@@ -13,8 +13,8 @@
 #include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_util.h"
 #include "chrome/browser/ui/views/permissions/chip/multi_image_container.h"
+#include "chrome/browser/ui/views/permissions/chip/permission_chip_theme.h"
 #include "chrome/browser/ui/views/permissions/permission_prompt_style.h"
-#include "components/content_settings/core/common/features.h"
 #include "components/permissions/permission_uma_util.h"
 #include "components/vector_icons/vector_icons.h"
 #include "third_party/skia/include/core/SkColor.h"
@@ -30,7 +30,7 @@
 #include "ui/views/painter.h"
 #include "ui/views/view_class_properties.h"
 
-DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(PermissionChipView, kChipElementId);
+DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(PermissionChipView, kElementIdForTesting);
 
 PermissionChipView::PermissionChipView(PressedCallback callback)
     : MdTextButton(std::move(callback),
@@ -38,7 +38,6 @@ PermissionChipView::PermissionChipView(PressedCallback callback)
                    views::style::CONTEXT_BUTTON_MD,
                    /*use_text_color_for_icon=*/true,
                    std::make_unique<MultiImageContainer>()) {
-  SetProperty(views::kElementIdentifierKey, kChipElementId);
   views::InstallPillHighlightPathGenerator(this);
   SetHorizontalAlignment(gfx::ALIGN_LEFT);
   SetElideBehavior(gfx::ElideBehavior::FADE_TAIL);
@@ -46,11 +45,10 @@ PermissionChipView::PermissionChipView(PressedCallback callback)
   // Equalizing padding on the left, right and between icon and label.
   SetImageLabelSpacing(GetLayoutConstant(LOCATION_BAR_CHIP_PADDING));
   SetCustomPadding(GetPadding());
-  if (features::IsChromeRefresh2023()) {
-    label()->SetTextStyle(views::style::STYLE_BODY_4_EMPHASIS);
-  }
+  label()->SetTextStyle(views::style::STYLE_BODY_4_EMPHASIS);
   SetCornerRadius(GetCornerRadius());
   animation_ = std::make_unique<gfx::SlideAnimation>(this);
+  SetProperty(views::kElementIdentifierKey, kElementIdForTesting);
 
   UpdateIconAndColors();
 }
@@ -78,19 +76,15 @@ void PermissionChipView::AnimateExpand(base::TimeDelta duration) {
 
 void PermissionChipView::AnimateToFit(base::TimeDelta duration) {
   animation_->SetSlideDuration(duration);
-  if (base::FeatureList::IsEnabled(
-          content_settings::features::kLeftHandSideActivityIndicators)) {
-    base_width_ =
-        label()
-            ->GetPreferredSize(views::SizeBounds(label()->width(), {}))
-            .width();
-  } else {
-    base_width_ = label()->width();
-  }
 
   if (label()
           ->GetPreferredSize(views::SizeBounds(label()->width(), {}))
           .width() < width()) {
+    base_width_ =
+        label()
+            ->GetPreferredSize(views::SizeBounds(label()->width(), {}))
+            .width();
+
     // As we're collapsing, we need to make sure that the padding is not
     // animated away.
     base_width_ += GetPadding().width();
@@ -101,26 +95,40 @@ void PermissionChipView::AnimateToFit(base::TimeDelta duration) {
 }
 
 void PermissionChipView::ResetAnimation(double value) {
+  // `base_width_` is used regardless of the animation value. When animation is
+  // reset, e.g. on a tab switch, `base_width_` may hold obsolete values that
+  // should be reset as well.
+  if (value == 0.0) {
+    base_width_ = 0;
+  }
   animation_->Reset(value);
   OnAnimationValueMaybeChanged();
 }
 
-// TODO(crbug.com/40232718): Use the CalculatePreferredSize(SizeBounds) method
-// to avoid double calculations.
-gfx::Size PermissionChipView::CalculatePreferredSize() const {
+gfx::Size PermissionChipView::CalculatePreferredSize(
+    const views::SizeBounds& available_size) const {
   const int icon_width = GetIconViewWidth();
+  const int extra_width = GetPadding().width() + icon_width;
+  views::SizeBound available_width =
+      std::max<views::SizeBound>(0, available_size.width() - extra_width);
   const int label_width =
-      label()
-          ->GetPreferredSize(views::SizeBounds(label()->width(), {}))
-          .width() +
-      GetPadding().width();
+      label()->GetPreferredSize(views::SizeBounds(available_width, {})).width();
+  const int collapsable_width = label_width + GetPadding().width();
 
   const int width =
-      base_width_ +
-      base::ClampRound(label_width * animation_->GetCurrentValue()) +
-      icon_width;
+      base_width_ + icon_width +
+      base::ClampRound(collapsable_width * animation_->GetCurrentValue());
 
-  return gfx::Size(width, GetHeightForWidth(width));
+  return gfx::Size(width, views::LabelButton::CalculatePreferredSize(
+                              views::SizeBounds(width, {}))
+                              .height());
+}
+
+bool PermissionChipView::OnMousePressed(const ui::MouseEvent& event) {
+  for (Observer& observer : observers_) {
+    observer.OnMousePressed();
+  }
+  return MdTextButton::OnMousePressed(event);
 }
 
 void PermissionChipView::OnThemeChanged() {
@@ -207,86 +215,73 @@ const gfx::VectorIcon& PermissionChipView::GetIcon() const {
 }
 
 SkColor PermissionChipView::GetForegroundColor() const {
-  if (GetPermissionChipTheme() ==
-      PermissionChipTheme::kInUseActivityIndicator) {
+  if (theme() == PermissionChipTheme::kInUseActivityIndicator) {
     return GetColorProvider()->GetColor(
         kColorOmniboxChipInUseActivityIndicatorForeground);
   }
 
-  if (GetPermissionChipTheme() ==
-      PermissionChipTheme::kBlockedActivityIndicator) {
+  if (theme() == PermissionChipTheme::kBlockedActivityIndicator) {
     return GetColorProvider()->GetColor(
         kColorOmniboxChipBlockedActivityIndicatorForeground);
   }
 
-  if (GetPermissionChipTheme() ==
-      PermissionChipTheme::kOnSystemBlockedActivityIndicator) {
+  if (theme() == PermissionChipTheme::kOnSystemBlockedActivityIndicator) {
     return GetColorProvider()->GetColor(
         kColorOmniboxChipOnSystemBlockedActivityIndicatorForeground);
   }
 
-  if (features::IsChromeRefresh2023()) {
-    // 1. Default to the system primary color.
-    SkColor text_and_icon_color = GetColorProvider()->GetColor(
-        kColorOmniboxChipForegroundNormalVisibility);
+  // 1. Default to the system primary color.
+  SkColor text_and_icon_color =
+      GetColorProvider()->GetColor(kColorOmniboxChipForegroundNormalVisibility);
 
-    // 2. Then update the color if the quiet chip is showing.
-    if (GetPermissionPromptStyle() == PermissionPromptStyle::kQuietChip) {
-      text_and_icon_color = GetColorProvider()->GetColor(
-          kColorOmniboxChipForegroundLowVisibility);
-    }
-
-    // 3. Then update the color based on the user decision.
-    // TODO(dljames): There is potentially a bug here if there exists a case
-    // where a quiet chip can be shown on a GRANTED_ONCE permission action.
-    // In that case the color should stay kColorOmniboxChipTextDefaultCR23.
-    switch (GetUserDecision()) {
-      case permissions::PermissionAction::GRANTED:
-      case permissions::PermissionAction::GRANTED_ONCE:
-        text_and_icon_color = GetColorProvider()->GetColor(
-            kColorOmniboxChipForegroundNormalVisibility);
-        break;
-      case permissions::PermissionAction::DENIED:
-      case permissions::PermissionAction::DISMISSED:
-      case permissions::PermissionAction::IGNORED:
-      case permissions::PermissionAction::REVOKED:
-        text_and_icon_color = GetColorProvider()->GetColor(
-            kColorOmniboxChipForegroundLowVisibility);
-        break;
-      case permissions::PermissionAction::NUM:
-        break;
-    }
-
-    // 4. Then update the color based on if the icon is blocked or not.
-    if (ShouldShowBlockedIcon()) {
-      text_and_icon_color = GetColorProvider()->GetColor(
-          kColorOmniboxChipForegroundLowVisibility);
-    }
-
-    return text_and_icon_color;
+  // 2. Then update the color if the quiet chip is showing.
+  if (GetPermissionPromptStyle() == PermissionPromptStyle::kQuietChip) {
+    text_and_icon_color =
+        GetColorProvider()->GetColor(kColorOmniboxChipForegroundLowVisibility);
   }
 
-  return GetColorProvider()->GetColor(
-      GetPermissionChipTheme() == PermissionChipTheme::kLowVisibility
-          ? kColorOmniboxChipForegroundLowVisibility
-          : kColorOmniboxChipForegroundNormalVisibility);
+  // 3. Then update the color based on the user decision.
+  // TODO(dljames): There is potentially a bug here if there exists a case
+  // where a quiet chip can be shown on a GRANTED_ONCE permission action.
+  // In that case the color should stay kColorOmniboxChipTextDefaultCR23.
+  switch (GetUserDecision()) {
+    case permissions::PermissionAction::GRANTED:
+    case permissions::PermissionAction::GRANTED_ONCE:
+      text_and_icon_color = GetColorProvider()->GetColor(
+          kColorOmniboxChipForegroundNormalVisibility);
+      break;
+    case permissions::PermissionAction::DENIED:
+    case permissions::PermissionAction::DISMISSED:
+    case permissions::PermissionAction::IGNORED:
+    case permissions::PermissionAction::REVOKED:
+      text_and_icon_color = GetColorProvider()->GetColor(
+          kColorOmniboxChipForegroundLowVisibility);
+      break;
+    case permissions::PermissionAction::NUM:
+      break;
+  }
+
+  // 4. Then update the color based on if the icon is blocked or not.
+  if (ShouldShowBlockedIcon()) {
+    text_and_icon_color =
+        GetColorProvider()->GetColor(kColorOmniboxChipForegroundLowVisibility);
+  }
+
+  return text_and_icon_color;
 }
 
 SkColor PermissionChipView::GetBackgroundColor() const {
-  if (GetPermissionChipTheme() ==
-      PermissionChipTheme::kInUseActivityIndicator) {
+  if (theme() == PermissionChipTheme::kInUseActivityIndicator) {
     return GetColorProvider()->GetColor(
         kColorOmniboxChipInUseActivityIndicatorBackground);
   }
 
-  if (GetPermissionChipTheme() ==
-      PermissionChipTheme::kBlockedActivityIndicator) {
+  if (theme() == PermissionChipTheme::kBlockedActivityIndicator) {
     return GetColorProvider()->GetColor(
         kColorOmniboxChipBlockedActivityIndicatorBackground);
   }
 
-  if (GetPermissionChipTheme() ==
-      PermissionChipTheme::kOnSystemBlockedActivityIndicator) {
+  if (theme() == PermissionChipTheme::kOnSystemBlockedActivityIndicator) {
     return GetColorProvider()->GetColor(
         kColorOmniboxChipOnSystemBlockedActivityIndicatorBackground);
   }
@@ -298,12 +293,20 @@ void PermissionChipView::UpdateIconAndColors() {
   if (!GetWidget()) {
     return;
   }
-  SetEnabledTextColors(GetForegroundColor());
-  SetImageModel(views::Button::STATE_NORMAL, GetIconImageModel());
-  if (features::IsChromeRefresh2023()) {
-    ConfigureInkDropForRefresh2023(this, kColorOmniboxChipInkDropHover,
-                                   kColorOmniboxChipInkDropRipple);
-  }
+
+  SkColor foreground_color = GetForegroundColor();
+  SetEnabledTextColors(foreground_color);
+  // On macOS the chip view could get disabled if a browser's window lost its
+  // focus. This can lead to low contrast between the chip's text and background
+  // color.
+  SetTextColor(views::Button::STATE_DISABLED, foreground_color);
+
+  ui::ImageModel image_model = GetIconImageModel();
+  SetImageModel(views::Button::STATE_NORMAL, image_model);
+  SetImageModel(views::Button::STATE_DISABLED, image_model);
+
+  ConfigureInkDropForRefresh2023(this, kColorOmniboxChipInkDropHover,
+                                 kColorOmniboxChipInkDropRipple);
 }
 
 void PermissionChipView::ForceAnimateExpand() {
@@ -321,18 +324,11 @@ void PermissionChipView::OnAnimationValueMaybeChanged() {
 }
 
 int PermissionChipView::GetIconSize() const {
-  if (features::IsChromeRefresh2023()) {
-    return GetLayoutConstant(LOCATION_BAR_CHIP_ICON_SIZE);
-  }
-
-  return GetLayoutConstant(LOCATION_BAR_ICON_SIZE);
+  return GetLayoutConstant(LOCATION_BAR_CHIP_ICON_SIZE);
 }
 
 int PermissionChipView::GetCornerRadius() const {
-  if (features::IsChromeRefresh2023()) {
-    return GetLayoutConstant(LOCATION_BAR_CHILD_CORNER_RADIUS);
-  }
-  return GetIconSize();
+  return GetLayoutConstant(LOCATION_BAR_CHILD_CORNER_RADIUS);
 }
 
 gfx::RoundedCornersF PermissionChipView::GetCornerRadii() const {
@@ -346,13 +342,7 @@ gfx::RoundedCornersF PermissionChipView::GetCornerRadii() const {
 }
 
 gfx::Insets PermissionChipView::GetPadding() const {
-  if (features::IsChromeRefresh2023()) {
-    return gfx::Insets(GetLayoutConstant(LOCATION_BAR_CHIP_PADDING));
-  } else {
-    return gfx::Insets::VH(
-        GetLayoutConstant(LOCATION_BAR_CHILD_INTERIOR_PADDING),
-        GetLayoutInsets(LOCATION_BAR_ICON_INTERIOR_PADDING).left());
-  }
+  return gfx::Insets(GetLayoutConstant(LOCATION_BAR_CHIP_PADDING));
 }
 
 void PermissionChipView::SetChipIcon(const gfx::VectorIcon& icon) {
@@ -365,6 +355,18 @@ void PermissionChipView::SetChipIcon(const gfx::VectorIcon* icon) {
   icon_ = icon;
 
   UpdateIconAndColors();
+}
+
+bool PermissionChipView::GetIsRequestForTesting() const {
+  switch (theme()) {
+    case PermissionChipTheme::kNormalVisibility:
+    case PermissionChipTheme::kLowVisibility:
+      return true;
+    case PermissionChipTheme::kBlockedActivityIndicator:
+    case PermissionChipTheme::kOnSystemBlockedActivityIndicator:
+    case PermissionChipTheme::kInUseActivityIndicator:
+      return false;
+  }
 }
 
 void PermissionChipView::AddObserver(Observer* observer) {

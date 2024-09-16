@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/check.h"
@@ -29,12 +30,13 @@ namespace manta {
 namespace {
 
 constexpr char kOauthConsumerName[] = "manta_orca";
+constexpr base::TimeDelta kTimeout = base::Seconds(30);
 
 using Tone = proto::RequestConfig::Tone;
 
 std::optional<Tone> GetTone(const std::string& tone) {
   static constexpr auto tone_map =
-      base::MakeFixedFlatMap<base::StringPiece, Tone>({
+      base::MakeFixedFlatMap<std::string_view, Tone>({
           {"UNSPECIFIED", proto::RequestConfig::UNSPECIFIED},
           {"SHORTEN", proto::RequestConfig::SHORTEN},
           {"ELABORATE", proto::RequestConfig::ELABORATE},
@@ -43,6 +45,7 @@ std::optional<Tone> GetTone(const std::string& tone) {
           {"EMOJIFY", proto::RequestConfig::EMOJIFY},
           {"FREEFORM_REWRITE", proto::RequestConfig::FREEFORM_REWRITE},
           {"FREEFORM_WRITE", proto::RequestConfig::FREEFORM_WRITE},
+          {"PROOFREAD", proto::RequestConfig::PROOFREAD},
 
       });
   const auto iter = tone_map.find(tone);
@@ -100,8 +103,9 @@ void OnServerResponseOrErrorReceived(
   }
 
   if (output_data_list.size() == 0) {
-    std::move(callback).Run(base::Value::Dict(),
-                            {MantaStatusCode::kBlockedOutputs, std::string()});
+    std::move(callback).Run(
+        base::Value::Dict(),
+        {MantaStatusCode::kBlockedOutputs, /*message=*/std::string()});
     return;
   }
 
@@ -115,14 +119,8 @@ void OnServerResponseOrErrorReceived(
 OrcaProvider::OrcaProvider(
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     signin::IdentityManager* identity_manager,
-    bool is_demo_mode,
-    const std::string& chrome_version,
-    const std::string& locale)
-    : BaseProvider(url_loader_factory,
-                   identity_manager,
-                   is_demo_mode,
-                   chrome_version,
-                   locale) {}
+    const ProviderParams& provider_params)
+    : BaseProvider(url_loader_factory, identity_manager, provider_params) {}
 
 OrcaProvider::~OrcaProvider() = default;
 
@@ -132,7 +130,7 @@ void OrcaProvider::Call(const std::map<std::string, std::string>& input,
   if (request == std::nullopt) {
     std::move(done_callback)
         .Run(base::Value::Dict(),
-             {MantaStatusCode::kInvalidInput, std::string()});
+             {MantaStatusCode::kInvalidInput, /*message=*/std::string()});
     return;
   }
 
@@ -180,7 +178,8 @@ void OrcaProvider::Call(const std::map<std::string, std::string>& input,
       kOauthConsumerName, traffic_annotation, request.value(),
       MantaMetricType::kOrca,
       base::BindOnce(&OnServerResponseOrErrorReceived,
-                     std::move(done_callback)));
+                     std::move(done_callback)),
+      kTimeout);
 }
 
 }  // namespace manta

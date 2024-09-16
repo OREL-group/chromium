@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <vector>
 
 #include "base/command_line.h"
@@ -57,7 +62,7 @@ class RestoreOnStartupPolicyTest : public UrlBlockingPolicyTest,
                                        RestoreOnStartupPolicyTest::*)(void)> {
  public:
   RestoreOnStartupPolicyTest() {
-    // TODO(crbug.com/1394910): Use HTTPS URLs in tests to avoid having to
+    // TODO(crbug.com/40248833): Use HTTPS URLs in tests to avoid having to
     // disable this feature.
     feature_list_.InitAndDisableFeature(features::kHttpsUpgrades);
   }

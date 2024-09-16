@@ -33,9 +33,9 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/no_destructor.h"
 #include "base/path_service.h"
+#include "base/profiler/process_type.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/system/sys_info.h"
@@ -46,6 +46,7 @@
 #include "base/threading/platform_thread.h"
 #include "base/time/default_tick_clock.h"
 #include "base/time/time.h"
+#include "base/trace_event/named_trigger.h"
 #include "base/trace_event/trace_event.h"
 #include "base/values.h"
 #include "build/branding_buildflags.h"
@@ -62,6 +63,7 @@
 #include "chrome/browser/buildflags.h"
 #include "chrome/browser/chrome_browser_field_trials.h"
 #include "chrome/browser/chrome_browser_main_extra_parts.h"
+#include "chrome/browser/component_updater/registration.h"
 #include "chrome/browser/defaults.h"
 #include "chrome/browser/enterprise/browser_management/management_service_factory.h"
 #include "chrome/browser/extensions/component_loader.h"
@@ -91,7 +93,6 @@
 #include "chrome/browser/sessions/chrome_serialized_navigation_driver.h"
 #include "chrome/browser/shell_integration.h"
 #include "chrome/browser/startup_data.h"
-#include "chrome/browser/tracing/background_tracing_field_trial.h"
 #include "chrome/browser/tracing/trace_event_system_stats_monitor.h"
 #include "chrome/browser/translate/chrome_translate_client.h"
 #include "chrome/browser/translate/translate_service.h"
@@ -117,7 +118,6 @@
 #include "chrome/common/media/media_resource_provider.h"
 #include "chrome/common/net/net_resource_provider.h"
 #include "chrome/common/pref_names.h"
-#include "chrome/common/profiler/thread_profiler.h"
 #include "chrome/common/profiler/thread_profiler_configuration.h"
 #include "chrome/common/profiler/unwind_util.h"
 #include "chrome/grit/branded_strings.h"
@@ -130,6 +130,7 @@
 #include "components/embedder_support/switches.h"
 #include "components/flags_ui/pref_service_flags_storage.h"
 #include "components/google/core/common/google_util.h"
+#include "components/heap_profiling/in_process/heap_profiler_controller.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/language/content/browser/geo_language_provider.h"
 #include "components/language/core/browser/language_usage_metrics.h"
@@ -137,7 +138,6 @@
 #include "components/language/core/common/language_experiments.h"
 #include "components/language/core/common/language_util.h"
 #include "components/metrics/call_stacks/call_stack_profile_metrics_provider.h"
-#include "components/metrics/call_stacks/call_stack_profile_params.h"
 #include "components/metrics/content/subprocess_metrics_provider.h"
 #include "components/metrics/expired_histogram_util.h"
 #include "components/metrics/metrics_reporting_default_state.h"
@@ -153,6 +153,7 @@
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/pref_value_store.h"
+#include "components/sampling_profiler/thread_profiler.h"
 #include "components/site_isolation/site_isolation_policy.h"
 #include "components/spellcheck/spellcheck_buildflags.h"
 #include "components/startup_metric_utils/browser/startup_metric_utils.h"
@@ -186,10 +187,12 @@
 #include "media/audio/audio_manager.h"
 #include "media/base/localized_strings.h"
 #include "media/media_buildflags.h"
+#include "net/base/data_url.h"
 #include "net/base/net_module.h"
 #include "net/cookies/cookie_monster.h"
 #include "net/http/http_network_layer.h"
 #include "net/http/http_stream_factory.h"
+#include "pdf/buildflags.h"
 #include "ppapi/buildflags/buildflags.h"
 #include "printing/buildflags/buildflags.h"
 #include "rlz/buildflags/buildflags.h"
@@ -200,9 +203,9 @@
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/color/color_provider_manager.h"
 
-#if BUILDFLAG(ENABLE_COMPONENT_UPDATER)
-#include "chrome/browser/component_updater/registration.h"
-#endif  // BUILDFLAG(ENABLE_COMPONENT_UPDATER)
+#if BUILDFLAG(ENABLE_UPDATER)
+#include "chrome/browser/updater/scheduler.h"
+#endif
 
 #if BUILDFLAG(IS_ANDROID)
 #include "chrome/browser/flags/android/chrome_feature_list.h"
@@ -228,7 +231,6 @@
 #if BUILDFLAG(IS_CHROMEOS)
 #include "base/process/process.h"
 #include "base/task/task_traits.h"
-#include "components/crash/core/app/breakpad_linux.h"
 #else
 #include "components/enterprise/browser/controller/chrome_browser_cloud_management_controller.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
@@ -244,7 +246,7 @@
 #include "chromeos/ash/components/settings/cros_settings_names.h"
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
-// TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
+// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
 // of lacros-chrome is complete.
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
 #include "chrome/browser/first_run/upgrade_util_linux.h"
@@ -284,10 +286,10 @@
 #include "ui/shell_dialogs/select_file_dialog.h"
 #endif  // BUILDFLAG(IS_WIN)
 
-// TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
+// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
 // of lacros-chrome is complete.
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
-    BUILDFLAG(IS_CHROMEOS_LACROS) || BUILDFLAG(IS_FUCHSIA)
+    BUILDFLAG(IS_CHROMEOS_LACROS)
 #include "chrome/browser/metrics/desktop_session_duration/desktop_session_duration_tracker.h"
 #include "chrome/browser/metrics/desktop_session_duration/touch_mode_stats_tracker.h"
 #include "chrome/browser/profiles/profile_activity_metrics_recorder.h"
@@ -328,6 +330,11 @@
 #include "chrome/browser/printing/oop_features.h"
 #include "chrome/browser/printing/printing_init.h"
 #endif
+
+#if BUILDFLAG(ENABLE_PDF)
+#include "chrome/browser/pdf/pdf_pref_names.h"
+#include "pdf/pdf_features.h"
+#endif  // BUILDFLAG(ENABLE_PDF)
 
 #if BUILDFLAG(ENABLE_PLUGINS)
 #include "chrome/browser/plugins/plugin_prefs.h"
@@ -407,7 +414,7 @@ void HandleTestParameters(const base::CommandLine& command_line) {
 //   the profile is a guest profile in this case, or
 // - kError mode with a nullptr profile if startup should not continue.
 StartupProfileInfo CreateInitialProfile(
-    const base::FilePath& cur_dir,
+    const base::FilePath& user_data_dir,
     const base::CommandLine& parsed_command_line) {
   TRACE_EVENT0("startup", "ChromeBrowserMainParts::CreateProfile");
   base::Time start = base::Time::Now();
@@ -430,9 +437,18 @@ StartupProfileInfo CreateInitialProfile(
   bool profile_dir_specified =
       profiles::IsMultipleProfilesEnabled() &&
       parsed_command_line.HasSwitch(switches::kProfileDirectory);
+  base::FilePath last_used_profile;
   if (!last_used_profile_set && profile_dir_specified) {
-    profiles::SetLastUsedProfile(
-        parsed_command_line.GetSwitchValuePath(switches::kProfileDirectory));
+    last_used_profile =
+        parsed_command_line.GetSwitchValuePath(switches::kProfileDirectory);
+  }
+  if (parsed_command_line.HasSwitch(
+          switches::kIgnoreProfileDirectoryIfNotExists) &&
+      !base::DirectoryExists(user_data_dir.Append(last_used_profile))) {
+    last_used_profile.clear();
+  }
+  if (!last_used_profile.empty()) {
+    profiles::SetLastUsedProfile(last_used_profile);
     last_used_profile_set = true;
   }
 
@@ -469,7 +485,8 @@ StartupProfileInfo CreateInitialProfile(
   ProfileManager::GetPrimaryUserProfile();
 #endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
 
-  profile_info = GetStartupProfile(cur_dir, parsed_command_line);
+  profile_info =
+      GetStartupProfile(/*cur_dir=*/base::FilePath(), parsed_command_line);
 
   if (profile_info.mode == StartupProfileMode::kError &&
       !last_used_profile_set) {
@@ -557,7 +574,7 @@ bool ShouldInstallSodaDuringPostProfileInit(
 #if BUILDFLAG(IS_CHROMEOS_ASH)
   return base::FeatureList::IsEnabled(
       ash::features::kOnDeviceSpeechRecognition);
-#elif !BUILDFLAG(IS_CHROMEOS_LACROS) && BUILDFLAG(ENABLE_COMPONENT_UPDATER)
+#elif !BUILDFLAG(IS_CHROMEOS_LACROS)
   return !command_line.HasSwitch(switches::kDisableComponentUpdate);
 #else
   return false;
@@ -580,6 +597,7 @@ void StartWatchingForProcessShutdownHangs() {
   // This HangWatcher scope is covering the shutdown phase up to the end of the
   // process. Intentionally leak this instance so that it is not destroyed
   // before process termination.
+  base::HangWatcher::SetShuttingDown();
   auto* watcher = new base::WatchHangsInScope(base::Seconds(30));
   ANNOTATE_LEAKING_OBJECT_PTR(watcher);
   std::ignore = watcher;
@@ -708,13 +726,22 @@ void ChromeBrowserMainParts::SetupMetrics() {
 void ChromeBrowserMainParts::StartMetricsRecording() {
   TRACE_EVENT0("startup", "ChromeBrowserMainParts::StartMetricsRecording");
 
-  // Register a synthetic field trial for the sampling profiler configuration
-  // that was already chosen.
+  // Register synthetic field trials for the sampling profiler configurations
+  // that were already chosen.
   std::string trial_name, group_name;
   if (ThreadProfilerConfiguration::Get()->GetSyntheticFieldTrial(&trial_name,
                                                                  &group_name)) {
     ChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial(trial_name,
                                                               group_name);
+  }
+  auto* heap_profiler_controller =
+      heap_profiling::HeapProfilerController::GetInstance();
+  if (heap_profiler_controller &&
+      heap_profiler_controller->GetSyntheticFieldTrial(trial_name,
+                                                       group_name)) {
+    ChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial(
+        trial_name, group_name,
+        variations::SyntheticTrialAnnotationMode::kCurrentLog);
   }
 
 #if BUILDFLAG(IS_ANDROID)
@@ -822,7 +849,7 @@ int ChromeBrowserMainParts::PreEarlyInitialization() {
     if (!upgrade_util::RelaunchChromeBrowser(
             *base::CommandLine::ForCurrentProcess())) {
       // The relaunch failed. Feel free to panic now.
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
     }
 
     // Note, cannot return RESULT_CODE_NORMAL_EXIT here as this code needs to
@@ -862,6 +889,10 @@ void ChromeBrowserMainParts::PreCreateMainMessageLoop() {
 
   for (auto& chrome_extra_part : chrome_extra_parts_)
     chrome_extra_part->PreCreateMainMessageLoop();
+
+#if BUILDFLAG(ENABLE_UPDATER)
+  updater::SchedulePeriodicTasks();
+#endif  // BUILDFLAG(ENABLE_UPDATER)
 }
 
 void ChromeBrowserMainParts::PostCreateMainMessageLoop() {
@@ -873,7 +904,7 @@ void ChromeBrowserMainParts::PostCreateMainMessageLoop() {
   UpgradeDetector::GetInstance()->Init();
 #endif
 
-  ThreadProfiler::SetMainThreadTaskRunner(
+  sampling_profiler::ThreadProfiler::SetMainThreadTaskRunner(
       base::SingleThreadTaskRunner::GetCurrentDefault());
 
   // TODO(sebmarchand): Allow this to be created earlier if startup tracing is
@@ -1066,11 +1097,6 @@ int ChromeBrowserMainParts::PreCreateThreadsImpl() {
 #endif  // !BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(IS_WIN)
-#if !BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
-  // This is needed to enable ETW exporting. This is only relevant for the
-  // browser process, as other processes enable it separately.
-  base::trace_event::TraceEventETWExport::EnableETWExport();
-#endif
 #endif  // BUILDFLAG(IS_WIN)
 
   // Reset the command line in the crash report details, since we may have
@@ -1134,10 +1160,10 @@ int ChromeBrowserMainParts::PreCreateThreadsImpl() {
 
 #endif  // BUILDFLAG(IS_MAC)
 
-// TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
+// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
 // of lacros-chrome is complete.
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
-    BUILDFLAG(IS_CHROMEOS_LACROS) || BUILDFLAG(IS_FUCHSIA)
+    BUILDFLAG(IS_CHROMEOS_LACROS)
   metrics::DesktopSessionDurationTracker::Initialize();
   ProfileActivityMetricsRecorder::Initialize();
   TouchModeStatsTracker::Initialize(
@@ -1154,6 +1180,14 @@ int ChromeBrowserMainParts::PreCreateThreadsImpl() {
   }
   // IsolateOrigins policy is taken care of through SiteIsolationPrefsObserver
   // (constructed and owned by BrowserProcessImpl).
+
+  // We need to set the policy for data URLs since they can be created in
+  // any process. The ChromeContentBrowserClient will take care of child
+  // processes.
+  if (!local_state->GetBoolean(prefs::kDataURLWhitespacePreservationEnabled) &&
+      !command_line->HasSwitch(net::kRemoveWhitespaceForDataURLs)) {
+    command_line->AppendSwitch(net::kRemoveWhitespaceForDataURLs);
+  }
 
 #if BUILDFLAG(IS_ANDROID)
   // The admin should also be able to use these policies to force Site Isolation
@@ -1191,8 +1225,9 @@ void ChromeBrowserMainParts::PostCreateThreads() {
   // BrowserThreadsStarted as it matches the PreCreateThreads and CreateThreads
   // stages.
   content::GetIOThreadTaskRunner({})->PostTask(
-      FROM_HERE, base::BindOnce(&ThreadProfiler::StartOnChildThread,
-                                metrics::CallStackProfileParams::Thread::kIo));
+      FROM_HERE,
+      base::BindOnce(&sampling_profiler::ThreadProfiler::StartOnChildThread,
+                     base::ProfilerThreadType::kIo));
 // Sampling multiple threads might cause overhead on Android and we don't want
 // to enable it unless the data is needed.
 #if !BUILDFLAG(IS_ANDROID)
@@ -1209,9 +1244,11 @@ void ChromeBrowserMainParts::PostCreateThreads() {
   ChromeProcessSingleton::GetInstance()->StartWatching();
 #endif
 
-  tracing::MaybeSetupSystemTracingFromFieldTrial();
+  tracing::SetupSystemTracingFromFieldTrial();
   tracing::SetupBackgroundTracingFromCommandLine();
   tracing::SetupPresetTracingFromFieldTrial();
+  base::trace_event::EmitNamedTrigger(
+      base::trace_event::kStartupTracingTriggerName);
 
   for (auto& chrome_extra_part : chrome_extra_parts_)
     chrome_extra_part->PostCreateThreads();
@@ -1388,7 +1425,9 @@ void ChromeBrowserMainParts::PreBrowserStart() {
   // other services to start up before we start adjusting the oom priority.
   g_browser_process->GetTabManager()->Start();
 
-  CheckPakFileIntegrity();
+  if (base::FeatureList::IsEnabled(features::kReportPakFileIntegrity)) {
+    CheckPakFileIntegrity();
+  }
 #endif
 
   // The RulesetService will make the filtering rules available to renderers
@@ -1582,7 +1621,7 @@ int ChromeBrowserMainParts::PreMainMessageLoopRunImpl() {
   // This step is costly and is already measured in Startup.CreateFirstProfile
   // and more directly Profile.CreateAndInitializeProfile.
   StartupProfileInfo profile_info = CreateInitialProfile(
-      /*cur_dir=*/base::FilePath(), *base::CommandLine::ForCurrentProcess());
+      user_data_dir_, *base::CommandLine::ForCurrentProcess());
   base::UmaHistogramEnumeration(
       "ProfilePicker.StartupMode.CreateInitialProfile", profile_info.mode);
 
@@ -1630,12 +1669,10 @@ int ChromeBrowserMainParts::PreMainMessageLoopRunImpl() {
 
   // Needs to be done before PostProfileInit, since the SODA Installer setup is
   // called inside PostProfileInit and depends on it.
-#if BUILDFLAG(ENABLE_COMPONENT_UPDATER)
   if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kDisableComponentUpdate)) {
     component_updater::RegisterComponentsForUpdate();
   }
-#endif  // BUILDFLAG(ENABLE_COMPONENT_UPDATER)
 
   // `profile` may be nullptr if the profile picker is shown.
   Profile* profile = profile_info.profile;
@@ -1700,6 +1737,12 @@ int ChromeBrowserMainParts::PreMainMessageLoopRunImpl() {
   // needs to read prefs that get set after that runs.
   browser_process_->intranet_redirect_detector();
 #endif
+
+#if BUILDFLAG(ENABLE_PDF)
+  chrome_pdf::features::SetIsOopifPdfPolicyEnabled(
+      g_browser_process->local_state()->GetBoolean(
+          prefs::kPdfViewerOutOfProcessIframeEnabled));
+#endif  // BUILDFLAG(ENABLE_PDF)
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW) && !defined(OFFICIAL_BUILD)
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
@@ -1770,7 +1813,7 @@ int ChromeBrowserMainParts::PreMainMessageLoopRunImpl() {
   if (browser_creator_->Start(*base::CommandLine::ForCurrentProcess(),
                               base::FilePath(), profile_info,
                               last_opened_profiles)) {
-// TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
+// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
 // of lacros-chrome is complete.
 #if BUILDFLAG(IS_WIN) || (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS))
     // Initialize autoupdate timer. Timer callback costs basically nothing
@@ -1781,7 +1824,7 @@ int ChromeBrowserMainParts::PreMainMessageLoopRunImpl() {
 #endif  // BUILDFLAG(IS_WIN) || (BUILDFLAG(IS_LINUX) ||
         // BUILDFLAG(IS_CHROMEOS_LACROS))
 
-// TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
+// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
 // of lacros-chrome is complete.
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
     // On Linux, the running exe will be updated if an upgrade becomes
@@ -1837,7 +1880,7 @@ void ChromeBrowserMainParts::WillRunMainMessageLoop(
 #if BUILDFLAG(IS_ANDROID)
   // Chrome on Android does not use default MessageLoop. It has its own
   // Android specific MessageLoop
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 #else
   DCHECK(base::CurrentUIThread::IsSet());
 
@@ -1877,7 +1920,7 @@ void ChromeBrowserMainParts::PostMainMessageLoopRun() {
 #if BUILDFLAG(IS_ANDROID)
   // Chrome on Android does not use default MessageLoop. It has its own
   // Android specific MessageLoop
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 #else
   // Shutdown the UpgradeDetector here before `ChromeBrowserMainPartsAsh`
   // disconnects DBus services in its PostDestroyThreads.
@@ -1889,7 +1932,7 @@ void ChromeBrowserMainParts::PostMainMessageLoopRun() {
   // Two different types of hang detection cannot attempt to upload crashes at
   // the same time or they would interfere with each other. Do not start the
   // ShutdownWatcher if the HangWatcher is already collecting crash.
-  // TODO(crbug.com/1327000): Migrate away from ShutdownWatcher and its old
+  // TODO(crbug.com/40840897): Migrate away from ShutdownWatcher and its old
   // timing.
   if (!base::HangWatcher::IsCrashReportingEnabled()) {
     // Start watching for jank during shutdown. It gets disarmed when
@@ -1926,7 +1969,7 @@ void ChromeBrowserMainParts::PostDestroyThreads() {
 #if BUILDFLAG(IS_ANDROID)
   // On Android, there is no quit/exit. So the browser's main message loop will
   // not finish.
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 #else
 
   for (auto& chrome_extra_part : chrome_extra_parts_) {

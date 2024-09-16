@@ -7,16 +7,31 @@ package org.chromium.ui.util;
 import android.graphics.Rect;
 import android.graphics.Region;
 import android.graphics.RegionIterator;
+import android.util.Size;
+import android.view.WindowInsets;
 
 import androidx.annotation.NonNull;
 import androidx.core.graphics.Insets;
+import androidx.core.view.WindowInsetsCompat.Type.InsetsType;
 
 import org.chromium.base.Callback;
+import org.chromium.base.Log;
+import org.chromium.base.ResettersForTesting;
 
 import java.util.List;
 
 /** Helper functions for working with WindowInsets and Rects. */
 public final class WindowInsetsUtils {
+    private static final String TAG = "WindowInsetsUtils";
+
+    private static final Size DEFAULT_INSETS_FRAME = new Size(0, 0);
+    private static final List<Rect> DEFAULT_INSETS_BOUNDING_RECTS = List.of();
+
+    private static boolean sGetFrameMethodNotFound;
+    private static boolean sGetBoundingRectsMethodNotFound;
+
+    private static Size sFrameForTesting;
+    private static Rect sWidestUnoccludedRectForTesting;
 
     /** Private constructor to stop instantiation. */
     private WindowInsetsUtils() {}
@@ -96,6 +111,7 @@ public final class WindowInsetsUtils {
      */
     public static @NonNull Rect getWidestUnoccludedRect(
             @NonNull Rect regionRect, List<Rect> blockedRects) {
+        if (sWidestUnoccludedRectForTesting != null) return sWidestUnoccludedRectForTesting;
         if (regionRect.isEmpty()) return regionRect;
 
         Region region = new Region(regionRect);
@@ -111,6 +127,55 @@ public final class WindowInsetsUtils {
                     }
                 });
         return widestUnoccludedRect;
+    }
+
+    /** See {@link WindowInsets#getFrame()} for details. */
+    @SuppressWarnings("NewApi")
+    public static Size getFrameFromInsets(WindowInsets windowInsets) {
+        if (sFrameForTesting != null) return sFrameForTesting;
+
+        // This invocation is wrapped in a try-catch block to allow backporting of the #getFrame()
+        // API on pre-V devices. On pre-V devices not supporting this API, a default value will be
+        // cached on the first failure and returned subsequently.
+        if (sGetFrameMethodNotFound) return DEFAULT_INSETS_FRAME;
+        try {
+            return windowInsets == null ? DEFAULT_INSETS_FRAME : windowInsets.getFrame();
+        } catch (NoSuchMethodError e) {
+            Log.w(TAG, e.toString());
+            sGetFrameMethodNotFound = true;
+            return DEFAULT_INSETS_FRAME;
+        }
+    }
+
+    /** See {@link WindowInsets#getBoundingRects(int)} for details. */
+    @SuppressWarnings("NewApi")
+    public static List<Rect> getBoundingRectsFromInsets(
+            WindowInsets windowInsets, @InsetsType int insetType) {
+        // This invocation is wrapped in a try-catch block to allow backporting of the
+        // #getBoundingRects() API on pre-V devices. On pre-V devices not supporting this API, a
+        // default value will be cached on the first failure and returned subsequently.
+        if (sGetBoundingRectsMethodNotFound) return DEFAULT_INSETS_BOUNDING_RECTS;
+        try {
+            return windowInsets == null
+                    ? DEFAULT_INSETS_BOUNDING_RECTS
+                    : windowInsets.getBoundingRects(insetType);
+        } catch (NoSuchMethodError e) {
+            Log.w(TAG, e.toString());
+            sGetBoundingRectsMethodNotFound = true;
+            return DEFAULT_INSETS_BOUNDING_RECTS;
+        }
+    }
+
+    /** Sets the window frame size for testing purposes. */
+    public static void setFrameForTesting(Size frame) {
+        sFrameForTesting = frame;
+        ResettersForTesting.register(() -> sFrameForTesting = DEFAULT_INSETS_FRAME);
+    }
+
+    /** Sets a rect to be returned by {@code #getWidestUnoccludedRect()} for testing purposes. */
+    public static void setWidestUnoccludedRectForTesting(Rect widestUnoccludedRect) {
+        sWidestUnoccludedRectForTesting = widestUnoccludedRect;
+        ResettersForTesting.register(() -> sWidestUnoccludedRectForTesting = new Rect());
     }
 
     private static void forEachRect(Region region, Callback<Rect> rectConsumer) {

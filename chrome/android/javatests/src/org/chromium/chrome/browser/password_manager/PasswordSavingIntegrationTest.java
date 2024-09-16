@@ -4,9 +4,9 @@
 
 package org.chromium.chrome.browser.password_manager;
 
+import static org.chromium.base.ThreadUtils.runOnUiThreadBlocking;
 import static org.chromium.base.test.util.Matchers.is;
 import static org.chromium.content_public.browser.test.util.DOMUtils.enterInputIntoTextField;
-import static org.chromium.content_public.browser.test.util.TestThreadUtils.runOnUiThreadBlocking;
 
 import android.widget.TextView;
 
@@ -44,6 +44,7 @@ import org.chromium.content_public.browser.test.util.TestInputMethodManagerWrapp
 import org.chromium.content_public.browser.test.util.WebContentsUtils;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.test.util.DeviceRestriction;
+import org.chromium.ui.test.util.GmsCoreVersionRestriction;
 import org.chromium.ui.widget.ButtonCompat;
 import org.chromium.url.GURL;
 
@@ -77,6 +78,7 @@ public class PasswordSavingIntegrationTest {
 
     private PasswordStoreBridge mPasswordStoreBridge;
     private BottomSheetController mBottomSheetController;
+    private BottomSheetTestSupport mBottomSheetTestSupport;
     private WebContents mWebContents;
     private TestInputMethodManagerWrapper mInputMethodManagerWrapper;
 
@@ -92,7 +94,9 @@ public class PasswordSavingIntegrationTest {
                     mBottomSheetController =
                             BottomSheetControllerProvider.from(
                                     mActivityTestRule.getActivity().getWindowAndroid());
-                    mPasswordStoreBridge = new PasswordStoreBridge();
+                    mBottomSheetTestSupport = new BottomSheetTestSupport(mBottomSheetController);
+                    mPasswordStoreBridge =
+                            new PasswordStoreBridge(mActivityTestRule.getProfile(false));
                 });
 
         mWebContents = mActivityTestRule.getWebContents();
@@ -112,15 +116,16 @@ public class PasswordSavingIntegrationTest {
 
     @Test
     @MediumTest
-    @Restriction(DeviceRestriction.RESTRICTION_TYPE_NON_AUTO)
+    @Restriction({
+        DeviceRestriction.RESTRICTION_TYPE_NON_AUTO,
+        GmsCoreVersionRestriction.RESTRICTION_TYPE_VERSION_GE_22W30
+    })
     // TODO(crbug/1475346): Add integration tests for automotive save password flow.
     public void testSavingNewPassword() throws InterruptedException, TimeoutException {
         mActivityTestRule.loadUrl(mActivityTestRule.getTestServer().getURL(SIGNIN_FORM_URL));
 
-        enterInputIntoTextField(
-                mWebContents, mInputMethodManagerWrapper, USERNAME_FIELD_ID, USERNAME_TEXT);
-        enterInputIntoTextField(
-                mWebContents, mInputMethodManagerWrapper, PASSWORD_NODE_ID, PASSWORD_TEXT);
+        enterInputIntoTextField(mWebContents, USERNAME_FIELD_ID, USERNAME_TEXT);
+        enterInputIntoTextField(mWebContents, PASSWORD_NODE_ID, PASSWORD_TEXT);
         waitForPmParserAnnotation(mWebContents, PASSWORD_NODE_ID);
 
         DOMUtils.clickNodeWithJavaScript(mWebContents, SUBMIT_BUTTON_ID);
@@ -143,9 +148,12 @@ public class PasswordSavingIntegrationTest {
 
     @Test
     @MediumTest
-    @Restriction(DeviceRestriction.RESTRICTION_TYPE_NON_AUTO)
-    // TODO(crbug/1475346): Add integration tests for automotive update password flow.
-    @DisabledTest(message = "https://crbug.com/1468903")
+    @Restriction({
+        DeviceRestriction.RESTRICTION_TYPE_NON_AUTO,
+        GmsCoreVersionRestriction.RESTRICTION_TYPE_VERSION_GE_22W30
+    })
+    @DisabledTest(message = "https://crbug.com/347739972")
+    // TODO(crbug.com/40927881): Add integration tests for automotive update password flow.
     public void testUpdatingPassword() throws InterruptedException, TimeoutException {
         // Store the test credential.
         PasswordStoreCredential testCredential =
@@ -179,16 +187,22 @@ public class PasswordSavingIntegrationTest {
                 });
 
         // Wait till TTF closes.
-        BottomSheetTestSupport.waitForState(mBottomSheetController, SheetState.HIDDEN);
+        waitForBottomSheetClosed();
 
         // Enter the new password.
-        enterInputIntoTextField(
-                mWebContents, mInputMethodManagerWrapper, NEW_PASSWORD_NODE_ID, NEW_PASSWORD_TEXT);
-        enterInputIntoTextField(
+        DOMUtils.clickNode(
                 mWebContents,
-                mInputMethodManagerWrapper,
+                NEW_PASSWORD_NODE_ID,
+                /* goThroughRootAndroidView= */ true,
+                /* shouldScrollIntoView= */ false);
+        enterInputIntoTextField(mWebContents, NEW_PASSWORD_NODE_ID, NEW_PASSWORD_TEXT);
+        // Repeat the new password.
+        DOMUtils.clickNode(
+                mWebContents,
                 NEW_PASSWORD_REPEAT_NODE_ID,
-                NEW_PASSWORD_TEXT);
+                /* goThroughRootAndroidView= */ true,
+                /* shouldScrollIntoView= */ false);
+        enterInputIntoTextField(mWebContents, NEW_PASSWORD_REPEAT_NODE_ID, NEW_PASSWORD_TEXT);
 
         // Submit the form and wait for the success page to load.
         DOMUtils.clickNodeWithJavaScript(mWebContents, CHANGE_PASSWORD_BUTTON_ID);
@@ -242,6 +256,11 @@ public class PasswordSavingIntegrationTest {
                                     PASSWORD_MANAGER_ANNOTATION, webContents, nodeID, String.class);
                     return attribute != null;
                 });
+    }
+
+    private void waitForBottomSheetClosed() {
+        runOnUiThreadBlocking(() -> mBottomSheetTestSupport.endAllAnimations());
+        BottomSheetTestSupport.waitForState(mBottomSheetController, SheetState.HIDDEN);
     }
 
     private RecyclerView getCredentials() {

@@ -30,6 +30,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/chrome_test_utils.h"
+#include "chrome/test/base/platform_browser_test.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
 #include "components/policy/core/browser/webui/policy_status_provider.h"
 #include "components/policy/core/common/cloud/cloud_policy_refresh_scheduler.h"
@@ -66,8 +67,6 @@
 #include "components/account_id/account_id.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/features/simple_feature.h"
-#else
-#include "chrome/browser/toolbar_manager_test_helper_android.h"
 #endif  // !BUILDFLAG(IS_ANDROID)
 
 using testing::_;
@@ -198,14 +197,7 @@ class PolicyUITest : public PlatformBrowserTest {
   testing::NiceMock<policy::MockConfigurationPolicyProvider> provider_;
 };
 
-PolicyUITest::PolicyUITest() {
-#if BUILDFLAG(IS_ANDROID)
-  // Skips recreating the Android activity when homepage settings are changed.
-  // This happens when the feature chrome::android::kStartSurfaceAndroid is
-  // enabled.
-  toolbar_manager::setSkipRecreateForTesting(true);
-#endif  // BUILDFLAG(IS_ANDROID)
-}
+PolicyUITest::PolicyUITest() = default;
 
 PolicyUITest::~PolicyUITest() = default;
 
@@ -305,13 +297,8 @@ class PolicyUIStatusTest : public MixinBasedInProcessBrowserTest {
       &mixin_host_,
       ash::DeviceStateMixin::State::OOBE_COMPLETED_CLOUD_ENROLLED};
   ash::LoggedInUserMixin logged_in_user_mixin_{
-      &mixin_host_,
-      ash::LoggedInUserMixin::LogInType::kRegular,
-      embedded_test_server(),
-      this,
-      /*should_launch_browser=*/true,
-      AccountId::FromUserEmailGaiaId(policy::PolicyBuilder::kFakeUsername,
-                                     policy::PolicyBuilder::kFakeGaiaId)};
+      &mixin_host_, /*test_base=*/this, embedded_test_server(),
+      ash::LoggedInUserMixin::LogInType::kManaged};
 };
 
 bool PolicyUIStatusTest::ReadStatusFor(

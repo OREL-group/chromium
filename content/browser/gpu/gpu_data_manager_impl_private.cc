@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "content/browser/gpu/gpu_data_manager_impl_private.h"
 
 #include "build/build_config.h"
@@ -65,7 +70,6 @@
 #include "gpu/config/software_rendering_list_autogen.h"
 #include "gpu/ipc/common/memory_stats.h"
 #include "gpu/ipc/host/gpu_disk_cache.h"
-#include "gpu/ipc/host/gpu_memory_buffer_support.h"
 #include "gpu/vulkan/buildflags.h"
 #include "media/gpu/gpu_video_accelerator_util.h"
 #include "media/media_buildflags.h"
@@ -75,6 +79,7 @@
 #include "ui/display/screen.h"
 #include "ui/gfx/switches.h"
 #include "ui/gl/buildflags.h"
+#include "ui/gl/gl_features.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_switches.h"
 #include "ui/gl/gpu_preference.h"
@@ -101,18 +106,6 @@
 namespace content {
 
 namespace {
-
-// On X11, we do not know GpuMemoryBuffer configuration support until receiving
-// the initial GPUInfo.
-bool CanUpdateGmbGpuPreferences() {
-#if BUILDFLAG(IS_OZONE)
-  return !ui::OzonePlatform::GetInstance()
-              ->GetPlatformProperties()
-              .fetch_buffer_formats_for_gmb_on_gpu;
-#else
-  return true;
-#endif
-}
 
 #if BUILDFLAG(IS_ANDROID)
 // NOINLINE to ensure this function is used in crash reports.
@@ -408,29 +401,10 @@ void RequestVideoMemoryUsageStats(
 
 // Determines if SwiftShader is available as a fallback for WebGL.
 bool SwiftShaderAllowed() {
-#if BUILDFLAG(ENABLE_SWIFTSHADER)
-  return !base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kDisableSoftwareRasterizer);
-#else
-  return false;
-#endif
-}
-
-// Determines if Vulkan is available for the GPU process.
-[[maybe_unused]] bool VulkanAllowed() {
-#if BUILDFLAG(ENABLE_VULKAN)
-  // Vulkan will be enabled if certain flags are present.
-  // --enable-features=Vulkan will cause Vulkan to be used for compositing and
-  // rasterization. --use-vulkan by itself will initialize Vulkan so that it can
-  // be used for other purposes, such as WebGPU.
   const base::CommandLine* command_line =
       base::CommandLine::ForCurrentProcess();
-  gpu::VulkanImplementationName use_vulkan =
-      gpu::gles2::ParseVulkanImplementationName(command_line);
-  return use_vulkan != gpu::VulkanImplementationName::kNone;
-#else
-  return false;
-#endif
+  return !command_line->HasSwitch(switches::kDisableSoftwareRasterizer) &&
+         features::IsSwiftShaderAllowed(command_line);
 }
 
 // These values are logged to UMA. Entries should not be renumbered and numeric
@@ -564,9 +538,7 @@ void GpuDataManagerImplPrivate::InitializeGpuModes() {
     // support software compositing or sometimes fail dawn initialization.
     // TODO(b/323953910): Eliminate this fallback on each platform once Graphite
     // stability is sufficient on that platform.
-#if !BUILDFLAG(IS_MAC)
     fallback_modes_.push_back(gpu::GpuMode::HARDWARE_GL);
-#endif
     fallback_modes_.push_back(gpu::GpuMode::HARDWARE_GRAPHITE);
   } else {
     // On Fuchsia Vulkan must be used when it's enabled by the WebEngine
@@ -576,9 +548,10 @@ void GpuDataManagerImplPrivate::InitializeGpuModes() {
     fallback_modes_.push_back(gpu::GpuMode::HARDWARE_VULKAN);
 #else
     fallback_modes_.push_back(gpu::GpuMode::HARDWARE_GL);
-
-    if (VulkanAllowed())
+    // Prefer Vulkan over GL if enabled.
+    if (features::IsUsingVulkan()) {
       fallback_modes_.push_back(gpu::GpuMode::HARDWARE_VULKAN);
+    }
 #endif  // BUILDFLAG(IS_FUCHSIA)
   }
 
@@ -598,6 +571,15 @@ void GpuDataManagerImplPrivate::BlocklistWebGLForTesting() {
   }
   UpdateGpuFeatureInfo(gpu_feature_info, std::nullopt);
   NotifyGpuInfoUpdate();
+}
+
+void GpuDataManagerImplPrivate::SetSkiaGraphiteEnabledForTesting(bool enabled) {
+  // Pretend that HW acceleration is enabled so that we consider GpuFeatureInfo
+  // as initialized.
+  gpu_feature_info_.status_values[gpu::GPU_FEATURE_TYPE_ACCELERATED_GL] =
+      gpu::kGpuFeatureStatusEnabled;
+  gpu_feature_info_.status_values[gpu::GPU_FEATURE_TYPE_SKIA_GRAPHITE] =
+      enabled ? gpu::kGpuFeatureStatusEnabled : gpu::kGpuFeatureStatusDisabled;
 }
 
 gpu::GPUInfo GpuDataManagerImplPrivate::GetGPUInfo() const {
@@ -1200,8 +1182,7 @@ void GpuDataManagerImplPrivate::UpdateGpuFeatureInfo(
         gpu_feature_info_for_hardware_gpu) {
   gpu_feature_info_ = gpu_feature_info;
 #if !BUILDFLAG(IS_FUCHSIA)
-  // With Vulkan or Metal, GL might be blocked, so make sure we don't fallback
-  // to it later.
+  // With Vulkan or Graphite, GL might be blocked so don't fallback to it later.
   if (HardwareAccelerationEnabled() &&
       gpu_feature_info_.status_values[gpu::GPU_FEATURE_TYPE_ACCELERATED_GL] !=
           gpu::GpuFeatureStatus::kGpuFeatureStatusEnabled) {
@@ -1335,21 +1316,7 @@ void GpuDataManagerImplPrivate::UpdateGpuPreferences(
     GpuProcessKind kind) const {
   DCHECK(gpu_preferences);
 
-  // For performance reasons, discourage storing VideoFrames in a biplanar
-  // GpuMemoryBuffer if this is not native, see https://crbug.com/791676.
-  auto* gpu_memory_buffer_manager =
-      GpuMemoryBufferManagerSingleton::GetInstance();
-  if (gpu_memory_buffer_manager && CanUpdateGmbGpuPreferences()) {
-    gpu_preferences->disable_biplanar_gpu_memory_buffers_for_video_frames =
-        !gpu_memory_buffer_manager->IsNativeGpuMemoryBufferConfiguration(
-            gfx::BufferFormat::YUV_420_BIPLANAR,
-            gfx::BufferUsage::GPU_READ_CPU_READ_WRITE);
-  }
-
   gpu_preferences->gpu_program_cache_size = gpu::GetDefaultGpuDiskCacheSize();
-
-  gpu_preferences->texture_target_exception_list =
-      gpu::CreateBufferUsageAndFormatExceptionList();
 
   gpu_preferences->watchdog_starts_backgrounded = !application_is_visible_;
 
@@ -1376,10 +1343,10 @@ void GpuDataManagerImplPrivate::UpdateGpuPreferences(
                                            .message_pump_type_for_gpu;
 #endif
 
-#if BUILDFLAG(ENABLE_VULKAN)
-  if (gpu_mode_ != gpu::GpuMode::HARDWARE_VULKAN)
+  // Disable loading VulkanImplementation if not using Ganesh/Vulkan.
+  if (gpu_mode_ != gpu::GpuMode::HARDWARE_VULKAN) {
     gpu_preferences->use_vulkan = gpu::VulkanImplementationName::kNone;
-#endif
+  }
 
   if (!HardwareAccelerationEnabled()) {
     gpu_preferences->gr_context_type = gpu::GrContextType::kNone;
@@ -1484,8 +1451,8 @@ void GpuDataManagerImplPrivate::OnDisplayAdded(
                            }));
 }
 
-void GpuDataManagerImplPrivate::OnDisplayRemoved(
-    const display::Display& old_display) {
+void GpuDataManagerImplPrivate::OnDisplaysRemoved(
+    const display::Displays& removed_displays) {
   base::AutoUnlock unlock(owner_->lock_);
 
   // Notify observers in the browser process.

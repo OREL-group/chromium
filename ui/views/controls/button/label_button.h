@@ -91,7 +91,7 @@ class VIEWS_EXPORT LabelButton : public Button,
   void ShrinkDownThenClearText();
 
   // Sets the text color shown for the specified button |for_state| to |color|.
-  // TODO(crbug.com/1421316): Get rid of SkColor versions of these functions in
+  // TODO(crbug.com/40259212): Get rid of SkColor versions of these functions in
   // favor of the ColorId versions.
   void SetTextColor(ButtonState for_state, SkColor color);
 
@@ -99,7 +99,7 @@ class VIEWS_EXPORT LabelButton : public Button,
   void SetTextColorId(ButtonState for_state, ui::ColorId color_id);
 
   // Sets the text colors shown for the non-disabled states to |color|.
-  // TODO(crbug.com/1421316): Get rid of SkColor versions of these functions in
+  // TODO(crbug.com/40259212): Get rid of SkColor versions of these functions in
   // favor of the ColorId versions.
   virtual void SetEnabledTextColors(std::optional<SkColor> color);
 
@@ -158,9 +158,9 @@ class VIEWS_EXPORT LabelButton : public Button,
   // Button:
   void SetBorder(std::unique_ptr<Border> border) override;
   void OnBoundsChanged(const gfx::Rect& previous_bounds) override;
-  gfx::Size CalculatePreferredSize() const override;
+  gfx::Size CalculatePreferredSize(
+      const SizeBounds& available_size) const override;
   gfx::Size GetMinimumSize() const override;
-  int GetHeightForWidth(int w) const override;
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   void AddLayerToRegion(ui::Layer* new_layer,
                         views::LayerRegion region) override;
@@ -283,8 +283,10 @@ class VIEWS_EXPORT LabelButton : public Button,
   gfx::FontList cached_default_button_font_list_;
 
   // The image models and colors for each button state.
-  std::optional<ui::ImageModel> button_state_image_models_[STATE_COUNT] = {};
-  absl::variant<SkColor, ui::ColorId> button_state_colors_[STATE_COUNT] = {};
+  std::array<std::optional<ui::ImageModel>, STATE_COUNT>
+      button_state_image_models_;
+  std::array<absl::variant<SkColor, ui::ColorId>, STATE_COUNT>
+      button_state_colors_;
 
   // Used to track whether SetTextColor() has been invoked.
   std::array<bool, STATE_COUNT> explicitly_set_colors_ = {};

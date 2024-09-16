@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/compositor/debug_utils.h"
 
 #include <stddef.h>
@@ -87,6 +92,11 @@ void PrintLayerHierarchyImp(const Layer* layer,
              << cc::RenderSurfaceReasonToString(render_surface);
       }
     }
+  }
+
+  const auto clip_rect = layer->clip_rect();
+  if (!clip_rect.IsEmpty()) {
+    *out << " clip_rect:" << clip_rect.ToString();
   }
 
   if (!layer->rounded_corner_radii().IsEmpty()) {

@@ -7,31 +7,32 @@ load("//lib/args.star", "args")
 load("//lib/branches.star", "branches")
 load("//lib/builder_config.star", "builder_config")
 load("//lib/builder_health_indicators.star", "health_spec")
-load("//lib/builders.star", "os", "reclient", "sheriff_rotations", "siso")
+load("//lib/builders.star", "gardener_rotations", "os", "siso")
 load("//lib/ci.star", "ci")
 load("//lib/consoles.star", "consoles")
 load("//lib/gn_args.star", "gn_args")
-load("//lib/targets.star", "targets")
+load("//lib/html.star", "linkify_builder")
 
 ci.defaults.set(
     executable = ci.DEFAULT_EXECUTABLE,
     builder_group = "chromium.win",
+    builder_config_settings = builder_config.ci_settings(
+        retry_failed_shards = True,
+    ),
     pool = ci.DEFAULT_POOL,
     cores = 8,
     os = os.WINDOWS_DEFAULT,
-    sheriff_rotations = sheriff_rotations.CHROMIUM,
+    gardener_rotations = gardener_rotations.CHROMIUM,
     tree_closing = True,
     main_console_view = "main",
     contact_team_email = "chrome-desktop-engprod@google.com",
     execution_timeout = ci.DEFAULT_EXECUTION_TIMEOUT,
     health_spec = health_spec.DEFAULT,
-    reclient_instance = reclient.instance.DEFAULT_TRUSTED,
-    reclient_jobs = reclient.jobs.DEFAULT,
     service_account = ci.DEFAULT_SERVICE_ACCOUNT,
     shadow_service_account = ci.DEFAULT_SHADOW_SERVICE_ACCOUNT,
     siso_enabled = True,
     siso_project = siso.project.DEFAULT_TRUSTED,
-    siso_remote_jobs = reclient.jobs.DEFAULT,
+    siso_remote_jobs = siso.remote_jobs.DEFAULT,
 )
 
 consoles.console_view(
@@ -95,9 +96,10 @@ ci.builder(
         configs = [
             "gpu_tests",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "x86",
             "no_symbols",
+            "win",
         ],
     ),
     builderless = False,
@@ -130,7 +132,9 @@ ci.builder(
         configs = [
             "gpu_tests",
             "debug_builder",
-            "reclient",
+            "remoteexec",
+            "win",
+            "x64",
         ],
     ),
     builderless = True,
@@ -162,7 +166,7 @@ ci.builder(
         build_gs_bucket = "chromium-win-archive",
     ),
     # Too flaky. See crbug.com/876224 for more details.
-    sheriff_rotations = args.ignore_default(None),
+    gardener_rotations = args.ignore_default(None),
     tree_closing = False,
     console_view_entry = consoles.console_view_entry(
         category = "debug|tester",
@@ -192,9 +196,10 @@ ci.builder(
         configs = [
             "gpu_tests",
             "debug_builder",
-            "reclient",
+            "remoteexec",
             "x86",
             "no_symbols",
+            "win",
         ],
     ),
     builderless = False,
@@ -205,7 +210,7 @@ ci.builder(
         short_name = "32",
     ),
     cq_mirrors_console_view = "mirrors",
-    # TODO(crbug/1473182): Remove once the bug is closed.
+    # TODO(crbug.com/40926931): Remove once the bug is closed.
     reclient_bootstrap_env = {
         "RBE_experimental_exit_on_stuck_actions": "true",
     },
@@ -218,6 +223,9 @@ ci.builder(
         gclient_config = builder_config.gclient_config(
             config = "chromium",
             apply_configs = [
+                # This is necessary due to child builders running the
+                # telemetry_perf_unittests suite.
+                "chromium_with_telemetry_dependencies",
                 "use_clang_coverage",
             ],
         ),
@@ -236,8 +244,10 @@ ci.builder(
         configs = [
             "gpu_tests",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
+            "win",
+            "x64",
         ],
     ),
     builderless = False,
@@ -248,6 +258,9 @@ ci.builder(
         short_name = "64",
     ),
     cq_mirrors_console_view = "mirrors",
+    experiments = {
+        "chromium.use_per_builder_build_dir_name": 100,
+    },
 )
 
 ci.builder(
@@ -303,9 +316,6 @@ ci.thin_tester(
         ),
         build_gs_bucket = "chromium-win-archive",
     ),
-    builder_config_settings = builder_config.ci_settings(
-        retry_failed_shards = True,
-    ),
     tree_closing = False,
     console_view_entry = consoles.console_view_entry(
         category = "release|tester",
@@ -321,6 +331,9 @@ ci.builder(
         gclient_config = builder_config.gclient_config(
             config = "chromium",
             apply_configs = [
+                # This is necessary due to child builders running the
+                # telemetry_perf_unittests suite.
+                "chromium_with_telemetry_dependencies",
                 "use_clang_coverage",
             ],
         ),
@@ -341,8 +354,9 @@ ci.builder(
             "arm64",
             "gpu_tests",
             "release_builder",
-            "reclient",
+            "remoteexec",
             "minimal_symbols",
+            "win",
         ],
     ),
     builderless = False,
@@ -355,6 +369,13 @@ ci.builder(
     ),
     cq_mirrors_console_view = "mirrors",
     contact_team_email = "chrome-desktop-engprod@google.com",
+    # Can flakily hit the default 3 hour timeout due to inconsistent compile
+    # times.
+    execution_timeout = 4 * time.hour,
+    # Increase timeout for connecting to dependency scanner
+    reclient_bootstrap_env = {
+        "RBE_depsscan_connect_timeout": "120s",
+    },
 )
 
 ci.thin_tester(
@@ -381,9 +402,6 @@ ci.thin_tester(
             target_platform = builder_config.target_platform.WIN,
         ),
         build_gs_bucket = "chromium-win-archive",
-    ),
-    builder_config_settings = builder_config.ci_settings(
-        retry_failed_shards = True,
     ),
     tree_closing = False,
     console_view_entry = consoles.console_view_entry(
@@ -418,7 +436,8 @@ ci.builder(
             "arm64",
             "gpu_tests",
             "debug_builder",
-            "reclient",
+            "remoteexec",
+            "win",
         ],
     ),
     builderless = True,
@@ -430,6 +449,7 @@ ci.builder(
         short_name = "a64",
     ),
     contact_team_email = "chrome-desktop-engprod@google.com",
+    execution_timeout = 4 * time.hour,
 )
 
 ci.thin_tester(
@@ -453,11 +473,8 @@ ci.thin_tester(
         ),
         build_gs_bucket = "chromium-win-archive",
     ),
-    builder_config_settings = builder_config.ci_settings(
-        retry_failed_shards = True,
-    ),
-    # TODO(crbug.com/1383380): Enable sheriff when stable and green.
-    sheriff_rotations = args.ignore_default(None),
+    # TODO(crbug.com/40877793): Enable gardening when stable and green.
+    gardener_rotations = args.ignore_default(None),
     tree_closing = False,
     console_view_entry = consoles.console_view_entry(
         category = "debug|tester",
@@ -472,9 +489,10 @@ ci.builder(
     gn_args = gn_args.config(
         configs = [
             "release_builder",
-            "reclient",
+            "remoteexec",
             "x86",
             "minimal_symbols",
+            "win",
         ],
     ),
     builderless = False,
@@ -491,7 +509,9 @@ ci.builder(
 
 ci.builder(
     name = "linux-win-cross-rel",
-    description_html = "Linux to Windows cross compile.",
+    description_html = "Linux to Windows cross compile.<br/>" +
+                       "It builds with the same GN args with " + linkify_builder("ci", "Win x64 Builder", "chromium") +
+                       ", and runs the same test suites with " + linkify_builder("ci", "Win10 Tests x64", "chromium"),
     builder_spec = builder_config.builder_spec(
         gclient_config = builder_config.gclient_config(
             config = "chromium",
@@ -514,69 +534,8 @@ ci.builder(
             "win_cross",
         ],
     ),
-    targets = targets.bundle(
-        # TODO: crbug.com/332248571 - Add same targets as Win Tests builders.
-        targets = [
-            "absl_hardening_tests",
-            # TODO: crbug.com/333652645 - angle_unittests fail without test results.
-            # https://ci.chromium.org/ui/p/chromium/builders/try/linux-win-cross-rel/13/overview
-            # "angle_unittests",
-            "base_unittests",
-            "blink_common_unittests",
-            "blink_heap_unittests",
-            # TODO: crbug.com/333652645 - Include this target after fixing "Error: local variable mixin referenced before assignment".
-            # "blink_platform_unittests",
-            "boringssl_crypto_tests",
-            "boringssl_ssl_tests",
-            "capture_unittests",
-            "cast_unittests",
-            "components_browsertests",
-            "components_unittests",
-            # TODO: crbug.com/332248571 - Increase swarming shards to avoid timeout.
-            # "content_browsertests",
-            "content_unittests",
-            "crashpad_tests",
-            "crypto_unittests",
-            "env_chromium_unittests",
-            "events_unittests",
-            "gcm_unit_tests",
-            "gin_unittests",
-            "google_apis_unittests",
-            "gpu_unittests",
-            "gwp_asan_unittests",
-            "ipc_tests",
-            "latency_unittests",
-            "leveldb_unittests",
-            "libjingle_xmpp_unittests",
-            "liburlpattern_unittests",
-            "media_unittests",
-            "midi_unittests",
-            "mojo_unittests",
-            "net_unittests",
-            "perfetto_unittests",
-            "services_unittests",
-            "shell_dialogs_unittests",
-            "skia_unittests",
-            "sql_unittests",
-            "storage_unittests",
-            "ui_base_unittests",
-            "ui_touch_selection_unittests",
-            "url_unittests",
-            "webkit_unit_tests",
-            "wtf_unittests",
-            "zlib_unittests",
-        ],
-        additional_compile_targets = ["all"],
-        mixins = [
-            "chromium-tester-service-account",
-            "win10",
-            "x86-64",
-        ],
-    ),
+    cores = 32,
     os = os.LINUX_DEFAULT,
-
-    # TODO(crbug.com/332248571): Promote to main gardening rotation once green.
-    sheriff_rotations = args.ignore_default(None),
     tree_closing = False,
     console_view_entry = consoles.console_view_entry(
         category = "misc",

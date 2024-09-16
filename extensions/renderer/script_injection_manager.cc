@@ -62,7 +62,7 @@ std::optional<mojom::RunLocation> NextRunLocation(
     case mojom::RunLocation::kBrowserDriven:
       return std::nullopt;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 }  // namespace
@@ -479,7 +479,7 @@ void ScriptInjectionManager::ExecuteDeclarativeScript(
   if (injection.get()) {
     ScriptsRunInfo scripts_run_info(render_frame,
                                     mojom::RunLocation::kBrowserDriven);
-    // TODO(https://crbug.com/1186525): Use return value of TryToInject for
+    // TODO(crbug.com/40753782): Use return value of TryToInject for
     // error handling.
     TryToInject(std::move(injection), mojom::RunLocation::kBrowserDriven,
                 &scripts_run_info);

@@ -34,10 +34,10 @@ class AutofillSigninPromoTabHelper
 
   // Initializes the autofill data move process by observing the
   // IdentityManager. If the sign in happens from a tab with the appropriate
-  // |access_point| within the |time_limit|, the |password_form| will be moved
-  // to account storage.
+  // |access_point| within the |time_limit|, the |move_callback| will be
+  // executed.
   void InitializeDataMoveAfterSignIn(
-      const password_manager::PasswordForm& password_form,
+      base::OnceCallback<void(content::WebContents*)> move_callback,
       signin_metrics::AccessPoint access_point,
       base::TimeDelta time_limit = base::Minutes(50));
 
@@ -47,6 +47,11 @@ class AutofillSigninPromoTabHelper
   // Overrides signin::IdentityManager::Observer functions.
   void OnPrimaryAccountChanged(
       const signin::PrimaryAccountChangeEvent& event_details) override;
+  void OnErrorStateOfRefreshTokenUpdatedForAccount(
+      const CoreAccountInfo& account_info,
+      const GoogleServiceAuthError& error,
+      signin_metrics::SourceForRefreshTokenOperation token_operation_source)
+      override;
   void OnIdentityManagerShutdown(
       signin::IdentityManager* identity_manager) override;
 
@@ -65,12 +70,13 @@ class AutofillSigninPromoTabHelper
         identity_manager_observation_;
     std::unique_ptr<password_manager::MovePasswordToAccountStoreHelper>
         move_helper_;
-    password_manager::PasswordForm password_form_;
+    base::OnceCallback<void(content::WebContents*)> move_callback_;
     signin_metrics::AccessPoint access_point_ =
         signin_metrics::AccessPoint::ACCESS_POINT_UNKNOWN;
     base::Time initialization_time_;
     base::TimeDelta time_limit_;
     bool is_initialized_ = false;
+    bool needs_reauth_ = false;
   };
 
   std::unique_ptr<ResetableState> state_;

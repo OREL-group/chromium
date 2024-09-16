@@ -13,7 +13,6 @@
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
-#include "base/strings/string_piece.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/simple_test_clock.h"
 #include "base/test/task_environment.h"
@@ -638,7 +637,7 @@ TEST_F(WifiHotspotConnectorTest, TestConnect_Success) {
 }
 
 TEST_F(WifiHotspotConnectorTest, TestConnect_Success_RetryNeeded) {
-  SetNumberOfUpcomingConsecutiveFailures(2);
+  SetNumberOfUpcomingConsecutiveFailures(1);
 
   wifi_hotspot_connector_->ConnectToWifiHotspot(
       std::string(kSsid), std::string(kPassword), kTetherNetworkGuid,
@@ -657,6 +656,9 @@ TEST_F(WifiHotspotConnectorTest, TestConnect_Success_RetryNeeded) {
 
   // Network becomes connectable.
   NotifyVisible(test_network_connect_->last_service_path_created());
+
+  RunTestTaskRunner();
+
   VerifyTetherAndWifiNetworkAssociation(
       wifi_guid, kTetherNetworkGuid, 3u /* expected_num_connection_attempts */);
 
@@ -901,6 +903,9 @@ TEST_F(WifiHotspotConnectorTest, TestConnect_WifiDisabled_Success) {
 
   // Network becomes connectable.
   NotifyVisible(test_network_connect_->last_service_path_created());
+
+  RunTestTaskRunner();
+
   VerifyTetherAndWifiNetworkAssociation(
       wifi_guid, kTetherNetworkGuid, 1u /* expected_num_connection_attempts */);
   EXPECT_EQ(GetServicePath(wifi_guid), requested_connection_service_paths_[0]);

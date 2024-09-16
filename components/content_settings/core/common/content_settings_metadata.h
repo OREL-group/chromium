@@ -27,6 +27,10 @@ namespace content_settings {
 class RuleMetaData {
  public:
   RuleMetaData();
+  RuleMetaData(const RuleMetaData& other);
+  RuleMetaData(RuleMetaData&& other);
+  RuleMetaData& operator=(const RuleMetaData& other);
+  RuleMetaData& operator=(RuleMetaData&& other);
 
   bool operator==(const RuleMetaData& other) const;
 
@@ -63,6 +67,13 @@ class RuleMetaData {
     tpcd_metadata_cohort_ = cohort;
   }
 
+  uint32_t tpcd_metadata_elected_dtrp() const {
+    return tpcd_metadata_elected_dtrp_;
+  }
+  void set_tpcd_metadata_elected_dtrp(uint32_t elected_dtrp) {
+    tpcd_metadata_elected_dtrp_ = elected_dtrp;
+  }
+
   base::TimeDelta lifetime() const { return lifetime_; }
 
   // Sets member variables based on `constraints`.
@@ -77,12 +88,20 @@ class RuleMetaData {
   // Returns whether the Rule is expired. Expiration is handled by
   // HostContentSettingsMap automatically, clients do not have to check this
   // attribute manually.
-  bool IsExpired(base::Clock* clock) const;
+  bool IsExpired(const base::Clock* clock) const;
 
   // Computes the setting's lifetime, based on the lifetime and expiration that
   // were read from persistent storage.
   static base::TimeDelta ComputeLifetime(base::TimeDelta lifetime,
                                          base::Time expiration);
+
+  bool decided_by_related_website_sets() const {
+    return decided_by_related_website_sets_;
+  }
+  void set_decided_by_related_website_sets(
+      bool decided_by_related_website_sets) {
+    decided_by_related_website_sets_ = decided_by_related_website_sets;
+  }
 
  private:
   // mojo (de)serialization needs access to private details.
@@ -114,6 +133,10 @@ class RuleMetaData {
       mojom::TpcdMetadataRuleSource::SOURCE_UNSPECIFIED;
   mojom::TpcdMetadataCohort tpcd_metadata_cohort_ =
       mojom::TpcdMetadataCohort::DEFAULT;
+  uint32_t tpcd_metadata_elected_dtrp_ = 0u;
+
+  // Set to true if the storage access was decided by a Related Website Set.
+  bool decided_by_related_website_sets_ = false;
 };
 
 }  // namespace content_settings

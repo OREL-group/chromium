@@ -8,6 +8,7 @@
 #include "ash/public/cpp/shelf_prefs.h"
 #include "ash/public/cpp/shelf_types.h"
 #include "ash/screen_util.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shelf/scrollable_shelf_view.h"
 #include "ash/shelf/shelf_focus_cycler.h"
 #include "ash/shelf/shelf_layout_manager.h"
@@ -280,10 +281,10 @@ void DeskButtonWidget::Initialize(aura::Window* container) {
   CHECK(container);
   delegate_view_ = new DelegateView();
   views::Widget::InitParams params(
+      views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET,
       views::Widget::InitParams::TYPE_WINDOW_FRAMELESS);
   params.name = "DeskButtonWidget";
   params.opacity = views::Widget::InitParams::WindowOpacity::kTranslucent;
-  params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.delegate = delegate_view_;
   params.parent = container;
   params.layer_type = ui::LAYER_NOT_DRAWN;

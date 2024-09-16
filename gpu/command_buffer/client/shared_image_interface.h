@@ -5,6 +5,8 @@
 #ifndef GPU_COMMAND_BUFFER_CLIENT_SHARED_IMAGE_INTERFACE_H_
 #define GPU_COMMAND_BUFFER_CLIENT_SHARED_IMAGE_INTERFACE_H_
 
+#include <cstdint>
+
 #include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/memory/raw_ptr.h"
@@ -12,11 +14,12 @@
 #include "build/build_config.h"
 #include "components/viz/common/resources/shared_image_format.h"
 #include "gpu/command_buffer/common/mailbox.h"
+#include "gpu/command_buffer/common/shared_image_usage.h"
 #include "gpu/command_buffer/common/sync_token.h"
 #include "gpu/gpu_export.h"
 #include "gpu/ipc/common/surface_handle.h"
 #include "third_party/skia/include/core/SkImageInfo.h"
-#include "third_party/skia/include/gpu/GrTypes.h"
+#include "third_party/skia/include/gpu/ganesh/GrTypes.h"
 #include "ui/gfx/buffer_types.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/gpu_memory_buffer.h"
@@ -40,12 +43,19 @@ class D3DSharedFence;
 #endif
 }  // namespace gfx
 
+namespace media {
+class MockSharedImageInterface;
+}
+
 namespace gpu {
 class ClientSharedImage;
+class ClientSharedImageInterface;
 struct ExportedSharedImage;
-class GpuMemoryBufferManager;
+class GpuChannelSharedImageInterface;
 struct SharedImageCapabilities;
 class SharedImageInterfaceHolder;
+class SharedImageInterfaceInProcess;
+class TestSharedImageInterface;
 
 struct SharedImageMetadata {
   viz::SharedImageFormat format;
@@ -53,7 +63,7 @@ struct SharedImageMetadata {
   gfx::ColorSpace color_space;
   GrSurfaceOrigin surface_origin;
   SkAlphaType alpha_type;
-  uint32_t usage;
+  SharedImageUsageSet usage;
 };
 
 struct SharedImageInfo {
@@ -62,14 +72,14 @@ struct SharedImageInfo {
                   const gfx::ColorSpace& color_space,
                   GrSurfaceOrigin surface_origin,
                   SkAlphaType alpha_type,
-                  uint32_t usage,
+                  SharedImageUsageSet usage,
                   std::string_view debug_label)
       : meta(format, size, color_space, surface_origin, alpha_type, usage),
         debug_label(debug_label) {}
   SharedImageInfo(const viz::SharedImageFormat& format,
                   gfx::Size size,
                   const gfx::ColorSpace& color_space,
-                  uint32_t usage,
+                  SharedImageUsageSet usage,
                   std::string_view debug_label)
       : meta(format,
              size,
@@ -78,21 +88,6 @@ struct SharedImageInfo {
              kPremul_SkAlphaType,
              usage),
         debug_label(debug_label) {}
-  // This constructor exists only to support the DEPRECATED CreareSharedImage
-  // call below that accepts a GpuMemoryBuffer. This should be removed when that
-  // call is removed.
-  SharedImageInfo(const gfx::ColorSpace& color_space,
-                  GrSurfaceOrigin surface_origin,
-                  SkAlphaType alpha_type,
-                  uint32_t usage,
-                  std::string_view debug_label)
-      : SharedImageInfo(viz::SinglePlaneFormat::kRGBA_8888,
-                        gfx::Size(),
-                        color_space,
-                        surface_origin,
-                        alpha_type,
-                        usage,
-                        debug_label) {}
 
   SharedImageMetadata meta;
   std::string debug_label;
@@ -106,8 +101,6 @@ struct SharedImageInfo {
 class GPU_EXPORT SharedImageInterface
     : public base::RefCountedThreadSafe<SharedImageInterface> {
  public:
-  SharedImageInterface();
-
   // Creates a shared image of requested |format|, |size| and |color_space|.
   // |usage| is a combination of |SharedImageUsage| bits that describes which
   // API(s) the image will be used with.
@@ -115,8 +108,7 @@ class GPU_EXPORT SharedImageInterface
   // ClientSharedImage struct contains a mailbox that can be imported into said
   // APIs using their corresponding shared image functions (e.g.
   // GLES2Interface::CreateAndTexStorage2DSharedImageCHROMIUM or
-  // RasterInterface::CopySharedImage) or (deprecated) mailbox functions (e.g.
-  // GLES2Interface::CreateAndConsumeTextureCHROMIUM).
+  // RasterInterface::CopySharedImage).
   // The |SharedImageInterface| keeps ownership of the image until
   // |DestroySharedImage| is called or the interface itself is destroyed (e.g.
   // the GPU channel is lost).
@@ -131,7 +123,7 @@ class GPU_EXPORT SharedImageInterface
   // same format which would be passed to glTexImage2D to populate a similarly
   // specified texture.
   // May return null if |pixel_data| is too big for IPC.
-  // TODO(crbug.com/1447106): Have the caller specify a row span for
+  // TODO(crbug.com/40268891): Have the caller specify a row span for
   // |pixel_data| explicitly. Some backings have different row alignment
   // requirements which the caller has to match exactly or it won't work.
   virtual scoped_refptr<ClientSharedImage> CreateSharedImage(
@@ -144,7 +136,7 @@ class GPU_EXPORT SharedImageInterface
   // We are currently passing BufferUsage to this method for simplicity since
   // as of now we dont have a clear way to map BufferUsage to SharedImageUsage.
   // May return null if GPU memory buffer creation fails.
-  // TODO(crbug.com/1467584): Merge this method to above existing methods once
+  // TODO(crbug.com/40276844): Merge this method to above existing methods once
   // we figure out mapping between BufferUsage and SharedImageUsage and
   // eliminate all usages of BufferUsage.
   virtual scoped_refptr<ClientSharedImage> CreateSharedImage(
@@ -161,7 +153,7 @@ class GPU_EXPORT SharedImageInterface
   // NOTE: We are currently passing BufferUsage to this method for simplicity
   // since as of now we dont have a clear way to map BufferUsage to
   // SharedImageUsage.
-  // TODO(crbug.com/1467584): Merge this method to above existing methods once
+  // TODO(crbug.com/40276844): Merge this method to above existing methods once
   // we figure out mapping between BufferUsage and SharedImageUsage and
   // eliminate all usages of BufferUsage.
   virtual scoped_refptr<ClientSharedImage> CreateSharedImage(
@@ -203,33 +195,6 @@ class GPU_EXPORT SharedImageInterface
   virtual SharedImageMapping CreateSharedImage(
       const SharedImageInfo& si_info) = 0;
 
-  // NOTE: The below method is DEPRECATED for `gpu_memory_buffer` only with
-  // single planar eg. RGB BufferFormats. Please use the equivalent method above
-  // taking in single planar SharedImageFormat with GpuMemoryBufferHandle.
-  //
-  // Creates a shared image out of a GpuMemoryBuffer, using |color_space|.
-  // |usage| is a combination of |SharedImageUsage| bits that describes which
-  // API(s) the image will be used with. Format and size are derived from the
-  // GpuMemoryBuffer. |gpu_memory_buffer_manager| is the manager that created
-  // |gpu_memory_buffer|. If the |gpu_memory_buffer| was created on the client
-  // side (for NATIVE_PIXMAP or ANDROID_HARDWARE_BUFFER types only), without a
-  // GpuMemoryBufferManager, |gpu_memory_buffer_manager| can be nullptr.
-  // If valid, |color_space| will be applied to the shared
-  // image (possibly overwriting the one set on the GpuMemoryBuffer).
-  // Returns a mailbox that can be imported into said APIs using their
-  // corresponding shared image functions (e.g.
-  // GLES2Interface::CreateAndTexStorage2DSharedImageCHROMIUM or
-  // RasterInterface::CopySharedImage) or (deprecated) mailbox functions (e.g.
-  // GLES2Interface::CreateAndConsumeTextureCHROMIUM).
-  // The |SharedImageInterface| keeps ownership of the image until
-  // |DestroySharedImage| is called or the interface itself is destroyed (e.g.
-  // the GPU channel is lost).
-  virtual scoped_refptr<ClientSharedImage> CreateSharedImage(
-      gfx::GpuMemoryBuffer* gpu_memory_buffer,
-      GpuMemoryBufferManager* gpu_memory_buffer_manager,
-      gfx::BufferPlane plane,
-      const SharedImageInfo& si_info) = 0;
-
   // Updates a shared image after its GpuMemoryBuffer (if any) was modified on
   // the CPU or through external devices, after |sync_token| has been released.
   virtual void UpdateSharedImage(const SyncToken& sync_token,
@@ -250,6 +215,16 @@ class GPU_EXPORT SharedImageInterface
   // native GMBs.
   virtual void CopyToGpuMemoryBuffer(const SyncToken& sync_token,
                                      const Mailbox& mailbox);
+
+  // Update the GpuMemoryBuffer associated with the shared image |mailbox| after
+  // |sync_token| is released. The |callback| is run denoting if the copy was
+  // successful and the GpuMemoryBuffer is ready to be mapped by the client.
+  // This is needed when the GpuMemoryBuffer is backed by shared memory on
+  // platforms like Windows where the renderer cannot create native GMBs.
+  virtual void CopyToGpuMemoryBufferAsync(
+      const SyncToken& sync_token,
+      const Mailbox& mailbox,
+      base::OnceCallback<void(bool)> callback);
 
   // Destroys the shared image, unregistering its mailbox, after |sync_token|
   // has been released. After this call, the mailbox can't be used to reference
@@ -280,7 +255,7 @@ class GPU_EXPORT SharedImageInterface
       const gfx::ColorSpace& color_space,
       GrSurfaceOrigin surface_origin,
       SkAlphaType alpha_type,
-      uint32_t usage,
+      SharedImageUsageSet usage,
       uint32_t texture_target);
 
   // Imports SharedImage to this interface and returns an owning reference. It
@@ -302,15 +277,14 @@ class GPU_EXPORT SharedImageInterface
   // Creates a swap chain.
   // Returns shared images for front and back buffers of a DXGI Swap Chain that
   // can be imported into GL command buffer using shared image functions (e.g.
-  // GLES2Interface::CreateAndTexStorage2DSharedImageCHROMIUM) or (deprecated)
-  // mailbox functions (e.g. GLES2Interface::CreateAndConsumeTextureCHROMIUM).
+  // GLES2Interface::CreateAndTexStorage2DSharedImageCHROMIUM).
   virtual SwapChainSharedImages CreateSwapChain(
       viz::SharedImageFormat format,
       const gfx::Size& size,
       const gfx::ColorSpace& color_space,
       GrSurfaceOrigin surface_origin,
       SkAlphaType alpha_type,
-      uint32_t usage) = 0;
+      gpu::SharedImageUsageSet usage) = 0;
 
   // Swaps front and back buffer of a swap chain. Back buffer mailbox still
   // refers to the back buffer of the swap chain after calling PresentSwapChain.
@@ -335,7 +309,7 @@ class GPU_EXPORT SharedImageInterface
   virtual void RegisterSysmemBufferCollection(
       zx::eventpair service_handle,
       zx::channel sysmem_token,
-      gfx::BufferFormat format,
+      const viz::SharedImageFormat& format,
       gfx::BufferUsage usage,
       bool register_with_image_pipe) = 0;
 #endif  // BUILDFLAG(IS_FUCHSIA)
@@ -383,10 +357,10 @@ class GPU_EXPORT SharedImageInterface
 
   // Provides the usage flags supported by the given |mailbox|. This must have
   // been created using a SharedImageInterface on the same channel.
-  virtual uint32_t UsageForMailbox(const Mailbox& mailbox);
+  virtual SharedImageUsageSet UsageForMailbox(const Mailbox& mailbox);
 
-  // Informs that existing |mailbox| with |usage| can be passed to
-  // DestroySharedImage().
+  // Informs that existing |mailbox| with the specified metadata can be passed
+  // to DestroySharedImage().
   virtual scoped_refptr<ClientSharedImage> NotifyMailboxAdded(
       const Mailbox& mailbox,
       viz::SharedImageFormat format,
@@ -394,7 +368,16 @@ class GPU_EXPORT SharedImageInterface
       const gfx::ColorSpace& color_space,
       GrSurfaceOrigin surface_origin,
       SkAlphaType alpha_type,
-      uint32_t usage);
+      SharedImageUsageSet usage);
+  virtual scoped_refptr<ClientSharedImage> NotifyMailboxAdded(
+      const Mailbox& mailbox,
+      viz::SharedImageFormat format,
+      const gfx::Size& size,
+      const gfx::ColorSpace& color_space,
+      GrSurfaceOrigin surface_origin,
+      SkAlphaType alpha_type,
+      SharedImageUsageSet usage,
+      uint32_t texture_target);
 
   virtual const SharedImageCapabilities& GetCapabilities() = 0;
 
@@ -405,6 +388,20 @@ class GPU_EXPORT SharedImageInterface
   virtual ~SharedImageInterface();
 
   scoped_refptr<SharedImageInterfaceHolder> holder_;
+
+ private:
+  friend class ClientSharedImageInterface;
+  friend class GpuChannelSharedImageInterface;
+  friend class SharedImageInterfaceInProcess;
+  friend class TestSharedImageInterface;
+  friend class media::MockSharedImageInterface;
+
+  // Make the constructor private to ensure that any new subclassing of this
+  // interface gets explicit approval from //gpu OWNERS (by adding to the list
+  // of friends above). In particular, do not subclass this interface for
+  // testing purposes - use (and extend if necessary) TestSharedImageInterface
+  // instead.
+  SharedImageInterface();
 };
 
 // |SharedImageInterfaceHolder| provides thread-safe access to

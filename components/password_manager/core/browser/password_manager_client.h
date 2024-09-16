@@ -37,6 +37,10 @@
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) ||
         // BUILDFLAG(IS_CHROMEOS)
 
+#if BUILDFLAG(IS_ANDROID)
+#include "components/password_manager/core/browser/first_cct_page_load_passwords_ukm_recorder.h"
+#endif  // BUILDFLAG(IS_ANDROID)
+
 class PrefService;
 
 namespace affiliations {
@@ -92,9 +96,13 @@ class WebAuthnCredManDelegate;
 namespace password_manager {
 
 class FieldInfoManager;
+#if BUILDFLAG(IS_ANDROID)
+class FirstCctPageLoadPasswordsUkmRecorder;
+#endif  // BUILDFLAG(IS_ANDROID)
 class PasswordFeatureManager;
 class PasswordFormManagerForUI;
 class PasswordManagerDriver;
+class PasswordManagerInterface;
 class PasswordManagerMetricsRecorder;
 class HttpAuthManager;
 class PasswordRequirementsService;
@@ -106,11 +114,12 @@ struct PasswordForm;
 enum class ErrorMessageFlowType { kSaveFlow, kFillFlow };
 
 #if BUILDFLAG(IS_ANDROID)
-struct SubmissionReadinessParams {
+struct PasswordFillingParams {
   autofill::FormData form;
   uint64_t username_field_index;
   uint64_t password_field_index;
-  // TODO(crbug/1462532): Remove this param after
+  autofill::FieldRendererId focused_field_renderer_id_;
+  // TODO(crbug.com/40274966): Remove this param after
   // PasswordSuggestionBottomSheetV2 is launched.
   autofill::mojom::SubmissionReadinessState submission_readiness;
 };
@@ -211,14 +220,19 @@ class PasswordManagerClient {
       password_manager::PasswordStoreBackendErrorType error_type);
 
   // Instructs the client to show a keyboard replacing surface UI (e.g.
-  // TouchToFill).
-  virtual bool ShowKeyboardReplacingSurface(
+  // TouchToFill). `shown_cb` will be invoked with whether the view was shown.
+  // TODO(crbug.com/341322405): Make this synchronous again once the account
+  // storage notice is gone.
+  virtual void ShowKeyboardReplacingSurface(
       PasswordManagerDriver* driver,
-      const SubmissionReadinessParams& submission_readiness_params,
-      bool is_webauthn_form);
+      const PasswordFillingParams& password_filling_params,
+      bool is_webauthn_form,
+      base::OnceCallback<void(bool)> shown_cb);
 #endif
 
-  virtual bool CanUseBiometricAuthForFilling(
+  // Checks whether user re-authentication should be triggered before password
+  // filling.
+  virtual bool IsReauthBeforeFillingRequired(
       device_reauth::DeviceAuthenticator* authenticator);
 
   // Returns a pointer to a DeviceAuthenticator. Might be null if
@@ -252,7 +266,7 @@ class PasswordManagerClient {
           submitted_manager) = 0;
 
   // Informs that a successful login has just happened.
-  // TODO(crbug.com/1299394): Remove when the TimeToSuccessfulLogin metric is
+  // TODO(crbug.com/40215916): Remove when the TimeToSuccessfulLogin metric is
   // deprecated.
   virtual void NotifyOnSuccessfulLogin(
       const std::u16string& submitted_username) {}
@@ -261,14 +275,14 @@ class PasswordManagerClient {
   virtual void NotifyKeychainError() = 0;
 
   // Informs that a credential filled by Touch To Fill can be submitted.
-  // TODO(crbug.com/1299394): Remove when the TimeToSuccessfulLogin metric is
+  // TODO(crbug.com/40215916): Remove when the TimeToSuccessfulLogin metric is
   // deprecated.
   virtual void StartSubmissionTrackingAfterTouchToFill(
       const std::u16string& filled_username) {}
 
   // Informs that a successful submission didn't happen after Touch To Fill
   // (e.g. a submission failed, a user edited an input field manually).
-  // TODO(crbug.com/1299394): Remove when the TimeToSuccessfulLogin metric is
+  // TODO(crbug.com/40215916): Remove when the TimeToSuccessfulLogin metric is
   // deprecated.
   virtual void ResetSubmissionTrackingAfterTouchToFill() {}
 
@@ -292,15 +306,14 @@ class PasswordManagerClient {
   // PasswordForm into which a password was filled: the client may choose to
   // save this to the PasswordStore, for example. |origin| is the origin of the
   // form into which a password was filled. |federated_matches| are the stored
-  // federated matches relevant to the filled form, this argument may be null.
+  // federated matches relevant to the filled form, this argument may be empty.
   // They are never filled, but might be needed in the UI, for example. Default
   // implementation is a noop. |was_autofilled_on_pageload| contains information
   // if password form was autofilled on pageload.
   virtual void PasswordWasAutofilled(
       base::span<const PasswordForm> best_matches,
       const url::Origin& origin,
-      const std::vector<raw_ptr<const PasswordForm, VectorExperimental>>*
-          federated_matches,
+      base::span<const PasswordForm> federated_matches,
       bool was_autofilled_on_pageload);
 
   // Sends username/password from |preferred_match| for filling in the http auth
@@ -367,8 +380,8 @@ class PasswordManagerClient {
 
   // Returns the PasswordManager associated with this client. The non-const
   // version calls the const one.
-  PasswordManager* GetPasswordManager();
-  virtual const PasswordManager* GetPasswordManager() const;
+  PasswordManagerInterface* GetPasswordManager();
+  virtual const PasswordManagerInterface* GetPasswordManager() const;
 
   // Returns the PasswordFeatureManager associated with this client. The
   // non-const version calls the const one.
@@ -409,6 +422,16 @@ class PasswordManagerClient {
   virtual safe_browsing::PasswordProtectionService*
   GetPasswordProtectionService() const = 0;
 
+  // Maybe triggers a hats survey that measures the user's perception of
+  // Autofill for passwords. When triggering happens, the survey dialog will be
+  // displayed with a 5s delay. This survey should be triggered after form
+  // submissions.
+  // `filling_assistance` will be logged together with the responses as
+  // in-product data and should be a string representation of the
+  // `FillingAssistance` enum, i.e "Manually filled".
+  virtual void TriggerUserPerceptionOfPasswordManagerSurvey(
+      const std::string& filling_assistance);
+
 #if defined(ON_FOCUS_PING_ENABLED)
   // Checks the safe browsing reputation of the webpage when the
   // user focuses on a username/password field. This is used for reporting
@@ -422,7 +445,7 @@ class PasswordManagerClient {
   virtual void MaybeReportEnterpriseLoginEvent(
       const GURL& url,
       bool is_federated,
-      const url::Origin& federated_origin,
+      const url::SchemeHostPort& federated_origin,
       const std::u16string& login_user_name) const {}
 
   // If the feature is enabled send an event to the enterprise reporting
@@ -442,6 +465,16 @@ class PasswordManagerClient {
   // does not support metrics recording.
   virtual PasswordManagerMetricsRecorder* GetMetricsRecorder() = 0;
 
+#if BUILDFLAG(IS_ANDROID)
+  // Returns a metrics recorder created specifically for the first CCT page
+  // load. This can return nullptr if the current tab is not a CCT, or if
+  // the user already navigated away from the first page.
+  // It records metrics on destruction, which happens on the first navigation
+  // away from the first loaded page. Callers should  not hold on to the
+  // pointer.
+  virtual FirstCctPageLoadPasswordsUkmRecorder*
+  GetFirstCctPageLoadUkmRecorder() = 0;
+#endif
   // Gets the PasswordRequirementsService associated with the client. It is
   // valid that this method returns a nullptr if the PasswordRequirementsService
   // has not been implemented for a specific platform or the context is an
@@ -503,8 +536,21 @@ class PasswordManagerClient {
   // Refreshes password manager settings stored in prefs.
   virtual void RefreshPasswordManagerSettingsIfNeeded() const;
 
+  // Display username/password options to the user in the "ambient" sign-in
+  // bubble, which can also display other credential types for sign-in.
+  // If the user selects a password from the bubble, `callback` is invoked with
+  // the selected `PasswordForm`.
+  virtual void ShowCredentialsInAmbientBubble(
+      std::vector<std::unique_ptr<password_manager::PasswordForm>> forms,
+      CredentialsCallback callback);
+
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || \
     BUILDFLAG(IS_CHROMEOS)
+
+  // Shows the bubble with the details of the `form`.
+  virtual void OpenPasswordDetailsBubble(
+      const password_manager::PasswordForm& form) = 0;
+
   // Creates and show the cross domain confirmation popup.
   virtual std::unique_ptr<PasswordCrossDomainConfirmationPopupController>
   ShowCrossDomainConfirmationPopup(const gfx::RectF& element_bounds,

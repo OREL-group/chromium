@@ -11,6 +11,7 @@
 #include <optional>
 
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/stack_allocated.h"
 #include "base/metrics/histogram_macros.h"
@@ -21,11 +22,12 @@
 #include "build/build_config.h"
 #include "components/viz/common/resources/shared_image_format.h"
 #include "gpu/command_buffer/common/mailbox.h"
+#include "gpu/command_buffer/common/shared_image_usage.h"
 #include "gpu/gpu_gles2_export.h"
 #include "gpu/vulkan/buildflags.h"
 #include "third_party/skia/include/core/SkImageInfo.h"
 #include "third_party/skia/include/core/SkPixmap.h"
-#include "third_party/skia/include/gpu/GrTypes.h"
+#include "third_party/skia/include/gpu/ganesh/GrTypes.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
@@ -64,16 +66,15 @@ class SkiaGaneshImageRepresentation;
 class SkiaGraphiteImageRepresentation;
 class SkiaImageRepresentation;
 class DawnImageRepresentation;
+class DawnBufferRepresentation;
 class LegacyOverlayImageRepresentation;
 class OverlayImageRepresentation;
 class MemoryImageRepresentation;
-class VaapiImageRepresentation;
 class RasterImageRepresentation;
 class MemoryTracker;
-class VideoDecodeImageRepresentation;
+class VideoImageRepresentation;
 class MemoryTypeTracker;
 class SharedImageFactory;
-class VaapiDependenciesFactory;
 
 #if BUILDFLAG(ENABLE_VULKAN)
 class VulkanImageRepresentation;
@@ -105,10 +106,10 @@ enum class SharedImageBackingType {
 };
 
 #if BUILDFLAG(IS_WIN)
-using VideoDecodeDevice = Microsoft::WRL::ComPtr<ID3D11Device>;
+using VideoDevice = Microsoft::WRL::ComPtr<ID3D11Device>;
 #else
 // This parameter is only used on Windows so null is expected.
-using VideoDecodeDevice = void*;
+using VideoDevice = void*;
 #endif  // BUILDFLAG(IS_WIN)
 
 // Represents the actual storage (GL texture, VkImage, GMB) for a SharedImage.
@@ -123,7 +124,7 @@ class GPU_GLES2_EXPORT SharedImageBacking {
       const gfx::ColorSpace& color_space,
       GrSurfaceOrigin surface_origin,
       SkAlphaType alpha_type,
-      uint32_t usage,
+      SharedImageUsageSet usage,
       std::string debug_label,
       size_t estimated_size,
       bool is_thread_safe,
@@ -136,7 +137,7 @@ class GPU_GLES2_EXPORT SharedImageBacking {
   const gfx::ColorSpace& color_space() const { return color_space_; }
   GrSurfaceOrigin surface_origin() const { return surface_origin_; }
   SkAlphaType alpha_type() const { return alpha_type_; }
-  uint32_t usage() const { return usage_; }
+  SharedImageUsageSet usage() const { return usage_; }
   const Mailbox& mailbox() const { return mailbox_; }
   bool is_thread_safe() const { return !!lock_; }
   bool is_ref_counted() const { return is_ref_counted_; }
@@ -205,10 +206,24 @@ class GPU_GLES2_EXPORT SharedImageBacking {
   // pixmap per plane.
   virtual bool ReadbackToMemory(const std::vector<SkPixmap>& pixmaps);
 
-  // Copy from the backing's GPU texture to its GpuMemoryBuffer if present. This
-  // is needed on Windows where the renderer process can only create shared
-  // memory GMBs and an explicit copy is needed. Returns true on success.
+  // Performs asynchronous readback of pixels from GPU texture into memory.
+  // `pixmaps` should have one pixmap per plane.
+  virtual void ReadbackToMemoryAsync(const std::vector<SkPixmap>& pixmaps,
+                                     base::OnceCallback<void(bool)> callback);
+
+  // Copy from the backing's GPU texture to its GpuMemoryBuffer if present.
+  // Returns whether the copy was successful. The copy, if successful, is
+  // complete when this returns. This is needed on Windows where the renderer
+  // process can only create shared memory GMBs and an explicit copy is needed.
   virtual bool CopyToGpuMemoryBuffer();
+
+  // Copy from the backing's GPU texture to its GpuMemoryBuffer if present.
+  // Runs `callback` with copy success status. The copy, if successful, is
+  // complete when the callback runs. Necessary on platforms like Windows where
+  // we use shared memory GMBs for readback from D3D texture shared images.
+  // Returns true on success.
+  virtual void CopyToGpuMemoryBufferAsync(
+      base::OnceCallback<void(bool)> callback);
 
   // Present the swap chain corresponding to this backing. Presents only if the
   // backing is the back buffer of the swap chain. Returns true on success.
@@ -294,13 +309,14 @@ class GPU_GLES2_EXPORT SharedImageBacking {
       wgpu::BackendType backend_type,
       std::vector<wgpu::TextureFormat> view_formats,
       scoped_refptr<SharedContextState> context_state);
+  virtual std::unique_ptr<DawnBufferRepresentation> ProduceDawnBuffer(
+      SharedImageManager* manager,
+      MemoryTypeTracker* tracker,
+      const wgpu::Device& device,
+      wgpu::BackendType backend_type);
   virtual std::unique_ptr<OverlayImageRepresentation> ProduceOverlay(
       SharedImageManager* manager,
       MemoryTypeTracker* tracker);
-  virtual std::unique_ptr<VaapiImageRepresentation> ProduceVASurface(
-      SharedImageManager* manager,
-      MemoryTypeTracker* tracker,
-      VaapiDependenciesFactory* dep_factory);
   virtual std::unique_ptr<MemoryImageRepresentation> ProduceMemory(
       SharedImageManager* manager,
       MemoryTypeTracker* tracker);
@@ -309,17 +325,18 @@ class GPU_GLES2_EXPORT SharedImageBacking {
       MemoryTypeTracker* tracker);
   // Take void* device for resource generated from different devices. E.g  video
   // decoder starts using its own device on a separate thread.
-  virtual std::unique_ptr<VideoDecodeImageRepresentation> ProduceVideoDecode(
+  virtual std::unique_ptr<VideoImageRepresentation> ProduceVideo(
       SharedImageManager* manager,
       MemoryTypeTracker* tracker,
-      VideoDecodeDevice device);
+      VideoDevice device);
 
 #if BUILDFLAG(ENABLE_VULKAN)
   virtual std::unique_ptr<VulkanImageRepresentation> ProduceVulkan(
       SharedImageManager* manager,
       MemoryTypeTracker* tracker,
       gpu::VulkanDeviceQueue* vulkan_device_queue,
-      gpu::VulkanImplementation& vulkan_impl);
+      gpu::VulkanImplementation& vulkan_impl,
+      bool needs_detiling);
 #endif
 
 #if BUILDFLAG(IS_ANDROID)
@@ -395,7 +412,7 @@ class GPU_GLES2_EXPORT SharedImageBacking {
   const gfx::ColorSpace color_space_;
   const GrSurfaceOrigin surface_origin_;
   const SkAlphaType alpha_type_;
-  const uint32_t usage_;
+  const SharedImageUsageSet usage_;
   const std::string debug_label_;
   size_t estimated_size_ GUARDED_BY(lock_);
 
@@ -418,7 +435,8 @@ class GPU_GLES2_EXPORT SharedImageBacking {
   // A vector of SharedImageRepresentations which hold references to this
   // backing. The first reference is considered the owner, and the vector is
   // ordered by the order in which references were taken.
-  std::vector<raw_ptr<SharedImageRepresentation, VectorExperimental>> refs_
+  // RAW_PTR_EXCLUSION: Performance reasons (based on analysis of MotionMark).
+  RAW_PTR_EXCLUSION std::vector<SharedImageRepresentation*> refs_
       GUARDED_BY(lock_);
 };
 
@@ -435,7 +453,7 @@ class GPU_GLES2_EXPORT ClearTrackingSharedImageBacking
       const gfx::ColorSpace& color_space,
       GrSurfaceOrigin surface_origin,
       SkAlphaType alpha_type,
-      uint32_t usage,
+      SharedImageUsageSet usage,
       std::string debug_label,
       size_t estimated_size,
       bool is_thread_safe,

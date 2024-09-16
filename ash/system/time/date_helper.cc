@@ -68,7 +68,6 @@ icu::UnicodeString getHoursPattern(const icu::UnicodeString& unicode_pattern) {
   }
 
   NOTREACHED() << "Hours pattern not found.";
-  return icu::UnicodeString("HH");
 }
 
 }  // namespace
@@ -311,8 +310,6 @@ void DateHelper::CalculateLocalWeekTitles() {
     if (safe_index == calendar_utils::kDateInOneWeek) {
       NOTREACHED() << "Should already find the first day within 7 times, since "
                       "there are only 7 days in a week";
-      week_titles_ = kDefaultWeekTitle;
-      return;
     }
   }
 

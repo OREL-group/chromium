@@ -437,7 +437,6 @@ bool SoftBindAttestationFlowImpl::GenerateLeafCert(
     base::Time not_valid_before,
     base::Time not_valid_after,
     std::string* der_encoded_cert) {
-  crypto::EnsureOpenSSLInit();
   crypto::OpenSSLErrStackTracer err_tracer(FROM_HERE);
 
   bssl::ScopedCBB cbb;
@@ -445,7 +444,7 @@ bool SoftBindAttestationFlowImpl::GenerateLeafCert(
   uint8_t* cert_bytes;
   size_t cert_len;
   uint64_t serial_number;
-  crypto::RandBytes(&serial_number, sizeof(serial_number));
+  crypto::RandBytes(base::byte_span_from_ref(serial_number));
   if (!CBB_init(cbb.get(), 64) ||
       !CBB_add_asn1(cbb.get(), &cert, CBS_ASN1_SEQUENCE) ||
       !CBB_add_asn1(&cert, &version,

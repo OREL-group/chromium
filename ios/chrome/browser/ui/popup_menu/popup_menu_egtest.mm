@@ -6,8 +6,8 @@
 #import "base/strings/stringprintf.h"
 #import "base/strings/sys_string_conversions.h"
 #import "components/feature_engagement/public/feature_constants.h"
+#import "ios/chrome/browser/bubble/ui_bundled/bubble_constants.h"
 #import "ios/chrome/browser/find_in_page/model/util.h"
-#import "ios/chrome/browser/ui/bubble/bubble_constants.h"
 #import "ios/chrome/browser/ui/popup_menu/popup_menu_constants.h"
 #import "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
@@ -116,7 +116,7 @@ const char kPDFURL[] = "http://ios/testing/data/http_server_files/testpage.pdf";
 // Tests that the menu is opened and closed correctly, whatever the current
 // device type is.
 - (void)testOpenAndCloseToolsMenu {
-  // TODO(crbug.com/1289776): This test only fails on ipad bots with
+  // TODO(crbug.com/40817696): This test only fails on ipad bots with
   // multitasking enabled (e.g. compact width).
   if ([ChromeEarlGrey isNewOverflowMenuEnabled] &&
       [ChromeEarlGrey isIPadIdiom] && [ChromeEarlGrey isCompactWidth]) {

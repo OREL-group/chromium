@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/audio/mac/audio_manager_mac.h"
 
 #include <limits>
@@ -35,7 +40,6 @@
 #include "media/audio/audio_device_description.h"
 #include "media/audio/mac/audio_loopback_input_mac.h"
 #include "media/audio/mac/core_audio_util_mac.h"
-#include "media/audio/mac/coreaudio_dispatch_override.h"
 #include "media/audio/mac/screen_capture_kit_swizzler.h"
 #include "media/base/audio_parameters.h"
 #include "media/base/audio_timestamp_helper.h"
@@ -328,7 +332,7 @@ static bool GetInputDeviceChannels(AudioDeviceID device, int* channels) {
 
   // For input, get the channel count directly from the AudioUnit's stream
   // format.
-  // TODO(https://crbug.com/796163): Find out if we can use channel layout on
+  // TODO(crbug.com/41361558): Find out if we can use channel layout on
   // input element, or confirm that we can't.
   ScopedAudioUnit au(device, AUElement::INPUT);
   if (!au.is_valid()) {
@@ -458,7 +462,7 @@ class AudioManagerMac::AudioPowerObserver : public base::PowerSuspendObserver {
  public:
   AudioPowerObserver()
       : is_suspending_(false),
-        is_monitoring_(base::PowerMonitor::IsInitialized()),
+        is_monitoring_(base::PowerMonitor::GetInstance()->IsInitialized()),
         num_resume_notifications_(0) {
     // The PowerMonitor requires significant setup (a CFRunLoop and preallocated
     // IO ports) so it's not available under unit tests.  See the OSX impl of
@@ -466,7 +470,7 @@ class AudioManagerMac::AudioPowerObserver : public base::PowerSuspendObserver {
     if (!is_monitoring_) {
       return;
     }
-    base::PowerMonitor::AddPowerSuspendObserver(this);
+    base::PowerMonitor::GetInstance()->AddPowerSuspendObserver(this);
   }
 
   AudioPowerObserver(const AudioPowerObserver&) = delete;
@@ -477,7 +481,7 @@ class AudioManagerMac::AudioPowerObserver : public base::PowerSuspendObserver {
     if (!is_monitoring_) {
       return;
     }
-    base::PowerMonitor::RemovePowerSuspendObserver(this);
+    base::PowerMonitor::GetInstance()->RemovePowerSuspendObserver(this);
   }
 
   bool IsSuspending() const {
@@ -496,7 +500,7 @@ class AudioManagerMac::AudioPowerObserver : public base::PowerSuspendObserver {
 
   bool IsOnBatteryPower() const {
     DCHECK(thread_checker_.CalledOnValidThread());
-    return base::PowerMonitor::IsOnBatteryPower();
+    return base::PowerMonitor::GetInstance()->IsOnBatteryPower();
   }
 
  private:
@@ -788,8 +792,9 @@ AudioOutputStream* AudioManagerMac::MakeLowLatencyOutputStream(
     // CoreAudio drivers will fire the callbacks during stream creation, leading
     // to re-entrancy issues otherwise.  See http://crbug.com/349604
     output_device_listener_ = AudioDeviceListenerMac::Create(
-        base::BindPostTaskToCurrentDefault(base::BindRepeating(
-            &AudioManagerMac::HandleDeviceChanges, base::Unretained(this))),
+        base::BindPostTaskToCurrentDefault(
+            base::BindRepeating(&AudioManagerMac::HandleDeviceChanges,
+                                weak_ptr_factory_.GetWeakPtr())),
         /*monitor_sample_rate_changes=*/
         base::FeatureList::IsEnabled(kMonitorOutputSampleRateChangesMac),
         /*monitor_default_input=*/false,
@@ -947,9 +952,19 @@ AudioParameters AudioManagerMac::GetPreferredOutputStreamParameters(
     hardware_channel_layout = CHANNEL_LAYOUT_STEREO;
   }
 
+  // Use the input channel count and channel layout if possible.  Let OSX take
+  // care of remapping the channels; this lets user specified channel layouts
+  // work correctly.
+  int output_channels = input_params.channels();
+  ChannelLayout output_channel_layout = input_params.channel_layout();
+  if (!has_valid_input_params || output_channels > hardware_channels) {
+    output_channels = hardware_channels;
+    output_channel_layout = hardware_channel_layout;
+  }
+
   AudioParameters params(
       AudioParameters::AUDIO_PCM_LOW_LATENCY,
-      {hardware_channel_layout, hardware_channels}, hardware_sample_rate,
+      {output_channel_layout, output_channels}, hardware_sample_rate,
       buffer_size,
       AudioParameters::HardwareCapabilities(
           GetMinAudioBufferSizeMacOS(limits::kMinAudioBufferSize,
@@ -960,7 +975,6 @@ AudioParameters AudioManagerMac::GetPreferredOutputStreamParameters(
 
 void AudioManagerMac::InitializeOnAudioThread() {
   DCHECK(GetTaskRunner()->BelongsToCurrentThread());
-  InitializeCoreAudioDispatchOverride();
   power_observer_ = std::make_unique<AudioPowerObserver>();
 }
 
@@ -1405,7 +1419,7 @@ int AudioManagerMac::HardwareSampleRateForDevice(AudioDeviceID device_id) {
   if (result != noErr) {
     OSSTATUS_DLOG(WARNING, result)
         << "Could not get default sample rate for device: " << device_id
-        << ", returing fallback sample rate " << kFallbackSampleRate;
+        << ", returning fallback sample rate " << kFallbackSampleRate;
     return kFallbackSampleRate;
   }
 

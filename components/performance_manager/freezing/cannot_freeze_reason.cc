@@ -32,10 +32,10 @@ const char* CannotFreezeReasonToString(CannotFreezeReason reason) {
       return "capturing window";
     case CannotFreezeReason::kCapturingDisplay:
       return "capturing display";
+    case CannotFreezeReason::kWebRTC:
+      return "has an active WebRTC connection";
     case CannotFreezeReason::kLoading:
       return "loading";
-    case CannotFreezeReason::kManyBrowsingInstances:
-      return "page belongs to many browsing instances";
   }
 }
 

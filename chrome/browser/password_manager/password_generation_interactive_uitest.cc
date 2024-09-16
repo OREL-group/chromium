@@ -41,10 +41,6 @@
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/gfx/geometry/point_f.h"
 
-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
-#include "components/os_crypt/sync/os_crypt_mocker.h"
-#endif
-
 namespace {
 
 enum ReturnCodes {  // Possible results of the JavaScript code.
@@ -60,13 +56,6 @@ class PasswordGenerationInteractiveTest
  public:
   void SetUpOnMainThread() override {
     PasswordManagerBrowserTestBase::SetUpOnMainThread();
-    // Disable Autofill requesting access to AddressBook data. This will cause
-    // the tests to hang on Mac.
-    autofill::test::DisableSystemServices(browser()->profile()->GetPrefs());
-
-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
-    OSCryptMocker::SetUp();
-#endif
 
     // Set observer for popup.
     ChromePasswordManagerClient* client =
@@ -86,8 +75,6 @@ class PasswordGenerationInteractiveTest
     // causing this test to fail.
     base::RunLoop().RunUntilIdle();
     PasswordManagerBrowserTestBase::TearDownOnMainThread();
-
-    autofill::test::ReenableSystemServices();
   }
 
   // Waits until the value of the field with id |field_id| becomes non-empty.
@@ -169,7 +156,7 @@ class PasswordGenerationInteractiveTest
   }
 
   void SendKeyToPopup(ui::KeyboardCode key) {
-    content::NativeWebKeyboardEvent event(
+    input::NativeWebKeyboardEvent event(
         blink::WebKeyboardEvent::Type::kRawKeyDown,
         blink::WebInputEvent::kNoModifiers,
         blink::WebInputEvent::GetStaticTimeStampForTests());
@@ -198,8 +185,9 @@ class PasswordGenerationInteractiveTest
   }
 
   void WaitForGenerationPopupShowing() {
-    if (GenerationPopupShowing())
+    if (GenerationPopupShowing()) {
       return;
+    }
     observer_.WaitForStatusChange();
     EXPECT_TRUE(GenerationPopupShowing());
   }
@@ -251,6 +239,7 @@ IN_PROC_BROWSER_TEST_F(PasswordGenerationInteractiveTest,
 
   // The metrics are recorded when the form manager is destroyed. Closing the
   // tab enforces it.
+  ClearWebContentsPtr();
   CloseAllBrowsers();
   histogram_tester.ExpectUniqueSample(
       "PasswordGeneration.UserDecision",
@@ -527,7 +516,8 @@ IN_PROC_BROWSER_TEST_F(PasswordGenerationPopupViewPrerenderingTest,
 
   auto prerender_url = embedded_test_server()->GetURL("/empty.html");
   // Loads a page in the prerender.
-  int host_id = prerender_helper()->AddPrerender(prerender_url);
+  content::FrameTreeNodeId host_id =
+      prerender_helper()->AddPrerender(prerender_url);
   content::test::PrerenderHostObserver host_observer(*WebContents(), host_id);
   // It should keep the current popup controller since the prerenedering should
   // not affect the current page.

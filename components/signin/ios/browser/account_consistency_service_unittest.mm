@@ -161,9 +161,7 @@ class FakeWebState : public web::FakeWebState {
 
 class AccountConsistencyServiceTest : public PlatformTest {
  public:
-  AccountConsistencyServiceTest()
-      : task_environment_(web::WebTaskEnvironment::Options::DEFAULT,
-                          base::test::TaskEnvironment::TimeSource::MOCK_TIME) {}
+  AccountConsistencyServiceTest() = default;
 
  protected:
   void SetUp() override {
@@ -215,9 +213,15 @@ class AccountConsistencyServiceTest : public PlatformTest {
       }
       account_consistency_service_->Shutdown();
     }
+    // base::Unretained(...) is safe since the AccountConsistencyService does
+    // not outlive the BrowserState.
+    auto cookie_manager_callback =
+        base::BindRepeating(&web::BrowserState::GetCookieManager,
+                            base::Unretained(&browser_state_));
+
     account_consistency_service_ = std::make_unique<AccountConsistencyService>(
-        &browser_state_, account_reconcilor_.get(), cookie_settings_,
-        identity_test_env_->identity_manager());
+        std::move(cookie_manager_callback), account_reconcilor_.get(),
+        cookie_settings_, identity_test_env_->identity_manager());
   }
 
   // Identity APIs.
@@ -324,7 +328,8 @@ class AccountConsistencyServiceTest : public PlatformTest {
   }
 
   // Properties available for tests.
-  web::WebTaskEnvironment task_environment_;
+  web::WebTaskEnvironment task_environment_{
+      base::test::TaskEnvironment::TimeSource::MOCK_TIME};
   web::FakeBrowserState browser_state_;
   sync_preferences::TestingPrefServiceSyncable prefs_;
   FakeWebState web_state_;

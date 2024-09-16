@@ -35,27 +35,13 @@ class WatermarkView : public views::View {
 
   // views::View
   void OnPaint(gfx::Canvas* canvas) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
 
   bool has_text_for_testing() const {
     return text_fill_.get() || text_outline_.get();
   }
 
  private:
-  // Helper function to draw a single block of text with the data in
-  // `text_fill_` and `text_outline_` at the provided coordinates.
-  void DrawTextBlock(gfx::Canvas* canvas, int x, int y);
-
-  // The width/height of individual blocks of text, including spacing.
-  int block_width_offset() const;
-  int block_height_offset() const;
-
-  // Calculate X/Y bounds for the rotates canvas to cover the entire `bounds`
-  // the waternarj is overlapping.
-  int min_x(double angle, const gfx::Rect& bounds) const;
-  int max_x(double angle, const gfx::Rect& bounds) const;
-  int min_y(double angle, const gfx::Rect& bounds) const;
-  int max_y(double angle, const gfx::Rect& bounds) const;
-
   // Background color of the whole `WatermarkView`. This is normally
   // transparent, but can be an arbitrary color for testing with the
   // "watermark_app" target.
@@ -74,4 +60,4 @@ class WatermarkView : public views::View {
 
 }  // namespace enterprise_watermark
 
-#endif
+#endif  // CHROME_BROWSER_ENTERPRISE_WATERMARK_WATERMARK_VIEW_H_

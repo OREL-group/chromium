@@ -5,8 +5,6 @@
 #ifndef CHROME_BROWSER_OS_CRYPT_APP_BOUND_ENCRYPTION_PROVIDER_WIN_H_
 #define CHROME_BROWSER_OS_CRYPT_APP_BOUND_ENCRYPTION_PROVIDER_WIN_H_
 
-#include "components/os_crypt/async/browser/key_provider.h"
-
 #include <optional>
 #include <string>
 
@@ -16,6 +14,8 @@
 #include "base/threading/sequence_bound.h"
 #include "base/types/expected.h"
 #include "base/win/windows_types.h"
+#include "chrome/browser/os_crypt/app_bound_encryption_win.h"
+#include "components/os_crypt/async/browser/key_provider.h"
 
 class PrefService;
 class PrefRegistrySimple;
@@ -24,7 +24,8 @@ namespace os_crypt_async {
 
 class AppBoundEncryptionProviderWin : public os_crypt_async::KeyProvider {
  public:
-  explicit AppBoundEncryptionProviderWin(PrefService* local_state);
+  AppBoundEncryptionProviderWin(PrefService* local_state,
+                                bool use_for_encryption);
   ~AppBoundEncryptionProviderWin() override;
 
   // Not copyable.
@@ -33,10 +34,6 @@ class AppBoundEncryptionProviderWin : public os_crypt_async::KeyProvider {
       const AppBoundEncryptionProviderWin&) = delete;
 
   static void RegisterLocalPrefs(PrefRegistrySimple* registry);
-
-  // Set encryption enabled for testing. Should be called before creating any
-  // instances of the class.
-  static void SetEnableEncryptionForTesting(bool use_for_encryption);
 
  private:
   // These values are persisted to logs. Entries should not be renumbered and
@@ -52,21 +49,25 @@ class AppBoundEncryptionProviderWin : public os_crypt_async::KeyProvider {
   // os_crypt_async::KeyProvider interface.
   void GetKey(KeyCallback callback) override;
   bool UseForEncryption() override;
+  bool IsCompatibleWithOsCryptSync() override;
 
-  base::expected<std::vector<const uint8_t>, KeyRetrievalStatus>
+  base::expected<std::vector<uint8_t>, KeyRetrievalStatus>
   RetrieveEncryptedKey();
   void StoreEncryptedKeyAndReply(
-      const std::vector<const uint8_t>& decrypted_key,
+      const std::vector<uint8_t>& decrypted_key,
       KeyCallback callback,
-      const std::optional<std::vector<const uint8_t>>& encrypted_key);
-  static void ReplyWithKey(
-      KeyCallback callback,
-      std::optional<const std::vector<const uint8_t>> decrypted_key);
+      const std::optional<std::vector<uint8_t>>& encrypted_key);
+  static void ReplyWithKey(KeyCallback callback,
+                           std::optional<std::vector<uint8_t>> decrypted_key);
 
   raw_ptr<PrefService> local_state_ GUARDED_BY_CONTEXT(sequence_checker_);
 
   class COMWorker;
   base::SequenceBound<COMWorker> com_worker_;
+
+  const bool use_for_encryption_;
+
+  const os_crypt::SupportLevel support_level_;
 
   SEQUENCE_CHECKER(sequence_checker_);
 

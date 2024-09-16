@@ -53,6 +53,8 @@ void ExtensionsBrowserClient::AddAPIProvider(
   providers_.push_back(std::move(provider));
 }
 
+void ExtensionsBrowserClient::StartTearDown() {}
+
 scoped_refptr<update_client::UpdateClient>
 ExtensionsBrowserClient::CreateUpdateClient(content::BrowserContext* context) {
   return scoped_refptr<update_client::UpdateClient>(nullptr);
@@ -154,6 +156,13 @@ void ExtensionsBrowserClient::NotifyExtensionApiDeclarativeNetRequest(
     content::BrowserContext* context,
     const ExtensionId& extension_id,
     const std::vector<api::declarative_net_request::Rule>& rules) const {}
+
+void ExtensionsBrowserClient::
+    NotifyExtensionDeclarativeNetRequestRedirectAction(
+        content::BrowserContext* context,
+        const ExtensionId& extension_id,
+        const GURL& request_url,
+        const GURL& redirect_url) const {}
 
 void ExtensionsBrowserClient::NotifyExtensionRemoteHostContacted(
     content::BrowserContext* context,

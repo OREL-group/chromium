@@ -22,6 +22,7 @@
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/shortcuts/shortcut_icon_generator.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -54,6 +55,10 @@
 #include "ui/gfx/skia_util.h"
 #include "url/gurl.h"
 
+#if !BUILDFLAG(IS_CHROMEOS)
+#include "chrome/common/chrome_features.h"
+#endif  // !BUILDFLAG(IS_CHROMEOS)
+
 namespace {
 
 std::string LoadExtension(Profile* profile, const base::FilePath& path) {
@@ -68,8 +73,15 @@ std::string LoadExtension(Profile* profile, const base::FilePath& path) {
 
 namespace web_app {
 
+// TODO(crbug.com/344912771): Remove once ShortcutsNotApps launches to 100%
+// Stable.
 class CreateShortcutBrowserTest : public WebAppBrowserTestBase {
  public:
+  CreateShortcutBrowserTest() {
+#if !BUILDFLAG(IS_CHROMEOS)
+    scoped_feature_list_.InitAndDisableFeature(features::kShortcutsNotApps);
+#endif  // !BUILDFLAG(IS_CHROMEOS)
+  }
   webapps::AppId InstallShortcutAppForCurrentUrl(bool open_as_window = false) {
     SetAutoAcceptWebAppDialogForTesting(true, open_as_window);
     WebAppTestInstallObserver observer(profile());
@@ -100,6 +112,10 @@ class CreateShortcutBrowserTest : public WebAppBrowserTestBase {
     CHECK(provider);
     return provider->sync_bridge_unsafe();
   }
+
+#if !BUILDFLAG(IS_CHROMEOS)
+  base::test::ScopedFeatureList scoped_feature_list_;
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 };
 
 IN_PROC_BROWSER_TEST_F(CreateShortcutBrowserTest,
@@ -181,7 +197,7 @@ IN_PROC_BROWSER_TEST_F(CreateShortcutBrowserTest,
 // within an extension, then added it as a shortcut app.
 // Regression test for https://crbug.com/828233.
 //
-// TODO(crbug.com/1253234): Remove chrome-extension scheme for web apps.
+// TODO(crbug.com/40793595): Remove chrome-extension scheme for web apps.
 IN_PROC_BROWSER_TEST_F(CreateShortcutBrowserTest,
                        ShouldShowCustomTabBarForExtensionPage) {
   // This involves the creation of a regular (non-app) extension with a popup
@@ -203,7 +219,7 @@ IN_PROC_BROWSER_TEST_F(CreateShortcutBrowserTest,
 
   NavigateViaLinkClickToURLAndWait(browser(), popup_url);
 
-  // TODO(crbug.com/1253234): IDC_CREATE_SHORTCUT command must become disabled.
+  // TODO(crbug.com/40793595): IDC_CREATE_SHORTCUT command must become disabled.
   ASSERT_TRUE(chrome::IsCommandEnabled(browser(), IDC_CREATE_SHORTCUT));
 
   const webapps::AppId app_id = InstallShortcutAppForCurrentUrl();
@@ -324,7 +340,7 @@ IN_PROC_BROWSER_TEST_F(CreateShortcutBrowserTest, UseHostWhenTitleIsUrl) {
   // The letter for https://example.com should be the first letter of the host,
   // which is "E".
   SkBitmap generated_icon_bitmap =
-      GenerateBitmap(icon_size::k128, static_cast<char32_t>('E'));
+      shortcuts::GenerateBitmap(icon_size::k128, static_cast<char32_t>('E'));
   EXPECT_TRUE(gfx::BitmapsAreEqual(bitmap, generated_icon_bitmap));
 }
 

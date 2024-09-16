@@ -31,6 +31,7 @@
 #include "components/strings/grit/components_strings.h"
 #include "components/user_manager/user_manager.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/views/widget/widget.h"
@@ -85,7 +86,7 @@ class SigninWebDialogDelegate : public ui::WebDialogDelegate {
     set_can_close(true);
     set_can_resize(false);
     set_dialog_content_url(url);
-    set_dialog_modal_type(ui::MODAL_TYPE_SYSTEM);
+    set_dialog_modal_type(ui::mojom::ModalType::kSystem);
     set_dialog_title(l10n_util::GetStringUTF16(
         IDS_CAPTIVE_PORTAL_AUTHORIZATION_DIALOG_NAME));
     set_show_dialog_title(true);
@@ -98,7 +99,7 @@ class SigninWebDialogDelegate : public ui::WebDialogDelegate {
   ~SigninWebDialogDelegate() override = default;
 
   void OnLoadingStateChanged(content::WebContents* source) override {
-    network_portal_detector::GetInstance()->RequestCaptivePortalDetection();
+    NetworkHandler::Get()->network_state_handler()->RequestPortalDetection();
   }
 };
 
@@ -173,16 +174,12 @@ void NetworkPortalSigninController::ShowSignin(SigninSource source) {
       break;
     }
     case SigninMode::kIncognitoDisabledByPolicy:
-      ABSL_FALLTHROUGH_INTENDED;
+      ShowTab(ProfileManager::GetActiveUserProfile(), url);
+      break;
     case SigninMode::kIncognitoDisabledByParentalControls: {
-      if (chromeos::features::IsCaptivePortalPopupWindowEnabled()) {
-        // Since the signin window enables extensions and disables navigation,
-        // no special handling is required when Incognito browsing is disabled
-        // by policy.
-        ShowSigninWindow(url);
-      } else {
-        ShowTab(ProfileManager::GetActiveUserProfile(), url);
-      }
+      // Supervised users require SupervisedUserNavigationThrottle which is
+      // only available to non OTR profiles.
+      ShowTab(ProfileManager::GetActiveUserProfile(), url);
       break;
     }
   }
@@ -200,6 +197,11 @@ NetworkPortalSigninController::GetSigninMode(
   if (user_manager::UserManager::Get()->IsLoggedInAsAnyKioskApp()) {
     NET_LOG(DEBUG) << "GetSigninMode: Kiosk app";
     return SigninMode::kSigninDialog;
+  }
+
+  if (user_manager::UserManager::Get()->IsLoggedInAsChildUser()) {
+    NET_LOG(DEBUG) << "GetSigninMode: Child User";
+    return SigninMode::kIncognitoDisabledByParentalControls;
   }
 
   Profile* profile = ProfileManager::GetActiveUserProfile();
@@ -226,11 +228,6 @@ NetworkPortalSigninController::GetSigninMode(
       &availability);
   if (availability == policy::IncognitoModeAvailability::kDisabled) {
     return SigninMode::kIncognitoDisabledByPolicy;
-  }
-
-  if (IncognitoModePrefs::GetAvailability(profile->GetPrefs()) ==
-      policy::IncognitoModeAvailability::kDisabled) {
-    return SigninMode::kIncognitoDisabledByParentalControls;
   }
 
   return SigninMode::kSigninDefault;

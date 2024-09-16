@@ -135,10 +135,13 @@ WASAPIAudioOutputStream::WASAPIAudioOutputStream(
       params.hardware_capabilities().value_or(
           AudioParameters::HardwareCapabilities());
 
-  // Only request an explicit buffer size if we are requesting the minimum
-  // supported by the hardware, everything else uses the older IAudioClient API.
-  if (params.frames_per_buffer() ==
-      hardware_capabilities.min_frames_per_buffer) {
+  // Only request an explicit buffer size if we are requesting the non-default
+  // and the minimum supported by the hardware, everything else uses the older
+  // IAudioClient API.
+  if (params.frames_per_buffer() !=
+          hardware_capabilities.default_frames_per_buffer &&
+      params.frames_per_buffer() ==
+          hardware_capabilities.min_frames_per_buffer) {
     requested_iaudioclient3_buffer_size_ =
         hardware_capabilities.min_frames_per_buffer;
   }
@@ -170,6 +173,21 @@ bool WASAPIAudioOutputStream::Open() {
   DCHECK(!audio_client_.Get());
   DCHECK(!audio_render_client_.Get());
 
+  enable_audio_offload_ = params_.RequireOffload();
+  if (enable_audio_offload_ &&
+      (params_.latency_tag() != AudioLatency::Type::kPlayback ||
+       params_.IsBitstreamFormat())) {
+    // Fail fast for audio offload request on latency-senstive streams, so
+    // they can switch to non-offload mode immediately. Also we must avoid
+    // audio offload for bitstream formats. AudioRendererImpl has already
+    // guaranteed this, the check here is just for extra safety.
+    SendLogMessage(
+        "%s => (INFO: Not enrolling into audio offload for stream without "
+        "latency tag set to kPlayback, or the stream is in bitstream format.",
+        __func__);
+    return false;
+  }
+
   const bool communications_device =
       device_id_.empty() ? (device_role_ == eCommunications) : false;
 
@@ -182,7 +200,6 @@ bool WASAPIAudioOutputStream::Open() {
   }
 
   HRESULT hr = S_FALSE;
-  enable_audio_offload_ = params_.RequireOffload();
 
   if (share_mode_ == AUDCLNT_SHAREMODE_SHARED && enable_audio_offload_) {
     enable_audio_offload_ =
@@ -236,16 +253,18 @@ bool WASAPIAudioOutputStream::Open() {
     if (enable_audio_offload_) {
       audio_client->GetBufferSize(&preferred_frames_per_buffer);
 
-      // if the granted buffer size is not the same as requested buffer size
-      // re-initializing audio bus.
+      // TODO(crbug.com/348468130) : Consider reinitializing `audio_bus_` and
+      // handling mismatch of `packet_size_frames_` and
+      // `preferred_frames_per_buffer`.
+      // If `packet_size_frames_` doesn't match the preferred size, fallback to
+      // not offloading. This might happen after a device change.
       if (packet_size_frames_ != preferred_frames_per_buffer) {
-        AudioParameters params = AudioParameters(params_);
-        params.set_frames_per_buffer(preferred_frames_per_buffer);
-        audio_bus_ = AudioBus::Create(params);
-        // For Offload case GetBuffer API requires the preferred buffer size to
-        // be used or it will fail.
-        packet_size_frames_ = preferred_frames_per_buffer;
-        packet_size_bytes_ = params.GetBytesPerBuffer(kSampleFormatS16);
+        SendLogMessage(
+            "%s => (INFO: Requested buffer size in frames mismatch. "
+            "Disable audio offload for the stream.",
+            __func__);
+        // Return here to allow falling back to non-offload mode.
+        return false;
       }
     } else {
       preferred_frames_per_buffer = AudioTimestampHelper::TimeToFrames(
@@ -385,7 +404,7 @@ void WASAPIAudioOutputStream::Start(AudioSourceCallback* callback) {
   last_position_ = 0;
   last_qpc_position_ = 0;
 
-  // Recreate `peak_detector_` everytime we create a new `render_thread_`, to
+  // Recreate `peak_detector_` every time we create a new `render_thread_`, to
   // avoid ThreadChecker DCHECKs.
   peak_detector_ = std::make_unique<AmplitudePeakDetector>(base::BindRepeating(
       &AudioManager::TraceAmplitudePeak, base::Unretained(manager_),
@@ -784,7 +803,7 @@ bool WASAPIAudioOutputStream::RenderAudioFromSource(UINT64 device_frequency) {
         base::TimeDelta gap_duration =
             qpc_position_time_increase - position_time_increase;
 
-        // TODO(crbug.com/1417946): Investigate precisely what gap duration
+        // TODO(crbug.com/40257462): Investigate precisely what gap duration
         // should be counted as a glitch.
         bool is_glitch = gap_duration > buffer_duration / 2;
         glitch_reporter_.UpdateStats(is_glitch ? gap_duration

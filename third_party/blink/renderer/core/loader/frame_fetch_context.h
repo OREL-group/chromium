@@ -96,10 +96,17 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext,
                          const AtomicString& initiator_type) override;
   bool AllowImage() const override;
 
-  void PopulateResourceRequest(ResourceType,
-                               const std::optional<float> resource_width,
-                               ResourceRequest&,
-                               const ResourceLoaderOptions&) override;
+  void PopulateResourceRequestBeforeCacheAccess(
+      const ResourceLoaderOptions& options,
+      ResourceRequest& request) override;
+
+  void WillSendRequest(ResourceRequest& resource_request) override;
+
+  void UpgradeResourceRequestForLoader(
+      ResourceType,
+      const std::optional<float> resource_width,
+      ResourceRequest&,
+      const ResourceLoaderOptions&) override;
 
   bool IsPrerendering() const override;
 
@@ -139,6 +146,10 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext,
 
   scoped_refptr<const SecurityOrigin> GetTopFrameOrigin() const override;
 
+  const Vector<KURL>& GetPotentiallyUnusedPreloads() const override;
+
+  void AddLcpPredictedCallback(base::OnceClosure callback) override;
+
  private:
   friend class FrameFetchContextTest;
 
@@ -162,7 +173,7 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext,
                                ResourceType) const override;
   ContentSecurityPolicy* GetContentSecurityPolicyForWorld(
       const DOMWrapperWorld* world) const override;
-  bool IsSVGImageChromeClient() const override;
+  bool IsIsolatedSVGChromeClient() const override;
   void CountUsage(WebFeature) const override;
   void CountDeprecation(WebFeature) const override;
   bool ShouldBlockWebSocketByMixedContentCheck(const KURL&) const override;
@@ -191,12 +202,6 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext,
   String GetReducedAcceptLanguage() const;
 
   enum class ClientHintsMode { kLegacy, kStandard };
-  bool ShouldSendClientHint(ClientHintsMode mode,
-                            const PermissionsPolicy*,
-                            const url::Origin& resource_origin,
-                            bool is_1p_origin,
-                            network::mojom::blink::WebClientHintsType,
-                            const ClientHintsPreferences&) const;
   void SetFirstPartyCookie(ResourceRequest&);
 
   // Returns true if `resource_origin` is same as the origin of the top level
@@ -211,6 +216,10 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext,
 
   // Non-null only when detached.
   Member<FrozenState> frozen_state_;
+
+  // Serializing the brand major version list is expensive, so it's cached.
+  std::optional<UserAgentMetadata> last_ua_;
+  std::optional<AtomicString> last_ua_serialized_brand_major_version_list_;
 };
 
 }  // namespace blink

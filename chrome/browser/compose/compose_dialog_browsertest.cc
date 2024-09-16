@@ -63,7 +63,7 @@ IN_PROC_BROWSER_TEST_F(ComposeSessionBrowserTest, LifetimeOfBubbleWrapper) {
   gfx::PointF textarea_center =
       content::GetCenterCoordinatesOfElementWithId(web_contents, "elem1");
   autofill::FormFieldData field_data;
-  field_data.bounds = gfx::RectF((textarea_center), gfx::SizeF(1, 1));
+  field_data.set_bounds(gfx::RectF((textarea_center), gfx::SizeF(1, 1)));
 
   auto* client = ChromeComposeClient::FromWebContents(web_contents);
   client->ShowComposeDialog(
@@ -75,13 +75,7 @@ IN_PROC_BROWSER_TEST_F(ComposeSessionBrowserTest, LifetimeOfBubbleWrapper) {
                                                    TabCloseTypes::CLOSE_NONE);
 }
 
-// TODO(b/328139715): Add support for ChromeOS lacros.
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-#define MAYBE_OpenFeedbackPage DISABLED_OpenFeedbackPage
-#else
-#define MAYBE_OpenFeedbackPage OpenFeedbackPage
-#endif
-IN_PROC_BROWSER_TEST_F(ComposeSessionBrowserTest, MAYBE_OpenFeedbackPage) {
+IN_PROC_BROWSER_TEST_F(ComposeSessionBrowserTest, OpenFeedbackPage) {
   // Feedback page can only be opened from a dialog state where MSSB is enabled.
   // TODO(b/316601302): Without directly setting the MSBB pref value this test
   // is flaky on Linux MSan builders. This requires further investigation, but
@@ -101,7 +95,7 @@ IN_PROC_BROWSER_TEST_F(ComposeSessionBrowserTest, MAYBE_OpenFeedbackPage) {
   gfx::PointF textarea_center =
       content::GetCenterCoordinatesOfElementWithId(web_contents, "elem1");
   autofill::FormFieldData field_data;
-  field_data.bounds = gfx::RectF((textarea_center), gfx::SizeF(1, 1));
+  field_data.set_bounds(gfx::RectF((textarea_center), gfx::SizeF(1, 1)));
 
   auto* client = ChromeComposeClient::FromWebContents(web_contents);
   client->ShowComposeDialog(
@@ -127,7 +121,7 @@ IN_PROC_BROWSER_TEST_F(ComposeSessionBrowserTest,
   gfx::PointF textarea_center =
       content::GetCenterCoordinatesOfElementWithId(web_contents, "elem1");
   autofill::FormFieldData field_data;
-  field_data.bounds = gfx::RectF((textarea_center), gfx::SizeF(1, 1));
+  field_data.set_bounds(gfx::RectF((textarea_center), gfx::SizeF(1, 1)));
 
   client->ShowComposeDialog(
       autofill::AutofillComposeDelegate::UiEntryPoint::kAutofillPopup,
@@ -155,7 +149,7 @@ IN_PROC_BROWSER_TEST_F(ComposeSessionBrowserTest, SettingsLaunchedTest) {
   gfx::PointF textarea_center =
       content::GetCenterCoordinatesOfElementWithId(web_contents, "elem1");
   autofill::FormFieldData field_data;
-  field_data.bounds = gfx::RectF((textarea_center), gfx::SizeF(1, 1));
+  field_data.set_bounds(gfx::RectF((textarea_center), gfx::SizeF(1, 1)));
 
   auto* client = ChromeComposeClient::FromWebContents(web_contents);
   client->ShowComposeDialog(

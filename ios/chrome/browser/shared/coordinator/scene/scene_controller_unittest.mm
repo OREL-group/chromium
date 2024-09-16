@@ -12,7 +12,6 @@
 #import "components/variations/variations_ids_provider.h"
 #import "ios/chrome/app/application_delegate/app_state.h"
 #import "ios/chrome/browser/bookmarks/model/bookmark_model_factory.h"
-#import "ios/chrome/browser/bookmarks/model/local_or_syncable_bookmark_model_factory.h"
 #import "ios/chrome/browser/favicon/model/favicon_service_factory.h"
 #import "ios/chrome/browser/favicon/model/ios_chrome_favicon_loader_factory.h"
 #import "ios/chrome/browser/favicon/model/ios_chrome_large_icon_service_factory.h"
@@ -21,14 +20,14 @@
 #import "ios/chrome/browser/intents/user_activity_browser_agent.h"
 #import "ios/chrome/browser/prerender/model/prerender_service_factory.h"
 #import "ios/chrome/browser/search_engines/model/template_url_service_factory.h"
-#import "ios/chrome/browser/sessions/session_restoration_service_factory.h"
-#import "ios/chrome/browser/sessions/test_session_restoration_service.h"
+#import "ios/chrome/browser/sessions/model/session_restoration_service_factory.h"
+#import "ios/chrome/browser/sessions/model/test_session_restoration_service.h"
 #import "ios/chrome/browser/shared/coordinator/scene/scene_controller_testing.h"
 #import "ios/chrome/browser/shared/coordinator/scene/scene_state.h"
 #import "ios/chrome/browser/shared/coordinator/scene/scene_util_test_support.h"
 #import "ios/chrome/browser/shared/model/browser/browser_list_factory.h"
 #import "ios/chrome/browser/shared/model/browser/test/test_browser.h"
-#import "ios/chrome/browser/shared/model/browser_state/test_chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/chrome/browser/signin/model/authentication_service_factory.h"
 #import "ios/chrome/browser/signin/model/fake_authentication_service_delegate.h"
 #import "ios/chrome/browser/signin/model/identity_manager_factory.h"
@@ -41,6 +40,7 @@
 #import "ios/web/public/test/web_task_environment.h"
 #import "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
 #import "services/network/test/test_url_loader_factory.h"
+#import "testing/gtest_mac.h"
 #import "testing/platform_test.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
 
@@ -120,15 +120,12 @@ class SceneControllerTest : public PlatformTest {
     builder.AddTestingFactory(ios::BookmarkModelFactory::GetInstance(),
                               ios::BookmarkModelFactory::GetDefaultFactory());
     builder.AddTestingFactory(
-        ios::LocalOrSyncableBookmarkModelFactory::GetInstance(),
-        ios::LocalOrSyncableBookmarkModelFactory::GetDefaultFactory());
-    builder.AddTestingFactory(
         AuthenticationServiceFactory::GetInstance(),
         AuthenticationServiceFactory::GetDefaultFactory());
     builder.AddTestingFactory(
         SessionRestorationServiceFactory::GetInstance(),
         TestSessionRestorationService::GetTestingFactory());
-    browser_state_ = builder.Build();
+    browser_state_ = std::move(builder).Build();
 
     AuthenticationServiceFactory::CreateAndInitializeForBrowserState(
         browser_state_.get(),
@@ -146,8 +143,7 @@ class SceneControllerTest : public PlatformTest {
         [[BrowserViewWrangler alloc] initWithBrowserState:browser_state_.get()
                                                sceneState:scene_state_
                                       applicationEndpoint:nil
-                                         settingsEndpoint:nil
-                                     browsingDataEndpoint:nil];
+                                         settingsEndpoint:nil];
     [scene_controller_.browserViewWrangler createMainCoordinatorAndInterface];
 
     scene_controller_.browser = browser_.get();
@@ -175,12 +171,12 @@ class SceneControllerTest : public PlatformTest {
   }
 
   signin::IdentityManager* GetIdentityManager() {
-    return IdentityManagerFactory::GetForBrowserState(browser_state_.get());
+    return IdentityManagerFactory::GetForProfile(browser_state_.get());
   }
 
   void MakePrimaryAccountAvailable(const std::string& email) {
     signin::MakePrimaryAccountAvailable(
-        IdentityManagerFactory::GetForBrowserState(browser_state_.get()), email,
+        IdentityManagerFactory::GetForProfile(browser_state_.get()), email,
         signin::ConsentLevel::kSignin);
   }
 
@@ -189,9 +185,9 @@ class SceneControllerTest : public PlatformTest {
   }
 
   web::WebTaskEnvironment task_environment_{
-      web::WebTaskEnvironment::Options::IO_MAINLOOP,
+      web::WebTaskEnvironment::MainThreadType::IO,
       base::test::TaskEnvironment::TimeSource::MOCK_TIME};
-  IOSChromeScopedTestingLocalState local_state_;
+  IOSChromeScopedTestingLocalState scoped_testing_local_state_;
   variations::ScopedVariationsIdsProvider scoped_variations_ids_provider_{
       variations::VariationsIdsProvider::Mode::kUseSignedInState};
 
@@ -206,9 +202,10 @@ class SceneControllerTest : public PlatformTest {
   network::TestURLLoaderFactory test_loader_factory_;
 };
 
-// TODO(crbug.com/1084905): Add a test for keeping validity of detecting a fresh
-// open in new window coming from ios dock. 'Dock' is considered the default
-// when the new window opening request is external to chrome and unknown.
+// TODO(crbug.com/40693350): Add a test for keeping validity of detecting a
+// fresh open in new window coming from ios dock. 'Dock' is considered the
+// default when the new window opening request is external to chrome and
+// unknown.
 
 // Tests that scene controller updates scene state's incognitoContentVisible
 // when the relevant application command is called.
@@ -223,7 +220,7 @@ TEST_F(SceneControllerTest, UpdatesIncognitoContentVisibility) {
 
 // Tests that scene controller correctly handles an external intent to
 // OpenIncognitoSearch.
-// TODO(crbug.com/1506950): re-enabled the test.
+// TODO(crbug.com/40947630): re-enabled the test.
 TEST_F(SceneControllerTest, DISABLED_TestOpenIncognitoSearchForShortcutItem) {
   UIApplicationShortcutItem* shortcut = [[UIApplicationShortcutItem alloc]
         initWithType:kShortcutNewIncognitoSearch
@@ -293,7 +290,7 @@ TEST_F(SceneControllerTest, TestReportAnIssueViewControllerWithFamilyResponse) {
       base::BindRepeating(^(UserFeedbackData* data) {
         EXPECT_EQ(UserFeedbackSender::ToolsMenu, data.origin);
         EXPECT_FALSE(data.currentPageIsIncognito);
-        EXPECT_TRUE([data.familyMemberRole isEqualToString:@"child"]);
+        EXPECT_NSEQ(data.familyMemberRole, @"child");
       }).Then(run_loop.QuitClosure());
 
   [scene_controller_
@@ -309,7 +306,7 @@ TEST_F(SceneControllerTest, TestReportAnIssueViewControllerWithFamilyResponse) {
       list_family_members_response.add_members(), kidsmanagement::CHILD, "foo");
   test_loader_factory_.SimulateResponseForPendingRequest(
       "https://kidsmanagement-pa.googleapis.com/kidsmanagement/v1/families/"
-      "mine/members?alt=proto",
+      "mine/members?alt=proto&allow_empty_family=true",
       list_family_members_response.SerializeAsString());
 
   run_loop.Run();

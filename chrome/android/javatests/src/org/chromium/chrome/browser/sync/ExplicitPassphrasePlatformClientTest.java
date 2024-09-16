@@ -18,6 +18,7 @@ import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.DoNotBatch;
@@ -26,7 +27,6 @@ import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.components.sync.ExplicitPassphrasePlatformClient;
 import org.chromium.components.sync.SyncService;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 /**
  * Integration test for ExplicitPassphrasePlatformClient.
@@ -34,7 +34,7 @@ import org.chromium.content_public.browser.test.util.TestThreadUtils;
  * <p>TODO(crbug.com/329409293): Test the case where the passphrase was already entered.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@DoNotBatch(reason = "TODO(crbug.com/1168590): SyncTestRule doesn't support batching.")
+@DoNotBatch(reason = "TODO(crbug.com/40743432): SyncTestRule doesn't support batching.")
 @CommandLineFlags.Add({
     ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
     // Keep in sync with the corresponding string in sync_service_impl.cc.
@@ -60,8 +60,7 @@ public class ExplicitPassphrasePlatformClientTest {
         SyncService syncService = mSyncTestRule.getSyncService();
         CriteriaHelper.pollUiThread(() -> syncService.isPassphraseRequiredForPreferredDataTypes());
 
-        TestThreadUtils.runOnUiThreadBlocking(
-                () -> syncService.setDecryptionPassphrase("passphrase"));
+        ThreadUtils.runOnUiThreadBlocking(() -> syncService.setDecryptionPassphrase("passphrase"));
 
         verify(mExplicitPassphrasePlatformClient)
                 .setExplicitDecryptionPassphrase(eq(account), notNull());
@@ -77,7 +76,7 @@ public class ExplicitPassphrasePlatformClientTest {
         SyncService syncService = mSyncTestRule.getSyncService();
         CriteriaHelper.pollUiThread(() -> syncService.isPassphraseRequiredForPreferredDataTypes());
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> syncService.setDecryptionPassphrase("wrongPassphrase"));
 
         verify(mExplicitPassphrasePlatformClient)

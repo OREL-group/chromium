@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/themes/browser_theme_pack.h"
 
 #include <limits.h>
@@ -437,10 +442,9 @@ class ThemeImagePngSource : public gfx::ImageSkiaSource {
     PngMap::const_iterator exact_png_it = png_map_.find(scale_factor);
     if (exact_png_it != png_map_.end()) {
       SkBitmap bitmap;
-      if (!gfx::PNGCodec::Decode(exact_png_it->second->front(),
-                                 exact_png_it->second->size(),
-                                 &bitmap)) {
-        NOTREACHED();
+      if (!gfx::PNGCodec::Decode(exact_png_it->second->data(),
+                                 exact_png_it->second->size(), &bitmap)) {
+        // The image is either broken or a different format.
         return gfx::ImageSkiaRep();
       }
       bitmap_map_[scale_factor] = bitmap;
@@ -469,10 +473,10 @@ class ThemeImagePngSource : public gfx::ImageSkiaSource {
         bitmap_map_.find(available_scale_factor);
     if (available_bitmap_it == bitmap_map_.end()) {
       SkBitmap available_bitmap;
-      if (!gfx::PNGCodec::Decode(available_png_it->second->front(),
+      if (!gfx::PNGCodec::Decode(available_png_it->second->data(),
                                  available_png_it->second->size(),
                                  &available_bitmap)) {
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
         return gfx::ImageSkiaRep();
       }
       bitmap_map_[available_scale_factor] = available_bitmap;
@@ -1546,13 +1550,13 @@ bool BrowserThemePack::LoadRawBitmapsTo(
           image_memory_[raw_id] = raw_data;
         } else {
           SkBitmap bitmap;
-          if (gfx::PNGCodec::Decode(raw_data->front(), raw_data->size(),
+          if (gfx::PNGCodec::Decode(raw_data->data(), raw_data->size(),
                                     &bitmap)) {
             image_skia.AddRepresentation(gfx::ImageSkiaRep(
                 bitmap, ui::GetScaleForResourceScaleFactor(scale_factor)));
           } else {
-            NOTREACHED() << "Unable to decode theme image resource "
-                         << entry.first;
+            // The image is either broken or a different format.
+            return false;
           }
         }
       }
@@ -1984,8 +1988,7 @@ void BrowserThemePack::MergeImageCaches(
 void BrowserThemePack::AddRawImagesTo(const RawImages& images,
                                       RawDataForWriting* out) const {
   for (const auto& pair : images) {
-    (*out)[pair.first] =
-        std::string_view(pair.second->front_as<char>(), pair.second->size());
+    (*out)[pair.first] = base::as_string_view(*pair.second);
   }
 }
 
@@ -2076,11 +2079,9 @@ void BrowserThemePack::GenerateRawImageForAllSupportedScales(
   int available_raw_id = GetRawIDByPersistentID(prs_id, available_scale_factor);
   RawImages::const_iterator it = image_memory_.find(available_raw_id);
   SkBitmap available_bitmap;
-  if (!gfx::PNGCodec::Decode(it->second->front(),
-                             it->second->size(),
+  if (!gfx::PNGCodec::Decode(it->second->data(), it->second->size(),
                              &available_bitmap)) {
-    NOTREACHED() << "Unable to decode theme image for prs_id=" << prs_id
-                 << " for scale_factor=" << available_scale_factor;
+    // The image is either broken or a different format.
     return;
   }
 
@@ -2097,8 +2098,9 @@ void BrowserThemePack::GenerateRawImageForAllSupportedScales(
     if (!gfx::PNGCodec::EncodeBGRASkBitmap(scaled_bitmap,
                                            false,
                                            &bitmap_data)) {
-      NOTREACHED() << "Unable to encode theme image for prs_id=" << prs_id
-                   << " for scale_factor=" << scale_factors_[i];
+      NOTREACHED_IN_MIGRATION()
+          << "Unable to encode theme image for prs_id=" << prs_id
+          << " for scale_factor=" << scale_factors_[i];
       break;
     }
     image_memory_[scaled_raw_id] =

@@ -60,7 +60,7 @@
 #endif
 
 #if BUILDFLAG(IS_WIN)
-#include "chrome/browser/win/titlebar_config.h"
+#include "chrome/browser/win/mica_titlebar.h"
 #endif
 
 namespace {
@@ -257,12 +257,12 @@ void BrowserFrame::GetWindowPlacement(gfx::Rect* bounds,
 }
 
 content::KeyboardEventProcessingResult BrowserFrame::PreHandleKeyboardEvent(
-    const content::NativeWebKeyboardEvent& event) {
+    const input::NativeWebKeyboardEvent& event) {
   return native_browser_frame_->PreHandleKeyboardEvent(event);
 }
 
 bool BrowserFrame::HandleKeyboardEvent(
-    const content::NativeWebKeyboardEvent& event) {
+    const input::NativeWebKeyboardEvent& event) {
   return native_browser_frame_->HandleKeyboardEvent(event);
 }
 
@@ -386,8 +386,9 @@ void BrowserFrame::OnNativeWidgetWorkspaceChanged() {
 void BrowserFrame::ShowContextMenuForViewImpl(views::View* source,
                                               const gfx::Point& p,
                                               ui::MenuSourceType source_type) {
-  if (chrome::IsRunningInForcedAppMode())
+  if (IsRunningInForcedAppMode()) {
     return;
+  }
 
   // Do not show context menu for Document picture-in-picture browser. Context:
   // http://b/274862709.

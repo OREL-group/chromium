@@ -37,5 +37,16 @@ const char kMagicStackModuleEngagementSafetyCheckIndexHistogram[] =
     "IOS.MagicStack.Module.Click.SafetyCheck";
 const char kMagicStackModuleEngagementParcelTrackingIndexHistogram[] =
     "IOS.MagicStack.Module.Click.ParcelTracking";
+const char kMagicStackModuleEngagementPriceTrackingPromoIndexHistogram[] =
+    "IOS.MagicStack.Module.Click.PriceTrackingPromo";
+const char kMagicStackModuleDisabledHistogram[] =
+    "IOS.MagicStack.Module.Disabled";
 const char kContentNotificationSnackbarEventHistogram[] =
     "ContentNotifications.Promo.Snackbar.Event";
+const char kIOSSafetyCheckMagicStackHiddenReason[] =
+    "IOS.SafetyCheck.MagicStack.HiddenReason";
+
+const char kMagicStackStartSegmentationRankingFetchTimeHistogram[] =
+    "IOS.MagicStack.Start.SegmentationRankingFetchTime";
+const char kMagicStackNTPSegmentationRankingFetchTimeHistogram[] =
+    "IOS.MagicStack.NTP.SegmentationRankingFetchTime";

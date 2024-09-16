@@ -157,14 +157,6 @@ class DynamicIIDsImpl : public internal::WrlRuntimeClass<Interface> {
 // NO_ERROR to E_FAIL.
 HRESULT HRESULTFromLastError();
 
-// Checks whether a process is running with the image |executable|. Returns true
-// if a process is found.
-bool IsProcessRunning(const wchar_t* executable);
-
-// Waits until every running instance of |executable| is stopped.
-// Returns true if every running processes are stopped.
-bool WaitForProcessesStopped(const wchar_t* executable);
-
 struct NamedObjectAttributes {
   NamedObjectAttributes(const std::wstring& name, const CSecurityDesc& sd);
   NamedObjectAttributes(const NamedObjectAttributes& other) = delete;
@@ -233,9 +225,9 @@ bool SetRegistryKey(HKEY root,
                     const std::wstring& name,
                     const std::wstring& value);
 
-// Returns a value in the [0, 100] range or -1 if the progress could not
-// be computed.
-int GetDownloadProgress(int64_t downloaded_bytes, int64_t total_bytes);
+// Deletes or sets the `eulaaccepted` value in the `Google\Update` key, based on
+// whether `eula_accepted` is `true` or `false`. Returns `true` on success.
+bool SetEulaAccepted(UpdaterScope scope, bool eula_accepted);
 
 // Returns `true` if the token is an elevated administrator. If
 // `token` is `NULL`, the current thread token is used.
@@ -294,11 +286,6 @@ HResultOr<DWORD> ShellExecuteAndWait(const base::FilePath& file_path,
 // process was created successfully but the exit code is unknown.
 HResultOr<DWORD> RunElevated(const base::FilePath& file_path,
                              const std::wstring& parameters);
-
-// Runs `path` de-elevated. `path` specifies the exe or url to be launched.
-// `parameters` can be an empty string. The function does not wait for the
-// spawned process.
-HRESULT RunDeElevated(const std::wstring& path, const std::wstring& parameters);
 
 // Runs `cmd_line` de-elevated.The function does not wait for the spawned
 // process.
@@ -452,6 +439,14 @@ bool ResetOemInstallState();
 // Returns `true` if the OEM install time is present and it has been less than
 // `kMinOemModeTime` since the OEM install.
 bool IsOemInstalling();
+
+// Stores the runtime enrollment token to the persistent storage.
+bool StoreRunTimeEnrollmentToken(const std::string& enrollment_token);
+
+// Returns a unique temp file path of the form
+// `%TMP%\{name}{guid}.{fileextension}`, where `name` and `extension` are the
+// name and extension of `file`.
+std::optional<base::FilePath> GetUniqueTempFilePath(base::FilePath file);
 
 }  // namespace updater
 

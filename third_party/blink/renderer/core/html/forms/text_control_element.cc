@@ -310,11 +310,6 @@ void TextControlElement::SetFocused(bool flag,
 }
 
 void TextControlElement::DispatchFormControlChangeEvent() {
-  if (UserHasEditedTheField()) {
-    // If the user has edited the field, then at this point we should also start
-    // matching :user-valid/:user-invalid.
-    SetUserHasEditedTheFieldAndBlurred();
-  }
   if (!value_before_first_user_edit_.IsNull() &&
       !EqualIgnoringNullity(value_before_first_user_edit_, Value())) {
     ClearValueBeforeFirstUserEdit();
@@ -443,7 +438,7 @@ static Position PositionForIndex(HTMLElement* inner_editor, unsigned index) {
       continue;
     }
 
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
   }
   DCHECK(last_br_or_text);
   return LastPositionInOrAfterNode(*last_br_or_text);
@@ -508,11 +503,19 @@ bool TextControlElement::SetSelectionRange(
 
   // TODO(crbug.com/927646): The focused element should always be connected, but
   // we fail to ensure so in some cases. Fix it.
-  if (ShouldApplySelectionCache() || !isConnected())
+  if (ShouldApplySelectionCache() || !isConnected()) {
+    if (did_change) {
+      ScheduleSelectionchangeEventOnThisOrDocument();
+    }
     return did_change;
+  }
 
-  if (!frame || !inner_editor)
+  if (!frame || !inner_editor) {
+    if (did_change) {
+      ScheduleSelectionchangeEventOnThisOrDocument();
+    }
     return did_change;
+  }
 
   Position start_position = PositionForIndex(inner_editor, start);
   Position end_position =
@@ -648,7 +651,7 @@ static const AtomicString& DirectionString(
       return backward;
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return none;
 }
 
@@ -809,6 +812,16 @@ void TextControlElement::ScheduleSelectEvent() {
   Event* event = Event::CreateBubble(event_type_names::kSelect);
   event->SetTarget(this);
   GetDocument().EnqueueAnimationFrameEvent(event);
+}
+
+void TextControlElement::ScheduleSelectionchangeEventOnThisOrDocument() {
+  if (RuntimeEnabledFeatures::DispatchSelectionchangeEventPerElementEnabled()) {
+    if (!IsInShadowTree()) {
+      ScheduleSelectionchangeEvent();
+    } else {
+      GetDocument().ScheduleSelectionchangeEvent();
+    }
+  }
 }
 
 void TextControlElement::ParseAttribute(
@@ -1086,6 +1099,19 @@ HTMLElement* TextControlElement::CreateInnerEditorElement() {
 
 const String& TextControlElement::SuggestedValue() const {
   return suggested_value_;
+}
+
+void TextControlElement::ScheduleSelectionchangeEvent() {
+  if (RuntimeEnabledFeatures::CoalesceSelectionchangeEventEnabled()) {
+    if (has_scheduled_selectionchange_event_)
+      return;
+    has_scheduled_selectionchange_event_ = true;
+    EnqueueEvent(*Event::CreateBubble(event_type_names::kSelectionchange),
+                 TaskType::kMiscPlatformAPI);
+  } else {
+    EnqueueEvent(*Event::CreateBubble(event_type_names::kSelectionchange),
+                 TaskType::kMiscPlatformAPI);
+  }
 }
 
 void TextControlElement::Trace(Visitor* visitor) const {

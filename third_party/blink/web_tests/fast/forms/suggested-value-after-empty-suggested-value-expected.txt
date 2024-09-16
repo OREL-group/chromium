@@ -58,11 +58,11 @@ Input before setting suggested values:
 |   <option>
 |     "CA"
 |     <shadow:root>
-|       "CA"
+|       <slot>
 |   <option>
 |     "TX"
 |     <shadow:root>
-|       "TX"
+|       <slot>
 |   <shadow:root>
 |     <div>
 |       aria-hidden="true"
@@ -72,13 +72,24 @@ Input before setting suggested values:
 |     <slot>
 |       id="select-button"
 |       <button>
-|         type="popover"
-|     <slot>
-|       id="select-datalist"
-|       <datalist>
-|         pseudo="select-fallback-datalist"
-|         shadow:pseudoId="select-fallback-datalist"
-|         <slot>
+|         pseudo="select-fallback-button"
+|         shadow:pseudoId="select-fallback-button"
+|         <span>
+|           pseudo="select-fallback-button-text"
+|           shadow:pseudoId="select-fallback-button-text"
+|     <div>
+|       popover="auto"
+|       pseudo="picker(select)"
+|       shadow:pseudoId="picker(select)"
+|       <slot>
+|         id="select-popover-options"
+|     <div>
+|       popover="manual"
+|       pseudo="-internal-select-autofill-preview"
+|       shadow:pseudoId="-internal-select-autofill-preview"
+|       <div>
+|         pseudo="-internal-select-autofill-preview-text"
+|         shadow:pseudoId="-internal-select-autofill-preview-text"
 | "input.value: initial value"
 | "internals.suggestedValue(input): "
 | "inputWithPlaceholder.value: "
@@ -160,11 +171,11 @@ Input after setting suggestedValue:
 |   <option>
 |     "CA"
 |     <shadow:root>
-|       "CA"
+|       <slot>
 |   <option>
 |     "TX"
 |     <shadow:root>
-|       "TX"
+|       <slot>
 |   <shadow:root>
 |     <div>
 |       aria-hidden="true"
@@ -174,14 +185,25 @@ Input after setting suggestedValue:
 |     <slot>
 |       id="select-button"
 |       <button>
-|         type="popover"
-|         "TX"
-|     <slot>
-|       id="select-datalist"
-|       <datalist>
-|         pseudo="select-fallback-datalist"
-|         shadow:pseudoId="select-fallback-datalist"
-|         <slot>
+|         pseudo="select-fallback-button"
+|         shadow:pseudoId="select-fallback-button"
+|         <span>
+|           pseudo="select-fallback-button-text"
+|           shadow:pseudoId="select-fallback-button-text"
+|           "TX"
+|     <div>
+|       popover="auto"
+|       pseudo="picker(select)"
+|       shadow:pseudoId="picker(select)"
+|       <slot>
+|         id="select-popover-options"
+|     <div>
+|       popover="manual"
+|       pseudo="-internal-select-autofill-preview"
+|       shadow:pseudoId="-internal-select-autofill-preview"
+|       <div>
+|         pseudo="-internal-select-autofill-preview-text"
+|         shadow:pseudoId="-internal-select-autofill-preview-text"
 | "input.value: initial value"
 | "internals.suggestedValue(input): "
 | "inputWithPlaceholder.value: "
@@ -261,11 +283,11 @@ After resetting suggestedValue value:
 |   <option>
 |     "CA"
 |     <shadow:root>
-|       "CA"
+|       <slot>
 |   <option>
 |     "TX"
 |     <shadow:root>
-|       "TX"
+|       <slot>
 |   <shadow:root>
 |     <div>
 |       aria-hidden="true"
@@ -275,13 +297,24 @@ After resetting suggestedValue value:
 |     <slot>
 |       id="select-button"
 |       <button>
-|         type="popover"
-|     <slot>
-|       id="select-datalist"
-|       <datalist>
-|         pseudo="select-fallback-datalist"
-|         shadow:pseudoId="select-fallback-datalist"
-|         <slot>
+|         pseudo="select-fallback-button"
+|         shadow:pseudoId="select-fallback-button"
+|         <span>
+|           pseudo="select-fallback-button-text"
+|           shadow:pseudoId="select-fallback-button-text"
+|     <div>
+|       popover="auto"
+|       pseudo="picker(select)"
+|       shadow:pseudoId="picker(select)"
+|       <slot>
+|         id="select-popover-options"
+|     <div>
+|       popover="manual"
+|       pseudo="-internal-select-autofill-preview"
+|       shadow:pseudoId="-internal-select-autofill-preview"
+|       <div>
+|         pseudo="-internal-select-autofill-preview-text"
+|         shadow:pseudoId="-internal-select-autofill-preview-text"
 | "input.value: initial value"
 | "internals.suggestedValue(input): "
 | "inputWithPlaceholder.value: "

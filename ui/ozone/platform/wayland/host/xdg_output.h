@@ -37,7 +37,9 @@ class XDGOutput {
 
  private:
   FRIEND_TEST_ALL_PREFIXES(WaylandOutputTest, NameAndDescriptionFallback);
+  FRIEND_TEST_ALL_PREFIXES(WaylandOutputTest, ScaleFactorCalculation);
   FRIEND_TEST_ALL_PREFIXES(WaylandOutputTest, ScaleFactorFallback);
+  FRIEND_TEST_ALL_PREFIXES(WaylandOutputTest, ScaleFactorCalculationNoop);
 
   // zxdg_output_v1_listener callbacks:
   static void OnLogicalPosition(void* data,

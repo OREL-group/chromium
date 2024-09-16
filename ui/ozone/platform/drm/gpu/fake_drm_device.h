@@ -55,52 +55,59 @@ Object* DrmAllocator(size_t num_of_objects = 1) {
 }
 
 // DRM Object Base IDs:
-constexpr uint32_t kPlaneOffset = 100;
-constexpr uint32_t kCrtcIdBase = 200;
-constexpr uint32_t kConnectorIdBase = 300;
-constexpr uint32_t kInFormatsBlobIdBase = 400;
-constexpr uint32_t kEncoderIdBase = 500;
+inline constexpr uint32_t kPlaneOffset = 100;
+inline constexpr uint32_t kCrtcIdBase = 200;
+inline constexpr uint32_t kConnectorIdBase = 300;
+inline constexpr uint32_t kEncoderIdBase = 400;
 
 // Required Connector Property IDs:
-constexpr uint32_t kCrtcIdPropId = 1000;
-constexpr uint32_t kLinkStatusPropId = 1001;
-constexpr uint32_t kEdidBlobPropId = 1002;
+inline constexpr uint32_t kCrtcIdPropId = 1000;
+inline constexpr uint32_t kLinkStatusPropId = 1001;
+inline constexpr uint32_t kEdidBlobPropId = 1002;
+
+// Optional Connector Property IDs:
+inline constexpr uint32_t kTileBlobPropId = 1500;
+inline constexpr uint32_t kVrrCapablePropId = 1501;
 
 // Required CRTC Property IDs:
-constexpr uint32_t kActivePropId = 2000;
-constexpr uint32_t kModePropId = 2001;
+inline constexpr uint32_t kActivePropId = 2000;
+inline constexpr uint32_t kModePropId = 2001;
 
 // Optional CRTC Property IDs:
-constexpr uint32_t kBackgroundColorPropId = 3000;
-constexpr uint32_t kCtmPropId = 3001;
-constexpr uint32_t kDegammaLutPropId = 3002;
-constexpr uint32_t kDegammaLutSizePropId = 3003;
-constexpr uint32_t kGammaLutPropId = 3004;
-constexpr uint32_t kGammaLutSizePropId = 3005;
-constexpr uint32_t kInFencePropId = 3006;
-constexpr uint32_t kOutFencePtrPropId = 3007;
-constexpr uint32_t kVrrEnabledPropId = 3008;
+inline constexpr uint32_t kBackgroundColorPropId = 3000;
+inline constexpr uint32_t kCtmPropId = 3001;
+inline constexpr uint32_t kDegammaLutPropId = 3002;
+inline constexpr uint32_t kDegammaLutSizePropId = 3003;
+inline constexpr uint32_t kGammaLutPropId = 3004;
+inline constexpr uint32_t kGammaLutSizePropId = 3005;
+inline constexpr uint32_t kInFencePropId = 3006;
+inline constexpr uint32_t kOutFencePtrPropId = 3007;
+inline constexpr uint32_t kVrrEnabledPropId = 3008;
 
 // Required Plane Property IDs:
-constexpr uint32_t kCrtcH = 4001;
-constexpr uint32_t kCrtcW = 4002;
-constexpr uint32_t kCrtcX = 4003;
-constexpr uint32_t kCrtcY = 4004;
-constexpr uint32_t kPlaneCrtcId = 4005;
-constexpr uint32_t kPlaneFbId = 4006;
-constexpr uint32_t kSrcH = 4007;
-constexpr uint32_t kSrcW = 4008;
-constexpr uint32_t kSrcX = 4009;
-constexpr uint32_t kSrcY = 4010;
+inline constexpr uint32_t kCrtcH = 4001;
+inline constexpr uint32_t kCrtcW = 4002;
+inline constexpr uint32_t kCrtcX = 4003;
+inline constexpr uint32_t kCrtcY = 4004;
+inline constexpr uint32_t kPlaneCrtcId = 4005;
+inline constexpr uint32_t kPlaneFbId = 4006;
+inline constexpr uint32_t kSrcH = 4007;
+inline constexpr uint32_t kSrcW = 4008;
+inline constexpr uint32_t kSrcX = 4009;
+inline constexpr uint32_t kSrcY = 4010;
 
 // Optional Plane Property IDs:
-constexpr uint32_t kTypePropId = 5000;
-constexpr uint32_t kInFormatsPropId = 5001;
-constexpr uint32_t kPlaneCtmId = 5002;
-constexpr uint32_t kRotationPropId = 5003;
+inline constexpr uint32_t kTypePropId = 5000;
+inline constexpr uint32_t kInFormatsPropId = 5001;
+inline constexpr uint32_t kPlaneCtmId = 5002;
+inline constexpr uint32_t kRotationPropId = 5003;
+inline constexpr uint32_t kColorEncodingPropId = 5004;
+inline constexpr uint32_t kColorRangePropId = 5005;
+inline constexpr uint32_t kSizeHintsPropId = 5006;
 
 // Blob IDs:
-constexpr uint32_t kBaseBlobId = 6000;
+inline constexpr uint32_t kBaseBlobId = 6000;
+inline constexpr uint32_t kTileBlobId = 6100;
 
 // The real DrmDevice makes actual DRM calls which we can't use in unit tests.
 class FakeDrmDevice : public DrmDevice {
@@ -143,54 +150,27 @@ class FakeDrmDevice : public DrmDevice {
     PlaneProperties(const PlaneProperties&);
     ~PlaneProperties();
 
-    uint32_t type() const;
-
-    std::optional<const DrmWrapper::Property*> GetProp(uint32_t prop_id) const;
-    void SetProp(uint32_t prop_id, uint32_t value);
-
     uint32_t id;
     uint32_t crtc_mask;
 
     std::vector<DrmWrapper::Property> properties;
   };
 
-  struct MockDrmState {
-    MockDrmState();
-    MockDrmState(const MockDrmState&);
-    ~MockDrmState();
+  struct FakeDrmState {
+    FakeDrmState();
+    FakeDrmState(const FakeDrmState&) = delete;
+    FakeDrmState& operator=(const FakeDrmState&) = delete;
+    ~FakeDrmState();
 
-    // Creates a totally empty |MockDrmState| with no properties configured and
-    // no property names set.
-    static MockDrmState CreateStateWithNoProperties();
-    // Creates a |MockDrmState| with all properties registered with their names
-    // in |property_names|, but no objects configured.
-    static MockDrmState CreateStateWithAllProperties();
-    // Creates a generic |MockDrmState|. Will create |crtc_count| different
-    // CRTCs and connectors with 1 primary plane, 1 cursor plane (since some
-    // tests expect them), and |planes_per_crtc| - 1 overlay planes for each
-    // CRTC.
-    static MockDrmState CreateStateWithDefaultObjects(
-        size_t crtc_count,
-        size_t planes_per_crtc,
-        size_t movable_planes = 0u);
-
-    ConnectorProperties& AddConnector();
-    EncoderProperties& AddEncoder();
-    CrtcProperties& AddCrtc();
-    std::pair<CrtcProperties&, ConnectorProperties&> AddCrtcAndConnector();
-    PlaneProperties& AddPlane(uint32_t crtc_id, uint32_t type);
-    PlaneProperties& AddPlane(const std::vector<uint32_t>& crtc_ids,
-                              uint32_t type);
     bool HasResources() const;
-
-    uint32_t AddPlaneOnCrtcAndGetCrtcId(size_t num_of_planes = 1u);
 
     std::vector<CrtcProperties> crtc_properties;
     std::vector<ConnectorProperties> connector_properties;
     std::vector<EncoderProperties> encoder_properties;
     std::vector<PlaneProperties> plane_properties;
-    std::vector<DrmWrapper::Property> blobs;
     std::map<uint32_t, std::string> property_names;
+    std::map<uint32_t, std::vector<std::pair<uint64_t, std::string>>>
+        enum_values;
   };
 
   explicit FakeDrmDevice(std::unique_ptr<GbmDevice> gbm_device);
@@ -201,11 +181,11 @@ class FakeDrmDevice : public DrmDevice {
   FakeDrmDevice(const FakeDrmDevice&) = delete;
   FakeDrmDevice& operator=(const FakeDrmDevice&) = delete;
 
-  static ScopedDrmPropertyBlobPtr AllocateInFormatsBlob(
-      uint32_t id,
+  ScopedDrmPropertyBlob CreateInFormatsBlob(
       const std::vector<uint32_t>& supported_formats,
       const std::vector<drm_format_modifier>& supported_format_modifiers);
-
+  ScopedDrmPropertyBlob CreateSizeHintsBlob(
+      const std::vector<gfx::Size>& sizes);
   int get_set_crtc_call_count() const { return set_crtc_call_count_; }
   int get_add_framebuffer_call_count() const {
     return add_framebuffer_call_count_;
@@ -255,25 +235,74 @@ class FakeDrmDevice : public DrmDevice {
     return it != crtc_cursor_map_.end() ? it->second : 0;
   }
 
-  void InitializeState(MockDrmState& state, bool use_atomic);
-  bool InitializeStateWithResult(MockDrmState& state, bool use_atomic);
+  gfx::Point get_crtc_cursor_location(uint32_t crtc) const {
+    const auto it = crtc_cursor_location_map_.find(crtc);
+    return it != crtc_cursor_location_map_.end() ? it->second : gfx::Point();
+  }
 
-  // Runs all connector update utility functions on |state|.
-  void UpdateConnectors(MockDrmState& state);
+  // Resets `drm_state_` to be empty, with no properties configured and no
+  // property names set. Resets `plane_manager_` to nullptr (it will not be
+  // re-created until InitializeState is called).
+  void ResetStateWithNoProperties();
 
-  // Update a connector's link status to bad if it has no modes (probably due
-  // to unsuccessful link-training.
-  void UpdateConnectorsLinkStatus(MockDrmState& state);
+  // Calls `ResetStateWithNoProperties`, then configures `drm_state_` to have
+  // all properties registered with their names in `property_names`, but no
+  // objects configured.
+  void ResetStateWithAllProperties();
 
-  // Sets EDID blobs as property blobs so they can be fetched when needed via
-  // GetPropertyBlob().
-  void MaybeSetEdidBlobsForConnectors(MockDrmState& state);
+  // Calls `ResetStateWithNoProperties`, and then configures `drm_state_`. Will
+  // create `crtc_count` different CRTCs and connectors with 1 primary plane, 1
+  // cursor plane (since some tests expect them), and `planes_per_crtc` - 1
+  // overlay planes for each CRTC. All planes will be allocated with the
+  // specified `plane_supported_formats` and `plane_supported_format_modifiers`.
+  // Returns a reference to `drm_state_`.
+  // TODO(b/335542790): Update tests to not need the returned reference to
+  // `drm_state_`.
+  FakeDrmDevice::FakeDrmState& ResetStateWithDefaultObjects(
+      size_t crtc_count,
+      size_t planes_per_crtc,
+      size_t movable_planes = 0u,
+      std::vector<uint32_t> plane_supported_formats = {DRM_FORMAT_XRGB8888},
+      std::vector<drm_format_modifier> plane_supported_format_modifiers = {});
 
-  void UpdateStateBesidesPlaneManager(const MockDrmState& state);
+  // Create `plane_manager_`, set the connector link status, and the EDID
+  // blob.
+  void InitializeState(bool use_atomic);
+  bool InitializeStateWithResult(bool use_atomic);
+
+  // Return true if InitializeState has been called yet.
+  bool IsInitialized() const { return !!plane_manager_; }
 
   void RunCallbacks();
 
-  void SetPropertyBlob(ScopedDrmPropertyBlobPtr blob);
+  // Add a `property.id` to `object_id`, and set its value to `property.value`.
+  // This can only be called before InitializeState.
+  void AddProperty(uint32_t object_id, const DrmWrapper::Property& property);
+
+  // Configure the possible enum values for a particular property. This can only
+  // be called before InitializeState.
+  void SetPossibleValuesForEnumProperty(
+      uint32_t property_id,
+      std::vector<std::pair<uint64_t /* value */, std::string /* name */>>
+          values);
+
+  // Functions to configure the FakeDrmState. Must be called before Initialize
+  // is called.
+  CrtcProperties& AddCrtc();
+  CrtcProperties& AddCrtcWithPrimaryAndCursorPlanes();
+  std::pair<CrtcProperties&, ConnectorProperties&> AddCrtcAndConnector();
+  PlaneProperties& AddPlane(
+      uint32_t crtc_id,
+      uint32_t type,
+      std::vector<uint32_t> supported_formats = {DRM_FORMAT_XRGB8888},
+      std::vector<drm_format_modifier> supported_format_modifiers = {});
+  PlaneProperties& AddPlane(
+      const std::vector<uint32_t>& crtc_ids,
+      uint32_t type,
+      std::vector<uint32_t> supported_formats = {DRM_FORMAT_XRGB8888},
+      std::vector<drm_format_modifier> supported_format_modifiers = {});
+  ConnectorProperties& AddConnector();
+  EncoderProperties& AddEncoder();
 
   void SetModifiersOverhead(base::flat_map<uint64_t, int> modifiers_overhead);
   void SetSystemLimitOfModifiers(uint64_t limit);
@@ -394,11 +423,25 @@ class FakeDrmDevice : public DrmDevice {
 
   bool UpdateProperty(uint32_t id,
                       uint64_t value,
-                      std::vector<DrmWrapper::Property>* properties);
+                      std::vector<DrmWrapper::Property>* properties,
+                      bool add_property_if_needed = false);
 
-  bool UpdateProperty(uint32_t object_id, uint32_t property_id, uint64_t value);
+  bool UpdateProperty(uint32_t object_id,
+                      uint32_t property_id,
+                      uint64_t value,
+                      bool add_property_if_needed = false);
 
   bool ValidatePropertyValue(uint32_t id, uint64_t value);
+
+  // Returns true iff SetPossibleValuesForEnumProperty() has been called for
+  // `prop_id`.
+  bool IsPropertyValueEnum(uint32_t prop_id) const;
+
+  // Fills `property->count_enums` and `property->enums` with the possible enum
+  // values for the property (provided to a previous call to
+  // SetPossibleValuesForEnumProperty()). It's assumed that `property->id` has
+  // the correct property ID.
+  void FillPossibleValuesForEnumProperty(drmModePropertyRes* property) const;
 
   int set_crtc_call_count_ = 0;
   int add_framebuffer_call_count_ = 0;
@@ -430,8 +473,7 @@ class FakeDrmDevice : public DrmDevice {
   base::flat_map<uint32_t /*handle*/, sk_sp<SkSurface>> buffers_;
 
   std::map<uint32_t, uint32_t> crtc_cursor_map_;
-
-  std::map<uint32_t, ScopedDrmPropertyBlobPtr> blob_property_map_;
+  std::unordered_map<uint32_t, gfx::Point> crtc_cursor_location_map_;
 
   std::set<uint32_t> framebuffer_ids_;
   std::map<uint32_t, uint32_t> crtc_fb_;
@@ -439,9 +481,27 @@ class FakeDrmDevice : public DrmDevice {
 
   base::queue<PageFlipRequest::PageFlipCallback> callbacks_;
 
-  MockDrmState drm_state_;
+  FakeDrmState drm_state_;
 
-  std::set<uint32_t> allocated_property_blobs_;
+  struct BlobState {
+    BlobState();
+    BlobState(const BlobState&);
+    ~BlobState();
+
+    // The reference count for this blob. The blob is retained and released
+    // with the lifetime of the ScopedDrmPropertyBlob returned by
+    // CreatePropertyBlob. It is also retained when its id is set as a value in
+    // UpdateProperty and released when that value is overwritten.
+    uint32_t ref_count = 0;
+    std::vector<uint8_t> data;
+  };
+  std::map<uint32_t, BlobState> allocated_blobs_;
+
+  // Retain or release the blob with id `id`. Returns true if the blob was found
+  // and retained or released. If no blob exists with `id`, return false and
+  // do nothing.
+  bool RetainBlob(uint32_t id);
+  bool ReleaseBlob(uint32_t id);
 
   // Props of the plane associated with the generated fb_id.
   base::flat_map<uint32_t /*fb_id*/, FramebufferProps> fb_props_;

@@ -18,6 +18,7 @@
 #include "third_party/abseil-cpp/absl/types/variant.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/models/menu_separator_types.h"
+#include "ui/color/color_id.h"
 #include "ui/color/color_provider_key.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/geometry/rect.h"
@@ -32,6 +33,7 @@ class PaintCanvas;
 }
 
 namespace gfx {
+class Insets;
 class Rect;
 class Size;
 }
@@ -60,7 +62,7 @@ class NATIVE_THEME_EXPORT NativeTheme {
   // The part to be painted / sized.
   enum Part {
     kCheckbox,
-// TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
+// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
 // of lacros-chrome is complete.
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
     kFrameTopArea,
@@ -146,6 +148,10 @@ class NATIVE_THEME_EXPORT NativeTheme {
     kMaxValue = kCustom,
   };
 
+  // IMPORTANT!
+  // This enum is reported in metrics. Do not reorder; add additional values at
+  // the end.
+  //
   // This represents the OS-level high contrast theme. kNone unless the default
   // system color scheme is kPlatformHighContrast.
   enum class PlatformHighContrastColorScheme {
@@ -218,6 +224,7 @@ class NATIVE_THEME_EXPORT NativeTheme {
 
   struct MenuSeparatorExtraParams {
     raw_ptr<const gfx::Rect> paint_rect = nullptr;
+    ui::ColorId color_id = ui::kColorMenuSeparator;
     MenuSeparatorType type = MenuSeparatorType::NORMAL_SEPARATOR;
   };
 
@@ -287,16 +294,8 @@ class NATIVE_THEME_EXPORT NativeTheme {
     std::optional<SkColor> track_color;
   };
 
-  enum class ScrollbarOverlayColorTheme {
-    kDefault = 0,
-    kLight = 1,
-    kDark = 2,
-  };
-
   struct ScrollbarThumbExtraParams {
     bool is_hovering = false;
-    ScrollbarOverlayColorTheme scrollbar_theme =
-        ScrollbarOverlayColorTheme::kDefault;
     // This allows clients to directly override the color values to support
     // element-specific web platform CSS.
     std::optional<SkColor> thumb_color;
@@ -318,8 +317,6 @@ class NATIVE_THEME_EXPORT NativeTheme {
   struct ScrollbarExtraParams {
     bool is_hovering = false;
     bool is_overlay = false;
-    ScrollbarOverlayColorTheme scrollbar_theme =
-        ScrollbarOverlayColorTheme::kDefault;
     ScrollbarOrientation orientation =
         ScrollbarOrientation::kVerticalOnRight;  // Used on Mac for drawing
                                                  // gradients.
@@ -391,6 +388,14 @@ class NATIVE_THEME_EXPORT NativeTheme {
                                 State state,
                                 const ExtraParams& extra) const = 0;
   virtual int GetPaintedScrollbarTrackInset() const;
+
+  virtual gfx::Insets GetScrollbarSolidColorThumbInsets(Part part) const;
+
+  // Called if the theme uses solid color for scrollbar thumb.
+  virtual SkColor4f GetScrollbarThumbColor(
+      const ui::ColorProvider& color_provider,
+      State state,
+      const ScrollbarThumbExtraParams& extra_params) const;
 
   virtual float GetBorderRadiusForPart(Part part,
                                        float width,
@@ -519,6 +524,12 @@ class NATIVE_THEME_EXPORT NativeTheme {
   virtual std::optional<CaptionStyle> GetSystemCaptionStyle() const;
 
   virtual ColorScheme GetDefaultSystemColorScheme() const;
+
+  // Updates contrast-related theme states such as `forced_colors_`,
+  // `page_colors_`, `preferred_contrast_` and `prefers_reduced_transparency_`
+  // based on the `observed_theme`. Returns true if there's an update to any of
+  // these states.
+  bool UpdateContrastRelatedStates(const NativeTheme& observed_theme);
 
   virtual const std::map<SystemThemeColor, SkColor>& GetSystemColors() const;
 

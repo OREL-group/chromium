@@ -15,6 +15,7 @@ import 'chrome://resources/ash/common/cr_elements/cr_icon_button/cr_icon_button.
 import 'chrome://resources/ash/common/cr_elements/cr_toast/cr_toast.js';
 import 'chrome://resources/ash/common/cr_elements/icons.html.js';
 import 'chrome://resources/ash/common/cr_elements/policy/cr_policy_indicator.js';
+import 'chrome://resources/ash/common/cr_elements/policy/cr_tooltip_icon.js';
 import 'chrome://resources/polymer/v3_0/iron-icon/iron-icon.js';
 import 'chrome://resources/polymer/v3_0/paper-tooltip/paper-tooltip.js';
 import '/shared/settings/prefs/prefs.js';
@@ -188,9 +189,9 @@ export class SettingsInternetPageElement extends
        * enforced by policy and users are prohibited by policy from manually
        * disconnecting from it.
        */
-      isAddingBuiltInVpnProhibited_: {
+      isBuiltInVpnManagementBlocked_: {
         type: Boolean,
-        computed: 'computeIsAddingBuiltInVpnProhibited_(vpnIsProhibited_,' +
+        computed: 'computeIsBuiltInVpnManagementBlocked_(vpnIsProhibited_,' +
             'prefs.vpn_config_allowed.*' +
             'prefs.arc.vpn.*,' +
             'prefs.arc.vpn.always_on.*)',
@@ -226,14 +227,6 @@ export class SettingsInternetPageElement extends
         value() {
           return loadTimeData.valueExists('isApnRevampEnabled') &&
               loadTimeData.getBoolean('isApnRevampEnabled');
-        },
-      },
-
-      isCellularCarrierLockEnabled_: {
-        type: Boolean,
-        value() {
-          return loadTimeData.valueExists('isCellularCarrierLockEnabled') &&
-              loadTimeData.getBoolean('isCellularCarrierLockEnabled');
         },
       },
 
@@ -313,6 +306,11 @@ export class SettingsInternetPageElement extends
         computed: 'showProviderLocked_(subpageType_, deviceStates)',
       },
 
+      isDeviceUpdating_: {
+        type: Boolean,
+        computed: 'showDeviceUpdating_(subpageType_, deviceStates)',
+      },
+
       /**
        * eSIM network used in internet detail menu.
        */
@@ -338,14 +336,13 @@ export class SettingsInternetPageElement extends
         value: '',
       },
 
-      /**
-       * Return true if hotspot feature flag is enabled.
-       */
-      isHotspotFeatureEnabled_: {
+      isApnRevampAndAllowApnModificationPolicyEnabled_: {
         type: Boolean,
         value() {
-          return loadTimeData.valueExists('isHotspotEnabled') &&
-              loadTimeData.getBoolean('isHotspotEnabled');
+          return loadTimeData.valueExists(
+                     'isApnRevampAndAllowApnModificationPolicyEnabled') &&
+              loadTimeData.getBoolean(
+                  'isApnRevampAndAllowApnModificationPolicyEnabled');
         },
       },
 
@@ -363,6 +360,16 @@ export class SettingsInternetPageElement extends
         type: Object,
         notify: true,
       },
+
+      /**
+       * The position of the tooltips displayed by the APN menu. This can be
+       * 'right' if the language is RTL. This ensures the tooltip doesn't get
+       * cut off in RTL languages (b/335486874).
+       */
+      apnMenuTooltipsPosition_: {
+        type: String,
+        value: 'left',
+      },
     };
   }
 
@@ -378,13 +385,11 @@ export class SettingsInternetPageElement extends
   private eSimNetworkState_: NetworkStateProperties;
   private globalPolicy_: GlobalPolicy|undefined;
   private hasActiveCellularNetwork_: boolean;
-  private isApnRevampEnabled_: boolean;
-  private isCellularCarrierLockEnabled_: boolean;
   private isConnectedToNonCellularNetwork_: boolean;
   private isNumCustomApnsLimitReached_: boolean;
   private isInstantHotspotRebrandEnabled_: boolean;
-  private isHotspotFeatureEnabled_: boolean;
-  private isAddingBuiltInVpnProhibited_: boolean;
+  private isApnRevampAndAllowApnModificationPolicyEnabled_: boolean;
+  private isBuiltInVpnManagementBlocked_: boolean;
   private knownNetworksType_: NetworkType;
   private networkConfig_: CrosNetworkConfigInterface;
   private passpointSubscription_: PasspointSubscription|undefined;
@@ -399,10 +404,12 @@ export class SettingsInternetPageElement extends
   private showInternetConfig_: boolean;
   private showSimLockDialog_: boolean;
   private isProviderLocked_: boolean;
+  private isDeviceUpdating_: boolean;
   private showSpinner_: boolean;
   private subpageType_: NetworkType;
   private vpnIsProhibited_: boolean;
   private vpnProviders_: VpnProvider[];
+  private apnMenuTooltipsPosition_: string;
 
   constructor() {
     super();
@@ -495,6 +502,9 @@ export class SettingsInternetPageElement extends
     this.onPoliciesApplied(/*userhash=*/ '');
     this.onVpnProvidersChanged();
     this.onNetworkStateListChanged();
+
+    const isRTL = window.getComputedStyle(this).direction === 'rtl';
+    this.apnMenuTooltipsPosition_ = isRTL ? 'right' : 'left';
   }
 
   /**
@@ -772,9 +782,6 @@ export class SettingsInternetPageElement extends
   }
 
   private showProviderLocked_(): boolean {
-    if (!this.isCellularCarrierLockEnabled_) {
-      return false;
-    }
     if (this.subpageType_ !== NetworkType.kCellular) {
       return false;
     }
@@ -782,6 +789,18 @@ export class SettingsInternetPageElement extends
     const cellularDeviceState =
         this.getDeviceState_(NetworkType.kCellular, this.deviceStates);
     if (!cellularDeviceState || !cellularDeviceState.isCarrierLocked) {
+      return false;
+    }
+    return true;
+  }
+
+  private showDeviceUpdating_(): boolean {
+    if (this.subpageType_ !== NetworkType.kCellular) {
+      return false;
+    }
+    const cellularDeviceState =
+        this.getDeviceState_(NetworkType.kCellular, this.deviceStates);
+    if (!cellularDeviceState || !cellularDeviceState.isFlashing) {
       return false;
     }
     return true;
@@ -867,7 +886,7 @@ export class SettingsInternetPageElement extends
   }
 
   private onAddVpnClick_(): void {
-    if (!this.isAddingBuiltInVpnProhibited_) {
+    if (!this.isBuiltInVpnManagementBlocked_) {
       this.showConfig_(true /* configAndConnect */, NetworkType.kVPN);
     }
   }
@@ -940,7 +959,7 @@ export class SettingsInternetPageElement extends
     return this.allowAddWiFiConnection_(globalPolicy, managedNetworkAvailable);
   }
 
-  private computeIsAddingBuiltInVpnProhibited_(): boolean {
+  private computeIsBuiltInVpnManagementBlocked_(): boolean {
     if (this.vpnIsProhibited_) {
       return true;
     }
@@ -1059,6 +1078,17 @@ export class SettingsInternetPageElement extends
     const apnSubpage = castExists(
         this.shadowRoot!.querySelector<ApnSubpageElement>('#apnSubpage'));
     apnSubpage.openApnSelectionDialog();
+  }
+
+  private shouldDisallowApnModification_(globalPolicy: GlobalPolicy|
+                                         undefined): boolean {
+    if (!this.isApnRevampAndAllowApnModificationPolicyEnabled_) {
+      return false;
+    }
+    if (!globalPolicy) {
+      return false;
+    }
+    return !globalPolicy.allowApnModification;
   }
 
   private onShowPasspointDetails_(event: CustomEvent<PasspointSubscription>):

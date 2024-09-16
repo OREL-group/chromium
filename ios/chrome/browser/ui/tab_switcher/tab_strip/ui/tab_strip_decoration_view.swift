@@ -14,6 +14,10 @@ class TabStripDecorationView: UIView {
     super.init(frame: frame)
     translatesAutoresizingMaskIntoConstraints = false
 
+    if TabStripFeaturesUtils.isTabStripBlackBackgroundEnabled {
+      overrideUserInterfaceStyle = .dark
+    }
+
     let solidBackgroundView: UIView = createSolidBackgroundView()
     let smallSeparator: UIView = createSeparatorView()
     let regularSeparator: UIView = createSeparatorView()
@@ -28,8 +32,8 @@ class TabStripDecorationView: UIView {
         equalToConstant: TabStripConstants.StaticSeparator.viewHeight),
 
       /// `smallSeparator` constraints.
-      smallSeparator.leftAnchor.constraint(
-        equalTo: self.leftAnchor,
+      smallSeparator.leadingAnchor.constraint(
+        equalTo: self.leadingAnchor,
         constant: TabStripConstants.StaticSeparator.leadingInset),
       smallSeparator.widthAnchor.constraint(
         equalToConstant: TabStripConstants.StaticSeparator.separatorWidth),
@@ -38,11 +42,11 @@ class TabStripDecorationView: UIView {
       smallSeparator.centerYAnchor.constraint(equalTo: self.centerYAnchor),
 
       /// `regularSeparator` constraints.
-      regularSeparator.leftAnchor.constraint(
-        equalTo: smallSeparator.rightAnchor,
+      regularSeparator.leadingAnchor.constraint(
+        equalTo: smallSeparator.trailingAnchor,
         constant: TabStripConstants.StaticSeparator.horizontalInset),
-      regularSeparator.rightAnchor.constraint(
-        equalTo: self.rightAnchor),
+      regularSeparator.trailingAnchor.constraint(
+        equalTo: self.trailingAnchor),
       regularSeparator.widthAnchor.constraint(
         equalToConstant: TabStripConstants.StaticSeparator.separatorWidth),
       regularSeparator.heightAnchor.constraint(
@@ -50,10 +54,14 @@ class TabStripDecorationView: UIView {
       regularSeparator.centerYAnchor.constraint(equalTo: self.centerYAnchor),
 
       /// `solidBackgroundView` constraints.
-      solidBackgroundView.leftAnchor.constraint(equalTo: self.leftAnchor),
-      solidBackgroundView.rightAnchor.constraint(equalTo: regularSeparator.leftAnchor),
-      solidBackgroundView.topAnchor.constraint(equalTo: regularSeparator.topAnchor),
-      solidBackgroundView.bottomAnchor.constraint(equalTo: regularSeparator.bottomAnchor),
+      solidBackgroundView.leadingAnchor.constraint(equalTo: self.leadingAnchor),
+      solidBackgroundView.trailingAnchor.constraint(equalTo: regularSeparator.leadingAnchor),
+      solidBackgroundView.topAnchor.constraint(
+        equalTo: regularSeparator.topAnchor,
+        constant: -TabStripConstants.StaticSeparator.solidBackgroundVerticalPadding),
+      solidBackgroundView.bottomAnchor.constraint(
+        equalTo: regularSeparator.bottomAnchor,
+        constant: +TabStripConstants.StaticSeparator.solidBackgroundVerticalPadding),
     ])
 
   }
@@ -76,7 +84,7 @@ class TabStripDecorationView: UIView {
   // Returns a new solid background view.
   func createSolidBackgroundView() -> UIView {
     let solidBackgroundView = UIView()
-    solidBackgroundView.backgroundColor = UIColor(named: kGroupedPrimaryBackgroundColor)
+    solidBackgroundView.backgroundColor = TabStripHelper.backgroundColor
     solidBackgroundView.translatesAutoresizingMaskIntoConstraints = false
     return solidBackgroundView
   }

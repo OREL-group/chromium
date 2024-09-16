@@ -54,7 +54,7 @@ PasswordForm CreateSavedFederated() {
   federated.signon_realm = "federation://example.in/google.com";
   federated.type = PasswordForm::Type::kApi;
   federated.federation_origin =
-      url::Origin::Create(GURL("https://google.com/"));
+      url::SchemeHostPort(GURL("https://google.com/"));
   federated.username_value = u"federated_username";
   return federated;
 }
@@ -169,14 +169,15 @@ PasswordGenerationManagerTest::SetUpOverwritingUI(
   saved.username_value = u"";
   const PasswordForm federated = CreateSavedFederated();
   FakeFormFetcher fetcher;
-  fetcher.SetNonFederated({&saved});
-  fetcher.set_federated({&federated});
+  fetcher.SetNonFederated({saved});
+  fetcher.SetBestMatches({saved});
+  fetcher.set_federated({federated});
 
   EXPECT_CALL(client_, PromptUserToSaveOrUpdatePasswordMock(true))
       .WillOnce(testing::Return(true));
   manager().GeneratedPasswordAccepted(
-      std::move(generated), fetcher.GetNonFederatedMatches(),
-      fetcher.GetFederatedMatches(), std::move(driver));
+      std::move(generated), {&saved}, {&federated},
+      PasswordForm::Store::kAccountStore, std::move(driver));
   return client_.MoveForm();
 }
 
@@ -197,9 +198,9 @@ TEST_F(PasswordGenerationManagerTest, GeneratedPasswordAccepted_EmptyStore) {
   FakeFormFetcher fetcher;
 
   EXPECT_CALL(driver, GeneratedPasswordAccepted(generated.password_value));
-  manager().GeneratedPasswordAccepted(
-      std::move(generated), fetcher.GetNonFederatedMatches(),
-      fetcher.GetFederatedMatches(), driver.AsWeakPtr());
+  manager().GeneratedPasswordAccepted(std::move(generated), {}, {},
+                                      PasswordForm::Store::kAccountStore,
+                                      driver.AsWeakPtr());
   EXPECT_FALSE(manager().HasGeneratedPassword());
 }
 
@@ -212,12 +213,13 @@ TEST_F(PasswordGenerationManagerTest, GeneratedPasswordAccepted_Conflict) {
   generated.username_value = saved.username_value;
   MockPasswordManagerDriver driver;
   FakeFormFetcher fetcher;
-  fetcher.SetNonFederated({&saved});
+  fetcher.SetNonFederated({saved});
+  fetcher.SetBestMatches({saved});
 
   EXPECT_CALL(driver, GeneratedPasswordAccepted(generated.password_value));
-  manager().GeneratedPasswordAccepted(
-      std::move(generated), fetcher.GetNonFederatedMatches(),
-      fetcher.GetFederatedMatches(), driver.AsWeakPtr());
+  manager().GeneratedPasswordAccepted(std::move(generated), {&saved}, {},
+                                      PasswordForm::Store::kAccountStore,
+                                      driver.AsWeakPtr());
   EXPECT_FALSE(manager().HasGeneratedPassword());
 }
 
@@ -231,7 +233,7 @@ TEST_F(PasswordGenerationManagerTest, GeneratedPasswordAccepted_UpdateUI) {
   EXPECT_THAT(ui_form->GetBestMatches(),
               ElementsAre(Field(&PasswordForm::username_value, u"")));
   EXPECT_THAT(ui_form->GetFederatedMatches(),
-              ElementsAre(Pointee(CreateSavedFederated())));
+              ElementsAre(CreateSavedFederated()));
   EXPECT_EQ(u"", ui_form->GetPendingCredentials().username_value);
   EXPECT_EQ(CreateGenerated().password_value,
             ui_form->GetPendingCredentials().password_value);
@@ -273,6 +275,9 @@ TEST_F(PasswordGenerationManagerTest, GeneratedPasswordAccepted_UpdateUISave) {
   std::unique_ptr<PasswordFormManagerForUI> ui_form =
       SetUpOverwritingUI(driver.AsWeakPtr());
   ASSERT_TRUE(ui_form);
+  EXPECT_EQ(
+      PasswordForm::Store::kAccountStore,
+      ui_form->GetPasswordStoreForSaving(ui_form->GetPendingCredentials()));
   EXPECT_CALL(driver,
               GeneratedPasswordAccepted(CreateGenerated().password_value));
   ui_form->Save();
@@ -400,10 +405,10 @@ TEST_F(PasswordGenerationManagerTest, PresaveGeneratedPassword_ThenSaveAsNew) {
   EXPECT_CALL(store(),
               UpdateLoginWithPrimaryKey(generated_with_date,
                                         FormHasUniqueKey(generated), _));
-  PendingCredentialsStates states;
   manager().CommitGeneratedPassword(
-      pending, {} /* matches */, std::u16string() /* old_password */, states,
-      &form_saver(), nullptr /* account_store_form_saver */);
+      pending, {} /* matches */, std::u16string() /* old_password */,
+      PasswordForm::Store::kProfileStore, &form_saver(),
+      nullptr /* account_store_form_saver */);
   EXPECT_TRUE(manager().HasGeneratedPassword());
 }
 
@@ -460,10 +465,13 @@ TEST_F(PasswordGenerationManagerTest, PresaveGeneratedPassword_ThenUpdate) {
   related_psl_password_expected.date_password_modified = base::Time::Now();
   EXPECT_CALL(store(), UpdateLogin(related_psl_password_expected, _));
 
-  PendingCredentialsStates states;
-  manager().CommitGeneratedPassword(generated, matches, u"old password", states,
-                                    &form_saver(),
-                                    nullptr /* account_store_form_saver */);
+  const std::vector<PasswordForm> matches_for_generation = {
+      related_password, related_psl_password, unrelated_password,
+      unrelated_psl_password};
+  manager().CommitGeneratedPassword(
+      generated, matches_for_generation, u"old password",
+      PasswordForm::Store::kProfileStore, &form_saver(),
+      nullptr /* account_store_form_saver */);
   EXPECT_TRUE(manager().HasGeneratedPassword());
 }
 
@@ -474,7 +482,7 @@ TEST_F(PasswordGenerationManagerTest, PasswordNoLongerGenerated) {
   EXPECT_CALL(store(), AddLogin);
   manager().PresaveGeneratedPassword(generated, {}, &form_saver());
 
-  EXPECT_CALL(store(), RemoveLogin(FormHasUniqueKey(generated)));
+  EXPECT_CALL(store(), RemoveLogin(_, FormHasUniqueKey(generated)));
   manager().PasswordNoLongerGenerated(&form_saver());
   EXPECT_FALSE(manager().HasGeneratedPassword());
 }
@@ -491,7 +499,7 @@ TEST_F(PasswordGenerationManagerTest,
   EXPECT_CALL(store(), AddLogin(generated_with_date, _));
   manager().PresaveGeneratedPassword(generated, {}, &form_saver());
 
-  EXPECT_CALL(store(), RemoveLogin(FormHasUniqueKey(generated_with_date)));
+  EXPECT_CALL(store(), RemoveLogin(_, FormHasUniqueKey(generated_with_date)));
   manager().PasswordNoLongerGenerated(&form_saver());
 
   ForwardByMinute();
@@ -565,11 +573,10 @@ TEST_F(PasswordGenerationManagerTest, EditsInGeneratedPasswordMetrics) {
   EXPECT_CALL(store(), UpdateLoginWithPrimaryKey(
                            generated_after_edits,
                            FormHasUniqueKey(generated_after_edits), _));
-  PendingCredentialsStates states;
-  manager().CommitGeneratedPassword(generated_after_edits, {} /* matches */,
-                                    std::u16string() /* old_password */, states,
-                                    &form_saver(),
-                                    nullptr /* account_store_form_saver */);
+  manager().CommitGeneratedPassword(
+      generated_after_edits, {} /* matches */,
+      std::u16string() /* old_password */, PasswordForm::Store::kProfileStore,
+      &form_saver(), nullptr /* account_store_form_saver */);
 
   // Check emitted metrics.
   histogram_tester.ExpectUniqueSample(
@@ -619,11 +626,10 @@ TEST_F(PasswordGenerationManagerTest,
   EXPECT_CALL(store(), UpdateLoginWithPrimaryKey(
                            generated_after_edits,
                            FormHasUniqueKey(generated_after_edits), _));
-  PendingCredentialsStates states;
-  manager().CommitGeneratedPassword(generated_after_edits, {} /* matches */,
-                                    std::u16string() /* old_password */, states,
-                                    &form_saver(),
-                                    nullptr /* account_store_form_saver */);
+  manager().CommitGeneratedPassword(
+      generated_after_edits, {} /* matches */,
+      std::u16string() /* old_password */, PasswordForm::Store::kProfileStore,
+      &form_saver(), nullptr /* account_store_form_saver */);
 
   // Check emitted metrics.
   histogram_tester.ExpectUniqueSample(
@@ -666,9 +672,9 @@ TEST_F(PasswordGenerationManagerTest, CommitGeneratedPassword_Replace) {
 
   EXPECT_CALL(store(), UpdateLoginWithPrimaryKey(
                            generated, FormHasUniqueKey(generated), _));
-  PendingCredentialsStates states;
-  manager().CommitGeneratedPassword(generated, {}, u"", states, &form_saver(),
-                                    nullptr /* account_store_form_saver */);
+  manager().CommitGeneratedPassword(
+      generated, {}, u"", PasswordForm::Store::kProfileStore, &form_saver(),
+      nullptr /* account_store_form_saver */);
 
   ForwardByMinute();
   PasswordForm generated_updated = generated;
@@ -678,9 +684,9 @@ TEST_F(PasswordGenerationManagerTest, CommitGeneratedPassword_Replace) {
   generated_updated.date_last_used = base::Time::Now();
   EXPECT_CALL(store(), UpdateLoginWithPrimaryKey(
                            generated_updated, FormHasUniqueKey(generated), _));
-  manager().CommitGeneratedPassword(generated_updated, {}, u"", states,
-                                    &form_saver(),
-                                    nullptr /* account_store_form_saver */);
+  manager().CommitGeneratedPassword(
+      generated_updated, {}, u"", PasswordForm::Store::kProfileStore,
+      &form_saver(), nullptr /* account_store_form_saver */);
 }
 
 TEST_F(PasswordGenerationManagerTest,
@@ -707,10 +713,10 @@ TEST_F(PasswordGenerationManagerTest,
   EXPECT_CALL(store(), UpdateLogin(generated, _));
   EXPECT_CALL(store(), UpdateLoginWithPrimaryKey(generated, _, _));
 
-  PendingCredentialsStates states;
-  states.profile_store_state = PendingCredentialsState::UPDATE;
-  manager().CommitGeneratedPassword(generated, {&saved}, u"", states,
-                                    &form_saver(), &account_store_form_saver);
+  manager().CommitGeneratedPassword(
+      generated, std::vector{saved}, u"",
+      PasswordForm::Store::kProfileStore | PasswordForm::Store::kAccountStore,
+      &form_saver(), &account_store_form_saver);
 }
 
 }  // namespace

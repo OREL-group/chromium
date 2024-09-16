@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/formats/mp4/box_definitions.h"
 
 #include <bitset>
@@ -29,7 +34,7 @@
 
 #include "media/formats/mp4/avc.h"
 #include "media/formats/mp4/dolby_vision.h"
-#include "media/video/h264_parser.h"  // nogncheck
+#include "media/parsers/h264_parser.h"
 
 #if BUILDFLAG(ENABLE_PLATFORM_HEVC)
 #include "media/formats/mp4/hevc.h"
@@ -1680,20 +1685,26 @@ IamfSpecificBox::IamfSpecificBox(const IamfSpecificBox& other) = default;
 IamfSpecificBox::~IamfSpecificBox() = default;
 
 FourCC IamfSpecificBox::BoxType() const {
-  return FOURCC_IAMF;
+  return FOURCC_IACB;
 }
 
 bool IamfSpecificBox::Parse(BoxReader* reader) {
-  const int obu_bitstream_size = reader->box_size() - reader->pos();
+  uint8_t configuration_version;
+  RCHECK(reader->Read1(&configuration_version));
+  RCHECK(configuration_version == 0x01);
+
+  uint32_t config_obus_size;
+  RCHECK(ReadLeb128Value(reader, &config_obus_size));
+
   base::span<const uint8_t> buffer =
-      reader->buffer().subspan(reader->pos(), obu_bitstream_size);
+      reader->buffer().subspan(reader->pos(), config_obus_size);
   ia_descriptors.assign(buffer.begin(), buffer.end());
 
-  RCHECK(reader->SkipBytes(obu_bitstream_size));
+  RCHECK(reader->SkipBytes(config_obus_size));
 
   BufferReader config_reader(ia_descriptors.data(), ia_descriptors.size());
 
-  while (config_reader.pos() < config_reader.buffer_size()) {
+  while (config_reader.pos() < config_reader.buffer().size()) {
     RCHECK(ReadOBU(&config_reader));
   }
 
@@ -1807,14 +1818,6 @@ bool AudioSampleEntry::Parse(BoxReader* reader) {
   // Convert from 16.16 fixed point to integer
   samplerate >>= 16;
 
-#if BUILDFLAG(ENABLE_PLATFORM_IAMF_AUDIO)
-  if (format == FOURCC_IAMF) {
-    RCHECK_MEDIA_LOGGED(iamf.Parse(reader), reader->media_log(),
-                        "Failure parsing IamfSpecificBox (iamf)");
-    return true;
-  }
-#endif  // BUILDFLAG(ENABLE_PLATFORM_IAMF_AUDIO)
-
   RCHECK(reader->ScanChildren());
   if (format == FOURCC_ENCA) {
     // Continue scanning until a recognized protection scheme is found, or until
@@ -1871,6 +1874,14 @@ bool AudioSampleEntry::Parse(BoxReader* reader) {
                         "Failure parsing AC4SpecificBox (dac4)");
   }
 #endif  // BUILDFLAG(ENABLE_PLATFORM_AC4_AUDIO)
+
+#if BUILDFLAG(ENABLE_PLATFORM_IAMF_AUDIO)
+  if (format == FOURCC_IAMF ||
+      (format == FOURCC_ENCA && sinf.format.format == FOURCC_IAMF)) {
+    RCHECK_MEDIA_LOGGED(reader->ReadChild(&iacb), reader->media_log(),
+                        "Failure parsing IamfSpecificBox (iacb)");
+  }
+#endif  // BUILDFLAG(ENABLE_PLATFORM_IAMF_AUDIO)
 
   // Read the FLACSpecificBox, even if CENC is signalled.
   if (format == FOURCC_FLAC ||
@@ -1953,7 +1964,7 @@ std::string MediaHeader::language() const {
 
   if (lang_chars[0] < 'a' || lang_chars[0] > 'z' || lang_chars[1] < 'a' ||
       lang_chars[1] > 'z' || lang_chars[2] < 'a' || lang_chars[2] > 'z') {
-    // Got unexpected characteds in ISO 639-2/T language code. Something must be
+    // Got unexpected characters in ISO 639-2/T language code. Something must be
     // wrong with the input file, report 'und' language to be safe.
     DVLOG(2) << "Ignoring MDHD language_code (non ISO 639-2 compliant): "
              << lang_chars;

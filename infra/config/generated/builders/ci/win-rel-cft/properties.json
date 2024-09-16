@@ -25,6 +25,9 @@
                 "target_platform": "win"
               },
               "legacy_gclient_config": {
+                "apply_configs": [
+                  "chromium_with_telemetry_dependencies"
+                ],
                 "config": "chromium"
               }
             }
@@ -48,7 +51,6 @@
   },
   "$build/reclient": {
     "instance": "rbe-chromium-trusted",
-    "jobs": 500,
     "metrics_project": "chromium-reclient-metrics",
     "scandeps_server": true
   },
@@ -70,6 +72,9 @@
     ]
   },
   "builder_group": "chromium.cft",
+  "gardener_rotations": [
+    "cft"
+  ],
   "recipe": "chromium",
   "sheriff_rotations": [
     "cft"

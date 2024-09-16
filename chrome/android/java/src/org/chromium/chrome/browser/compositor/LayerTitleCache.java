@@ -39,8 +39,8 @@ public class LayerTitleCache {
     private final Context mContext;
     private TabModelSelector mTabModelSelector;
 
-    private final SparseArray<FaviconTitle> mTabTitles = new SparseArray<FaviconTitle>();
-    private final SparseArray<Title> mGroupTitles = new SparseArray<Title>();
+    private final SparseArray<FaviconTitle> mTabTitles = new SparseArray<>();
+    private final SparseArray<Title> mGroupTitles = new SparseArray<>();
     private final int mFaviconSize;
 
     private long mNativeLayerTitleCache;
@@ -166,13 +166,14 @@ public class LayerTitleCache {
         TabGroupModelFilter filter =
                 (TabGroupModelFilter)
                         mTabModelSelector.getTabModelFilterProvider().getTabModelFilter(incognito);
+        if (!filter.tabGroupExistsForRootId(groupRootId)) return;
+
         String titleString = filter.getTabGroupTitle(groupRootId);
         getUpdatedGroupTitle(groupRootId, titleString, incognito);
     }
 
     public String getUpdatedGroupTitle(int groupRootId, String titleString, boolean incognito) {
-        // TODO(crbug.com/331642736): Investigate skipping creating the bitmap for empty titles.
-        if (titleString == null) titleString = "";
+        if (TextUtils.isEmpty(titleString)) return null;
 
         getUpdatedGroupTitleInternal(groupRootId, titleString, incognito);
         return titleString;
@@ -189,7 +190,11 @@ public class LayerTitleCache {
             title.register();
         }
 
-        Bitmap titleBitmap = titleBitmapFactory.getGroupTitleBitmap(mContext, rootId, titleString);
+        TabGroupModelFilter filter =
+                (TabGroupModelFilter)
+                        mTabModelSelector.getTabModelFilterProvider().getCurrentTabModelFilter();
+        Bitmap titleBitmap =
+                titleBitmapFactory.getGroupTitleBitmap(filter, mContext, rootId, titleString);
         title.set(titleBitmap);
 
         if (mNativeLayerTitleCache != 0) {
@@ -305,8 +310,6 @@ public class LayerTitleCache {
     }
 
     public void removeGroupTitle(int rootId) {
-        // TODO(crbug.com/326492787): Currently unused. Call to release bitmaps when we actually
-        // observe tab group changes (i.e. call this when a tab group is destroyed).
         Title title = mGroupTitles.get(rootId);
         if (title == null) return;
         title.unregister();
@@ -391,7 +394,7 @@ public class LayerTitleCache {
         long init(
                 LayerTitleCache caller,
                 int fadeWidth,
-                int faviconStartlPadding,
+                int faviconStartPadding,
                 int faviconEndPadding,
                 int spinnerResId,
                 int spinnerIncognitoResId,

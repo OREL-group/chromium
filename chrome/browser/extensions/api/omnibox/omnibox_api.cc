@@ -9,6 +9,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -154,6 +155,7 @@ void ExtensionOmniboxEventRouter::OnInputEntered(
   auto event = std::make_unique<Event>(events::OMNIBOX_ON_INPUT_ENTERED,
                                        omnibox::OnInputEntered::kEventName,
                                        std::move(args), profile);
+  event->user_gesture = EventRouter::USER_GESTURE_ENABLED;
   EventRouter::Get(profile)
       ->DispatchEventToExtension(extension_id, std::move(event));
 
@@ -284,7 +286,7 @@ ExtensionFunction::ResponseAction OmniboxSendSuggestionsFunction::Run() {
   EXTENSION_FUNCTION_VALIDATE(params_);
 
   if (is_from_service_worker() && !params_->suggest_results.empty()) {
-    std::vector<base::StringPiece> inputs;
+    std::vector<std::string_view> inputs;
     inputs.reserve(params_->suggest_results.size());
     for (const auto& suggestion : params_->suggest_results)
       inputs.push_back(suggestion.description);

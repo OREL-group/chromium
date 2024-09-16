@@ -62,9 +62,18 @@ class MockCloudPolicyClient : public CloudPolicyClient {
               (const RegistrationParameters&,
                const std::string&,
                const std::string&,
-               const std::string&),
+               const std::string&,
+               const base::TimeDelta&),
               (override));
   MOCK_METHOD(void, FetchPolicy, (PolicyFetchReason), (override));
+  MOCK_METHOD(void,
+              FetchRemoteCommands,
+              (std::unique_ptr<RemoteCommandJob::UniqueIDType>,
+               const std::vector<enterprise_management::RemoteCommandResult>&,
+               enterprise_management::PolicyFetchRequest::SignatureType,
+               const std::string&,
+               RemoteCommandCallback),
+              (override));
   MOCK_METHOD(void,
               UploadEnterpriseMachineCertificate,
               (const std::string&, ResultCallback),
@@ -93,6 +102,7 @@ class MockCloudPolicyClient : public CloudPolicyClient {
               UploadPolicyValidationReport,
               (CloudPolicyValidatorBase::Status,
                const std::vector<ValueValidationIssue>&,
+               const ValidationAction,
                const std::string&,
                const std::string&),
               (override));
@@ -132,6 +142,11 @@ class MockCloudPolicyClient : public CloudPolicyClient {
               ClientCertProvisioningRequest,
               (enterprise_management::ClientCertificateProvisioningRequest,
                ClientCertProvisioningRequestCallback),
+              (override));
+  MOCK_METHOD(void,
+              UploadFmRegistrationToken,
+              (enterprise_management::FmRegistrationTokenUploadRequest request,
+               ResultCallback callback),
               (override));
 
   // Sets the DMToken.

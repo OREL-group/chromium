@@ -8,18 +8,21 @@
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
+#include "base/time/time.h"
 #include "base/uuid.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
+#include "components/autofill/core/browser/payments_data_manager.h"
+#include "components/autofill/core/browser/payments_data_manager_test_base.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
-#include "components/autofill/core/browser/personal_data_manager_test_base.h"
-#include "components/autofill/core/common/autofill_clock.h"
+#include "components/autofill/core/browser/personal_data_manager_test_utils.h"
 #include "components/autofill/core/common/autofill_constants.h"
+#include "components/autofill/core/common/credit_card_network_identifiers.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/icu/source/i18n/unicode/timezone.h"
 
 namespace autofill {
 
-class PaymentsDataCleanerTest : public PersonalDataManagerTestBase,
+class PaymentsDataCleanerTest : public PaymentsDataManagerTestBase,
                                 public testing::Test {
  public:
   PaymentsDataCleanerTest() = default;
@@ -27,9 +30,16 @@ class PaymentsDataCleanerTest : public PersonalDataManagerTestBase,
 
   void SetUp() override {
     SetUpTest();
-    personal_data_ = std::make_unique<PersonalDataManager>("EN", "US");
-    ResetPersonalDataManager(
-        /*use_sync_transport_mode=*/false, personal_data_.get());
+    MakePrimaryAccountAvailable(/*use_sync_transport_mode=*/false,
+                                identity_test_env_, sync_service_);
+    personal_data_ = std::make_unique<PersonalDataManager>(
+        profile_database_service_, account_database_service_, prefs_.get(),
+        prefs_.get(), identity_test_env_.identity_manager(),
+        /*history_service=*/nullptr, &sync_service_,
+        /*strike_database=*/nullptr,
+        /*image_fetcher=*/nullptr, /*shared_storage_handler=*/nullptr, "en-US",
+        "US");
+    PersonalDataChangedWaiter(*personal_data_).Wait();
     payments_data_cleaner_ = std::make_unique<PaymentsDataCleaner>(
         &personal_data_->payments_data_manager());
   }
@@ -71,8 +81,10 @@ class PaymentsDataCleanerTest : public PersonalDataManagerTestBase,
 // Tests that DeleteDisusedCreditCards deletes desired credit cards only.
 TEST_F(PaymentsDataCleanerTest,
        DeleteDisusedCreditCards_OnlyDeleteExpiredDisusedLocalCards) {
+  // Move the time to 20XX.
+  task_environment_.FastForwardBy(base::Days(365) * 31);
   const char kHistogramName[] = "Autofill.CreditCardsDeletedForDisuse";
-  auto now = AutofillClock::Now();
+  auto now = base::Time::Now();
 
   // Create a recently used local card, it is expected to remain.
   CreditCard credit_card1(base::Uuid::GenerateRandomV4().AsLowercaseString(),
@@ -112,10 +124,10 @@ TEST_F(PaymentsDataCleanerTest,
                           "5105105105105100" /* Mastercard */, "04", "1999",
                           "1");
   credit_card4.set_use_date(now - base::Days(400));
-  personal_data().AddCreditCard(credit_card1);
-  personal_data().AddCreditCard(credit_card2);
-  personal_data().AddCreditCard(credit_card3);
-  personal_data().AddCreditCard(credit_card4);
+  personal_data().payments_data_manager().AddCreditCard(credit_card1);
+  personal_data().payments_data_manager().AddCreditCard(credit_card2);
+  personal_data().payments_data_manager().AddCreditCard(credit_card3);
+  personal_data().payments_data_manager().AddCreditCard(credit_card4);
 
   // Create masked server card expired 400 days ago, and last used 400 days ago.
   // It is expected to remain because we do not delete server cards.
@@ -132,7 +144,8 @@ TEST_F(PaymentsDataCleanerTest,
       {credit_card5});
 
   PersonalDataChangedWaiter(personal_data()).Wait();
-  EXPECT_EQ(5U, personal_data().GetCreditCards().size());
+  EXPECT_EQ(5U,
+            personal_data().payments_data_manager().GetCreditCards().size());
 
   // Setup histograms capturing.
   base::HistogramTester histogram_tester;
@@ -143,10 +156,11 @@ TEST_F(PaymentsDataCleanerTest,
   // Wait for the data to be refreshed.
   PersonalDataChangedWaiter(personal_data()).Wait();
 
-  EXPECT_EQ(4U, personal_data().GetCreditCards().size());
+  EXPECT_EQ(4U,
+            personal_data().payments_data_manager().GetCreditCards().size());
   std::unordered_set<std::u16string> expectedToRemain = {u"Alice", u"Bob",
                                                          u"Clyde", u"Frank"};
-  for (auto* card : personal_data().GetCreditCards()) {
+  for (auto* card : personal_data().payments_data_manager().GetCreditCards()) {
     EXPECT_NE(expectedToRemain.end(),
               expectedToRemain.find(card->GetRawInfo(CREDIT_CARD_NAME_FULL)));
   }
@@ -166,7 +180,7 @@ TEST_F(PaymentsDataCleanerTest, ClearCreditCardNonSettingsOrigins) {
                           "5105105105105100" /* Mastercard */, "04", "1999",
                           "1");
   credit_card0.set_use_count(10000);
-  personal_data().AddCreditCard(credit_card0);
+  personal_data().payments_data_manager().AddCreditCard(credit_card0);
 
   CreditCard credit_card1(base::Uuid::GenerateRandomV4().AsLowercaseString(),
                           test::kEmptyOrigin);
@@ -174,7 +188,7 @@ TEST_F(PaymentsDataCleanerTest, ClearCreditCardNonSettingsOrigins) {
                           "5105105105105101" /* Mastercard */, "04", "1999",
                           "1");
   credit_card1.set_use_count(1000);
-  personal_data().AddCreditCard(credit_card1);
+  personal_data().payments_data_manager().AddCreditCard(credit_card1);
 
   CreditCard credit_card2(base::Uuid::GenerateRandomV4().AsLowercaseString(),
                           "1234");
@@ -182,7 +196,7 @@ TEST_F(PaymentsDataCleanerTest, ClearCreditCardNonSettingsOrigins) {
                           "5105105105105102" /* Mastercard */, "04", "1999",
                           "1");
   credit_card2.set_use_count(100);
-  personal_data().AddCreditCard(credit_card2);
+  personal_data().payments_data_manager().AddCreditCard(credit_card2);
 
   // Create a card with a settings origin.
   CreditCard credit_card3(base::Uuid::GenerateRandomV4().AsLowercaseString(),
@@ -191,23 +205,39 @@ TEST_F(PaymentsDataCleanerTest, ClearCreditCardNonSettingsOrigins) {
                           "5105105105105103" /* Mastercard */, "04", "1999",
                           "1");
   credit_card3.set_use_count(10);
-  personal_data().AddCreditCard(credit_card3);
+  personal_data().payments_data_manager().AddCreditCard(credit_card3);
 
   PersonalDataChangedWaiter(personal_data()).Wait();
-  ASSERT_EQ(4U, personal_data().GetCreditCards().size());
+  ASSERT_EQ(4U,
+            personal_data().payments_data_manager().GetCreditCards().size());
 
   ClearCreditCardNonSettingsOrigins();
 
   PersonalDataChangedWaiter(personal_data()).Wait();
-  ASSERT_EQ(4U, personal_data().GetCreditCards().size());
+  ASSERT_EQ(4U,
+            personal_data().payments_data_manager().GetCreditCards().size());
 
   // The first three profiles' origin should be cleared and the fourth one still
   // be the settings origin.
-  EXPECT_TRUE(personal_data().GetCreditCardsToSuggest()[0]->origin().empty());
-  EXPECT_TRUE(personal_data().GetCreditCardsToSuggest()[1]->origin().empty());
-  EXPECT_TRUE(personal_data().GetCreditCardsToSuggest()[2]->origin().empty());
-  EXPECT_EQ(kSettingsOrigin,
-            personal_data().GetCreditCardsToSuggest()[3]->origin());
+  EXPECT_TRUE(personal_data()
+                  .payments_data_manager()
+                  .GetCreditCardsToSuggest()[0]
+                  ->origin()
+                  .empty());
+  EXPECT_TRUE(personal_data()
+                  .payments_data_manager()
+                  .GetCreditCardsToSuggest()[1]
+                  ->origin()
+                  .empty());
+  EXPECT_TRUE(personal_data()
+                  .payments_data_manager()
+                  .GetCreditCardsToSuggest()[2]
+                  ->origin()
+                  .empty());
+  EXPECT_EQ(kSettingsOrigin, personal_data()
+                                 .payments_data_manager()
+                                 .GetCreditCardsToSuggest()[3]
+                                 ->origin());
 }
 
 }  // namespace autofill

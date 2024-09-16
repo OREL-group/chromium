@@ -41,7 +41,7 @@ class CONTENT_EXPORT RenderFrameDevToolsAgentHost
       private RenderProcessHostObserver {
  public:
   // Returns true when DevTools was ever attached to any RenderFrameHost.
-  // TODO(https://crbug.com/1434900): Remove this method after the experiment
+  // TODO(crbug.com/40264958): Remove this method after the experiment
   // associated with the bug entry.
   static bool WasEverAttachedToAnyFrame();
 
@@ -67,8 +67,8 @@ class CONTENT_EXPORT RenderFrameDevToolsAgentHost
   // whether DevToolsAgentHost has actually been created.
   static bool ShouldCreateDevToolsForHost(RenderFrameHostImpl* rfh);
 
-  // This method is called when new frame is created for an emebedded page
-  // (portal or fenced frame) or local root navigation.
+  // This method is called when new frame is created for an embedded page
+  // (fenced frame) or local root navigation.
   static scoped_refptr<RenderFrameDevToolsAgentHost>
   CreateForLocalRootOrEmbeddedPageNavigation(NavigationRequest* request);
   static scoped_refptr<RenderFrameDevToolsAgentHost> FindForDangling(
@@ -86,7 +86,6 @@ class CONTENT_EXPORT RenderFrameDevToolsAgentHost
 
   void OnNavigationRequestWillBeSent(
       const NavigationRequest& navigation_request);
-  void UpdatePortals();
   void DidCreateFencedFrame(FencedFrame* fenced_frame);
 
   // DevToolsAgentHost overrides.
@@ -152,7 +151,7 @@ class CONTENT_EXPORT RenderFrameDevToolsAgentHost
   void DidFinishNavigation(NavigationHandle* navigation_handle) override;
   void RenderFrameHostChanged(RenderFrameHost* old_host,
                               RenderFrameHost* new_host) override;
-  void FrameDeleted(int frame_tree_node_id) override;
+  void FrameDeleted(FrameTreeNodeId frame_tree_node_id) override;
   void RenderFrameDeleted(RenderFrameHost* rfh) override;
   void OnVisibilityChanged(content::Visibility visibility) override;
 
@@ -185,7 +184,7 @@ class CONTENT_EXPORT RenderFrameDevToolsAgentHost
   bool render_frame_alive_ = false;
   bool render_frame_crashed_ = false;
 
-  // TODO(https://crbug.com/1449114): Remove these fields once we collect enough
+  // TODO(crbug.com/40269649): Remove these fields once we collect enough
   // data.
   bool is_debugger_paused_ = false;
   bool is_debugger_pause_situation_recorded_ = false;

@@ -19,6 +19,7 @@
 #include "chrome/browser/ui/views/mahi/mahi_menu_constants.h"
 #include "chrome/browser/ui/views/mahi/mahi_menu_view.h"
 #include "chrome/test/views/chrome_views_test_base.h"
+#include "chromeos/components/mahi/public/cpp/mahi_media_app_events_proxy.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "testing/gmock/include/gmock/gmock-matchers.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -28,6 +29,8 @@
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 #include "ash/constants/ash_switches.h"
+#include "ash/system/mahi/fake_mahi_manager.h"
+#include "ash/system/mahi/test/mock_mahi_media_app_events_proxy.h"
 #include "base/auto_reset.h"
 #include "base/command_line.h"
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
@@ -35,6 +38,9 @@
 namespace chromeos::mahi {
 
 using ::testing::IsNull;
+using ::testing::Mock;
+using ::testing::NiceMock;
+using ::testing::Return;
 
 class MahiMenuControllerTest : public ChromeViewsTestBase {
  public:
@@ -45,6 +51,10 @@ class MahiMenuControllerTest : public ChromeViewsTestBase {
     scoped_mahi_web_contents_manager_ =
         std::make_unique<::mahi::ScopedMahiWebContentsManagerForTesting>(
             &fake_mahi_web_contents_manager_);
+
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+    fake_mahi_manager_ = std::make_unique<ash::FakeMahiManager>();
+#endif
     // Sets the focused page's distillability to true so that it does not block
     // the menu widget's display.
     ChangePageDistillability(true);
@@ -56,6 +66,21 @@ class MahiMenuControllerTest : public ChromeViewsTestBase {
   MahiMenuControllerTest& operator=(const MahiMenuControllerTest&) = delete;
 
   ~MahiMenuControllerTest() override = default;
+
+  void SetUp() override {
+    feature_list_.InitWithFeatures(
+        /*enabled_features=*/{chromeos::features::kMahi,
+                              chromeos::features::kFeatureManagementMahi},
+        /*disabled_features=*/{});
+    ChromeViewsTestBase::SetUp();
+  }
+
+  void TearDown() override {
+    // Manually reset `menu_controller_` here because it requires the existence
+    // of `mock_mahi_media_app_events_proxy_` to destroy.
+    menu_controller_.reset();
+    ChromeViewsTestBase::TearDown();
+  }
 
   MahiMenuController* menu_controller() { return menu_controller_.get(); }
 
@@ -72,17 +97,24 @@ class MahiMenuControllerTest : public ChromeViewsTestBase {
   ReadWriteCardsUiController read_write_cards_ui_controller_;
 
  private:
+  base::test::ScopedFeatureList feature_list_;
+
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  // Providing a mock MahiMediaAppEvnetsProxy and a fake mahi manager to satisfy
+  // MahiMenuController.
+  testing::NiceMock<::ash::MockMahiMediaAppEventsProxy>
+      mock_mahi_media_app_events_proxy_;
+  chromeos::ScopedMahiMediaAppEventsProxySetter
+      scoped_mahi_media_app_events_proxy_{&mock_mahi_media_app_events_proxy_};
+
+  std::unique_ptr<ash::FakeMahiManager> fake_mahi_manager_;
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+
   std::unique_ptr<MahiMenuController> menu_controller_;
 
   ::mahi::FakeMahiWebContentsManager fake_mahi_web_contents_manager_;
   std::unique_ptr<::mahi::ScopedMahiWebContentsManagerForTesting>
       scoped_mahi_web_contents_manager_;
-
-  base::test::ScopedFeatureList feature_list_{chromeos::features::kMahi};
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  base::AutoReset<bool> ignore_mahi_secret_key_ =
-      ash::switches::SetIgnoreMahiSecretKeyForTest();
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 };
 
 // Tests the behavior of the controller when there's no text selected when
@@ -125,17 +157,19 @@ TEST_F(MahiMenuControllerTest, BoundsChanged) {
   auto* widget = menu_controller()->menu_widget_for_test();
   EXPECT_TRUE(widget);
 
-  EXPECT_EQ(editor_menu::GetEditorMenuBounds(anchor_bounds,
-                                             widget->GetContentsView()),
-            widget->GetRestoredBounds());
+  EXPECT_EQ(
+      editor_menu::GetEditorMenuBounds(anchor_bounds, widget->GetContentsView(),
+                                       editor_menu::CardType::kMahiDefaultMenu),
+      widget->GetRestoredBounds());
 
   anchor_bounds = gfx::Rect(0, 50, 55, 80);
 
   // Widget should change bounds accordingly.
   menu_controller()->OnAnchorBoundsChanged(anchor_bounds);
-  EXPECT_EQ(editor_menu::GetEditorMenuBounds(anchor_bounds,
-                                             widget->GetContentsView()),
-            widget->GetRestoredBounds());
+  EXPECT_EQ(
+      editor_menu::GetEditorMenuBounds(anchor_bounds, widget->GetContentsView(),
+                                       editor_menu::CardType::kMahiDefaultMenu),
+      widget->GetRestoredBounds());
 }
 
 // Tests the behavior of the controller when there's text selected when
@@ -150,14 +184,14 @@ TEST_F(MahiMenuControllerTest, TextSelected) {
 
   EXPECT_TRUE(read_write_cards_ui_controller_.widget_for_test());
   EXPECT_TRUE(read_write_cards_ui_controller_.widget_for_test()->IsVisible());
-  EXPECT_TRUE(read_write_cards_ui_controller_.GetMahiViewForTest());
+  EXPECT_TRUE(read_write_cards_ui_controller_.GetMahiUiForTest());
   EXPECT_TRUE(views::IsViewClass<MahiCondensedMenuView>(
-      read_write_cards_ui_controller_.GetMahiViewForTest()));
+      read_write_cards_ui_controller_.GetMahiUiForTest()));
 
   // Menu widget should hide when dismissed.
   menu_controller()->OnDismiss(/*is_other_command_executed=*/false);
   EXPECT_FALSE(read_write_cards_ui_controller_.widget_for_test());
-  EXPECT_FALSE(read_write_cards_ui_controller_.GetMahiViewForTest());
+  EXPECT_FALSE(read_write_cards_ui_controller_.GetMahiUiForTest());
 }
 
 // Tests the behavior of the controller when pref state changed.
@@ -206,9 +240,7 @@ TEST_F(MahiMenuControllerTest, DistillableMetrics) {
                                      false, 0);
 
   ChangePageDistillability(false);
-  menu_controller()->OnTextAvailable(/*anchor_bounds=*/gfx::Rect(),
-                                     /*selected_text=*/"",
-                                     /*surrounding_text=*/"");
+  menu_controller()->RecordPageDistillable();
 
   histogram_tester.ExpectBucketCount(kMahiContextMenuDistillableHistogram, true,
                                      0);
@@ -217,42 +249,12 @@ TEST_F(MahiMenuControllerTest, DistillableMetrics) {
 
   // If page is not distillable, then menu widget should not be triggered.
   ChangePageDistillability(true);
-  menu_controller()->OnTextAvailable(/*anchor_bounds=*/gfx::Rect(),
-                                     /*selected_text=*/"",
-                                     /*surrounding_text=*/"");
+  menu_controller()->RecordPageDistillable();
 
   histogram_tester.ExpectBucketCount(kMahiContextMenuDistillableHistogram, true,
                                      1);
   histogram_tester.ExpectBucketCount(kMahiContextMenuDistillableHistogram,
                                      false, 1);
 }
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-class MahiMenuControllerFeatureKeyTest : public ChromeViewsTestBase {
- public:
-  MahiMenuControllerFeatureKeyTest() {
-    base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-    command_line->AppendSwitchASCII(ash::switches::kMahiFeatureKey, "hello");
-  }
-
- private:
-  base::test::ScopedFeatureList feature_list_{chromeos::features::kMahi};
-};
-
-TEST_F(MahiMenuControllerFeatureKeyTest, DoesNotShowWidgetIfFeatureKeyIsWrong) {
-  ReadWriteCardsUiController read_write_cards_ui_controller;
-  ::mahi::FakeMahiWebContentsManager fake_mahi_web_contents_manager;
-  fake_mahi_web_contents_manager.set_focused_web_content_is_distillable(true);
-  ::mahi::ScopedMahiWebContentsManagerForTesting
-      scoped_mahi_web_contents_manager(&fake_mahi_web_contents_manager);
-  MahiMenuController menu_controller(read_write_cards_ui_controller);
-
-  menu_controller.OnTextAvailable(/*anchor_bounds=*/gfx::Rect(),
-                                  /*selected_text=*/"",
-                                  /*surrounding_text=*/"");
-
-  EXPECT_THAT(menu_controller.menu_widget_for_test(), IsNull());
-}
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 }  // namespace chromeos::mahi

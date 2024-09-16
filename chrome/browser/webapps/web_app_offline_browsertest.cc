@@ -15,7 +15,6 @@
 #include "chrome/browser/web_applications/test/web_app_icon_waiter.h"
 #include "chrome/browser/web_applications/test/web_app_install_test_utils.h"
 #include "chrome/browser/web_applications/test/web_app_test_utils.h"
-#include "chrome/common/chrome_features.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/metrics/content/subprocess_metrics_provider.h"
@@ -27,7 +26,6 @@
 #include "content/public/test/url_loader_interceptor.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/public/common/features.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/native_theme/native_theme.h"
 
@@ -440,12 +438,6 @@ class WebAppOfflineDarkModeTest
     : public WebAppOfflineTest,
       public testing::WithParamInterface<blink::mojom::PreferredColorScheme> {
  public:
-  WebAppOfflineDarkModeTest() {
-    std::vector<base::test::FeatureRef> disabled_features;
-    feature_list_.InitWithFeatures({blink::features::kWebAppEnableDarkMode},
-                                   {disabled_features});
-  }
-
   void SetUp() override {
 #if BUILDFLAG(IS_WIN)
     InProcessBrowserTest::SetUp();
@@ -475,14 +467,11 @@ class WebAppOfflineDarkModeTest
     if (GetParam() == blink::mojom::PreferredColorScheme::kDark)
       command_line->AppendSwitch(switches::kForceDarkMode);
   }
-
- private:
-  base::test::ScopedFeatureList feature_list_;
 };
 
 // Testing offline page in dark mode for a web app with a manifest and no
 // service worker.
-// TODO(crbug.com/1373750): tests are flaky on Lacros and Linux.
+// TODO(crbug.com/40871921): tests are flaky on Lacros and Linux.
 #if BUILDFLAG(IS_CHROMEOS_LACROS) || BUILDFLAG(IS_LINUX)
 #define MAYBE_WebAppOfflineDarkModeNoServiceWorker \
   DISABLED_WebAppOfflineDarkModeNoServiceWorker
@@ -501,74 +490,11 @@ IN_PROC_BROWSER_TEST_P(WebAppOfflineDarkModeTest,
 
   ASSERT_TRUE(embedded_test_server()->Start());
 
-  // ui::NativeTheme::GetInstanceForNativeUi()->set_use_dark_colors(true);
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
 
-  StartWebAppAndDisconnect(
-      web_contents, "/web_apps/get_manifest.html?color_scheme_dark.json");
+  StartWebAppAndDisconnect(web_contents, "/banners/no-sw-with-colors.html");
 
-  // Expect that the default offline page is showing with dark mode colors.
-  if (GetParam() == blink::mojom::PreferredColorScheme::kDark) {
-    EXPECT_TRUE(
-        EvalJs(web_contents,
-               "window.matchMedia('(prefers-color-scheme: dark)').matches")
-            .ExtractBool());
-    EXPECT_EQ(
-        EvalJs(web_contents,
-               "window.getComputedStyle(document.querySelector('div')).color")
-            .ExtractString(),
-        "rgb(227, 227, 227)");
-    EXPECT_EQ(EvalJs(web_contents,
-                     "window.getComputedStyle(document.querySelector('body'))."
-                     "backgroundColor")
-                  .ExtractString(),
-              "rgb(31, 31, 31)");
-  } else {
-    EXPECT_TRUE(
-        EvalJs(web_contents,
-               "window.matchMedia('(prefers-color-scheme: light)').matches")
-            .ExtractBool());
-    EXPECT_EQ(
-        EvalJs(web_contents,
-               "window.getComputedStyle(document.querySelector('div')).color")
-            .ExtractString(),
-        "rgb(31, 31, 31)");
-    EXPECT_EQ(EvalJs(web_contents,
-                     "window.getComputedStyle(document.querySelector('body'))."
-                     "backgroundColor")
-                  .ExtractString(),
-              "rgb(255, 255, 255)");
-  }
-}
-
-// Testing offline page in dark mode for a web app with a manifest and service
-// worker that does not handle offline error.
-// TODO(crbug.com/1373750): tests are flaky on Lacros and Linux.
-#if BUILDFLAG(IS_CHROMEOS_LACROS) || BUILDFLAG(IS_LINUX)
-#define MAYBE_WebAppOfflineDarkModeEmptyServiceWorker \
-  DISABLED_WebAppOfflineDarkModeEmptyServiceWorker
-#else
-#define MAYBE_WebAppOfflineDarkModeEmptyServiceWorker \
-  WebAppOfflineDarkModeEmptyServiceWorker
-#endif
-IN_PROC_BROWSER_TEST_P(WebAppOfflineDarkModeTest,
-                       MAYBE_WebAppOfflineDarkModeEmptyServiceWorker) {
-#if BUILDFLAG(IS_WIN)
-  if (GetParam() == blink::mojom::PreferredColorScheme::kLight &&
-      ui::NativeTheme::GetInstanceForNativeUi()->ShouldUseDarkColors()) {
-    GTEST_SKIP() << "Host is in dark mode; skipping test";
-  }
-#endif  // BUILDFLAG(IS_WIN)
-
-  ASSERT_TRUE(embedded_test_server()->Start());
-
-  content::WebContents* web_contents =
-      browser()->tab_strip_model()->GetActiveWebContents();
-  StartPwaAndDisconnect(
-      web_contents,
-      "/banners/manifest_test_page_empty_fetch_handler.html?manifest=../"
-      "web_apps/color_scheme_dark.json");
   if (GetParam() == blink::mojom::PreferredColorScheme::kDark) {
     // Expect that the default offline page is showing with dark mode colors.
     EXPECT_TRUE(
@@ -604,18 +530,18 @@ IN_PROC_BROWSER_TEST_P(WebAppOfflineDarkModeTest,
   }
 }
 
-// Testing offline page in dark mode for a web app with a manifest that has not
-// provided dark mode colors.
-// TODO(crbug.com/1373750): tests are flaky on Lacros and Linux.
+// Testing offline page in dark mode for a web app with a manifest and service
+// worker that does not handle offline error.
+// TODO(crbug.com/40871921): tests are flaky on Lacros and Linux.
 #if BUILDFLAG(IS_CHROMEOS_LACROS) || BUILDFLAG(IS_LINUX)
-#define MAYBE_WebAppOfflineNoDarkModeColorsProvided \
-  DISABLED_WebAppOfflineNoDarkModeColorsProvided
+#define MAYBE_WebAppOfflineDarkModeEmptyServiceWorker \
+  DISABLED_WebAppOfflineDarkModeEmptyServiceWorker
 #else
-#define MAYBE_WebAppOfflineNoDarkModeColorsProvided \
-  WebAppOfflineNoDarkModeColorsProvided
+#define MAYBE_WebAppOfflineDarkModeEmptyServiceWorker \
+  WebAppOfflineDarkModeEmptyServiceWorker
 #endif
 IN_PROC_BROWSER_TEST_P(WebAppOfflineDarkModeTest,
-                       MAYBE_WebAppOfflineNoDarkModeColorsProvided) {
+                       MAYBE_WebAppOfflineDarkModeEmptyServiceWorker) {
 #if BUILDFLAG(IS_WIN)
   if (GetParam() == blink::mojom::PreferredColorScheme::kLight &&
       ui::NativeTheme::GetInstanceForNativeUi()->ShouldUseDarkColors()) {
@@ -627,8 +553,8 @@ IN_PROC_BROWSER_TEST_P(WebAppOfflineDarkModeTest,
 
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
-  StartWebAppAndDisconnect(web_contents, "/banners/no-sw-with-colors.html");
-
+  StartPwaAndDisconnect(web_contents,
+                        "/banners/manifest_test_page_empty_fetch_handler.html");
   if (GetParam() == blink::mojom::PreferredColorScheme::kDark) {
     // Expect that the default offline page is showing with dark mode colors.
     EXPECT_TRUE(

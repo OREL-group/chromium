@@ -13,6 +13,7 @@
 #include "base/check.h"
 #include "base/hash/md5.h"
 #include "base/notreached.h"
+#include "components/visitedlink/core/visited_link.h"
 #include "net/base/schemeful_site.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -58,15 +59,23 @@ bool VisitedLinkCommon::IsVisited(const GURL& url) const {
   return IsVisited(url.spec());
 }
 
+bool VisitedLinkCommon::IsVisited(const VisitedLink& link, uint64_t salt) {
+  if (!hash_table_ || table_length_ == 0) {
+    return false;
+  }
+  if (!link.IsValid()) {
+    return false;
+  }
+  return IsVisited(ComputePartitionedFingerprint(
+      link.link_url, link.top_level_site, link.frame_origin, salt));
+}
+
 bool VisitedLinkCommon::IsVisited(const GURL& link_url,
                                   const net::SchemefulSite& top_level_site,
                                   const url::Origin& frame_origin,
                                   uint64_t salt) {
-  if (!hash_table_ || table_length_ == 0) {
-    return false;
-  }
-  return IsVisited(ComputePartitionedFingerprint(link_url, top_level_site,
-                                                 frame_origin, salt));
+  const VisitedLink link = {link_url, top_level_site, frame_origin};
+  return IsVisited(link, salt);
 }
 
 bool VisitedLinkCommon::IsVisited(Fingerprint fingerprint) const {
@@ -90,7 +99,7 @@ bool VisitedLinkCommon::IsVisited(Fingerprint fingerprint) const {
     if (cur_hash == first_hash) {
       // Wrapped around and didn't find an empty space, this means we're in an
       // infinite loop because AddFingerprint didn't do its job resizing.
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return false;
     }
   }
@@ -112,14 +121,22 @@ VisitedLinkCommon::Fingerprint VisitedLinkCommon::ComputeURLFingerprint(
 
   base::MD5Context ctx;
   base::MD5Init(&ctx);
-  base::MD5Update(&ctx, base::StringPiece(reinterpret_cast<const char*>(salt),
-                                          LINK_SALT_LENGTH));
+  base::MD5Update(&ctx, std::string_view(reinterpret_cast<const char*>(salt),
+                                         LINK_SALT_LENGTH));
   base::MD5Update(&ctx, canonical_url);
 
   base::MD5Digest digest;
   base::MD5Final(&digest, &ctx);
 
   return ConvertDigestToFingerprint(digest);
+}
+
+// static
+VisitedLinkCommon::Fingerprint VisitedLinkCommon::ComputePartitionedFingerprint(
+    const VisitedLink& link,
+    uint64_t salt) {
+  return ComputePartitionedFingerprint(link.link_url, link.top_level_site,
+                                       link.frame_origin, salt);
 }
 
 // static
@@ -139,22 +156,22 @@ VisitedLinkCommon::Fingerprint VisitedLinkCommon::ComputePartitionedFingerprint(
   base::MD5Init(&ctx);
 
   // Salt the hash.
-  base::MD5Update(&ctx, base::StringPiece(reinterpret_cast<const char*>(&salt),
-                                          sizeof(salt)));
+  base::MD5Update(&ctx, std::string_view(reinterpret_cast<const char*>(&salt),
+                                         sizeof(salt)));
 
   // Add the link url.
   base::MD5Update(
-      &ctx, base::StringPiece(link_url.spec().data(), link_url.spec().size()));
+      &ctx, std::string_view(link_url.spec().data(), link_url.spec().size()));
 
   // Add the serialized schemeful top-level site.
   const std::string serialized_site = top_level_site.Serialize();
   base::MD5Update(
-      &ctx, base::StringPiece(serialized_site.data(), serialized_site.size()));
+      &ctx, std::string_view(serialized_site.data(), serialized_site.size()));
 
   // Add the serialized frame origin.
   const std::string serialized_origin = frame_origin.Serialize();
-  base::MD5Update(&ctx, base::StringPiece(serialized_origin.data(),
-                                          serialized_origin.size()));
+  base::MD5Update(&ctx, std::string_view(serialized_origin.data(),
+                                         serialized_origin.size()));
   base::MD5Digest digest;
   base::MD5Final(&digest, &ctx);
 

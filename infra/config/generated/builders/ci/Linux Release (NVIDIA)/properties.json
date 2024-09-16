@@ -24,7 +24,8 @@
               },
               "legacy_gclient_config": {
                 "apply_configs": [
-                  "use_clang_coverage"
+                  "use_clang_coverage",
+                  "chromium_with_telemetry_dependencies"
                 ],
                 "config": "chromium"
               }
@@ -85,25 +86,11 @@
           "group": "tryserver.chromium.linux"
         },
         {
-          "builder": "linux-mbi-mode-per-render-process-host-rel",
-          "group": "tryserver.chromium.linux"
-        },
-        {
           "builder": "linux-rel",
           "group": "tryserver.chromium.linux"
         }
       ]
     }
-  },
-  "$build/siso": {
-    "configs": [
-      "builder"
-    ],
-    "enable_cloud_profiler": true,
-    "enable_cloud_trace": true,
-    "experiments": [],
-    "project": "rbe-chromium-trusted",
-    "remote_jobs": 250
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],
@@ -113,6 +100,9 @@
     ]
   },
   "builder_group": "chromium.gpu",
+  "gardener_rotations": [
+    "chromium.gpu"
+  ],
   "recipe": "chromium",
   "sheriff_rotations": [
     "chromium.gpu"

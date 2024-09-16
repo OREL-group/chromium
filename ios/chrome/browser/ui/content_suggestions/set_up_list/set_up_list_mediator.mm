@@ -11,13 +11,23 @@
 #import "base/strings/sys_string_conversions.h"
 #import "components/prefs/ios/pref_observer_bridge.h"
 #import "components/prefs/pref_service.h"
+#import "components/segmentation_platform/embedder/default_model/device_switcher_model.h"
+#import "components/segmentation_platform/embedder/default_model/device_switcher_result_dispatcher.h"
+#import "components/segmentation_platform/public/constants.h"
+#import "components/segmentation_platform/public/result.h"
+#import "components/segmentation_platform/public/segmentation_platform_service.h"
+#import "components/signin/public/identity_manager/identity_manager.h"
 #import "components/signin/public/identity_manager/objc/identity_manager_observer_bridge.h"
+#import "ios/chrome/browser/content_notification/model/content_notification_util.h"
+#import "ios/chrome/browser/credential_provider_promo/ui_bundled/credential_provider_promo_metrics.h"
+#import "ios/chrome/browser/default_browser/model/utils.h"
 #import "ios/chrome/browser/ntp/model/set_up_list.h"
 #import "ios/chrome/browser/ntp/model/set_up_list_delegate.h"
 #import "ios/chrome/browser/ntp/model/set_up_list_item.h"
 #import "ios/chrome/browser/ntp/model/set_up_list_item_type.h"
 #import "ios/chrome/browser/ntp/model/set_up_list_prefs.h"
 #import "ios/chrome/browser/push_notification/model/push_notification_settings_util.h"
+#import "ios/chrome/browser/segmentation_platform/model/segmented_default_browser_utils.h"
 #import "ios/chrome/browser/shared/coordinator/scene/scene_state.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
@@ -26,14 +36,12 @@
 #import "ios/chrome/browser/sync/model/enterprise_utils.h"
 #import "ios/chrome/browser/sync/model/sync_observer_bridge.h"
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_constants.h"
-#import "ios/chrome/browser/ui/content_suggestions/content_suggestions_consumer.h"
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_delegate.h"
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_metrics_recorder.h"
 #import "ios/chrome/browser/ui/content_suggestions/set_up_list/set_up_list_config.h"
 #import "ios/chrome/browser/ui/content_suggestions/set_up_list/set_up_list_consumer_source.h"
 #import "ios/chrome/browser/ui/content_suggestions/set_up_list/set_up_list_item_view_data.h"
 #import "ios/chrome/browser/ui/content_suggestions/set_up_list/utils.h"
-#import "ios/chrome/browser/ui/credential_provider_promo/credential_provider_promo_metrics.h"
 
 using credential_provider_promo::IOSCredentialProviderPromoAction;
 
@@ -46,6 +54,25 @@ bool CredentialProviderPromoDismissed(PrefService* local_state) {
       static_cast<IOSCredentialProviderPromoAction>(local_state->GetInteger(
           prefs::kIosCredentialProviderPromoLastActionTaken));
   return last_action == IOSCredentialProviderPromoAction::kNo;
+}
+
+// Returns true if a Default Browser Promo was completed, outside of SetUpList.
+// This includes the FRE.
+bool DefaultBrowserPromoCompleted() {
+  std::optional<IOSDefaultBrowserPromoAction> action =
+      DefaultBrowserPromoLastAction();
+  if (!action.has_value()) {
+    return false;
+  }
+
+  switch (action.value()) {
+    case IOSDefaultBrowserPromoAction::kActionButton:
+    case IOSDefaultBrowserPromoAction::kCancel:
+      return true;
+    case IOSDefaultBrowserPromoAction::kRemindMeLater:
+    case IOSDefaultBrowserPromoAction::kDismiss:
+      return false;
+  }
 }
 
 }  // namespace
@@ -92,13 +119,29 @@ bool CredentialProviderPromoDismissed(PrefService* local_state) {
   SceneState* _sceneState;
   SetUpListConsumerList* _consumers;
   NSArray<SetUpListConfig*>* _setUpListConfigs;
+  // Components for retrieving user segmentation information from the
+  // Segmentation Platform.
+  raw_ptr<segmentation_platform::SegmentationPlatformService>
+      _segmentationService;
+  raw_ptr<segmentation_platform::DeviceSwitcherResultDispatcher>
+      _deviceSwitcherResultDispatcher;
+  // User segment retrieved by the Segmentation Platform.
+  segmentation_platform::DefaultBrowserUserSegment _userSegment;
 }
+
+#pragma mark - Public
 
 - (instancetype)initWithPrefService:(PrefService*)prefService
                         syncService:(syncer::SyncService*)syncService
                     identityManager:(signin::IdentityManager*)identityManager
               authenticationService:(AuthenticationService*)authService
-                         sceneState:(SceneState*)sceneState {
+                         sceneState:(SceneState*)sceneState
+              isDefaultSearchEngine:(BOOL)isDefaultSearchEngine
+                segmentationService:
+                    (segmentation_platform::SegmentationPlatformService*)
+                        segmentationService
+     deviceSwitcherResultDispatcher:
+         (segmentation_platform::DeviceSwitcherResultDispatcher*)dispatcher {
   self = [super init];
   if (self) {
     _prefService = prefService;
@@ -120,7 +163,17 @@ bool CredentialProviderPromoDismissed(PrefService* local_state) {
         prefs::kIosCredentialProviderPromoLastActionTaken,
         &_localStatePrefChangeRegistrar);
     _prefObserverBridge->ObserveChangesForPreference(
+        prefs::kIosDefaultBrowserPromoLastAction,
+        &_localStatePrefChangeRegistrar);
+    _prefObserverBridge->ObserveChangesForPreference(
         set_up_list_prefs::kDisabled, &_localStatePrefChangeRegistrar);
+
+    if (IsHomeCustomizationEnabled()) {
+      _prefObserverBridge->ObserveChangesForPreference(
+          prefs::kHomeCustomizationMagicStackSetUpListEnabled,
+          &_prefChangeRegistrar);
+    }
+
     if (IsIOSTipsNotificationsEnabled()) {
       _prefObserverBridge->ObserveChangesForPreference(
           prefs::kAppLevelPushNotificationPermissions,
@@ -135,13 +188,29 @@ bool CredentialProviderPromoDismissed(PrefService* local_state) {
       [self checkIfCPEEnabled];
     }
 
+    if (DefaultBrowserPromoCompleted()) {
+      set_up_list_prefs::MarkItemComplete(_localState,
+                                          SetUpListItemType::kDefaultBrowser);
+    }
+
     _sceneState = sceneState;
     [_sceneState addObserver:self];
+
+    if (IsSegmentedDefaultBrowserPromoEnabled()) {
+      _segmentationService = segmentationService;
+      _deviceSwitcherResultDispatcher = dispatcher;
+    }
+    BOOL isContentNotificationEnabled =
+        IsContentNotificationExperimentEnabled() &&
+        IsContentNotificationSetUpListEnabled(
+            identityManager->HasPrimaryAccount(signin::ConsentLevel::kSignin),
+            isDefaultSearchEngine, prefService);
 
     _setUpList = [SetUpList buildFromPrefs:prefService
                                 localState:_localState
                                syncService:syncService
-                     authenticationService:authService];
+                     authenticationService:authService
+                contentNotificationEnabled:isContentNotificationEnabled];
     _setUpList.delegate = self;
 
     _consumers = [SetUpListConsumerList
@@ -151,6 +220,8 @@ bool CredentialProviderPromoDismissed(PrefService* local_state) {
 }
 
 - (void)disconnect {
+  _segmentationService = nullptr;
+  _deviceSwitcherResultDispatcher = nullptr;
   _authenticationService = nullptr;
   _authServiceObserverBridge.reset();
   _syncObserverBridge.reset();
@@ -182,6 +253,9 @@ bool CredentialProviderPromoDismissed(PrefService* local_state) {
     SetUpListItemViewData* item =
         [[SetUpListItemViewData alloc] initWithType:model.type
                                            complete:model.complete];
+    if (IsSegmentedDefaultBrowserPromoEnabled()) {
+      [item setUserSegment:_userSegment];
+    }
     [allItems addObject:item];
   }
   return allItems;
@@ -192,11 +266,12 @@ bool CredentialProviderPromoDismissed(PrefService* local_state) {
 }
 
 - (void)disableModule {
-  set_up_list_prefs::DisableSetUpList(_localState);
+  set_up_list_prefs::DisableSetUpList(
+      IsHomeCustomizationEnabled() ? _prefService : _localState);
 }
 
 - (BOOL)shouldShowSetUpList {
-  if (!set_up_list_utils::IsSetUpListActive(_localState)) {
+  if (!set_up_list_utils::IsSetUpListActive(_localState, _prefService)) {
     return NO;
   }
 
@@ -207,21 +282,8 @@ bool CredentialProviderPromoDismissed(PrefService* local_state) {
   return YES;
 }
 
-- (void)showSetUpList {
-  DCHECK(!IsIOSMagicStackCollectionViewEnabled());
-  [self.consumer showSetUpListModuleWithConfigs:[self setUpListConfigs]];
-  [self.contentSuggestionsMetricsRecorder recordSetUpListShown];
-  for (SetUpListConfig* config in [self setUpListConfigs]) {
-    for (SetUpListItemViewData* item in config.setUpListItems) {
-      [self.contentSuggestionsMetricsRecorder
-          recordSetUpListItemShown:item.type];
-    }
-  }
-}
-
 - (NSArray<SetUpListConfig*>*)setUpListConfigs {
   if (!_setUpListConfigs) {
-    NSArray<SetUpListItemViewData*>* items = [self setUpListItems];
     if ([self allItemsComplete]) {
       SetUpListConfig* config = [[SetUpListConfig alloc] init];
       config.setUpListConsumerSource = self;
@@ -229,9 +291,8 @@ bool CredentialProviderPromoDismissed(PrefService* local_state) {
       config.setUpListItems = @[ [self allSetItem] ];
       _setUpListConfigs = @[ config ];
     } else {
-      BOOL shouldShowCompactedSetUpListModule =
-          set_up_list_utils::ShouldShowCompactedSetUpListModule();
-      if (shouldShowCompactedSetUpListModule) {
+      NSArray<SetUpListItemViewData*>* items = [self setUpListItems];
+      if (set_up_list_utils::ShouldShowCompactedSetUpListModule()) {
         SetUpListConfig* config = [[SetUpListConfig alloc] init];
         config.shouldShowCompactModule = YES;
         config.shouldShowSeeMore = YES;
@@ -263,35 +324,59 @@ bool CredentialProviderPromoDismissed(PrefService* local_state) {
         _setUpListConfigs = configs;
       }
     }
+
+    // Record "ItemDisplayed" histogram for each item.
+    for (SetUpListConfig* config in _setUpListConfigs) {
+      for (SetUpListItemViewData* item in config.setUpListItems) {
+        [self.contentSuggestionsMetricsRecorder
+            recordSetUpListItemShown:item.type];
+      }
+    }
+    [self.contentSuggestionsMetricsRecorder recordSetUpListShown];
   }
   return _setUpListConfigs;
+}
+
+- (void)retrieveUserSegment {
+  CHECK(_segmentationService);
+  CHECK(_deviceSwitcherResultDispatcher);
+  segmentation_platform::PredictionOptions options =
+      segmentation_platform::PredictionOptions::ForCached();
+
+  segmentation_platform::ClassificationResult deviceSwitcherResult =
+      _deviceSwitcherResultDispatcher->GetCachedClassificationResult();
+
+  __weak __typeof(self) weakSelf = self;
+  auto classificationResultCallback = base::BindOnce(
+      [](__typeof(self) strongSelf,
+         segmentation_platform::ClassificationResult deviceSwitcherResult,
+
+         const segmentation_platform::ClassificationResult& shopperResult) {
+        [strongSelf didReceiveShopperSegmentationResult:shopperResult
+                                   deviceSwitcherResult:deviceSwitcherResult];
+      },
+      weakSelf, deviceSwitcherResult);
+  _segmentationService->GetClassificationResult(
+      segmentation_platform::kShoppingUserSegmentationKey, options, nullptr,
+      std::move(classificationResultCallback));
 }
 
 #pragma mark - SetUpListDelegate
 
 - (void)setUpListItemDidComplete:(SetUpListItem*)item
                allItemsCompleted:(BOOL)completed {
-  __weak __typeof(self) weakSelf = self;
   // Can resend signal to mediator from Set Up List after SetUpListItemView
   // completes animation
   ProceduralBlock completion = ^{
     if (completed) {
-      if (IsIOSMagicStackCollectionViewEnabled()) {
-        SetUpListConfig* config = [[SetUpListConfig alloc] init];
-        config.setUpListItems = @[ [self allSetItem] ];
-        [self.audience replaceSetUpListWithAllSet:config];
-      } else {
-        [weakSelf.consumer showSetUpListDoneWithAnimations:^{
-        }];
-      }
-    } else {
-      [weakSelf.consumer scrollToNextMagicStackModuleForCompletedModule:
-                             SetUpListModuleTypeForSetUpListType(item.type)];
+      SetUpListConfig* config = [[SetUpListConfig alloc] init];
+      config.setUpListItems = @[ [self allSetItem] ];
+      [self.audience replaceSetUpListWithAllSet:config];
     }
   };
-    [_consumers setUpListItemDidComplete:item
-                       allItemsCompleted:completed
-                              completion:completion];
+  [_consumers setUpListItemDidComplete:item
+                     allItemsCompleted:completed
+                            completion:completion];
 }
 
 #pragma mark - IdentityManagerObserverBridgeDelegate
@@ -324,6 +409,9 @@ bool CredentialProviderPromoDismissed(PrefService* local_state) {
   if (preferenceName == prefs::kIosCredentialProviderPromoLastActionTaken &&
       CredentialProviderPromoDismissed(_localState)) {
     [self markSetUpListItemPrefComplete:SetUpListItemType::kAutofill];
+  } else if (preferenceName == prefs::kIosDefaultBrowserPromoLastAction &&
+             DefaultBrowserPromoCompleted()) {
+    [self markSetUpListItemPrefComplete:SetUpListItemType::kDefaultBrowser];
   } else if (preferenceName == set_up_list_prefs::kDisabled &&
              set_up_list_prefs::IsSetUpListDisabled(_localState)) {
     [self hideSetUpList];
@@ -333,6 +421,12 @@ bool CredentialProviderPromoDismissed(PrefService* local_state) {
     if ([self hasOptedInToNotifications]) {
       [self markSetUpListItemPrefComplete:SetUpListItemType::kNotifications];
     }
+  } else if (preferenceName ==
+                 prefs::kHomeCustomizationMagicStackSetUpListEnabled &&
+             !_prefService->GetBoolean(
+                 prefs::kHomeCustomizationMagicStackSetUpListEnabled)) {
+    CHECK(IsHomeCustomizationEnabled());
+    [self hideSetUpList];
   }
 }
 
@@ -383,6 +477,7 @@ bool CredentialProviderPromoDismissed(PrefService* local_state) {
 
 - (NSArray<SetUpListItemViewData*>*)setUpListItems {
   NSMutableArray<SetUpListItemViewData*>* items = [[NSMutableArray alloc] init];
+
   // Add items that are not complete yet.
   for (SetUpListItem* model in _setUpList.items) {
     if (model.complete) {
@@ -391,8 +486,13 @@ bool CredentialProviderPromoDismissed(PrefService* local_state) {
     SetUpListItemViewData* item =
         [[SetUpListItemViewData alloc] initWithType:model.type
                                            complete:model.complete];
+
+    if (IsSegmentedDefaultBrowserPromoEnabled()) {
+      [item setUserSegment:_userSegment];
+    }
     [items addObject:item];
   }
+
   // Add items that are complete to the end.
   for (SetUpListItem* model in _setUpList.items) {
     if (!model.complete) {
@@ -401,6 +501,10 @@ bool CredentialProviderPromoDismissed(PrefService* local_state) {
     SetUpListItemViewData* item =
         [[SetUpListItemViewData alloc] initWithType:model.type
                                            complete:model.complete];
+
+    if (IsSegmentedDefaultBrowserPromoEnabled()) {
+      [item setUserSegment:_userSegment];
+    }
     [items addObject:item];
   }
   return items;
@@ -408,6 +512,11 @@ bool CredentialProviderPromoDismissed(PrefService* local_state) {
 
 // Sets the pref for a SetUpList item to indicate it is complete.
 - (void)markSetUpListItemPrefComplete:(SetUpListItemType)type {
+  // Exit early if this is called after `disconnect` which clears _localState.
+  // Item states will be reevaluated the next time this mediator is loaded.
+  if (!_localState) {
+    return;
+  }
   set_up_list_prefs::MarkItemComplete(_localState, type);
 }
 
@@ -423,14 +532,7 @@ bool CredentialProviderPromoDismissed(PrefService* local_state) {
 
 // Hides the Set Up List with an animation.
 - (void)hideSetUpList {
-  if (IsIOSMagicStackCollectionViewEnabled()) {
-    [self.audience removeSetUpList];
-    return;
-  }
-  __weak __typeof(self) weakSelf = self;
-  [self.consumer hideSetUpListWithAnimations:^{
-    [weakSelf.delegate contentSuggestionsWasUpdated];
-  }];
+  [self.audience removeSetUpList];
 }
 
 // Checks if the CPE is enabled and marks the SetUpList Autofill item complete
@@ -460,6 +562,17 @@ bool CredentialProviderPromoDismissed(PrefService* local_state) {
       _authenticationService->GetPrimaryIdentity(signin::ConsentLevel::kSignin);
   return push_notification_settings::IsMobileNotificationsEnabledForAnyClient(
       base::SysNSStringToUTF8(identity.gaiaID), _prefService);
+}
+
+// Sets user's highest priority segment retrieved from the Segmentation
+// Platform.
+- (void)didReceiveShopperSegmentationResult:
+            (const segmentation_platform::ClassificationResult&)shopperResult
+                       deviceSwitcherResult:
+                           (const segmentation_platform::ClassificationResult&)
+                               deviceSwitcherResult {
+  _userSegment =
+      GetDefaultBrowserUserSegment(&deviceSwitcherResult, &shopperResult);
 }
 
 @end

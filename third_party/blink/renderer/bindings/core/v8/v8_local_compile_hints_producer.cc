@@ -4,6 +4,10 @@
 
 #include "third_party/blink/renderer/bindings/core/v8/v8_local_compile_hints_producer.h"
 
+#include <utility>
+
+#include "base/containers/heap_array.h"
+#include "base/containers/span.h"
 #include "base/metrics/histogram_functions.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/page/v8_compile_hints_histograms.h"
@@ -19,7 +23,7 @@ namespace blink::v8_compile_hints {
 
 V8LocalCompileHintsProducer::V8LocalCompileHintsProducer(LocalFrame* frame)
     : frame_(frame) {
-  should_generate_data_ =
+  should_generate_data_ = frame->IsMainFrame() &&
       base::FeatureList::IsEnabled(features::kLocalCompileHints);
 }
 
@@ -35,11 +39,13 @@ void V8LocalCompileHintsProducer::RecordScript(
     return;
   }
   v8::Isolate* isolate = execution_context->GetIsolate();
-  v8_scripts_.emplace_back(v8::Global<v8::Script>(isolate, script));
+  compile_hints_collectors_.emplace_back(isolate,
+                                         script->GetCompileHintsCollector());
   cache_handlers_.emplace_back(cache_handler);
 }
 
 void V8LocalCompileHintsProducer::GenerateData(bool final_data) {
+  DCHECK_EQ(cache_handlers_.size(), compile_hints_collectors_.size());
   if (cache_handlers_.empty()) {
     return;
   }
@@ -52,15 +58,8 @@ void V8LocalCompileHintsProducer::GenerateData(bool final_data) {
       ExecutionContext::GetCodeCacheHostFromContext(execution_context);
   v8::HandleScope handle_scope(isolate);
 
-  DCHECK_EQ(cache_handlers_.size(), v8_scripts_.size());
   for (wtf_size_t i = 0; i < cache_handlers_.size(); ++i) {
     CachedMetadataHandler* cache_handler = cache_handlers_.at(i);
-
-    v8::Local<v8::Script> script = v8_scripts_[i].Get(isolate);
-    std::vector<int> compile_hints = script->GetProducedCompileHints();
-    if (compile_hints.size() == 0) {
-      continue;
-    }
 
     if (V8CodeCache::HasCodeCache(cache_handler,
                                   CachedMetadataHandler::kAllowUnchecked)) {
@@ -79,6 +78,11 @@ void V8LocalCompileHintsProducer::GenerateData(bool final_data) {
             ? V8CodeCache::SetMetadataType::kLocalCompileHintsAtInteractive
             : V8CodeCache::SetMetadataType::kLocalCompileHintsAtFMP);
 
+    v8::Local<v8::CompileHintsCollector> compile_hints_collector =
+        compile_hints_collectors_.at(i).Get(isolate);
+    std::vector<int> compile_hints =
+        compile_hints_collector->GetCompileHints(isolate);
+
     uint64_t timestamp = V8CodeCache::GetTimestamp();
     std::unique_ptr<v8::ScriptCompiler::CachedData> data(
         CreateCompileHintsCachedDataForScript(compile_hints, timestamp));
@@ -91,7 +95,7 @@ void V8LocalCompileHintsProducer::GenerateData(bool final_data) {
   }
   if (final_data) {
     cache_handlers_.clear();
-    v8_scripts_.clear();
+    compile_hints_collectors_.clear();
     base::UmaHistogramEnumeration(kLocalCompileHintsGeneratedHistogram,
                                   LocalCompileHintsGenerated::kFinal);
 
@@ -110,7 +114,7 @@ V8LocalCompileHintsProducer::CreateCompileHintsCachedDataForScript(
   size_t hints_count = compile_hints.size();
   constexpr size_t prefix_size = sizeof(uint64_t);
   size_t data_size = hints_count * sizeof(int) + prefix_size;
-  std::unique_ptr<uint8_t[]> data(new uint8_t[data_size]);
+  auto data = base::HeapArray<uint8_t>::Uninit(data_size);
 
   // Add the prefix in a little-endian manner.
   size_t ix = 0;
@@ -130,13 +134,14 @@ V8LocalCompileHintsProducer::CreateCompileHintsCachedDataForScript(
   DCHECK_EQ(data_size, ix);
 
   return new v8::ScriptCompiler::CachedData(
-      data.release(), static_cast<int>(data_size),
+      std::move(data).leak().data(), static_cast<int>(data_size),
       v8::ScriptCompiler::CachedData::BufferOwned);
 }
 
 void V8LocalCompileHintsProducer::Trace(Visitor* visitor) const {
   visitor->Trace(cache_handlers_);
   visitor->Trace(frame_);
+  visitor->Trace(compile_hints_collectors_);
 }
 
 }  // namespace blink::v8_compile_hints

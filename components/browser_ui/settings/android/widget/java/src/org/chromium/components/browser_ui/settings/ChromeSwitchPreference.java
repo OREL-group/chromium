@@ -12,8 +12,9 @@ import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.TextView;
 
-import androidx.annotation.ColorRes;
-import androidx.appcompat.content.res.AppCompatResources;
+import androidx.annotation.ColorInt;
+import androidx.annotation.Nullable;
+import androidx.annotation.VisibleForTesting;
 import androidx.preference.PreferenceViewHolder;
 import androidx.preference.SwitchPreferenceCompat;
 
@@ -24,8 +25,8 @@ public class ChromeSwitchPreference extends SwitchPreferenceCompat {
     /** The View for this preference. */
     private View mView;
 
-    /** The color resource ID for tinting of the view's background. */
-    @ColorRes private Integer mBackgroundColorRes;
+    /** The color for tinting of the view's background. */
+    @ColorInt @Nullable private Integer mBackgroundColorInt;
 
     /** Indicates if the preference uses a custom layout. */
     private final boolean mHasCustomLayout;
@@ -110,19 +111,26 @@ public class ChromeSwitchPreference extends SwitchPreferenceCompat {
     }
 
     @Override
-    protected void onClick() {
+    @VisibleForTesting(otherwise = VisibleForTesting.PROTECTED)
+    public void onClick() {
         if (ManagedPreferencesUtils.onClickPreference(mManagedPrefDelegate, this)) return;
         super.onClick();
     }
 
     /**
-     * Sets the Color resource ID which will be used to set the color of the view.
-     * @param colorRes
+     * Sets the color which will be used for the view background.
+     *
+     * @param colorInt The color for the background.
      */
-    public void setBackgroundColor(@ColorRes int colorRes) {
-        if (mBackgroundColorRes != null && mBackgroundColorRes == colorRes) return;
-        mBackgroundColorRes = colorRes;
+    public void setBackgroundColor(@ColorInt int colorInt) {
+        if (mBackgroundColorInt != null && mBackgroundColorInt == colorInt) return;
+        mBackgroundColorInt = colorInt;
         updateBackground();
+    }
+
+    /** Returns the background color of the preference. */
+    public @Nullable @ColorInt Integer getBackgroundColor() {
+        return mBackgroundColorInt;
     }
 
     /**
@@ -141,9 +149,7 @@ public class ChromeSwitchPreference extends SwitchPreferenceCompat {
     }
 
     private void updateBackground() {
-        if (mView == null || mBackgroundColorRes == null) return;
-        mView.setBackgroundColor(
-                AppCompatResources.getColorStateList(getContext(), mBackgroundColorRes)
-                        .getDefaultColor());
+        if (mView == null || mBackgroundColorInt == null) return;
+        mView.setBackgroundColor(mBackgroundColorInt);
     }
 }

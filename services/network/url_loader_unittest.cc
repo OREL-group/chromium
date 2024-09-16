@@ -28,7 +28,6 @@
 #include "base/run_loop.h"
 #include "base/strings/escape.h"
 #include "base/strings/strcat.h"
-#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
@@ -65,12 +64,14 @@
 #include "net/dns/mock_host_resolver.h"
 #include "net/http/http_network_session.h"
 #include "net/http/http_response_info.h"
+#include "net/http/http_status_code.h"
 #include "net/http/http_transaction_test_util.h"
 #include "net/log/net_log_event_type.h"
 #include "net/log/test_net_log.h"
 #include "net/proxy_resolution/configured_proxy_resolution_service.h"
 #include "net/socket/socket_test_util.h"
 #include "net/ssl/client_cert_identity_test_util.h"
+#include "net/storage_access_api/status.h"
 #include "net/test/cert_test_util.h"
 #include "net/test/embedded_test_server/controllable_http_response.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
@@ -79,6 +80,7 @@
 #include "net/test/quic_simple_test_server.h"
 #include "net/test/test_data_directory.h"
 #include "net/test/url_request/url_request_failed_job.h"
+#include "net/third_party/quiche/src/quiche/common/http/http_header_block.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
@@ -89,12 +91,10 @@
 #include "net/url_request/url_request_test_job.h"
 #include "net/url_request/url_request_test_util.h"
 #include "services/network/attribution/attribution_request_helper.h"
-#include "services/network/attribution/attribution_test_utils.h"
 #include "services/network/public/cpp/cors/origin_access_list.h"
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/cpp/ip_address_space_util.h"
 #include "services/network/public/cpp/resource_request.h"
-#include "services/network/public/cpp/trust_token_http_headers.h"
 #include "services/network/public/mojom/cookie_access_observer.mojom-forward.h"
 #include "services/network/public/mojom/cookie_access_observer.mojom.h"
 #include "services/network/public/mojom/early_hints.mojom.h"
@@ -161,7 +161,8 @@ URLLoader::DeleteCallback DeleteLoaderCallback(
 // this method, as URLLoaders don't expect to be alive after they invoke their
 // delete callback.
 URLLoader::DeleteCallback NeverInvokedDeleteLoaderCallback() {
-  return base::BindOnce([](URLLoader* /* loader*/) { NOTREACHED(); });
+  return base::BindOnce(
+      [](URLLoader* /* loader*/) { NOTREACHED_IN_MIGRATION(); });
 }
 
 constexpr char kTestAuthURL[] = "/auth-basic?password=PASS&realm=REALM";
@@ -375,8 +376,9 @@ class URLRequestSimulatedCacheJob : public net::URLRequestJob {
   }
 
   void GetResponseInfo(net::HttpResponseInfo* info) override {
-    if (!use_text_plain_)
+    if (!use_text_plain_) {
       return URLRequestJob::GetResponseInfo(info);
+    }
     if (!info->headers) {
       info->headers = net::HttpResponseHeaders::TryToCreate(
           "HTTP/1.1 200 OK\r\nContent-Type: text/plain");
@@ -503,8 +505,9 @@ class URLRequestFakeTransportInfoJob : public net::URLRequestJob {
             base::Unretained(this)));
 
     // Wait for callback to be invoked in async case.
-    if (result == net::ERR_IO_PENDING)
+    if (result == net::ERR_IO_PENDING) {
       return;
+    }
 
     ConnectedCallbackComplete(result);
   }
@@ -648,6 +651,7 @@ struct URLLoaderOptions {
         std::move(sync_url_loader_client), traffic_annotation, request_id,
         keepalive_request_size, std::move(keepalive_statistics_recorder),
         std::move(trust_token_helper_factory),
+        std::move(shared_dictionary_manager),
         std::move(shared_dictionary_checker), std::move(cookie_observer),
         std::move(trust_token_observer), std::move(url_loader_network_observer),
         std::move(devtools_observer), std::move(accept_ch_frame_observer),
@@ -663,6 +667,7 @@ struct URLLoaderOptions {
   int keepalive_request_size = 0;
   base::WeakPtr<KeepaliveStatisticsRecorder> keepalive_statistics_recorder;
   std::unique_ptr<TrustTokenRequestHelperFactory> trust_token_helper_factory;
+  raw_ptr<SharedDictionaryManager> shared_dictionary_manager;
   std::unique_ptr<SharedDictionaryAccessChecker> shared_dictionary_checker;
   std::unique_ptr<AttributionRequestHelper> attribution_request_helper;
   mojo::PendingRemote<mojom::CookieAccessObserver> cookie_observer =
@@ -727,10 +732,11 @@ class URLLoaderTest : public testing::Test {
       : task_environment_(base::test::TaskEnvironment::MainThreadType::IO) {
     scoped_refptr<net::X509Certificate> quic_root = net::ImportCertFromFile(
         net::GetTestCertsDirectory().AppendASCII("quic-root.pem"));
-    if (quic_root)
+    if (quic_root) {
       scoped_test_root_.Reset({quic_root});
-    else
+    } else {
       ADD_FAILURE();
+    }
 
     net::QuicSimpleTestServer::Start();
     net::URLRequestFailedJob::AddUrlHandler();
@@ -767,8 +773,6 @@ class URLLoaderTest : public testing::Test {
 
     test_server_.AddDefaultHandlers(
         base::FilePath(FILE_PATH_LITERAL("services/test/data")));
-    test_server_.RegisterRequestHandler(
-        base::BindRepeating(&HandleVerificationRequest));
     // This Unretained is safe because test_server_ is owned by |this|.
     test_server_.RegisterRequestMonitor(
         base::BindRepeating(&URLLoaderTest::Monitor, base::Unretained(this)));
@@ -804,8 +808,9 @@ class URLLoaderTest : public testing::Test {
     ResourceRequest request =
         CreateResourceRequest(!request_body_ ? "GET" : "POST", url);
 
-    if (request_body_)
+    if (request_body_) {
       request.request_body = request_body_;
+    }
 
     request.trusted_params->client_security_state.Swap(
         &request_client_security_state_);
@@ -826,12 +831,15 @@ class URLLoaderTest : public testing::Test {
                                 std::string* body = nullptr,
                                 bool is_trusted = true) {
     uint32_t options = mojom::kURLLoadOptionNone;
-    if (send_ssl_with_response_)
+    if (send_ssl_with_response_) {
       options |= mojom::kURLLoadOptionSendSSLInfoWithResponse;
-    if (sniff_)
+    }
+    if (sniff_) {
       options |= mojom::kURLLoadOptionSniffMimeType;
-    if (send_ssl_for_cert_error_)
+    }
+    if (send_ssl_for_cert_error_) {
       options |= mojom::kURLLoadOptionSendSSLInfoForCertificateError;
+    }
 
     std::unique_ptr<TestNetworkContextClient> network_context_client;
     std::unique_ptr<TestURLLoaderNetworkObserver> url_loader_network_observer;
@@ -965,8 +973,9 @@ class URLLoaderTest : public testing::Test {
     EXPECT_FALSE(first.empty());
     std::list<std::string> packets;
     packets.push_back(first);
-    if (!second.empty())
+    if (!second.empty()) {
       packets.push_back(second);
+    }
     AddMultipleWritesInterceptor(std::move(packets), net::OK,
                                  false /* async_reads */);
 
@@ -1116,8 +1125,9 @@ class URLLoaderTest : public testing::Test {
       }
 
       // The pipe was closed.
-      if (rv == MOJO_RESULT_FAILED_PRECONDITION)
+      if (rv == MOJO_RESULT_FAILED_PRECONDITION) {
         return body;
+      }
 
       CHECK_EQ(rv, MOJO_RESULT_OK);
 
@@ -1135,8 +1145,9 @@ class URLLoaderTest : public testing::Test {
     options.flags = MOJO_READ_DATA_FLAG_QUERY;
     MojoResult result = MojoReadData(consumer, &options, nullptr, &num_bytes);
     CHECK_EQ(MOJO_RESULT_OK, result);
-    if (num_bytes == 0)
+    if (num_bytes == 0) {
       return std::string();
+    }
 
     std::vector<char> buffer(num_bytes);
     result = MojoReadData(consumer, nullptr, buffer.data(), &num_bytes);
@@ -1455,7 +1466,7 @@ TEST_F(URLLoaderTest, InconsistentIPAddressSpaceIsBlocked) {
   EXPECT_THAT(
       client()->completion_status().cors_error_status,
       Optional(CorsErrorStatus(mojom::CorsError::kInvalidPrivateNetworkAccess,
-                               // TODO(https://crbug.com/1279376): Expect
+                               // TODO(crbug.com/40208529): Expect
                                // `kPublic` here instead, for better debugging.
                                mojom::IPAddressSpace::kUnknown,
                                mojom::IPAddressSpace::kLocal)));
@@ -3138,8 +3149,9 @@ class CallbackSavingNetworkContextClient : public TestNetworkContextClient {
                              const GURL& destination_url,
                              OnFileUploadRequestedCallback callback) override {
     file_upload_requested_callback_ = std::move(callback);
-    if (quit_closure_for_on_file_upload_requested_)
+    if (quit_closure_for_on_file_upload_requested_) {
       std::move(quit_closure_for_on_file_upload_requested_).Run();
+    }
   }
 
   void RunUntilUploadRequested(OnFileUploadRequestedCallback* callback) {
@@ -3235,8 +3247,9 @@ TEST_F(URLLoaderTest, UploadDataPipeWithLotsOfData) {
   request_body.reserve(5 * 1024 * 1024);
   // Using a repeating patter with a length that's prime is more likely to spot
   // out of order or repeated chunks of data.
-  while (request_body.size() < 5 * 1024 * 1024)
+  while (request_body.size() < 5 * 1024 * 1024) {
     request_body.append("foppity");
+  }
 
   mojo::PendingRemote<mojom::DataPipeGetter> data_pipe_getter_remote;
   auto data_pipe_getter = std::make_unique<TestDataPipeGetter>(
@@ -3291,6 +3304,7 @@ TEST_F(URLLoaderTest, UploadChunkedDataPipe) {
   ResourceRequest request =
       CreateResourceRequest("POST", test_server()->GetURL("/echo"));
   request.request_body = base::MakeRefCounted<ResourceRequestBody>();
+  request.request_body->SetAllowHTTP1ForStreamingUpload(true);
   request.request_body->SetToChunkedDataPipe(
       data_pipe_getter.GetDataPipeGetterRemote(),
       ResourceRequestBody::ReadOnlyOnce(false));
@@ -3316,8 +3330,55 @@ TEST_F(URLLoaderTest, UploadChunkedDataPipe) {
   EXPECT_EQ(net::OK, client()->completion_status().error_code);
 }
 
+TEST_F(URLLoaderTest, UploadChunkedDataPipeOverHTTP2) {
+  const std::string kRequestBody = "Request Body";
+
+  TestChunkedDataPipeGetter data_pipe_getter;
+
+  ResourceRequest request = CreateResourceRequest(
+      "POST", net::QuicSimpleTestServer::GetFileURL("/echo"));
+  request.request_body = base::MakeRefCounted<ResourceRequestBody>();
+  request.request_body->SetToChunkedDataPipe(
+      data_pipe_getter.GetDataPipeGetterRemote(),
+      ResourceRequestBody::ReadOnlyOnce(false));
+
+  base::RunLoop delete_run_loop;
+  mojo::Remote<mojom::URLLoader> loader;
+  std::unique_ptr<URLLoader> url_loader;
+  context().mutable_factory_params().process_id = mojom::kBrowserProcessId;
+  context().mutable_factory_params().is_orb_enabled = false;
+  url_loader = URLLoaderOptions().MakeURLLoader(
+      context(), DeleteLoaderCallback(&delete_run_loop, &url_loader),
+      loader.BindNewPipeAndPassReceiver(), request, client()->CreateRemote());
+
+  mojom::ChunkedDataPipeGetter::GetSizeCallback get_size_callback =
+      data_pipe_getter.WaitForGetSize();
+  mojo::BlockingCopyFromString(kRequestBody,
+                               data_pipe_getter.WaitForStartReading());
+  std::move(get_size_callback).Run(net::OK, kRequestBody.size());
+  delete_run_loop.Run();
+  client()->RunUntilComplete();
+
+  EXPECT_EQ(kRequestBody, ReadBody());
+  EXPECT_EQ(net::OK, client()->completion_status().error_code);
+}
+
+TEST_F(URLLoaderTest, UploadChunkedDataPipeNotAllowHTTP1) {
+  const std::string kRequestBody = "Request Body";
+
+  TestChunkedDataPipeGetter data_pipe_getter;
+
+  auto resource_request_body = base::MakeRefCounted<ResourceRequestBody>();
+  resource_request_body->SetToChunkedDataPipe(
+      data_pipe_getter.GetDataPipeGetterRemote(),
+      ResourceRequestBody::ReadOnlyOnce(false));
+  set_request_body(std::move(resource_request_body));
+
+  EXPECT_EQ(net::ERR_H2_OR_QUIC_REQUIRED, Load(test_server()->GetURL("/echo")));
+}
+
 // Tests a request body with ReadOnceStream.
-TEST_F(URLLoaderTest, UploadReadOnceStream) {
+TEST_F(URLLoaderTest, UploadChunkedDataPipeReadOnceStream) {
   const std::string kRequestBody = "Request Body";
 
   TestChunkedDataPipeGetter data_pipe_getter;
@@ -3325,6 +3386,7 @@ TEST_F(URLLoaderTest, UploadReadOnceStream) {
   ResourceRequest request =
       CreateResourceRequest("POST", test_server()->GetURL("/echo"));
   request.request_body = base::MakeRefCounted<ResourceRequestBody>();
+  request.request_body->SetAllowHTTP1ForStreamingUpload(true);
   request.request_body->SetToChunkedDataPipe(
       data_pipe_getter.GetDataPipeGetterRemote(),
       ResourceRequestBody::ReadOnlyOnce(true));
@@ -3860,7 +3922,13 @@ TEST_F(URLLoaderTest, CertStatusOnResponse) {
 }
 
 // Verifies if URLLoader works well with ResourceScheduler.
-TEST_F(URLLoaderTest, ResourceSchedulerIntegration) {
+// TODO(crbug.com/333723898): enable this test.
+#if BUILDFLAG(IS_MAC)
+#define MAYBE_ResourceSchedulerIntegration DISABLED_ResourceSchedulerIntegration
+#else
+#define MAYBE_ResourceSchedulerIntegration ResourceSchedulerIntegration
+#endif
+TEST_F(URLLoaderTest, MAYBE_ResourceSchedulerIntegration) {
   // ResourceScheduler limits the number of connections for the same host
   // by 6.
   constexpr int kRepeat = 6;
@@ -4014,14 +4082,12 @@ class MockCookieObserver : public network::mojom::CookieAccessObserver {
   void OnCookiesAccessed(std::vector<network::mojom::CookieAccessDetailsPtr>
                              details_vector) override {
     for (auto& details : details_vector) {
-      for (size_t i = 0; i < details->count; ++i) {
-        if (access_type_ && access_type_ != details->type) {
-          continue;
-        }
+      if (access_type_ && access_type_ != details->type) {
+        continue;
+      }
 
-        for (const auto& cookie_with_status : details->cookie_list) {
-          observed_cookies_.emplace_back(details, cookie_with_status);
-        }
+      for (const auto& cookie_with_status : details->cookie_list) {
+        observed_cookies_.emplace_back(details, cookie_with_status);
       }
     }
     if (wait_for_cookie_count_ &&
@@ -4179,7 +4245,7 @@ class ClientCertAuthObserver : public TestURLLoaderNetworkObserver {
   };
   void OnAuthRequired(
       const std::optional<base::UnguessableToken>& window_id,
-      uint32_t request_id,
+      int32_t request_id,
       const GURL& url,
       bool first_auth_attempt,
       const net::AuthChallengeInfo& auth_info,
@@ -4214,7 +4280,7 @@ class ClientCertAuthObserver : public TestURLLoaderNetworkObserver {
         std::move(client_cert_responder_remote));
     switch (certificate_response_) {
       case CertificateResponse::INVALID:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
         break;
       case CertificateResponse::URL_LOADER_REQUEST_CANCELLED:
         ASSERT_TRUE(url_loader_remote_);
@@ -4717,7 +4783,7 @@ TEST_F(URLLoaderTest, ClientAuthNoCertificate) {
   // TLS 1.3 client auth errors show up post-handshake, resulting in a read
   // error which on Windows causes the socket to shutdown immediately before the
   // error is read.
-  // TODO(crbug.com/906668): Add support for testing this in TLS 1.3.
+  // TODO(crbug.com/41427061): Add support for testing this in TLS 1.3.
   ssl_config.version_max = net::SSL_PROTOCOL_VERSION_TLS1_2;
 
   test_server.SetSSLConfig(net::EmbeddedTestServer::CERT_OK, ssl_config);
@@ -4862,7 +4928,7 @@ TEST_F(URLLoaderTest, BlockAllCookies) {
 
   GURL cookie_url = test_server()->GetURL("/");
   auto cc = net::CanonicalCookie::CreateForTesting(
-      cookie_url, "a=b", base::Time::Now(), absl::nullopt /* server_time */,
+      cookie_url, "a=b", base::Time::Now(), std::nullopt /* server_time */,
       net::CookiePartitionKey::FromURLForTesting(
           GURL("https://toplevelsite.com")));
 
@@ -4891,7 +4957,7 @@ TEST_F(URLLoaderTest, BlockOnlyThirdPartyCookies) {
 
   GURL cookie_url = test_server()->GetURL("/");
   auto cc = net::CanonicalCookie::CreateForTesting(
-      cookie_url, "a=b", base::Time::Now(), absl::nullopt /* server_time */,
+      cookie_url, "a=b", base::Time::Now(), std::nullopt /* server_time */,
       net::CookiePartitionKey::FromURLForTesting(
           GURL("https://toplevelsite.com")));
 
@@ -4918,7 +4984,7 @@ TEST_F(URLLoaderTest, AllowAllCookies) {
 
   GURL cookie_url = test_server()->GetURL("/");
   auto cc = net::CanonicalCookie::CreateForTesting(
-      cookie_url, "a=b", base::Time::Now(), absl::nullopt /* server_time */,
+      cookie_url, "a=b", base::Time::Now(), std::nullopt /* server_time */,
       net::CookiePartitionKey::FromURLForTesting(
           GURL("https://toplevelsite.com")));
 
@@ -4927,9 +4993,182 @@ TEST_F(URLLoaderTest, AllowAllCookies) {
   EXPECT_TRUE(url_loader->AllowFullCookies(third_party_url, site_for_cookies));
 }
 
+class StorageAccessHeaderURLLoaderTest : public URLLoaderTest {
+ public:
+  StorageAccessHeaderURLLoaderTest() = default;
+
+ protected:
+  static constexpr char kStorageAccessRedirectLoadPath[] =
+      "/redirect-load-with-storage-access";
+
+ private:
+  std::unique_ptr<net::test_server::HttpResponse>
+  HandleLoadWithStorageAccessRequest(
+      const net::test_server::HttpRequest& request) {
+    if (!base::StartsWith(request.GetURL().path(),
+                          kStorageAccessRedirectLoadPath)) {
+      return nullptr;
+    }
+    auto http_response =
+        std::make_unique<net::test_server::BasicHttpResponse>();
+    http_response->set_content_type("text/plain");
+    http_response->AddCustomHeader("Activate-Storage-Access", "load");
+    http_response->set_code(net::HTTP_PERMANENT_REDIRECT);
+    http_response->AddCustomHeader("Location", "/empty.html");
+    return http_response;
+  }
+};
+
+TEST_F(StorageAccessHeaderURLLoaderTest, StorageAccessHeader_Load_NoStatus) {
+  base::RunLoop delete_run_loop;
+  ResourceRequest request = CreateResourceRequest(
+      "GET", test_server_.GetURL("/set-header?Activate-Storage-Access: load"));
+
+  test_network_delegate()->set_storage_access_status(std::nullopt);
+
+  mojo::PendingRemote<mojom::URLLoader> loader;
+  std::unique_ptr<URLLoader> url_loader;
+  context().mutable_factory_params().process_id = mojom::kBrowserProcessId;
+  url_loader = URLLoaderOptions().MakeURLLoader(
+      context(), DeleteLoaderCallback(&delete_run_loop, &url_loader),
+      loader.InitWithNewPipeAndPassReceiver(), request,
+      client()->CreateRemote());
+
+  client()->RunUntilComplete();
+  delete_run_loop.Run();
+
+  // TestNetworkDelegate always returns std::nullopt for the
+  // GetStorageAccessStatus call, so the job's `storage_access_status_` is never
+  // overwritten and stays kNone.
+  EXPECT_FALSE(client()->response_head()->load_with_storage_access);
+}
+
+TEST_F(StorageAccessHeaderURLLoaderTest, StorageAccessHeader_Load_StatusNone) {
+  base::RunLoop delete_run_loop;
+  ResourceRequest request = CreateResourceRequest(
+      "GET", test_server_.GetURL("/set-header?Activate-Storage-Access: load"));
+
+  test_network_delegate()->set_storage_access_status(
+      net::cookie_util::StorageAccessStatus::kNone);
+  test_network_delegate()->set_is_storage_access_header_enabled(true);
+
+  mojo::PendingRemote<mojom::URLLoader> loader;
+  std::unique_ptr<URLLoader> url_loader;
+  context().mutable_factory_params().process_id = mojom::kBrowserProcessId;
+  url_loader = URLLoaderOptions().MakeURLLoader(
+      context(), DeleteLoaderCallback(&delete_run_loop, &url_loader),
+      loader.InitWithNewPipeAndPassReceiver(), request,
+      client()->CreateRemote());
+
+  client()->RunUntilComplete();
+  delete_run_loop.Run();
+
+  EXPECT_FALSE(client()->response_head()->load_with_storage_access);
+}
+
+TEST_F(StorageAccessHeaderURLLoaderTest,
+       StorageAccessHeader_Load_StatusInactive) {
+  base::RunLoop delete_run_loop;
+  ResourceRequest request = CreateResourceRequest(
+      "GET", test_server_.GetURL("/set-header?Activate-Storage-Access: load"));
+
+  test_network_delegate()->set_storage_access_status(
+      net::cookie_util::StorageAccessStatus::kInactive);
+  test_network_delegate()->set_is_storage_access_header_enabled(true);
+
+  mojo::PendingRemote<mojom::URLLoader> loader;
+  std::unique_ptr<URLLoader> url_loader;
+  context().mutable_factory_params().process_id = mojom::kBrowserProcessId;
+  url_loader = URLLoaderOptions().MakeURLLoader(
+      context(), DeleteLoaderCallback(&delete_run_loop, &url_loader),
+      loader.InitWithNewPipeAndPassReceiver(), request,
+      client()->CreateRemote());
+
+  client()->RunUntilComplete();
+  delete_run_loop.Run();
+
+  EXPECT_TRUE(client()->response_head()->load_with_storage_access);
+}
+
+TEST_F(StorageAccessHeaderURLLoaderTest,
+       StorageAccessHeader_Load_StatusActive) {
+  base::RunLoop delete_run_loop;
+  ResourceRequest request = CreateResourceRequest(
+      "GET", test_server_.GetURL("/set-header?Activate-Storage-Access: load"));
+
+  test_network_delegate()->set_storage_access_status(
+      net::cookie_util::StorageAccessStatus::kActive);
+  test_network_delegate()->set_is_storage_access_header_enabled(true);
+
+  mojo::PendingRemote<mojom::URLLoader> loader;
+  std::unique_ptr<URLLoader> url_loader;
+  context().mutable_factory_params().process_id = mojom::kBrowserProcessId;
+  url_loader = URLLoaderOptions().MakeURLLoader(
+      context(), DeleteLoaderCallback(&delete_run_loop, &url_loader),
+      loader.InitWithNewPipeAndPassReceiver(), request,
+      client()->CreateRemote());
+
+  client()->RunUntilComplete();
+  delete_run_loop.Run();
+
+  EXPECT_TRUE(client()->response_head()->load_with_storage_access);
+}
+
+TEST_F(StorageAccessHeaderURLLoaderTest, StorageAccessHeader_RedirectWithLoad) {
+  base::RunLoop delete_run_loop;
+  ResourceRequest request = CreateResourceRequest(
+      "GET", test_server_.GetURL(kStorageAccessRedirectLoadPath));
+
+  test_network_delegate()->set_storage_access_status(
+      net::cookie_util::StorageAccessStatus::kActive);
+  test_network_delegate()->set_is_storage_access_header_enabled(true);
+
+  mojo::PendingRemote<mojom::URLLoader> loader;
+  std::unique_ptr<URLLoader> url_loader;
+  context().mutable_factory_params().process_id = mojom::kBrowserProcessId;
+  url_loader = URLLoaderOptions().MakeURLLoader(
+      context(), DeleteLoaderCallback(&delete_run_loop, &url_loader),
+      loader.InitWithNewPipeAndPassReceiver(), request,
+      client()->CreateRemote());
+
+  client()->RunUntilComplete();
+  delete_run_loop.Run();
+
+  // The redirect response included the `load` header, but the final response
+  // did not, so the URLLoader should not propagate it.
+  EXPECT_FALSE(client()->response_head()->load_with_storage_access);
+}
+
+TEST_F(StorageAccessHeaderURLLoaderTest,
+       StorageAccessHeader_NoLoadWhenHeaderNotenabled) {
+  base::RunLoop delete_run_loop;
+  ResourceRequest request = CreateResourceRequest(
+      "GET", test_server_.GetURL("/set-header?Activate-Storage-Access: load"));
+
+  test_network_delegate()->set_storage_access_status(
+      net::cookie_util::StorageAccessStatus::kActive);
+
+  mojo::PendingRemote<mojom::URLLoader> loader;
+  std::unique_ptr<URLLoader> url_loader;
+  context().mutable_factory_params().process_id = mojom::kBrowserProcessId;
+  url_loader = URLLoaderOptions().MakeURLLoader(
+      context(), DeleteLoaderCallback(&delete_run_loop, &url_loader),
+      loader.InitWithNewPipeAndPassReceiver(), request,
+      client()->CreateRemote());
+
+  client()->RunUntilComplete();
+  delete_run_loop.Run();
+
+  // `TestNetworkDelegate::`OnIsStorageAccessHeaderEnabled` should have returned
+  // false when called during the request, so `load_with_storage_access` should
+  // still be false.
+  EXPECT_FALSE(client()->response_head()->load_with_storage_access);
+}
+
 class URLLoaderCookieSettingOverridesTest
     : public URLLoaderTest,
-      public ::testing::WithParamInterface<std::tuple<bool, bool, bool, bool>> {
+      public ::testing::WithParamInterface<
+          std::tuple<bool, bool, net::StorageAccessApiStatus, bool>> {
  public:
   ~URLLoaderCookieSettingOverridesTest() override = default;
 
@@ -4941,7 +5180,7 @@ class URLLoaderCookieSettingOverridesTest
       EXPECT_EQ(request.mode, network::mojom::RequestMode::kNoCors);
     }
     request.is_outermost_main_frame = IsOuterMostFrame();
-    request.has_storage_access = HasStorageAccess();
+    request.storage_access_api_status = StorageAccessApiStatus();
     if (!InitiatorIsOtherOrigin()) {
       request.request_initiator =
           url::Origin::Create(GURL("http://other-origin.test/"));
@@ -4954,8 +5193,15 @@ class URLLoaderCookieSettingOverridesTest
       overrides.Put(
           net::CookieSettingOverride::kTopLevelStorageAccessGrantEligible);
     }
-    if (HasStorageAccess() && InitiatorIsOtherOrigin()) {
-      overrides.Put(net::CookieSettingOverride::kStorageAccessGrantEligible);
+    switch (StorageAccessApiStatus()) {
+      case net::StorageAccessApiStatus::kNone:
+        break;
+      case net::StorageAccessApiStatus::kAccessViaAPI:
+        if (InitiatorIsOtherOrigin()) {
+          overrides.Put(
+              net::CookieSettingOverride::kStorageAccessGrantEligible);
+        }
+        break;
     }
     return overrides;
   }
@@ -4970,7 +5216,9 @@ class URLLoaderCookieSettingOverridesTest
  private:
   bool IsCors() const { return std::get<0>(GetParam()); }
   bool IsOuterMostFrame() const { return std::get<1>(GetParam()); }
-  bool HasStorageAccess() const { return std::get<2>(GetParam()); }
+  net::StorageAccessApiStatus StorageAccessApiStatus() const {
+    return std::get<2>(GetParam());
+  }
   bool InitiatorIsOtherOrigin() const { return std::get<3>(GetParam()); }
 };
 
@@ -5089,12 +5337,15 @@ TEST_P(URLLoaderCookieSettingOverridesTest,
                           ExpectedCookieSettingOverrides(),
                           ExpectedCookieSettingOverrides()));
 }
-INSTANTIATE_TEST_SUITE_P(All,
-                         URLLoaderCookieSettingOverridesTest,
-                         testing::Combine(testing::Bool(),
-                                          testing::Bool(),
-                                          testing::Bool(),
-                                          testing::Bool()));
+INSTANTIATE_TEST_SUITE_P(
+    All,
+    URLLoaderCookieSettingOverridesTest,
+    testing::Combine(
+        testing::Bool(),
+        testing::Bool(),
+        testing::Values(net::StorageAccessApiStatus::kNone,
+                        net::StorageAccessApiStatus::kAccessViaAPI),
+        testing::Bool()));
 
 namespace {
 
@@ -5766,11 +6017,11 @@ TEST_F(URLLoaderTest, EarlyHints) {
   const std::string kPreloadPath = "/hello.txt";
 
   // Prepare a response with an Early Hints response.
-  spdy::Http2HeaderBlock response_headers;
+  quiche::HttpHeaderBlock response_headers;
   response_headers[":status"] = "200";
   response_headers[":path"] = kPath;
-  std::vector<spdy::Http2HeaderBlock> early_hints;
-  spdy::Http2HeaderBlock hints_headers;
+  std::vector<quiche::HttpHeaderBlock> early_hints;
+  quiche::HttpHeaderBlock hints_headers;
   std::string preload_link =
       base::StringPrintf("<%s>; rel=preload", kPreloadPath.c_str());
   hints_headers["link"] = preload_link;
@@ -5994,8 +6245,9 @@ class MockTrustTokenRequestHelper : public TrustTokenRequestHelper {
     mojom::TrustTokenOperationStatus result = *on_begin_;
     on_begin_.reset();
     std::optional<net::HttpRequestHeaders> headers;
-    if (result == mojom::TrustTokenOperationStatus::kOk)
+    if (result == mojom::TrustTokenOperationStatus::kOk) {
       headers.emplace();
+    }
 
     switch (operation_synchrony_) {
       case SyncOrAsync::kSync: {
@@ -6142,7 +6394,7 @@ class MockTrustTokenRequestHelperFactory
         return;
     }
 
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
   }
 
  private:
@@ -6219,10 +6471,6 @@ class URLLoaderSyncOrAsyncTrustTokenOperationTest
  protected:
   ResourceRequest CreateTrustTokenResourceRequest() {
     GURL request_url = test_server()->GetURL("/simple_page.html");
-    return CreateTrustTokenResourceRequest(request_url);
-  }
-
-  ResourceRequest CreateTrustTokenResourceRequest(const GURL& request_url) {
     ResourceRequest request = CreateResourceRequest("GET", request_url);
     request.trust_token_params =
         OptionalTrustTokenParams(mojom::TrustTokenParams::New());
@@ -6254,6 +6502,7 @@ INSTANTIATE_TEST_SUITE_P(WithSyncAndAsyncOperations,
 // whose Begin and Finalize steps are both successful should succeed overall.
 TEST_P(URLLoaderSyncOrAsyncTrustTokenOperationTest,
        HandlesTrustTokenOperationSuccess) {
+  base::HistogramTester histogram_tester;
   ResourceRequest request = CreateTrustTokenResourceRequest();
 
   base::RunLoop delete_run_loop;
@@ -6278,6 +6527,10 @@ TEST_P(URLLoaderSyncOrAsyncTrustTokenOperationTest,
 
   client()->RunUntilComplete();
   delete_run_loop.Run();
+
+  histogram_tester.ExpectUniqueSample(
+      "Net.TrustTokens.OperationOutcome.Issuance",
+      mojom::TrustTokenOperationStatus::kOk, 1);
 
   EXPECT_EQ(client()->completion_status().error_code, net::OK);
   EXPECT_EQ(client()->completion_status().trust_token_operation_status,
@@ -6358,10 +6611,7 @@ TEST_P(URLLoaderSyncOrAsyncTrustTokenOperationTest,
 
 TEST_P(URLLoaderSyncOrAsyncTrustTokenOperationTest,
        HandlesTrustTokenFollowedByAttribution) {
-  GURL request_url = test_server_.GetURL(
-      base::JoinString({kVerificationHandlerPathPrefix, "some-path"}, "/"));
-
-  ResourceRequest request = CreateTrustTokenResourceRequest(request_url);
+  ResourceRequest request = CreateTrustTokenResourceRequest();
 
   base::RunLoop delete_run_loop;
 
@@ -6383,12 +6633,8 @@ TEST_P(URLLoaderSyncOrAsyncTrustTokenOperationTest,
           &outbound_trust_token_operation_was_successful_);
 
   // Hook attribution helper
-  auto trust_token_key_commitments = CreateTestTrustTokenKeyCommitments(
-      /*key=*/"any-key",
-      /*protocol_version=*/mojom::TrustTokenProtocolVersion::kTrustTokenV3Pmb,
-      /*issuer_url=*/request_url);
   url_loader_options.attribution_request_helper =
-      CreateTestAttributionRequestHelper(trust_token_key_commitments.get());
+      AttributionRequestHelper::CreateForTesting();
 
   url_loader = url_loader_options.MakeURLLoader(
       context(), DeleteLoaderCallback(&delete_run_loop, &url_loader),
@@ -6397,19 +6643,13 @@ TEST_P(URLLoaderSyncOrAsyncTrustTokenOperationTest,
 
   client()->RunUntilComplete();
   delete_run_loop.Run();
-
-  ASSERT_GE(client()->response_head()->trigger_verifications.size(), 1u);
-  for (const auto& verification :
-       client()->response_head()->trigger_verifications) {
-    EXPECT_TRUE(
-        FakeCryptographer::IsToken(verification.token(), kTestBlindToken));
-  }
 }
 
 // When a request's associated Trust Tokens operation's Begin step fails, the
 // request itself should fail immediately.
 TEST_P(URLLoaderSyncOrAsyncTrustTokenOperationTest,
        HandlesTrustTokenBeginFailure) {
+  base::HistogramTester histogram_tester;
   ResourceRequest request = CreateTrustTokenResourceRequest();
 
   base::RunLoop delete_run_loop;
@@ -6434,6 +6674,10 @@ TEST_P(URLLoaderSyncOrAsyncTrustTokenOperationTest,
 
   client()->RunUntilComplete();
   delete_run_loop.Run();
+
+  histogram_tester.ExpectUniqueSample(
+      "Net.TrustTokens.OperationOutcome.Issuance",
+      mojom::TrustTokenOperationStatus::kFailedPrecondition, 1);
 
   EXPECT_EQ(client()->completion_status().error_code,
             net::ERR_TRUST_TOKEN_OPERATION_FAILED);
@@ -6586,106 +6830,6 @@ TEST_P(URLLoaderSyncOrAsyncTrustTokenOperationTest,
       trust_token_observer.observed_tokens(),
       testing::ElementsAre(MatchesTrustTokenDetails(
           test_server()->GetOrigin(), test_server()->GetOrigin(), true)));
-}
-
-TEST_F(URLLoaderTest, HandlesTriggerVerificationRequest) {
-  GURL request_url = test_server_.GetURL(
-      base::JoinString({kVerificationHandlerPathPrefix, "some-path"}, "/"));
-  ResourceRequest request = CreateResourceRequest("GET", request_url);
-
-  base::RunLoop delete_run_loop;
-
-  mojo::PendingRemote<mojom::URLLoader> loader_remote;
-  std::unique_ptr<URLLoader> url_loader;
-
-  // Request must come from a valid origin for verification operation to run.
-  context().mutable_factory_params().isolation_info =
-      net::IsolationInfo::CreateForInternalRequest(url::Origin::Create(
-          GURL("https://valid-destination-origin.example")));
-
-  URLLoaderOptions url_loader_options;
-
-  // Hook attribution helper
-  auto trust_token_key_commitments = CreateTestTrustTokenKeyCommitments(
-      /*key=*/"any-key",
-      /*protocol_version=*/mojom::TrustTokenProtocolVersion::kTrustTokenV3Pmb,
-      /*issuer_url=*/request_url);
-  url_loader_options.attribution_request_helper =
-      CreateTestAttributionRequestHelper(trust_token_key_commitments.get());
-
-  url_loader = url_loader_options.MakeURLLoader(
-      context(), DeleteLoaderCallback(&delete_run_loop, &url_loader),
-      loader_remote.InitWithNewPipeAndPassReceiver(), request,
-      client()->CreateRemote());
-
-  client()->RunUntilComplete();
-  delete_run_loop.Run();
-
-  ASSERT_GE(client()->response_head()->trigger_verifications.size(), 1u);
-  for (const auto& verification :
-       client()->response_head()->trigger_verifications) {
-    EXPECT_TRUE(
-        FakeCryptographer::IsToken(verification.token(), kTestBlindToken));
-  }
-}
-
-TEST_F(URLLoaderTest, HandlesTriggerVerificationRequestWithRedirect) {
-  GURL request_url = test_server_.GetURL(kRedirectVerificationRequestPath);
-  ResourceRequest request = CreateResourceRequest("GET", request_url);
-
-  base::RunLoop delete_run_loop;
-
-  mojo::PendingRemote<mojom::URLLoader> loader_remote;
-  std::unique_ptr<URLLoader> url_loader;
-
-  // Request must come from a valid origin for verification operation to run.
-  context().mutable_factory_params().isolation_info =
-      net::IsolationInfo::CreateForInternalRequest(url::Origin::Create(
-          GURL("https://valid-destination-origin.example")));
-  URLLoaderOptions url_loader_options;
-
-  // Hook attribution helper
-  auto trust_token_key_commitments = CreateTestTrustTokenKeyCommitments(
-      /*key=*/"any-key",
-      /*protocol_version=*/
-      mojom::TrustTokenProtocolVersion::kTrustTokenV3Pmb,
-      /*issuer_url=*/request_url);
-  url_loader_options.attribution_request_helper =
-      CreateTestAttributionRequestHelper(trust_token_key_commitments.get());
-
-  url_loader = url_loader_options.MakeURLLoader(
-      context(), DeleteLoaderCallback(&delete_run_loop, &url_loader),
-      loader_remote.InitWithNewPipeAndPassReceiver(), request,
-      client()->CreateRemote());
-
-  client()->RunUntilRedirectReceived();
-  ASSERT_TRUE(client()->has_received_redirect());
-
-  std::vector<TriggerVerification> redirect_verifications =
-      client()->response_head()->trigger_verifications;
-  ASSERT_GE(redirect_verifications.size(), 1u);
-  for (const auto& verification : redirect_verifications) {
-    EXPECT_TRUE(
-        FakeCryptographer::IsToken(verification.token(), kTestBlindToken));
-  }
-  // Follow redirect is called by the client. Even if the attribution request
-  // helper adds/remove headers follow redirect would/can still be called by the
-  // client without headers changes.
-  url_loader->FollowRedirect(/*removed_headers=*/{}, /*modified_headers=*/{},
-                             /*modified_cors_exempt_headers=*/{}, std::nullopt);
-
-  client()->RunUntilComplete();
-  delete_run_loop.Run();
-
-  std::vector<TriggerVerification> response_verifications =
-      client()->response_head()->trigger_verifications;
-  ASSERT_GE(response_verifications.size(), 1u);
-  for (const auto& verification : response_verifications) {
-    EXPECT_TRUE(
-        FakeCryptographer::IsToken(verification.token(), kTestBlindToken));
-  }
-  EXPECT_NE(redirect_verifications.at(0).aggregatable_report_id(),
-            response_verifications.at(0).aggregatable_report_id());
 }
 
 TEST_F(URLLoaderTest, OnRawRequestClientSecurityStateFactory) {
@@ -7131,8 +7275,8 @@ TEST_P(URLLoaderMockSocketAuctionOnlyTest,
   EXPECT_TRUE(socket_data_reads_writes.socket());
 }
 
-// TODO(crbug.com/1448564): Remove old names once API users have migrated to new
-// names.
+// TODO(crbug.com/40269364): Remove old names once API users have migrated to
+// new names.
 INSTANTIATE_TEST_SUITE_P(
     All,
     URLLoaderMockSocketAuctionOnlyTest,
@@ -7375,9 +7519,12 @@ TEST_F(URLLoaderTest, CookieSettingOverridesCopiedToURLRequest) {
   net::CookieSettingOverrides cookie_setting_overrides =
       net::CookieSettingOverrides::All();
   // The overrides are not allowed to start out with the
-  // `kStorageAccessGrantEligible` override present.
+  // `kStorageAccessGrantEligible` or `kStorageAccessGrantEligibleViaHeader`
+  // overrides present.
   cookie_setting_overrides.Remove(
       net::CookieSettingOverride::kStorageAccessGrantEligible);
+  cookie_setting_overrides.Remove(
+      net::CookieSettingOverride::kStorageAccessGrantEligibleViaHeader);
 
   set_cookie_setting_overrides(cookie_setting_overrides);
   bool was_intercepted = false;

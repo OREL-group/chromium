@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/cdm/cenc_decryptor.h"
 
 #include <stdint.h>
@@ -95,7 +100,7 @@ class CencDecryptorTest : public testing::Test {
     EXPECT_FALSE(iv.empty());
 
     scoped_refptr<DecoderBuffer> encrypted_buffer =
-        DecoderBuffer::CopyFrom(data.data(), data.size());
+        DecoderBuffer::CopyFrom(data);
 
     // Key_ID is never used.
     encrypted_buffer->set_decrypt_config(

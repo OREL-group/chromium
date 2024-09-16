@@ -4,17 +4,16 @@
 
 #include "chrome/browser/ui/settings_window_manager_chromeos.h"
 
-#include "ash/constants/app_types.h"
 #include "ash/constants/ash_features.h"
 #include "ash/public/cpp/resources/grit/ash_public_unscaled_resources.h"
 #include "ash/webui/system_apps/public/system_web_app_type.h"
+#include "ash/wm/window_properties.h"
 #include "base/strings/strcat.h"
 #include "base/types/cxx23_to_underlying.h"
 #include "chrome/browser/app_mode/app_mode_utils.h"
 #include "chrome/browser/apps/app_service/launch_utils.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/ash/system_web_apps/system_web_app_ui_utils.h"
-#include "chrome/browser/ui/ash/window_properties.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_navigator.h"
@@ -26,9 +25,11 @@
 #include "chrome/browser/ui/web_applications/app_browser_controller.h"
 #include "chrome/browser/web_applications/web_app_utils.h"
 #include "chrome/common/webui_url_constants.h"
+#include "chromeos/ui/base/app_types.h"
+#include "chromeos/ui/base/window_properties.h"
 #include "components/services/app_service/public/cpp/app_launch_util.h"
 #include "content/public/browser/web_contents.h"
-#include "ui/aura/client/aura_constants.h"
+#include "ui/aura/window.h"
 #include "url/gurl.h"
 
 namespace chrome {
@@ -65,7 +66,7 @@ bool SettingsWindowManager::UseDeprecatedSettingsWindow(Profile* profile) {
   }
 
   // Use deprecated settings window in Kiosk session only if SWA is disabled.
-  if (chrome::IsRunningInForcedAppMode() &&
+  if (IsRunningInForcedAppMode() &&
       !base::FeatureList::IsEnabled(ash::features::kKioskEnableSystemWebApps)) {
     return true;
   }
@@ -161,9 +162,9 @@ void SettingsWindowManager::ShowChromePageForProfile(
   DCHECK(browser->is_trusted_source());
 
   auto* window = browser->window()->GetNativeWindow();
-  window->SetProperty(aura::client::kAppType,
-                      static_cast<int>(ash::AppType::CHROME_APP));
-  window->SetProperty(kOverrideWindowIconResourceIdKey, IDR_SETTINGS_LOGO_192);
+  window->SetProperty(chromeos::kAppTypeKey, chromeos::AppType::CHROME_APP);
+  window->SetProperty(ash::kOverrideWindowIconResourceIdKey,
+                      IDR_SETTINGS_LOGO_192);
 
   for (SettingsWindowManagerObserver& observer : observers_) {
     observer.OnNewSettingsWindow(browser);

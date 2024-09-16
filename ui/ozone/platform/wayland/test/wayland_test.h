@@ -54,12 +54,11 @@ class WaylandTestBase {
   // The 'no_nested_runloops' parameter can be used to not use runloops for
   // testing code that posts delayed tasks and the delay can be controlled in
   // the test without them being executed unexpectedly during this call.
-  // TODO(https://crbug.com/328783999): Avoid nested runloops by default.
   void PostToServerAndWait(
       base::OnceCallback<void(wl::TestWaylandServerThread* server)> callback,
-      bool no_nested_runloops = false);
+      bool no_nested_runloops = true);
   void PostToServerAndWait(base::OnceClosure closure,
-                           bool no_nested_runloops = false);
+                           bool no_nested_runloops = true);
 
   // Similar to the two methods above, but provides the convenience of using a
   // capturing lambda directly.
@@ -68,10 +67,13 @@ class WaylandTestBase {
       typename = std::enable_if_t<
           std::is_invocable_r_v<void, Lambda, wl::TestWaylandServerThread*> ||
           std::is_invocable_r_v<void, Lambda>>>
-  void PostToServerAndWait(Lambda&& lambda, bool no_nested_runloops = false) {
+  void PostToServerAndWait(Lambda&& lambda, bool no_nested_runloops = true) {
     PostToServerAndWait(base::BindLambdaForTesting(std::move(lambda)),
                         no_nested_runloops);
   }
+
+  // Convenience wrapper function for WaylandConnectionTestApi::SyncDisplay.
+  void SyncDisplay();
 
  protected:
   // Disables client-server sync during the teardown.  Used by tests that
@@ -118,6 +120,10 @@ class WaylandTestBase {
 
   wl::TestWaylandServerThread server_;
 
+#if BUILDFLAG(USE_XKBCOMMON)
+  XkbEvdevCodes xkb_evdev_code_converter_;
+#endif
+
   ::testing::NiceMock<MockWaylandPlatformWindowDelegate> delegate_;
   std::unique_ptr<ScopedKeyboardLayoutEngine> scoped_keyboard_layout_engine_;
   std::unique_ptr<WaylandSurfaceFactory> surface_factory_;
@@ -132,11 +138,6 @@ class WaylandTestBase {
 
  private:
   bool initialized_ = false;
-
-#if BUILDFLAG(USE_XKBCOMMON)
-  XkbEvdevCodes xkb_evdev_code_converter_;
-#endif
-
   std::unique_ptr<KeyboardLayoutEngine> keyboard_layout_engine_;
   base::test::ScopedFeatureList feature_list_;
 };

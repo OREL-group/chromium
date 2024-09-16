@@ -26,9 +26,6 @@ gfx::Size GetLargestDisplaySizeLandscape();
 bool IsValidOutput(const manta::proto::OutputData& output,
                    const std::string_view source);
 
-bool IsValidTemplateQuery(
-    const ash::personalization_app::mojom::SeaPenTemplateQueryPtr& query);
-
 // Common helper function between `FetchThumbnails` and `FetchWallpaper`.
 manta::proto::Request CreateMantaRequest(
     const ash::personalization_app::mojom::SeaPenQueryPtr& query,
@@ -38,7 +35,7 @@ manta::proto::Request CreateMantaRequest(
     manta::proto::FeatureName feature_name);
 
 std::string GetFeedbackText(
-    const ash::personalization_app::mojom::SeaPenTemplateQueryPtr& query,
+    const ash::personalization_app::mojom::SeaPenQueryPtr& query,
     const ash::personalization_app::mojom::SeaPenFeedbackMetadataPtr& metadata);
 
 }  // namespace wallpaper_handlers

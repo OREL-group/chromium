@@ -147,7 +147,7 @@ class PageInfo : private content_settings::CookieControlsObserver,
     ContentSetting default_setting = CONTENT_SETTING_DEFAULT;
     // The settings source e.g. user, extensions, policy, ... .
     content_settings::SettingSource source =
-        content_settings::SETTING_SOURCE_NONE;
+        content_settings::SettingSource::kNone;
     // Whether the permission is a one-time grant.
     bool is_one_time = false;
     // Only set for settings that can have multiple permissions for different
@@ -228,7 +228,7 @@ class PageInfo : private content_settings::CookieControlsObserver,
 
   // Handles opening the link to show all sites settings with a filter for
   // current site's fps  and records the event.
-  void OpenAllSitesViewFilteredToFps();
+  void OpenAllSitesViewFilteredToRws();
 
   // Handles opening the cookies dialog and records the event.
   void OpenCookiesDialog();
@@ -311,7 +311,9 @@ class PageInfo : private content_settings::CookieControlsObserver,
                        bool protections_on,
                        CookieControlsEnforcement enforcement,
                        CookieBlocking3pcdStatus blocking_status,
-                       base::Time expiration) override;
+                       base::Time expiration,
+                       std::vector<content_settings::TrackingProtectionFeature>
+                           features) override;
 
   // Populates this object's UI state with provided security context. This
   // function does not update visible UI-- that's part of Present*().
@@ -493,6 +495,8 @@ class PageInfo : private content_settings::CookieControlsObserver,
 
   CookieBlocking3pcdStatus blocking_status_ =
       CookieBlocking3pcdStatus::kNotIn3pcd;
+
+  std::vector<content_settings::TrackingProtectionFeature> features_;
 
   base::Time cookie_exception_expiration_;
 

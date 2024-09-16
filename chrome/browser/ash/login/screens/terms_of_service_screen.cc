@@ -70,6 +70,7 @@ std::optional<std::string> ReadFileToOptionalString(
 
 // static
 std::string TermsOfServiceScreen::GetResultString(Result result) {
+  // LINT.IfChange(UsageMetrics)
   switch (result) {
     case Result::ACCEPTED:
       return "Accepted";
@@ -78,6 +79,7 @@ std::string TermsOfServiceScreen::GetResultString(Result result) {
     case Result::NOT_APPLICABLE:
       return BaseScreen::kNotApplicable;
   }
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/oobe/histograms.xml)
 }
 
 TermsOfServiceScreen::TermsOfServiceScreen(
@@ -148,7 +150,7 @@ void TermsOfServiceScreen::ShowImpl() {
   view_->Show(
       ash::InstallAttributes::Get()->IsEnterpriseManaged()
           ? connector->GetEnterpriseDomainManager()
-          : chrome::enterprise_util::GetDomainFromEmail(
+          : enterprise_util::GetDomainFromEmail(
                 ProfileManager::GetActiveUserProfile()->GetProfileUserName()));
 
   // Start downloading the Terms of Service.

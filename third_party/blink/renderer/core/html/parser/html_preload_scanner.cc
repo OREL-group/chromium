@@ -105,7 +105,7 @@ String InitiatorFor(const StringImpl* tag_impl, bool link_is_modulepreload) {
     return html_names::kScriptTag.LocalName();
   if (Match(tag_impl, html_names::kVideoTag))
     return html_names::kVideoTag.LocalName();
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return g_empty_string;
 }
 
@@ -115,8 +115,9 @@ bool MediaAttributeMatches(const MediaValuesCached& media_values,
   // trials for media queries are not needed.
   MediaQuerySet* media_queries =
       MediaQuerySet::Create(attribute_value, nullptr);
-  MediaQueryEvaluator media_query_evaluator(&media_values);
-  return media_query_evaluator.Eval(*media_queries);
+  MediaQueryEvaluator* media_query_evaluator =
+      MakeGarbageCollected<MediaQueryEvaluator>(&media_values);
+  return media_query_evaluator->Eval(*media_queries);
 }
 
 void ScanScriptWebBundle(
@@ -608,7 +609,11 @@ class TokenPreloadScanner::StartTagScanner {
     // whether it has loading="lazy" attribute or not, in order to make the LCP
     // image load completion faster. An exception to this is "lazy load auto
     // sizes" which must defer because sizes=auto requires layout information.
-    if (is_potentially_lcp_element && !source_size_is_auto_) {
+    //
+    // If the dry run mode is enabled, prevents the actual preload request from
+    // being created.
+    const bool dry_run_mode = features::kLCPPLazyLoadImagePreloadDryRun.Get();
+    if (is_potentially_lcp_element && !source_size_is_auto_ && !dry_run_mode) {
       switch (document_parameters.preload_lazy_load_image_type) {
         case features::LcppPreloadLazyLoadImageType::kNativeLazyLoading:
         case features::LcppPreloadLazyLoadImageType::kCustomLazyLoading:
@@ -658,7 +663,7 @@ class TokenPreloadScanner::StartTagScanner {
       return ResourceType::kCSSStyleSheet;
     if (link_is_preconnect_)
       return ResourceType::kRaw;
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return ResourceType::kRaw;
   }
 
@@ -842,11 +847,7 @@ TokenPreloadScanner::TokenPreloadScanner(
       document_parameters_(std::move(document_parameters)),
       media_values_cached_data_(std::move(media_values_cached_data)),
       scanner_type_(scanner_type),
-      lcp_element_matcher_(
-          std::move(locators),
-          features::
-              kLCPCriticalPathPredictorEnableElementLocatorPerformanceImprovements
-                  .Get()) {
+      lcp_element_matcher_(std::move(locators)) {
   CHECK(document_parameters_.get());
   CHECK(media_values_cached_data_.get());
   DCHECK(document_url.IsValid());
@@ -1326,10 +1327,25 @@ CachedDocumentParameters::CachedDocumentParameters(Document* document) {
   } else {
     lazy_load_image_setting = LocalFrame::LazyLoadImageSetting::kDisabled;
   }
+  static const features::LcppPreloadLazyLoadImageType
+      kPreloadLazyLoadImageType =
+          features::kLCPCriticalPathPredictorPreloadLazyLoadImageType.Get();
   preload_lazy_load_image_type =
-      features::kLCPCriticalPathPredictorPreloadLazyLoadImageType.Get();
+      preload_lazy_load_image_type_for_testing.has_value()
+          ? preload_lazy_load_image_type_for_testing.value()
+          : kPreloadLazyLoadImageType;
   probe::GetDisabledImageTypes(document->GetExecutionContext(),
                                &disabled_image_types);
+}
+
+// static
+std::optional<features::LcppPreloadLazyLoadImageType>
+    CachedDocumentParameters::preload_lazy_load_image_type_for_testing =
+        std::nullopt;
+// static
+void CachedDocumentParameters::SetLcppPreloadLazyLoadImageTypeForTesting(
+    std::optional<features::LcppPreloadLazyLoadImageType> type) {
+  preload_lazy_load_image_type_for_testing = type;
 }
 
 }  // namespace blink

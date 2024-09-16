@@ -26,19 +26,21 @@
 #import "components/sync/service/sync_user_settings.h"
 #import "components/sync_sessions/open_tabs_ui_delegate.h"
 #import "components/sync_sessions/session_sync_service.h"
+#import "components/trusted_vault/trusted_vault_server_constants.h"
 #import "ios/chrome/app/tests_hook.h"
 #import "ios/chrome/browser/drag_and_drop/model/drag_item_util.h"
 #import "ios/chrome/browser/drag_and_drop/model/table_view_url_drag_drop_handler.h"
+#import "ios/chrome/browser/keyboard/ui_bundled/UIKeyCommand+Chrome.h"
 #import "ios/chrome/browser/metrics/model/new_tab_page_uma.h"
 #import "ios/chrome/browser/net/model/crurl.h"
 #import "ios/chrome/browser/ntp/model/new_tab_page_util.h"
 #import "ios/chrome/browser/search_engines/model/template_url_service_factory.h"
-#import "ios/chrome/browser/sessions/live_tab_context_browser_agent.h"
-#import "ios/chrome/browser/sessions/session_util.h"
+#import "ios/chrome/browser/sessions/model/live_tab_context_browser_agent.h"
+#import "ios/chrome/browser/sessions/model/session_util.h"
 #import "ios/chrome/browser/settings/model/sync/utils/sync_presenter.h"
 #import "ios/chrome/browser/settings/model/sync/utils/sync_util.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/model/url/chrome_url_constants.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_opener.h"
@@ -81,7 +83,6 @@
 #import "ios/chrome/browser/ui/authentication/signin/signin_utils.h"
 #import "ios/chrome/browser/ui/authentication/signin_presenter.h"
 #import "ios/chrome/browser/ui/authentication/signin_promo_view_mediator.h"
-#import "ios/chrome/browser/ui/keyboard/UIKeyCommand+Chrome.h"
 #import "ios/chrome/browser/ui/recent_tabs/recent_tabs_constants.h"
 #import "ios/chrome/browser/ui/recent_tabs/recent_tabs_menu_provider.h"
 #import "ios/chrome/browser/ui/recent_tabs/recent_tabs_presentation_delegate.h"
@@ -371,7 +372,7 @@ typedef std::pair<SessionID, TableViewURLItem*> RecentlyClosedTableViewItemPair;
       [[TableViewDisclosureHeaderFooterItem alloc]
           initWithType:ItemTypeRecentlyClosedHeader];
   header.text = l10n_util::GetNSString(IDS_IOS_RECENT_TABS_RECENTLY_CLOSED);
-  if (self.tabRestoreService->entries().empty()) {
+  if (!self.tabRestoreService || self.tabRestoreService->entries().empty()) {
     header.subtitleText =
         l10n_util::GetNSString(IDS_IOS_RECENT_TABS_RECENTLY_CLOSED_EMPTY);
   }
@@ -419,7 +420,7 @@ typedef std::pair<SessionID, TableViewURLItem*> RecentlyClosedTableViewItemPair;
       const sessions::tab_restore::Entry* entry = iter->get();
       DCHECK(entry);
       // Only TAB type is handled.
-      // TODO(crbug.com/1056596) : Support WINDOW restoration under
+      // TODO(crbug.com/40676931) : Support WINDOW restoration under
       // multi-window.
       DCHECK_EQ(sessions::tab_restore::Type::TAB, entry->type);
 
@@ -659,7 +660,7 @@ typedef std::pair<SessionID, TableViewURLItem*> RecentlyClosedTableViewItemPair;
     switch (state) {
       case SessionsSyncUserState::USER_SIGNED_IN_SYNC_ON_WITH_SESSIONS:
       case SessionsSyncUserState::USER_SIGNED_IN_SYNC_IN_PROGRESS:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
         return;
 
       case SessionsSyncUserState::USER_SIGNED_IN_SYNC_OFF:
@@ -719,7 +720,7 @@ typedef std::pair<SessionID, TableViewURLItem*> RecentlyClosedTableViewItemPair;
 }
 
 - (void)addSigninPromoViewItem {
-  // Init|_signinPromoViewMediator` if nil.
+  // Init `_signinPromoViewMediator` if nil.
   if (!self.signinPromoViewMediator && self.browserState) {
     self.signinPromoViewMediator = [[SigninPromoViewMediator alloc]
         initWithAccountManagerService:ChromeAccountManagerServiceFactory::
@@ -815,7 +816,7 @@ typedef std::pair<SessionID, TableViewURLItem*> RecentlyClosedTableViewItemPair;
     if (_displayedTabs[i].session_tag == distantSession->tag)
       return i + kFirstSessionSectionIdentifier;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return -1;
 }
 
@@ -1783,23 +1784,30 @@ typedef std::pair<SessionID, TableViewURLItem*> RecentlyClosedTableViewItemPair;
 
 - (void)showTrustedVaultReauthForFetchKeysWithTrigger:
     (syncer::TrustedVaultUserActionTriggerForUMA)trigger {
+  trusted_vault::SecurityDomainId securityDomainID =
+      trusted_vault::SecurityDomainId::kChromeSync;
+  signin_metrics::AccessPoint accessPoint =
+      signin_metrics::AccessPoint::ACCESS_POINT_RECENT_TABS;
   [self.applicationHandler
       showTrustedVaultReauthForFetchKeysFromViewController:self
+                                          securityDomainID:securityDomainID
                                                    trigger:trigger
-                                               accessPoint:
-                                                   signin_metrics::AccessPoint::
-                                                       ACCESS_POINT_RECENT_TABS];
+                                               accessPoint:accessPoint];
 }
 
 - (void)showTrustedVaultReauthForDegradedRecoverabilityWithTrigger:
     (syncer::TrustedVaultUserActionTriggerForUMA)trigger {
+  trusted_vault::SecurityDomainId securityDomainID =
+      trusted_vault::SecurityDomainId::kChromeSync;
+  signin_metrics::AccessPoint accessPoint =
+      signin_metrics::AccessPoint::ACCESS_POINT_RECENT_TABS;
   [self.applicationHandler
       showTrustedVaultReauthForDegradedRecoverabilityFromViewController:self
+                                                       securityDomainID:
+                                                           securityDomainID
                                                                 trigger:trigger
                                                             accessPoint:
-                                                                signin_metrics::
-                                                                    AccessPoint::
-                                                                        ACCESS_POINT_RECENT_TABS];
+                                                                accessPoint];
 }
 
 #pragma mark - SigninPresenter
@@ -1870,12 +1878,12 @@ typedef std::pair<SessionID, TableViewURLItem*> RecentlyClosedTableViewItemPair;
 
 // Returns YES if the History Sync Opt-In should be shown when the promo action
 // button is tapped.
-// TODO(crbug.com/1462326): This logic should be moved outside of the
+// TODO(crbug.com/40921836): This logic should be moved outside of the
 // ViewController.
 - (BOOL)shouldShowHistorySyncOnPromoAction {
   AuthenticationService* authenticationService =
       AuthenticationServiceFactory::GetForBrowserState(_browserState);
-  // TODO(crbug.com/1466884): Delete the usage of ConsentLevel::kSync after
+  // TODO(crbug.com/40276546): Delete the usage of ConsentLevel::kSync after
   // Phase 2 on iOS is launched. See ConsentLevel::kSync documentation for
   // details.
   if (authenticationService->HasPrimaryIdentity(signin::ConsentLevel::kSync)) {

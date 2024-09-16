@@ -7,10 +7,10 @@
 #import "base/time/time.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/util/layout_guide_names.h"
+#import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
 #import "ios/chrome/browser/shared/ui/util/util_swift.h"
 #import "ios/chrome/browser/ui/omnibox/omnibox_ui_features.h"
 #import "ios/chrome/browser/ui/omnibox/popup/content_providing.h"
-#import "ios/chrome/browser/ui/toolbar/buttons/toolbar_configuration.h"
 #import "ios/chrome/browser/ui/toolbar/public/toolbar_constants.h"
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
 #import "ios/chrome/common/ui/util/constraints_ui_util.h"
@@ -71,12 +71,6 @@ const CGFloat kFadeAnimationVerticalOffset = 12;
     _viewController = viewController;
     _layoutGuideCenter = layoutGuideCenter;
 
-    // Popup uses same colors as the toolbar, so the ToolbarConfiguration is
-    // used to get the style.
-    ToolbarConfiguration* configuration = [[ToolbarConfiguration alloc]
-        initWithStyle:incognito ? ToolbarStyle::kIncognito
-                                : ToolbarStyle::kNormal];
-
     UIView* containerView = [[UIView alloc] init];
     [containerView addSubview:viewController.view];
     _popupContainerView = containerView;
@@ -90,17 +84,18 @@ const CGFloat kFadeAnimationVerticalOffset = 12;
     _popupContainerView.overrideUserInterfaceStyle = userInterfaceStyle;
     viewController.overrideUserInterfaceStyle = userInterfaceStyle;
 
-    if (IsIpadPopoutOmniboxEnabled()) {
+    if (ui::GetDeviceFormFactor() == ui::DEVICE_FORM_FACTOR_TABLET) {
       _popupContainerView.backgroundColor =
           [UIColor colorNamed:kPrimaryBackgroundColor];
     } else {
-      _popupContainerView.backgroundColor = configuration.backgroundColor;
+      _popupContainerView.backgroundColor =
+          [self.delegate popupBackgroundColorForPresenter:self];
     }
 
     _popupContainerView.translatesAutoresizingMaskIntoConstraints = NO;
     viewController.view.translatesAutoresizingMaskIntoConstraints = NO;
 
-    if (IsIpadPopoutOmniboxEnabled()) {
+    if (ui::GetDeviceFormFactor() == ui::DEVICE_FORM_FACTOR_TABLET) {
       self.viewController.view.layer.masksToBounds = YES;
 
       AddSameConstraints(viewController.view, _popupContainerView);
@@ -134,7 +129,6 @@ const CGFloat kFadeAnimationVerticalOffset = 12;
             constraintEqualToAnchor:_popupContainerView.bottomAnchor],
       ]];
     }
-
   }
   return self;
 }
@@ -148,8 +142,6 @@ const CGFloat kFadeAnimationVerticalOffset = 12;
     if (ui::GetDeviceFormFactor() != ui::DEVICE_FORM_FACTOR_TABLET) {
       self.bottomConstraintPhone.active = NO;
       self.bottomSeparator.hidden = YES;
-    } else if (!IsIpadPopoutOmniboxEnabled()) {
-      self.bottomConstraintTablet.active = NO;
     }
 
     [self.viewController willMoveToParentViewController:nil];
@@ -168,7 +160,7 @@ const CGFloat kFadeAnimationVerticalOffset = 12;
     [self.viewController didMoveToParentViewController:parentVC];
 
     BOOL enableFocusAnimation =
-        IsBottomOmniboxSteadyStateEnabled() && isFocusingOmnibox &&
+        IsBottomOmniboxAvailable() && isFocusingOmnibox &&
         _unfocusedOmniboxToolbarType == ToolbarType::kSecondary;
 
     [self initialLayoutAnimated:enableFocusAnimation];
@@ -186,8 +178,6 @@ const CGFloat kFadeAnimationVerticalOffset = 12;
 /// Therefore, on trait collection change, re-add the popup and recreate the
 /// constraints to make sure the correct ones are used.
 - (void)updatePopupAfterTraitCollectionChange {
-  DCHECK(IsIpadPopoutOmniboxEnabled());
-
   // Re-add the popup container to break any existing constraints.
   [self.popupContainerView removeFromSuperview];
   [[self.delegate popupParentViewForPresenter:self]
@@ -200,15 +190,10 @@ const CGFloat kFadeAnimationVerticalOffset = 12;
 
 - (void)updateBottomConstraints {
   if (ui::GetDeviceFormFactor() == ui::DEVICE_FORM_FACTOR_TABLET) {
-    if (IsIpadPopoutOmniboxEnabled()) {
-      BOOL showRegularLayout =
-          IsRegularXRegularSizeClass(self.popupContainerView.traitCollection);
-      self.bottomConstraintPhone.active = !showRegularLayout;
-      self.bottomConstraintTablet.active = showRegularLayout;
-    } else {
-      self.bottomConstraintPhone.active = NO;
-      self.bottomConstraintTablet.active = YES;
-    }
+    BOOL showRegularLayout =
+        IsRegularXRegularSizeClass(self.popupContainerView.traitCollection);
+    self.bottomConstraintPhone.active = !showRegularLayout;
+    self.bottomConstraintTablet.active = showRegularLayout;
   } else {
     self.bottomConstraintPhone.active = YES;
     self.bottomSeparator.hidden = NO;
@@ -228,7 +213,7 @@ const CGFloat kFadeAnimationVerticalOffset = 12;
   UIView* popup = self.popupContainerView;
   // Creates the constraints if the view is newly added to the view hierarchy.
 
-  if (IsIpadPopoutOmniboxEnabled()) {
+  if (ui::GetDeviceFormFactor() == ui::DEVICE_FORM_FACTOR_TABLET) {
     self.bottomConstraintPhone = [popup.superview.safeAreaLayoutGuide
                                       .bottomAnchor
         constraintGreaterThanOrEqualToAnchor:popup.bottomAnchor
@@ -249,10 +234,15 @@ const CGFloat kFadeAnimationVerticalOffset = 12;
   // Install in the superview the guide tracking the top omnibox.
   if (self.topOmniboxGuide) {
     [[popup superview] removeLayoutGuide:self.topOmniboxGuide];
+    self.topOmniboxGuide = nil;
   }
-  self.topOmniboxGuide =
-      [self.layoutGuideCenter makeLayoutGuideNamed:kTopOmniboxGuide];
-  [[popup superview] addLayoutGuide:self.topOmniboxGuide];
+  GuideName* omniboxGuideName =
+      [self.delegate omniboxGuideNameForPresenter:self];
+  if (omniboxGuideName) {
+    self.topOmniboxGuide =
+        [self.layoutGuideCenter makeLayoutGuideNamed:omniboxGuideName];
+    [[popup superview] addLayoutGuide:self.topOmniboxGuide];
+  }
 
   [self updatePopupLayer];
   [self updateConstraints];
@@ -266,7 +256,7 @@ const CGFloat kFadeAnimationVerticalOffset = 12;
 
 // Updates the popup's view layer.
 - (void)updatePopupLayer {
-  if (!IsIpadPopoutOmniboxEnabled()) {
+  if (ui::GetDeviceFormFactor() != ui::DEVICE_FORM_FACTOR_TABLET) {
     return;
   }
 
@@ -287,16 +277,24 @@ const CGFloat kFadeAnimationVerticalOffset = 12;
 - (void)updateConstraints {
   UIView* popup = self.popupContainerView;
 
-  // Position the top anchor of the popup relatively to that layout guide.
-  NSLayoutConstraint* topConstraint =
-      [popup.topAnchor constraintEqualToAnchor:self.topOmniboxGuide.bottomAnchor
-                                      constant:kVerticalOffset];
+  NSLayoutConstraint* topConstraint;
+  if (self.topOmniboxGuide) {
+    // Position the top anchor of the popup relatively to that layout guide.
+    topConstraint = [popup.topAnchor
+        constraintEqualToAnchor:self.topOmniboxGuide.bottomAnchor
+                       constant:kVerticalOffset];
+  } else {
+    topConstraint = [popup.topAnchor
+        constraintEqualToAnchor:[self.delegate popupParentViewForPresenter:self]
+                                    .topAnchor];
+  }
 
   NSMutableArray<NSLayoutConstraint*>* constraintsToActivate =
       [NSMutableArray arrayWithObject:topConstraint];
 
-  if (IsIpadPopoutOmniboxEnabled() &&
-      IsRegularXRegularSizeClass(self.popupContainerView.traitCollection)) {
+  if (ui::GetDeviceFormFactor() == ui::DEVICE_FORM_FACTOR_TABLET &&
+      IsRegularXRegularSizeClass(self.popupContainerView.traitCollection) &&
+      self.topOmniboxGuide) {
     NSLayoutConstraint* leadingConstraint = [popup.leadingAnchor
         constraintEqualToAnchor:self.topOmniboxGuide.leadingAnchor
                        constant:-16];
@@ -327,7 +325,6 @@ const CGFloat kFadeAnimationVerticalOffset = 12;
 
 /// Animates the popup for omnibox focus.
 - (void)animatePopupOnOmniboxFocus {
-  CHECK(IsBottomOmniboxSteadyStateEnabled());
   __weak __typeof__(self) weakSelf = self;
   self.viewController.view.alpha = 0.0;
   self.popupTopConstraint.constant = kFadeAnimationVerticalOffset;

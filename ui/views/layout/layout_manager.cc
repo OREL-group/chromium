@@ -6,7 +6,6 @@
 
 #include "base/auto_reset.h"
 #include "base/memory/raw_ptr.h"
-#include "base/notimplemented.h"
 #include "ui/views/view.h"
 
 namespace views {
@@ -16,14 +15,6 @@ LayoutManager::~LayoutManager() = default;
 void LayoutManager::Installed(View* host) {}
 
 void LayoutManager::InvalidateLayout() {}
-
-gfx::Size LayoutManager::GetPreferredSize(
-    const View* host,
-    const SizeBounds& available_size) const {
-  NOTIMPLEMENTED() << "Subclasses of LayoutManager should implement "
-                      "GetPreferredSize(const View*, const SizeBounds&)";
-  return gfx::Size();
-}
 
 gfx::Size LayoutManager::GetMinimumSize(const View* host) const {
   // Fall back to using preferred size if no minimum size calculation is
@@ -67,7 +58,7 @@ void LayoutManager::ViewVisibilitySet(View* host,
 void LayoutManager::SetViewVisibility(View* view, bool visible) {
   DCHECK(!view->parent() || view->parent()->GetLayoutManager() == this ||
          view->parent()->GetLayoutManager() == nullptr);
-  base::AutoReset<View*> setter(&view_setting_visibility_on_, view);
+  base::AutoReset<raw_ptr<View>> setter(&view_setting_visibility_on_, view);
   view->SetVisible(visible);
 }
 

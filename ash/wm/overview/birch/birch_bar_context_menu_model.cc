@@ -5,87 +5,70 @@
 #include "ash/wm/overview/birch/birch_bar_context_menu_model.h"
 
 #include "ash/resources/vector_icons/vector_icons.h"
-#include "ash/wm/overview/overview_grid.h"
-#include "ash/wm/overview/overview_session.h"
+#include "ash/strings/grit/ash_strings.h"
 #include "ash/wm/overview/overview_utils.h"
 #include "base/types/cxx23_to_underlying.h"
-#include "ui/base/models/image_model.h"
+#include "chromeos/ash/components/geolocation/simple_geolocation_provider.h"
+#include "ui/base/l10n/l10n_util.h"
 #include "ui/base/models/menu_separator_types.h"
-#include "ui/chromeos/styles/cros_tokens_color_mappings.h"
-#include "ui/gfx/vector_icon_types.h"
 #include "ui/views/controls/menu/menu_types.h"
 
 namespace ash {
-
-using CommandId = BirchBarContextMenuModel::CommandId;
-
 namespace {
 
-// Generates and stylizes the icon for menu item.
-ui::ImageModel CreateIcon(const gfx::VectorIcon& icon) {
-  constexpr ui::ColorId kMenuIconColorId = cros_tokens::kCrosSysOnSurface;
-  constexpr int kMenuIconSize = 20;
-  return ui::ImageModel::FromVectorIcon(icon, kMenuIconColorId, kMenuIconSize);
+// Returns whether the weather item should be enabled based on the geolocation
+// permission. See BirchWeatherProvider.
+bool IsWeatherAllowedByGeolocation() {
+  return SimpleGeolocationProvider::GetInstance()
+      ->IsGeolocationUsageAllowedForSystem();
 }
 
 }  // namespace
 
 BirchBarContextMenuModel::BirchBarContextMenuModel(
     ui::SimpleMenuModel::Delegate* delegate,
-    BirchBarContextMenuModel::Type type)
-    : ui::SimpleMenuModel(delegate), type_(type) {
-  // Fill in the items according to the menu type.
-  switch (type) {
-    case Type::kCollapsedBarMenu:
-    case Type::kExpandedBarMenu:
-      AddBarMenuItems();
-      break;
-    case Type::kChipMenu:
-      AddChipMenuItems();
-      break;
+    Type type)
+    : ui::SimpleMenuModel(delegate) {
+  // Show suggestions option is in both expanded and collapsed menu.
+  AddItem(base::to_underlying(CommandId::kShowSuggestions),
+          l10n_util::GetStringUTF16(IDS_ASH_BIRCH_MENU_SHOW_SUGGESTIONS));
+
+  // Expanded menu also has customizing suggestions options.
+  if (type == Type::kExpandedBarMenu) {
+    AddSeparator(ui::MenuSeparatorType::NORMAL_SEPARATOR);
+
+    bool enabled = IsWeatherAllowedByGeolocation();
+    std::u16string weather_label =
+        enabled ? l10n_util::GetStringUTF16(IDS_ASH_BIRCH_MENU_WEATHER)
+                : l10n_util::GetStringUTF16(
+                      IDS_ASH_BIRCH_MENU_WEATHER_NOT_AVAILABLE);
+    AddItem(base::to_underlying(CommandId::kWeatherSuggestions), weather_label);
+    auto weather_index = GetIndexOfCommandId(
+        base::to_underlying(CommandId::kWeatherSuggestions));
+    SetEnabledAt(weather_index.value(), enabled);
+    if (!enabled) {
+      SetMinorText(weather_index.value(),
+                   l10n_util::GetStringUTF16(
+                       IDS_ASH_BIRCH_MENU_WEATHER_NOT_AVAILABLE_TOOLTIP));
+    }
+
+    AddItem(base::to_underlying(CommandId::kCalendarSuggestions),
+            l10n_util::GetStringUTF16(IDS_ASH_BIRCH_MENU_CALENDAR));
+    AddItem(base::to_underlying(CommandId::kDriveSuggestions),
+            l10n_util::GetStringUTF16(IDS_ASH_BIRCH_MENU_DRIVE));
+    AddItem(base::to_underlying(CommandId::kChromeTabSuggestions),
+            l10n_util::GetStringUTF16(IDS_ASH_BIRCH_MENU_CHROME_BROWSER));
+    AddItem(base::to_underlying(CommandId::kMediaSuggestions),
+            l10n_util::GetStringUTF16(IDS_ASH_BIRCH_MENU_MEDIA));
+    // TODO(yulunwu) Replace with product name.
+    AddItem(base::to_underlying(CommandId::kCoralSuggestions), u"Coral");
+    AddSeparator(ui::MenuSeparatorType::NORMAL_SEPARATOR);
+    AddItemWithIcon(base::to_underlying(CommandId::kReset),
+                    l10n_util::GetStringUTF16(IDS_ASH_BIRCH_MENU_RESET),
+                    CreateIconForMenuItem(kResetIcon));
   }
 }
 
 BirchBarContextMenuModel::~BirchBarContextMenuModel() = default;
-
-void BirchBarContextMenuModel::AddBarMenuItems() {
-  CHECK(type_ == Type::kExpandedBarMenu || type_ == Type::kCollapsedBarMenu);
-
-  // Show suggestions option is in both expanded and collapsed menu.
-  AddItem(base::to_underlying(CommandId::kShowSuggestions),
-          u"Show suggestions");
-
-  // Expanded menu also has customizing suggestions options.
-  if (type_ == Type::kExpandedBarMenu) {
-    AddSeparator(ui::MenuSeparatorType::NORMAL_SEPARATOR);
-    AddItem(base::to_underlying(CommandId::kWeatherSuggestions), u"Weather");
-    AddItem(base::to_underlying(CommandId::kCalendarSuggestions),
-            u"Google Calendar");
-    AddItem(base::to_underlying(CommandId::kDriveSuggestions), u"Google Drive");
-    AddItem(base::to_underlying(CommandId::kOtherDeviceSuggestions),
-            u"Chrome from other devices");
-    AddSeparator(ui::MenuSeparatorType::NORMAL_SEPARATOR);
-    AddItemWithIcon(base::to_underlying(CommandId::kReset), u"Reset",
-                    CreateIcon(kResetIcon));
-  }
-}
-
-void BirchBarContextMenuModel::AddChipMenuItems() {
-  CHECK(type_ == Type::kChipMenu);
-  sub_menu_model_ = std::make_unique<BirchBarContextMenuModel>(
-      delegate(), Type::kExpandedBarMenu);
-  AddItemWithIcon(base::to_underlying(CommandId::kHideSuggestion),
-                  u"Hide this suggestion",
-                  CreateIcon(kSystemTrayDoNotDisturbIcon));
-  AddItemWithIcon(base::to_underlying(CommandId::kHideDriveSuggestions),
-                  u"Hide all Google Drive suggestions",
-                  CreateIcon(kForbidIcon));
-  AddSubMenuWithIcon(base::to_underlying(CommandId::kCustomizeSuggestions),
-                     u"Customize suggestions", sub_menu_model_.get(),
-                     CreateIcon(kPencilIcon));
-  AddSeparator(ui::MenuSeparatorType::NORMAL_SEPARATOR);
-  AddItemWithIcon(base::to_underlying(CommandId::kFeedback), u"Send Feedback",
-                  CreateIcon(kFeedbackIcon));
-}
 
 }  // namespace ash

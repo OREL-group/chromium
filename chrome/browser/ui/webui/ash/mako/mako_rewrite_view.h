@@ -20,7 +20,8 @@ class MakoRewriteView : public WebUIBubbleDialogView,
 
  public:
   MakoRewriteView(WebUIContentsWrapper* contents_wrapper,
-                  const gfx::Rect& caret_bounds);
+                  const gfx::Rect& caret_bounds,
+                  bool can_fallback_to_center_position);
   MakoRewriteView(const MakoRewriteView&) = delete;
   MakoRewriteView& operator=(const MakoRewriteView&) = delete;
   ~MakoRewriteView() override;
@@ -34,22 +35,31 @@ class MakoRewriteView : public WebUIBubbleDialogView,
   void DraggableRegionsChanged(
       const std::vector<blink::mojom::DraggableRegionPtr>& regions,
       content::WebContents* contents) override;
+  void SetContentsBounds(content::WebContents* source,
+                         const gfx::Rect& new_size) override;
 
   // MakoBubbleEventHandler::Delegate
   const std::optional<SkRegion> GetDraggableRegion() override;
   const gfx::Rect GetWidgetBoundsInScreen() override;
   void SetWidgetBoundsConstrained(const gfx::Rect bounds) override;
+  void SetCursor(const ui::Cursor& cursor) override;
+  bool IsDraggingEnabled() override;
+  bool IsResizingEnabled() override;
 
-  bool HandleKeyboardEvent(
-      content::WebContents* source,
-      const content::NativeWebKeyboardEvent& event) override;
+  bool HandleKeyboardEvent(content::WebContents* source,
+                           const input::NativeWebKeyboardEvent& event) override;
 
  private:
   gfx::Rect caret_bounds_;
   std::optional<SkRegion> draggable_region_ = std::nullopt;
   std::unique_ptr<MakoBubbleEventHandler> event_handler_;
+  bool dragging_initialized_;
+  bool resizing_initialized_;
+  bool content_bounds_updated_by_webui_;
+  bool can_fallback_to_center_position_;
 
   void SetupDraggingSupport();
+  void SetupResizingSupport();
 };
 
 }  // namespace ash

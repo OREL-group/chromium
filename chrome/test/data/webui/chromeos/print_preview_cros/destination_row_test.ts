@@ -13,6 +13,8 @@ import {assert} from 'chrome://resources/js/assert.js';
 import {assertEquals, assertTrue} from 'chrome://webui-test/chromeos/chai_assert.js';
 import {isVisible} from 'chrome://webui-test/test_util.js';
 
+import {createTestDestination, resetDataManagersAndProviders} from './test_utils.js';
+
 suite('DestinationRow', () => {
   let element: DestinationRowElement;
   let controller: DestinationRowController;
@@ -20,6 +22,7 @@ suite('DestinationRow', () => {
   setup(() => {
     document.body.innerHTML = window.trustedTypes!.emptyHTML;
 
+    resetDataManagersAndProviders();
     element = document.createElement(DestinationRowElement.is) as
         DestinationRowElement;
     element.destination = PDF_DESTINATION;
@@ -31,6 +34,7 @@ suite('DestinationRow', () => {
 
   teardown(() => {
     element.remove();
+    resetDataManagersAndProviders();
   });
 
   function getTextContent(selector: string): string {
@@ -62,10 +66,7 @@ suite('DestinationRow', () => {
         'PDF display name should be shown');
 
     // Change destination to verify UI matches updated destination.
-    const destination: Destination = {
-      id: 'fake-destination-id',
-      displayName: 'Fake Destination',
-    };
+    const destination: Destination = createTestDestination();
     element.destination = destination;
 
     assertEquals(

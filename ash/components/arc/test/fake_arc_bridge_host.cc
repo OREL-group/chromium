@@ -15,11 +15,11 @@
 #include "ash/components/arc/mojom/bluetooth.mojom.h"
 #include "ash/components/arc/mojom/boot_phase_monitor.mojom.h"
 #include "ash/components/arc/mojom/camera.mojom.h"
-#include "ash/components/arc/mojom/clipboard.mojom.h"
 #include "ash/components/arc/mojom/compatibility_mode.mojom.h"
 #include "ash/components/arc/mojom/crash_collector.mojom.h"
-#include "ash/components/arc/mojom/disk_quota.mojom.h"
+#include "ash/components/arc/mojom/disk_space.mojom.h"
 #include "ash/components/arc/mojom/enterprise_reporting.mojom.h"
+#include "ash/components/arc/mojom/error_notification.mojom.h"
 #include "ash/components/arc/mojom/file_system.mojom.h"
 #include "ash/components/arc/mojom/ime.mojom.h"
 #include "ash/components/arc/mojom/input_method_manager.mojom.h"
@@ -27,7 +27,6 @@
 #include "ash/components/arc/mojom/keyboard_shortcut.mojom.h"
 #include "ash/components/arc/mojom/keymaster.mojom.h"
 #include "ash/components/arc/mojom/keymint.mojom.h"
-#include "ash/components/arc/mojom/kiosk.mojom.h"
 #include "ash/components/arc/mojom/media_session.mojom.h"
 #include "ash/components/arc/mojom/memory.mojom.h"
 #include "ash/components/arc/mojom/metrics.mojom.h"
@@ -43,7 +42,6 @@
 #include "ash/components/arc/mojom/print_spooler.mojom.h"
 #include "ash/components/arc/mojom/privacy_items.mojom.h"
 #include "ash/components/arc/mojom/process.mojom.h"
-#include "ash/components/arc/mojom/property.mojom.h"
 #include "ash/components/arc/mojom/screen_capture.mojom.h"
 #include "ash/components/arc/mojom/sharesheet.mojom.h"
 #include "ash/components/arc/mojom/storage_manager.mojom.h"
@@ -109,9 +107,6 @@ void FakeArcBridgeHost::OnChromeFeatureFlagsInstanceReady(
     mojo::PendingRemote<mojom::ChromeFeatureFlagsInstance>
         chrome_feature_flags_remote) {}
 
-void FakeArcBridgeHost::OnClipboardInstanceReady(
-    mojo::PendingRemote<mojom::ClipboardInstance> clipboard_remote) {}
-
 void FakeArcBridgeHost::OnCompatibilityModeInstanceReady(
     mojo::PendingRemote<mojom::CompatibilityModeInstance>
         compatibility_mode_remote) {}
@@ -123,12 +118,16 @@ void FakeArcBridgeHost::OnCrashCollectorInstanceReady(
 void FakeArcBridgeHost::OnDigitalGoodsInstanceReady(
     mojo::PendingRemote<mojom::DigitalGoodsInstance> digital_goods_remote) {}
 
-void FakeArcBridgeHost::OnDiskQuotaInstanceReady(
-    mojo::PendingRemote<mojom::DiskQuotaInstance> disk_quota_remote) {}
+void FakeArcBridgeHost::OnDiskSpaceInstanceReady(
+    mojo::PendingRemote<mojom::DiskSpaceInstance> disk_space_remote) {}
 
 void FakeArcBridgeHost::OnEnterpriseReportingInstanceReady(
     mojo::PendingRemote<mojom::EnterpriseReportingInstance>
         enterprise_reporting_remote) {}
+
+void FakeArcBridgeHost::OnErrorNotificationInstanceReady(
+    mojo::PendingRemote<mojom::ErrorNotificationInstance>
+        error_notification_remote) {}
 
 void FakeArcBridgeHost::OnFileSystemInstanceReady(
     mojo::PendingRemote<mojom::FileSystemInstance> file_system_remote) {}
@@ -155,9 +154,6 @@ void FakeArcBridgeHost::OnKeymasterInstanceReady(
 
 void FakeArcBridgeHost::OnKeyMintInstanceReady(
     mojo::PendingRemote<mojom::keymint::KeyMintInstance> keymint_remote) {}
-
-void FakeArcBridgeHost::OnKioskInstanceReady(
-    mojo::PendingRemote<mojom::KioskInstance> kiosk_remote) {}
 
 void FakeArcBridgeHost::OnMediaSessionInstanceReady(
     mojo::PendingRemote<mojom::MediaSessionInstance> media_sesssion_remote) {}
@@ -207,9 +203,6 @@ void FakeArcBridgeHost::OnPrivacyItemsInstanceReady(
 
 void FakeArcBridgeHost::OnProcessInstanceReady(
     mojo::PendingRemote<mojom::ProcessInstance> process_remote) {}
-
-void FakeArcBridgeHost::OnPropertyInstanceReady(
-    mojo::PendingRemote<mojom::PropertyInstance> property_remote) {}
 
 void FakeArcBridgeHost::OnScreenCaptureInstanceReady(
     mojo::PendingRemote<mojom::ScreenCaptureInstance> screen_capture_remote) {}

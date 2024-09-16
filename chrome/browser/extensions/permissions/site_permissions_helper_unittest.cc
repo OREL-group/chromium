@@ -25,18 +25,6 @@
 
 namespace extensions {
 
-namespace {
-
-base::Value::List ToValueList(const std::vector<std::string>& permissions) {
-  base::Value::List list;
-  for (const std::string& permission : permissions) {
-    list.Append(permission);
-  }
-  return list;
-}
-
-}  // namespace
-
 using UserSiteAccess = PermissionsManager::UserSiteAccess;
 using SiteInteraction = SitePermissionsHelper::SiteInteraction;
 
@@ -85,13 +73,12 @@ SitePermissionsHelperUnitTest::InstallExtensionWithPermissions(
     const std::string& name,
     const std::vector<std::string>& host_permissions,
     const std::vector<std::string>& permissions) {
-  auto extension =
-      ExtensionBuilder(name)
-          .SetManifestVersion(3)
-          .SetManifestKey("host_permissions", ToValueList(host_permissions))
-          .AddPermissions(permissions)
-          .SetID(crx_file::id_util::GenerateId(name))
-          .Build();
+  auto extension = ExtensionBuilder(name)
+                       .SetManifestVersion(3)
+                       .AddHostPermissions(host_permissions)
+                       .AddAPIPermissions(permissions)
+                       .SetID(crx_file::id_util::GenerateId(name))
+                       .Build();
   service()->AddExtension(extension.get());
 
   return extension;
@@ -141,8 +128,8 @@ void SitePermissionsHelperUnitTest::TearDown() {
   ExtensionServiceTestBase::TearDown();
 }
 
-// TODO(crbug.com/1289441): Move test that verify SiteAccess and SiteInteraction
-// behavior after moving both enums to PermissionsManager.
+// TODO(crbug.com/40817514): Move test that verify SiteAccess and
+// SiteInteraction behavior after moving both enums to PermissionsManager.
 TEST_F(SitePermissionsHelperUnitTest, SiteAccessAndInteraction_AllUrls) {
   auto extension =
       InstallExtensionWithPermissions("AllUrls Extension", {"<all_urls>"});
@@ -404,7 +391,7 @@ TEST_F(SitePermissionsHelperWithUserHostControlsUnitTest,
   // The extension should now be able to run on `user_permitted` site
   // automatically, since it's a user-permitted site.
 
-  // TODO(https://crbug.com/1268198): The following check should be in place:
+  // TODO(crbug.com/40803363): The following check should be in place:
   // EXPECT_EQ(UserSiteAccess::kOnSite,
   //           permissions_manager->GetUserSiteAccess(
   //               *extension, user_permitted_site));

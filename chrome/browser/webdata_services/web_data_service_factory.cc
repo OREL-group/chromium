@@ -49,8 +49,8 @@ ProfileErrorType ProfileErrorFromWebDataServiceWrapperError(
       return ProfileErrorType::DB_WEB_DATA;
 
     default:
-      NOTREACHED() << "Unknown WebDataServiceWrapper::ErrorType: "
-                   << error_type;
+      NOTREACHED_IN_MIGRATION()
+          << "Unknown WebDataServiceWrapper::ErrorType: " << error_type;
       return ProfileErrorType::DB_WEB_DATA;
   }
 }
@@ -69,7 +69,8 @@ std::unique_ptr<KeyedService> BuildWebDataService(
   return std::make_unique<WebDataServiceWrapper>(
       profile_path, g_browser_process->GetApplicationLocale(),
       content::GetUIThreadTaskRunner({}),
-      base::BindRepeating(&ProfileErrorCallback));
+      base::BindRepeating(&ProfileErrorCallback),
+      g_browser_process->os_crypt_async());
 }
 
 }  // namespace

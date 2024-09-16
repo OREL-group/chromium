@@ -22,11 +22,13 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import androidx.test.filters.MediumTest;
 
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -36,6 +38,7 @@ import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 import org.mockito.quality.Strictness;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.BaseActivityTestRule;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.HistogramWatcher;
@@ -54,7 +57,6 @@ import org.chromium.components.signin.identitymanager.IdentityManager;
 import org.chromium.components.signin.metrics.SignoutReason;
 import org.chromium.components.user_prefs.UserPrefs;
 import org.chromium.components.user_prefs.UserPrefsJni;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.ui.test.util.BlankUiTestActivity;
 
 /** Instrumentation tests for {@link SignOutDialogCoordinator}. */
@@ -93,22 +95,26 @@ public class SignOutDialogTest {
         mActivityTestRule.launchActivity(null);
     }
 
-    // TestThreadUtils.runOnUiThreadBlocking() catches the IllegalArgumentException and throws it
-    // wrapped inside a RuntimeException.
-    @Test(expected = RuntimeException.class)
+    @Test
     @MediumTest
     public void testRegularAccountCanNotRevokeSyncConsent() {
         when(mProfile.isChild()).thenReturn(false);
-        showSignOutDialog(SignoutReason.USER_CLICKED_REVOKE_SYNC_CONSENT_SETTINGS);
+        // ThreadUtils.runOnUiThreadBlocking() catches the IllegalArgumentException and throws it
+        // wrapped inside a RuntimeException.
+        Assert.assertThrows(
+                RuntimeException.class,
+                () -> showSignOutDialog(SignoutReason.USER_CLICKED_REVOKE_SYNC_CONSENT_SETTINGS));
     }
 
-    // TestThreadUtils.runOnUiThreadBlocking() catches the IllegalArgumentException and throws it
-    // wrapped inside a RuntimeException.
-    @Test(expected = RuntimeException.class)
+    @Test
     @MediumTest
     public void testChildAccountCanOnlyRevokeSyncConsent() {
         when(mProfile.isChild()).thenReturn(true);
-        showSignOutDialog(SignoutReason.USER_CLICKED_SIGNOUT_SETTINGS);
+        // ThreadUtils.runOnUiThreadBlocking() catches the IllegalArgumentException and throws it
+        // wrapped inside a RuntimeException.
+        Assert.assertThrows(
+                RuntimeException.class,
+                () -> showSignOutDialog(SignoutReason.USER_CLICKED_SIGNOUT_SETTINGS));
     }
 
     @Test
@@ -352,7 +358,6 @@ public class SignOutDialogTest {
         setUpMocks();
         mockAllowDeletingBrowserHistoryPref(true);
         when(mProfile.isChild()).thenReturn(true);
-        when(mSigninManagerMock.isSignOutAllowed()).thenReturn(true);
         doAnswer(
                         args -> {
                             args.getArgument(0, Runnable.class).run();
@@ -365,6 +370,7 @@ public class SignOutDialogTest {
         onView(withText(R.string.continue_button)).inRoot(isDialog()).perform(click());
         onView(withId(android.R.id.message)).check(doesNotExist());
 
+        verify(mSigninManagerMock, times(0)).isSignOutAllowed();
         verify(mSigninManagerMock)
                 .revokeSyncConsent(
                         eq(SignoutReason.USER_CLICKED_REVOKE_SYNC_CONSENT_SETTINGS),
@@ -414,7 +420,7 @@ public class SignOutDialogTest {
                         })
                 .when(mSigninManagerMock)
                 .signOut(anyInt(), any(SignOutCallback.class), anyBoolean());
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     SignOutDialogCoordinator.show(
                             mActivityTestRule.getActivity(),
@@ -486,7 +492,7 @@ public class SignOutDialogTest {
     }
 
     private void showSignOutDialog(@SignoutReason int signOutReason) {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     SignOutDialogCoordinator.show(
                             mActivityTestRule.getActivity(),

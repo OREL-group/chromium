@@ -23,6 +23,7 @@
 #include "components/autofill/core/browser/test_autofill_manager_waiter.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/form_data.h"
+#include "components/autofill/core/common/form_data_test_api.h"
 #include "components/autofill/core/common/unique_ids.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
@@ -35,7 +36,6 @@ using testing::Not;
 using testing::ResultOf;
 
 namespace autofill {
-
 namespace {
 
 // Asserts that a filled field sent to devtools has `attribute` set with
@@ -94,8 +94,6 @@ std::string GetProfileInfoFromAddressField(const AutofillProfile profile,
       "en-US"));
 }
 
-}  // namespace
-
 // Adds waiting capabilities to BrowserAutofillManager.
 class TestAutofillManager : public autofill::BrowserAutofillManager {
  public:
@@ -133,8 +131,7 @@ class DevToolsAutofillTest : public DevToolsProtocolTestBase {
  public:
   DevToolsAutofillTest() {
     feature_list_.InitWithFeatures(
-        {features::kAutofillTestFormWithDevtools,
-         features::kAutofillTestFormWithTestAddresses},
+        {features::kAutofillTestFormWithTestAddresses},
         {});
   }
   void SetUpOnMainThread() override {
@@ -474,18 +471,20 @@ IN_PROC_BROWSER_TEST_F(DevToolsAutofillTest, AddressFormFilled) {
   AutofillProfile profile = CreateTestProfile();
 
   // Create fake filled fields.
-  // TODO(crbug.com/1331312): Get rid of FormFieldData.
+  // TODO(crbug.com/40227496): Get rid of FormFieldData.
   FormData form;
-  form.host_frame = LocalFrameToken(*main_frame()->GetFrameToken());
-  form.renderer_id = form_id().renderer_id;
-  form.fields.push_back(test::CreateTestFormField(
+  form.set_host_frame(LocalFrameToken(*main_frame()->GetFrameToken()));
+  form.set_renderer_id(form_id().renderer_id);
+  std::vector<FormFieldData> fields;
+  fields.push_back(test::CreateTestFormField(
       /*label=*/"", "name_1", "value_1", FormControlType::kInputText));
-  form.fields.back().id_attribute = u"id_1";
-  form.fields.back().host_frame = form.host_frame;
-  form.fields.push_back(test::CreateTestFormField(
+  fields.back().set_id_attribute(u"id_1");
+  fields.back().set_host_frame(form.host_frame());
+  fields.push_back(test::CreateTestFormField(
       /*label=*/"", "name_2", "value_2", FormControlType::kInputText));
-  form.fields.back().id_attribute = u"id_2";
-  form.fields.back().host_frame = form.host_frame;
+  fields.back().set_id_attribute(u"id_2");
+  fields.back().set_host_frame(form.host_frame());
+  form.set_fields(std::move(fields));
 
   // The parsed form is queried by
   // AutofillHandler::OnFillOrPreviewDataModelForm() to obtain the type
@@ -505,7 +504,7 @@ IN_PROC_BROWSER_TEST_F(DevToolsAutofillTest, AddressFormFilled) {
       std::move(form_structure);
 
   const std::vector<const FormFieldData*> filled_fields_by_autofill = {
-      {&form.fields[0], &form.fields[1]}};
+      {&form.fields()[0], &form.fields()[1]}};
 
   // Enable events and emit event about form being filled.
   SendCommandSync("Autofill.enable");
@@ -549,7 +548,8 @@ IN_PROC_BROWSER_TEST_F(DevToolsAutofillTest, AddressFormFilled) {
     const FormFieldData* ffd = filled_fields_by_autofill[i];
     const AutofillField* af = fs.GetFieldById(ffd->global_id());
 
-    EXPECT_THAT(ff, FilledFieldHasAttributeWithValue16("id", af->id_attribute));
+    EXPECT_THAT(ff,
+                FilledFieldHasAttributeWithValue16("id", af->id_attribute()));
     EXPECT_THAT(ff, FilledFieldHasAttributeWithValue(
                         "autofillType",
                         std::string(FieldTypeToDeveloperRepresentationString(
@@ -566,8 +566,8 @@ IN_PROC_BROWSER_TEST_F(DevToolsAutofillTest, AddressFormFilled) {
                 FilledFieldHasAttributeWithValue(
                     "htmlType", std::string(autofill::FormControlTypeToString(
                                     af->form_control_type()))));
-    EXPECT_THAT(ff,
-                FilledFieldHasAttributeWithValue16("name", af->name_attribute));
+    EXPECT_THAT(
+        ff, FilledFieldHasAttributeWithValue16("name", af->name_attribute()));
     EXPECT_EQ(*ff.GetDict().FindIntByDottedPath("fieldId"),
               (int)(ffd->renderer_id().value()));
   }
@@ -610,19 +610,19 @@ IN_PROC_BROWSER_TEST_F(DevToolsAutofillTest, AutofillInOOPIFs) {
   // frame `AutofillManager`.
   EXPECT_CALL(observer,
               OnBeforeAskForValuesToFill(_, form.global_id(),
-                                         form.fields[0].global_id(), _));
+                                         form.fields()[0].global_id(), _));
 
   const std::vector<const FormFieldData*> filled_fields_by_autofill = {
-      {&form.fields[0], &form.fields[1]}};
+      {&form.fields()[0], &form.fields()[1]}};
   web_contents()->ForEachRenderFrameHost([&](content::RenderFrameHost* rfh) {
     // Call the driver of the field host iframe.
     if (rfh->GetFrameToken().ToString() ==
-        form.fields[0].host_frame->ToString()) {
+        form.fields()[0].host_frame()->ToString()) {
       ASSERT_NE(rfh->GetFrameToken(), main_frame()->GetFrameToken());
       auto* driver = static_cast<mojom::AutofillDriver*>(
           autofill::ContentAutofillDriver::GetForRenderFrameHost(rfh));
       driver->AskForValuesToFill(
-          form, form.fields[0], ::gfx::RectF(10, 10),
+          form, form.fields()[0].renderer_id(), gfx::Rect(0, 10),
           ::autofill::mojom::AutofillSuggestionTriggerSource::kUnspecified);
     }
   });
@@ -660,7 +660,7 @@ IN_PROC_BROWSER_TEST_F(DevToolsAutofillTest, AddressFormFilledInOOPIFs) {
   FormData form =
       main_autofill_manager().form_structures().begin()->second->ToFormData();
   const std::vector<const FormFieldData*> filled_fields_by_autofill = {
-      {&form.fields[0], &form.fields[1]}};
+      {&form.fields()[0], &form.fields()[1]}};
   main_autofill_manager().NotifyObservers(
       &autofill::AutofillManager::Observer::OnFillOrPreviewDataModelForm,
       form.global_id(), autofill::mojom::ActionPersistence::kFill,
@@ -692,7 +692,7 @@ IN_PROC_BROWSER_TEST_F(DevToolsAutofillTest,
   FormData form_a =
       main_autofill_manager().form_structures().begin()->second->ToFormData();
   const std::vector<const FormFieldData*> filled_fields_by_autofill_a = {
-      {&form_a.fields[0], &form_a.fields[1]}};
+      {&form_a.fields()[0], &form_a.fields()[1]}};
   main_autofill_manager().NotifyObservers(
       &autofill::AutofillManager::Observer::OnFillOrPreviewDataModelForm,
       form_a.global_id(), autofill::mojom::ActionPersistence::kFill,
@@ -711,11 +711,13 @@ IN_PROC_BROWSER_TEST_F(DevToolsAutofillTest,
   FormData form_b =
       main_autofill_manager().form_structures().begin()->second->ToFormData();
   const std::vector<const FormFieldData*> filled_fields_by_autofill_b = {
-      {&form_b.fields[0], &form_b.fields[1]}};
+      {&form_b.fields()[0], &form_b.fields()[1]}};
   main_autofill_manager().NotifyObservers(
       &autofill::AutofillManager::Observer::OnFillOrPreviewDataModelForm,
       form_b.global_id(), autofill::mojom::ActionPersistence::kFill,
       filled_fields_by_autofill_b, &profile_b);
   WaitForNotification("Autofill.addressFormFilled", /*allow_existing=*/true);
 }
+
+}  // namespace
 }  // namespace autofill

@@ -21,6 +21,7 @@
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "content/common/content_export.h"
+#include "content/services/auction_worklet/public/mojom/auction_worklet_service.mojom.h"
 #include "content/services/auction_worklet/trusted_signals.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -36,7 +37,7 @@ class TrustedSignals;
 // Manages trusted signals requests and responses. Currently only batches
 // requests.
 //
-// TODO(https://crbug.com/1276639): Cache responses as well.
+// TODO(crbug.com/40207533): Cache responses as well.
 class CONTENT_EXPORT TrustedSignalsRequestManager {
  public:
   // Delay between construction of a Request and automatically starting a
@@ -88,7 +89,12 @@ class CONTENT_EXPORT TrustedSignalsRequestManager {
   // "&`trusted_bidding_signals_slot_size_param`" is appended to the end of the
   // query string. It's expected to already be escaped if necessary.
   //
-  // TODO(https://crbug.com/1279643): Investigate improving the
+  // The `public_key` pointer indicates whether this trusted signals
+  // request manager is intended for the KVv2 version. If the pointer is
+  // non-null, it will trigger the KVv2 call flow and be used during the message
+  // encryption and decryption process.
+  //
+  // TODO(crbug.com/40810962): Investigate improving the
   // `automatically_send_requests` logic.
   TrustedSignalsRequestManager(
       Type type,
@@ -100,6 +106,7 @@ class CONTENT_EXPORT TrustedSignalsRequestManager {
       const GURL& trusted_signals_url,
       std::optional<uint16_t> experiment_group_id,
       const std::string& trusted_bidding_signals_slot_size_param,
+      mojom::TrustedSignalsPublicKeyPtr public_key,
       AuctionV8Helper* v8_helper);
 
   explicit TrustedSignalsRequestManager(const TrustedSignalsRequestManager&) =
@@ -239,6 +246,7 @@ class CONTENT_EXPORT TrustedSignalsRequestManager {
   const GURL trusted_signals_url_;
   const std::optional<uint16_t> experiment_group_id_;
   const std::string trusted_bidding_signals_slot_size_param_;
+  const mojom::TrustedSignalsPublicKeyPtr public_key_;
   const scoped_refptr<AuctionV8Helper> v8_helper_;
 
   // All live requests that haven't yet been assigned to a

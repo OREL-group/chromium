@@ -6,7 +6,7 @@
 
 #import "ios/chrome/browser/policy/model/policy_util.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/snapshots/model/snapshot_tab_helper.h"
 #import "ios/chrome/browser/url_loading/model/url_loading_browser_agent.h"
@@ -86,9 +86,9 @@ void SceneUrlLoadingService::LoadUrlInNewTab(const UrlLoadParams& params) {
       return;
     }
 
-    // TODO(crbug.com/907527): move the following lines to Browser level making
-    // openNewTabFromOriginPoint a delegate there. openNewTabFromOriginPoint is
-    // only called from here.
+    // TODO(crbug.com/41427539): move the following lines to Browser level
+    // making openNewTabFromOriginPoint a delegate there.
+    // openNewTabFromOriginPoint is only called from here.
     [delegate_ openNewTabFromOriginPoint:params.origin_point
                             focusOmnibox:params.should_focus_omnibox
                            inheritOpener:params.inherit_opener];

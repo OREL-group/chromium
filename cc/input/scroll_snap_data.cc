@@ -125,7 +125,7 @@ std::optional<SnapSearchResult> SearchResultForDodgingRange(
       offset = max_offset;
       break;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 
   min_offset = area_range.start() - scroll_padding;
@@ -225,8 +225,18 @@ SnapPositionData SnapContainerData::FindSnapPosition(
                           (axis == SnapAxis::kX || axis == SnapAxis::kBoth);
   bool should_snap_on_y = strategy.ShouldSnapOnY() &&
                           (axis == SnapAxis::kY || axis == SnapAxis::kBoth);
-  if (!should_snap_on_x && !should_snap_on_y)
+  if (!should_snap_on_x && !should_snap_on_y) {
+    // We may arrive here because the strategy wants to snap in an axis in
+    // which we do not snap, and doesn't want to snap in an axis in which we do
+    // snap. Ensure that we retain the id of the target in any axis where we are
+    // snapped.
+    if (axis == SnapAxis::kY) {
+      result.target_element_ids.y = target_snap_area_element_ids_.y;
+    } else {
+      result.target_element_ids.x = target_snap_area_element_ids_.x;
+    }
     return result;
+  }
 
   bool should_prioritize_x_target =
       strategy.ShouldPrioritizeSnapTargets() &&
@@ -644,7 +654,7 @@ SnapSearchResult SnapContainerData::GetSnapSearchResult(
         result.set_snap_offset(area.rect.right() - rect.right());
         break;
       default:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
     }
     result.Clip(max_position_.x());
     result.set_snapport_max_visible(max_position_.y());
@@ -662,7 +672,7 @@ SnapSearchResult SnapContainerData::GetSnapSearchResult(
         result.set_snap_offset(area.rect.bottom() - rect.bottom());
         break;
       default:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
     }
     result.Clip(max_position_.y());
     result.set_snapport_max_visible(max_position_.x());
@@ -825,7 +835,7 @@ bool SnapContainerData::IsSnapportCoveredOnAxis(
   }
 }
 
-// TODO(crbug.com/1501103): Use tolerance value less than 1.
+// TODO(crbug.com/40941354): Use tolerance value less than 1.
 // It is currently set to 1 because of differences in the way Blink and cc
 // currently handle fractional offsets when snapping.
 constexpr float kSnappedToTolerance = 1.0;

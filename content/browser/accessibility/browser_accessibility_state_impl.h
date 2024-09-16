@@ -13,6 +13,7 @@
 #include "content/browser/accessibility/scoped_mode_collection.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/browser_accessibility_state.h"
+#include "content/public/browser/render_widget_host.h"
 #include "ui/accessibility/ax_mode.h"
 #include "ui/accessibility/platform/ax_platform.h"
 
@@ -39,7 +40,8 @@ struct FocusedNodeDetails;
 //     technologies.
 class CONTENT_EXPORT BrowserAccessibilityStateImpl
     : public BrowserAccessibilityState,
-      public ui::AXPlatform::Delegate {
+      public ui::AXPlatform::Delegate,
+      public content::RenderWidgetHost::InputEventObserver {
  public:
   BrowserAccessibilityStateImpl(const BrowserAccessibilityStateImpl&) = delete;
   BrowserAccessibilityStateImpl& operator=(
@@ -80,7 +82,6 @@ class CONTENT_EXPORT BrowserAccessibilityStateImpl
   void AddOtherThreadHistogramCallback(base::OnceClosure callback) override;
   void UpdateUniqueUserHistograms() override;
   void UpdateHistogramsForTesting() override;
-  void SetCaretBrowsingState(bool enabled) override;
   void SetPerformanceFilteringAllowed(bool enabled) override;
   bool IsPerformanceFilteringAllowed() override;
   base::CallbackListSubscription RegisterFocusChangedCallback(
@@ -96,20 +97,20 @@ class CONTENT_EXPORT BrowserAccessibilityStateImpl
   void SetAXModeChangeAllowed(bool allowed) override;
   bool IsAXModeChangeAllowed() const override;
 
-  // Returns whether caret browsing is enabled for the most recently
-  // used profile.
-  bool IsCaretBrowsingEnabled() const;
 
   // ui::AXPlatform::Delegate:
   ui::AXMode GetProcessMode() override;
   void SetProcessMode(ui::AXMode new_mode) override;
+  void OnAccessibilityApiUsage() override;
+
+  // content::RenderWidgetHost::InputEventObserver:
+  void OnInputEvent(const blink::WebInputEvent& event) override;
 
   // The global accessibility mode is automatically enabled based on
   // usage of accessibility APIs. When we detect a significant amount
   // of user inputs within a certain time period, but no accessibility
   // API usage, we automatically disable accessibility.
   void OnUserInputEvent();
-  void OnAccessibilityApiUsage();
 
   // Calls InitBackgroundTasks with short delays for scheduled tasks,
   // and then calls the given completion callback when done.
@@ -152,7 +153,7 @@ class CONTENT_EXPORT BrowserAccessibilityStateImpl
                                    ui::AXMode new_mode);
 
   // The process's single AXPlatform instance.
-  ui::AXPlatform ax_platform_{*this};
+  ui::AXPlatform ax_platform_;
 
   base::TimeDelta histogram_delay_;
 
@@ -170,10 +171,6 @@ class CONTENT_EXPORT BrowserAccessibilityStateImpl
   // Changes are disallowed while running tests or when
   // --force-renderer-accessibility is used on the command line.
   bool allow_ax_mode_changes_ = true;
-
-  // Keeps track of whether caret browsing is enabled for the most
-  // recently used profile.
-  bool caret_browsing_enabled_ = false;
 
   // Keeps track of whether performance filtering is allowed for the device.
   // Default is true to defer to feature flag. Value may be set to false by

@@ -27,6 +27,7 @@
 #include "extensions/browser/guest_view/mime_handler_view/mime_handler_view_guest.h"
 #include "extensions/common/api/mime_handler.mojom.h"
 #include "extensions/common/constants.h"
+#include "net/http/http_response_headers.h"
 #include "pdf/pdf_features.h"
 #include "printing/buildflags/buildflags.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -105,7 +106,7 @@ std::optional<GURL> ChromePdfStreamDelegate::MapToOriginalUrl(
   content::WebContents* contents = navigation_handle.GetWebContents();
   base::WeakPtr<extensions::StreamContainer> stream;
   content::RenderFrameHost* embedder_parent_frame = embedder_frame->GetParent();
-  if (base::FeatureList::IsEnabled(chrome_pdf::features::kPdfOopif)) {
+  if (chrome_pdf::features::IsOopifPdfEnabled()) {
     if (embedder_parent_frame) {
       // For the PDF viewer, the `embedder_frame` is the PDF extension frame.
       // The `StreamContainer` is stored using the PDF viewer's embedder frame,
@@ -142,6 +143,12 @@ std::optional<GURL> ChromePdfStreamDelegate::MapToOriginalUrl(
     info.full_frame = !stream->embedded();
     info.allow_javascript = stream->pdf_plugin_attributes()->allow_javascript;
     info.use_skia = ShouldEnableSkiaRenderer(contents);
+    if (chrome_pdf::features::IsOopifPdfEnabled()) {
+      net::HttpResponseHeaders* response_headers = stream->response_headers();
+      info.require_corp = response_headers &&
+                          response_headers->HasHeaderValue(
+                              "Cross-Origin-Embedder-Policy", "require-corp");
+    }
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
   } else if (stream_url.GetWithEmptyPath() ==
              chrome::kChromeUIUntrustedPrintURL) {
@@ -190,10 +197,11 @@ ChromePdfStreamDelegate::GetStreamInfo(
   return helper->TakeStreamInfo();
 }
 
-void ChromePdfStreamDelegate::OnPdfEmbedderSandboxed(int frame_tree_node_id) {
+void ChromePdfStreamDelegate::OnPdfEmbedderSandboxed(
+    content::FrameTreeNodeId frame_tree_node_id) {
   // Clean up the stream for a sandboxed embedder frame, as sandboxed frames
   // should be unable to instantiate the PDF viewer.
-  CHECK(base::FeatureList::IsEnabled(chrome_pdf::features::kPdfOopif));
+  CHECK(chrome_pdf::features::IsOopifPdfEnabled());
 
   auto* web_contents =
       content::WebContents::FromFrameTreeNodeId(frame_tree_node_id);
@@ -218,7 +226,7 @@ bool ChromePdfStreamDelegate::ShouldAllowPdfFrameNavigation(
   // content frame.
 
   // OOPIF PDF viewer only.
-  if (!base::FeatureList::IsEnabled(chrome_pdf::features::kPdfOopif)) {
+  if (!chrome_pdf::features::IsOopifPdfEnabled()) {
     return true;
   }
 
@@ -243,14 +251,17 @@ bool ChromePdfStreamDelegate::ShouldAllowPdfFrameNavigation(
   // extension frame.
   base::WeakPtr<extensions::StreamContainer> stream =
       pdf_viewer_stream_manager->GetStreamContainer(parent_frame);
-  int frame_tree_node_id = navigation_handle->GetFrameTreeNodeId();
+  content::FrameTreeNodeId frame_tree_node_id =
+      navigation_handle->GetFrameTreeNodeId();
   if (stream) {
     // Allow navigations for unrelated frames, which might be injected by
     // unrelated extensions. Only allow the PDF extension frame to navigate to
-    // the extension URL.
+    // the extension URL once.
     return !pdf_viewer_stream_manager->IsPdfExtensionFrameTreeNodeId(
                parent_frame, frame_tree_node_id) ||
-           url == stream->handler_url();
+           (!pdf_viewer_stream_manager->DidPdfExtensionFinishNavigation(
+                parent_frame) &&
+            url == stream->handler_url());
   }
 
   // If this navigation is for a PDF content frame, then there should be a
@@ -269,8 +280,10 @@ bool ChromePdfStreamDelegate::ShouldAllowPdfFrameNavigation(
 
   // Allow navigations for unrelated frames, which might be injected by
   // unrelated extensions. Only allow the PDF content frame to navigate to the
-  // original PDF URL.
+  // original PDF URL once.
   return !pdf_viewer_stream_manager->IsPdfContentFrameTreeNodeId(
              grandparent_frame, frame_tree_node_id) ||
-         url == stream->original_url();
+         (!pdf_viewer_stream_manager->DidPdfContentNavigate(
+              grandparent_frame) &&
+          url == stream->original_url());
 }

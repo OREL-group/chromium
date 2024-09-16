@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/browsing_topics/annotator_impl.h"
 
 #include <vector>
@@ -60,7 +65,7 @@ std::optional<std::unordered_map<std::string, std::vector<int32_t>>>
 LoadOverrideListFromFile(const base::FilePath& path) {
   if (!path.IsAbsolute() ||
       path.BaseName() != base::FilePath(kOverrideListBasePath)) {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     // This is enforced by calling code, so no UMA in this case.
     return std::nullopt;
   }

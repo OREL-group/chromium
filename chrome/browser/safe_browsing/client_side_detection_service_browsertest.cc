@@ -16,6 +16,7 @@
 #include "chrome/browser/safe_browsing/client_side_detection_service_factory.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/test/base/chrome_test_utils.h"
+#include "chrome/test/base/platform_browser_test.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/content/browser/client_side_phishing_model.h"
 #include "components/safe_browsing/content/common/safe_browsing.mojom.h"
@@ -34,10 +35,8 @@
 #if BUILDFLAG(IS_ANDROID)
 #include "chrome/browser/ui/android/tab_model/tab_model.h"
 #include "chrome/browser/ui/android/tab_model/tab_model_list.h"
-#include "chrome/test/base/android/android_browser_test.h"
 #else
 #include "chrome/browser/ui/browser.h"
-#include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #endif  // defined (
 
@@ -108,7 +107,7 @@ class ClientSideDetectionServiceBrowserTest : public PlatformBrowserTest {
   }
 };
 
-// TODO(crbug.com/1434848): Re-enable this test
+// TODO(crbug.com/40904444): Re-enable this test
 #if BUILDFLAG(IS_CHROMEOS) && !defined(NDEBUG)
 #define MAYBE_ModelUpdatesPropagated DISABLED_ModelUpdatesPropagated
 #else
@@ -194,7 +193,7 @@ IN_PROC_BROWSER_TEST_F(ClientSideDetectionServiceBrowserTest,
   }
 }
 
-// TODO(crbug.com/1434848): Re-enable this test
+// TODO(crbug.com/40904444): Re-enable this test
 #if BUILDFLAG(IS_CHROMEOS) && !defined(NDEBUG)
 #define MAYBE_TfLiteClassification DISABLED_TfLiteClassification
 #else
@@ -293,7 +292,7 @@ IN_PROC_BROWSER_TEST_F(ClientSideDetectionServiceBrowserTest,
   }
 }
 
-// TODO(crbug.com/1434848): Re-enable this test
+// TODO(crbug.com/40904444): Re-enable this test
 #if BUILDFLAG(IS_CHROMEOS) && !defined(NDEBUG)
 #define MAYBE_TfLiteClassificationAfterTwoModelUploads \
   DISABLED_TfLiteClassificationAfterTwoModelUploads

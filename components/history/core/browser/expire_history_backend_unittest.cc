@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/history/core/browser/expire_history_backend.h"
 
 #include <stddef.h>
@@ -80,17 +85,13 @@ class ExpireHistoryTest : public testing::Test, public HistoryBackendNotifier {
       : backend_client_(history_client_.CreateBackendClient()),
         expirer_(this,
                  backend_client_.get(),
-                 task_environment_.GetMainThreadTaskRunner()),
-        now_(PretendNow()) {}
+                 task_environment_.GetMainThreadTaskRunner()) {}
 
  protected:
   // Called by individual tests when they want data populated.
   void AddExampleData(URLID url_ids[3],
                       base::Time visit_times[4],
                       bool set_app_id = false);
-
-  // Add visits with source information.
-  void AddExampleSourceData(const GURL& url, URLID* id);
 
   // Returns true if the given favicon has an entry in the DB.
   bool HasFavicon(favicon_base::FaviconID favicon_id);
@@ -122,8 +123,6 @@ class ExpireHistoryTest : public testing::Test, public HistoryBackendNotifier {
 
   void StarURL(const GURL& url) { history_client_.AddBookmark(url); }
 
-  static bool IsStringInFile(const base::FilePath& filename, const char* str);
-
   // Returns the path the db files are created in.
   const base::FilePath& path() const { return tmp_dir_.GetPath(); }
 
@@ -141,9 +140,6 @@ class ExpireHistoryTest : public testing::Test, public HistoryBackendNotifier {
   std::unique_ptr<HistoryDatabase> main_db_;
   std::unique_ptr<favicon::FaviconDatabase> thumb_db_;
   scoped_refptr<TopSitesImpl> top_sites_;
-
-  // base::Time at the beginning of the test, so everybody agrees what "now" is.
-  const base::Time now_;
 
   typedef std::vector<std::pair<bool, URLRows>> URLsModifiedNotificationList;
   URLsModifiedNotificationList urls_modified_notifications_;
@@ -213,7 +209,7 @@ class ExpireHistoryTest : public testing::Test, public HistoryBackendNotifier {
   }
   void NotifyVisitUpdated(const VisitRow& visit,
                           VisitUpdateReason reason) override {}
-  void NotifyVisitDeleted(const VisitRow& visit) override {}
+  void NotifyVisitsDeleted(const std::vector<DeletedVisit>& visits) override {}
 };
 
 // The example data consists of 4 visits. The middle two visits are to the
@@ -413,14 +409,6 @@ TEST_F(ExpireHistoryTest, DeleteFaviconsIfPossible) {
     EXPECT_TRUE(HasFavicon(icon_id));
     EXPECT_TRUE(effects.deleted_favicons.empty());
   }
-}
-
-// static
-bool ExpireHistoryTest::IsStringInFile(const base::FilePath& filename,
-                                       const char* str) {
-  std::string contents;
-  EXPECT_TRUE(base::ReadFileToString(filename, &contents));
-  return contents.find(str) != std::string::npos;
 }
 
 // Deletes a URL with a favicon that it is the last referencer of, so that it
@@ -1200,7 +1188,7 @@ TEST_F(ExpireHistoryTest, ClearOldOnDemandFaviconsDoesDeleteUnstarred) {
   // The blob does not encode any real bitmap, obviously.
   const unsigned char kBlob[] = "0";
   scoped_refptr<base::RefCountedBytes> favicon(
-      new base::RefCountedBytes(kBlob, sizeof(kBlob)));
+      new base::RefCountedBytes(kBlob));
 
   // Icon: old and not bookmarked case.
   GURL url("http://google.com/favicon.ico");
@@ -1226,7 +1214,7 @@ TEST_F(ExpireHistoryTest, ClearOldOnDemandFaviconsDoesNotDeleteStarred) {
   // The blob does not encode any real bitmap, obviously.
   const unsigned char kBlob[] = "0";
   scoped_refptr<base::RefCountedBytes> favicon(
-      new base::RefCountedBytes(kBlob, sizeof(kBlob)));
+      new base::RefCountedBytes(kBlob));
 
   // Icon: old but bookmarked case.
   GURL url("http://google.com/favicon.ico");
@@ -1266,7 +1254,7 @@ TEST_F(ExpireHistoryTest, ClearOldOnDemandFaviconsDoesDeleteAfterLongDelay) {
   // The blob does not encode any real bitmap, obviously.
   const unsigned char kBlob[] = "0";
   scoped_refptr<base::RefCountedBytes> favicon(
-      new base::RefCountedBytes(kBlob, sizeof(kBlob)));
+      new base::RefCountedBytes(kBlob));
 
   // Icon: old and not bookmarked case.
   GURL url("http://google.com/favicon.ico");
@@ -1297,7 +1285,7 @@ TEST_F(ExpireHistoryTest,
   // The blob does not encode any real bitmap, obviously.
   const unsigned char kBlob[] = "0";
   scoped_refptr<base::RefCountedBytes> favicon(
-      new base::RefCountedBytes(kBlob, sizeof(kBlob)));
+      new base::RefCountedBytes(kBlob));
 
   // Icon: old but bookmarked case.
   GURL url("http://google.com/favicon.ico");

@@ -59,7 +59,7 @@ class FaviconServiceImpl;
 }
 
 namespace syncer {
-class ModelTypeControllerDelegate;
+class DataTypeControllerDelegate;
 class SyncableService;
 }  // namespace syncer
 
@@ -378,7 +378,7 @@ class HistoryService : public KeyedService,
   using GetVisibleVisitCountToHostCallback =
       base::OnceCallback<void(VisibleVisitCountToHostResult)>;
 
-  // TODO(crbug.com/1229440): Rename this function to use origin instead of
+  // TODO(crbug.com/40778368): Rename this function to use origin instead of
   // host.
   base::CancelableTaskTracker::TaskId GetVisibleVisitCountToHost(
       const GURL& url,
@@ -390,7 +390,8 @@ class HistoryService : public KeyedService,
   using QueryMostVisitedURLsCallback =
       base::OnceCallback<void(MostVisitedURLList)>;
 
-  base::CancelableTaskTracker::TaskId QueryMostVisitedURLs(
+  // Virtual for mocking.
+  virtual base::CancelableTaskTracker::TaskId QueryMostVisitedURLs(
       int result_count,
       QueryMostVisitedURLsCallback callback,
       base::CancelableTaskTracker* tracker);
@@ -431,7 +432,7 @@ class HistoryService : public KeyedService,
                           DomainDiversityCallback callback,
                           base::CancelableTaskTracker* tracker);
 
-  // Returns, via a callback, unique domains (eLTD+1) visited within the time
+  // Returns, via a callback, unique domains (eTLD+1) visited within the time
   // range [`begin_time`, `end_time`) for local and synced visits sorted in
   // reverse-chronological order.
   using GetUniqueDomainsVisitedCallback =
@@ -479,20 +480,18 @@ class HistoryService : public KeyedService,
       GetLastVisitCallback callback,
       base::CancelableTaskTracker* tracker);
 
-  using GetDailyVisitsToHostCallback =
+  using GetDailyVisitsToOriginCallback =
       base::OnceCallback<void(DailyVisitsResult)>;
 
-  // TODO(crbug/1152592): Use this function.
+  // TODO(crbug.com/40158714): Use this function.
   // Gets counts for total visits and days visited for pages matching `host`'s
   // scheme, port, and host. Counts only user-visible visits (i.e. no redirects
   // or subframes) within the time range [`begin_time`, `end_time`).
-  // TODO(crbug.com/1229440): Rename this function to use origin instead of
-  // host.
-  base::CancelableTaskTracker::TaskId GetDailyVisitsToHost(
-      const GURL& host,
+  base::CancelableTaskTracker::TaskId GetDailyVisitsToOrigin(
+      const url::Origin& origin,
       base::Time begin_time,
       base::Time end_time,
-      GetDailyVisitsToHostCallback callback,
+      GetDailyVisitsToOriginCallback callback,
       base::CancelableTaskTracker* tracker);
 
   // Generic operations --------------------------------------------------------
@@ -837,7 +836,7 @@ class HistoryService : public KeyedService,
 
   // For sync codebase only: instantiates a controller delegate to interact with
   // HistorySyncBridge. Must be called from the UI thread.
-  std::unique_ptr<syncer::ModelTypeControllerDelegate>
+  std::unique_ptr<syncer::DataTypeControllerDelegate>
   GetHistorySyncControllerDelegate();
 
   // Sends the SyncService's TransportState `state` to the backend, which will
@@ -879,6 +878,7 @@ class HistoryService : public KeyedService,
   friend std::unique_ptr<HistoryService> CreateHistoryService(
       const base::FilePath& history_dir,
       bool create_db);
+  FRIEND_TEST_ALL_PREFIXES(OrderingHistoryServiceTest, EnsureCorrectOrder);
 
   // Called on shutdown, this will tell the history backend to complete and
   // will release pointers to it. No other functions should be called once
@@ -922,6 +922,16 @@ class HistoryService : public KeyedService,
   // Notify all HistoryServiceObservers registered that URLs have been deleted.
   // `deletion_info` describes the urls that have been removed from history.
   void NotifyDeletions(const DeletionInfo& deletion_info);
+
+  // A helper function which alerts `visit_delegate_` of partitioned visited
+  // links that should be added to the PartitionedVisitedLink hashtable. Links
+  // will not be added if they do not contain valid values for the
+  // triple-partition key: <link url, top-level site, frame origin>.
+  void AddPartitionedVisitedLinks(const HistoryAddPageArgs& args);
+
+  // Notify the `visit_delegate_` of partitioned visited links that have been
+  // deleted from the VisitedLinkDatabase.
+  void NotifyVisitedLinksDeleted(const std::vector<DeletedVisitedLink>& links);
 
   // Notify all HistoryServiceObservers registered that the
   // HistoryService has finished loading.

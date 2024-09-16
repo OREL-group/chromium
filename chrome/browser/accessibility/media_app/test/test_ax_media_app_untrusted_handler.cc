@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "chrome/browser/screen_ai/public/test/fake_optical_character_recognizer.h"
 #include "content/public/browser/browser_context.h"
 #include "ui/accessibility/ax_tree.h"
 #include "ui/accessibility/ax_tree_id.h"
@@ -15,8 +16,9 @@ namespace ash::test {
 
 TestAXMediaAppUntrustedHandler::TestAXMediaAppUntrustedHandler(
     content::BrowserContext& context,
+    gfx::NativeWindow native_window,
     mojo::PendingRemote<media_app_ui::mojom::OcrUntrustedPage> page)
-    : AXMediaAppUntrustedHandler(context, std::move(page)) {}
+    : AXMediaAppUntrustedHandler(context, native_window, std::move(page)) {}
 
 TestAXMediaAppUntrustedHandler::~TestAXMediaAppUntrustedHandler() = default;
 
@@ -31,21 +33,18 @@ std::string TestAXMediaAppUntrustedHandler::GetDocumentTreeToStringForTesting()
 void TestAXMediaAppUntrustedHandler::
     EnablePendingSerializedUpdatesForTesting() {
   pending_serialized_updates_for_testing_ =
-      std::make_unique<std::vector<const ui::AXTreeUpdate>>();
+      std::make_unique<std::vector<ui::AXTreeUpdate>>();
 }
 
-#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
-void TestAXMediaAppUntrustedHandler::SetScreenAIAnnotatorForTesting(
-    mojo::PendingRemote<screen_ai::mojom::ScreenAIAnnotator>
-        screen_ai_annotator) {
-  screen_ai_annotator_.reset();
-  screen_ai_annotator_.Bind(std::move(screen_ai_annotator));
+void TestAXMediaAppUntrustedHandler::
+    CreateFakeOpticalCharacterRecognizerForTesting(bool return_empty) {
+  ocr_.reset();
+  ocr_ = screen_ai::FakeOpticalCharacterRecognizer::Create(return_empty);
 }
 
 void TestAXMediaAppUntrustedHandler::FlushForTesting() {
-  screen_ai_annotator_.FlushForTesting();  // IN-TEST
+  ocr_->FlushForTesting();  // IN-TEST
 }
-#endif  // BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
 
 bool TestAXMediaAppUntrustedHandler::IsOcrServiceEnabled() const {
   return is_ocr_service_enabled_for_testing_ ||

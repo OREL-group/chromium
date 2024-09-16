@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ui/views/tabs/tab_drag_controller_interactive_uitest.h"
 
 #include <stddef.h>
@@ -35,6 +40,7 @@
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
+#include "chrome/browser/ui/tabs/features.h"
 #include "chrome/browser/ui/tabs/tab_group.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -49,6 +55,7 @@
 #include "chrome/browser/ui/views/tabs/tab_strip.h"
 #include "chrome/browser/ui/views/tabs/window_finder.h"
 #include "chrome/browser/ui/web_applications/test/web_app_browsertest_util.h"
+#include "chrome/browser/web_applications/test/os_integration_test_override_impl.h"
 #include "chrome/browser/web_applications/test/web_app_install_test_utils.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
@@ -68,8 +75,8 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "third_party/blink/public/common/features.h"
 #include "ui/aura/env.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/base/test/ui_controls.h"
-#include "ui/base/ui_base_features.h"
 #include "ui/compositor/layer.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
@@ -92,13 +99,17 @@
 #include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
 #endif
 
+#if BUILDFLAG(IS_CHROMEOS)
+#include "base/test/simple_test_tick_clock.h"
+#include "ui/events/base_event_utils.h"
+#endif
+
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 #include "ash/public/cpp/split_view_test_api.h"
 #include "ash/public/cpp/test/shell_test_api.h"
 #include "ash/public/cpp/window_properties.h"
 #include "ash/shell.h"
 #include "ash/wm/window_state.h"
-#include "base/test/simple_test_tick_clock.h"
 #include "chrome/browser/ash/system_web_apps/test_support/test_system_web_app_installation.h"
 #include "chrome/browser/ui/views/frame/browser_view_layout.h"
 #include "chrome/browser/ui/views/frame/immersive_mode_controller.h"
@@ -111,12 +122,13 @@
 #include "ui/base/cursor/cursor.h"
 #include "ui/display/manager/display_manager.h"
 #include "ui/display/test/display_manager_test_api.h"  // nogncheck
-#include "ui/events/base_event_utils.h"
 #include "ui/events/gesture_detection/gesture_configuration.h"
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS_LACROS)
 #include "chrome/browser/ui/views/frame/desktop_browser_frame_lacros.h"
+#include "chromeos/crosapi/mojom/test_controller.mojom-test-utils.h"
+#include "chromeos/lacros/lacros_service.h"
 #include "ui/aura/window_tree_host_platform.h"
 #include "ui/platform_window/extensions/wayland_extension.h"
 #define DESKTOP_BROWSER_FRAME_AURA DesktopBrowserFrameLacros
@@ -533,14 +545,14 @@ IN_PROC_BROWSER_TEST_F(TabDragControllerTest, GestureEndShouldEndDragTest) {
 
   ui::GestureEvent gesture_tap_down(
       tab_1_center.x(), tab_1_center.x(), 0, base::TimeTicks(),
-      ui::GestureEventDetails(ui::ET_GESTURE_TAP_DOWN));
+      ui::GestureEventDetails(ui::EventType::kGestureTapDown));
   tab_strip->MaybeStartDrag(tab1, gesture_tap_down,
     tab_strip->GetSelectionModel());
   EXPECT_TRUE(TabDragController::IsActive());
 
-  ui::GestureEvent gesture_end(tab_1_center.x(), tab_1_center.x(), 0,
-                               base::TimeTicks(),
-                               ui::GestureEventDetails(ui::ET_GESTURE_END));
+  ui::GestureEvent gesture_end(
+      tab_1_center.x(), tab_1_center.x(), 0, base::TimeTicks(),
+      ui::GestureEventDetails(ui::EventType::kGestureEnd));
   HandleGestureEvent(tab_strip, &gesture_end);
   EXPECT_FALSE(TabDragController::IsActive());
   EXPECT_FALSE(tab_strip->GetDragContext()->IsDragSessionActive());
@@ -549,26 +561,39 @@ IN_PROC_BROWSER_TEST_F(TabDragControllerTest, GestureEndShouldEndDragTest) {
 class DetachToBrowserTabDragControllerTest
     : public TabDragControllerTest,
       public ::testing::WithParamInterface<
+#if !BUILDFLAG(IS_CHROMEOS)
+          testing::tuple<bool, bool, const char*, bool>> {
+#else
           testing::tuple<bool, bool, const char*>> {
+#endif
  public:
   DetachToBrowserTabDragControllerTest() {
     std::vector<base::test::FeatureRef> enabled_features = {};
+    std::vector<base::test::FeatureRef> disabled_features = {
+        features::kWebUITabStrip};
+
+#if BUILDFLAG(IS_WIN)
+    // Disable NativeWinOcclusion to avoid it interfering with test for dragging
+    // over occluded browser window.
+    disabled_features.push_back(features::kCalculateNativeWinOcclusion);
+#endif  // BUILDFLAG(IS_WIN)
+
     if (std::get<0>(GetParam())) {
-      enabled_features.push_back(features::kSplitTabStrip);
+      enabled_features.push_back(tabs::kSplitTabStrip);
     }
     if (std::get<1>(GetParam())) {
       enabled_features.push_back(features::kTearOffWebAppTabOpensWebAppWindow);
     }
-    scoped_feature_list_.InitWithFeatures(
-        /*enabled_features=*/enabled_features,
-        /*disabled_features=*/{
-            features::kWebUITabStrip,
-#if BUILDFLAG(IS_WIN)
-            // Disable NativeWinOcclusion to avoid it interfering with test
-            // for dragging over occluded browser window.
-            features::kCalculateNativeWinOcclusion,
-#endif  // BUILDFLAG(IS_WIN)
-        });
+#if !BUILDFLAG(IS_CHROMEOS)
+    if (std::get<3>(GetParam())) {
+      enabled_features.push_back(features::kAllowWindowDragUsingSystemDragDrop);
+    } else {
+      // We need to explicitly disable it to override potential field trials.
+      disabled_features.push_back(
+          features::kAllowWindowDragUsingSystemDragDrop);
+    }
+#endif  // !BUILDFLAG(IS_CHROMEOS)
+    scoped_feature_list_.InitWithFeatures(enabled_features, disabled_features);
   }
   DetachToBrowserTabDragControllerTest(
       const DetachToBrowserTabDragControllerTest&) = delete;
@@ -578,10 +603,11 @@ class DetachToBrowserTabDragControllerTest
   void SetUpOnMainThread() override {
 #if BUILDFLAG(IS_CHROMEOS_ASH)
     root_ = browser()->window()->GetNativeWindow()->GetRootWindow();
+#endif
+#if BUILDFLAG(IS_CHROMEOS)
     // Disable flings which might otherwise inadvertently be generated from
     // tests' touch events.
-    ui::GestureConfiguration::GetInstance()->set_min_fling_velocity(
-        std::numeric_limits<float>::max());
+    SetMinFlingVelocity(std::numeric_limits<float>::max());
 #endif
 #if BUILDFLAG(IS_MAC)
     // Currently MacViews' browser windows are shown in the background and could
@@ -622,7 +648,7 @@ class DetachToBrowserTabDragControllerTest
 #if BUILDFLAG(IS_CHROMEOS)
     return SendTouchEventsSync(ui_controls::kTouchPress, id, location);
 #else
-    NOTREACHED_NORETURN();
+    NOTREACHED();
 #endif
   }
 
@@ -643,7 +669,7 @@ class DetachToBrowserTabDragControllerTest
 #if BUILDFLAG(IS_CHROMEOS)
     return SendTouchEventsSync(ui_controls::kTouchMove, 0, location);
 #else
-    NOTREACHED_NORETURN();
+    NOTREACHED();
 #endif
   }
 
@@ -657,7 +683,7 @@ class DetachToBrowserTabDragControllerTest
     return ui_controls::SendTouchEvents(ui_controls::kTouchMove, 0,
                                         location.x(), location.y());
 #else
-    NOTREACHED_NORETURN();
+    NOTREACHED();
 #endif
   }
 
@@ -682,7 +708,7 @@ class DetachToBrowserTabDragControllerTest
         ui_controls::kTouchMove, 0, location.x(), location.y(),
         std::move(task));
 #else
-    NOTREACHED_NORETURN();
+    NOTREACHED();
 #endif
   }
 
@@ -699,7 +725,7 @@ class DetachToBrowserTabDragControllerTest
                  : SendTouchEventsSync(ui_controls::kTouchRelease, id,
                                        gfx::Point());
 #else
-    NOTREACHED_NORETURN();
+    NOTREACHED();
 #endif
   }
 
@@ -740,7 +766,7 @@ class DetachToBrowserTabDragControllerTest
 #if BUILDFLAG(IS_CHROMEOS_ASH)
     return SendTouchEventsSync(ui_controls::kTouchMove, 0, location);
 #else
-    NOTREACHED_NORETURN();
+    NOTREACHED();
 #endif
   }
 
@@ -816,6 +842,30 @@ class DetachToBrowserTabDragControllerTest
   }
 
   Browser* browser() const { return InProcessBrowserTest::browser(); }
+
+ protected:
+#if BUILDFLAG(IS_CHROMEOS)
+  void SetMinFlingVelocity(float velocity) {
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+    ui::GestureConfiguration::GetInstance()->set_min_fling_velocity(velocity);
+#elif BUILDFLAG(IS_CHROMEOS_LACROS)
+    auto* lacros_service = chromeos::LacrosService::Get();
+    const int version =
+        lacros_service->GetInterfaceVersion<crosapi::mojom::TestController>();
+    const int required_version = crosapi::mojom::TestController::
+        MethodMinVersions::kSetMinFlingVelocityMinVersion;
+    if (version < required_version) {
+      LOG(WARNING) << "Ash does not support crosapi "
+                      "TestController::SetMinFlingVelocity; skipping call.";
+      return;
+    }
+    auto& test_controller =
+        lacros_service->GetRemote<crosapi::mojom::TestController>();
+    crosapi::mojom::TestControllerAsyncWaiter(test_controller.get())
+        .SetMinFlingVelocity(velocity);
+#endif
+  }
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
  private:
 #if BUILDFLAG(IS_CHROMEOS_ASH)
@@ -1526,6 +1576,60 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTest,
   EXPECT_FALSE(tab_strip->GetDragContext()->IsDragSessionActive());
 }
 
+// Flaky. https://crbug.com/343188577
+#if BUILDFLAG(IS_CHROMEOS)
+#define MAYBE_StartDragWhileEndingPreviousDragDoesNothingTest \
+  DISABLED_StartDragWhileEndingPreviousDragDoesNothingTest
+#else
+#define MAYBE_StartDragWhileEndingPreviousDragDoesNothingTest \
+  StartDragWhileEndingPreviousDragDoesNothingTest
+#endif
+
+// Can't start another drag session while the previous one is still ending.
+IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTest,
+                       MAYBE_StartDragWhileEndingPreviousDragDoesNothingTest) {
+  AddTabsAndResetBrowser(browser(), 2);
+
+  TabStrip* tab_strip = GetTabStripForBrowser(browser());
+
+  const gfx::Point tab_0_center_screen =
+      GetCenterInScreenCoordinates(tab_strip->tab_at(0));
+  const gfx::Point tab_1_center_screen =
+      GetCenterInScreenCoordinates(tab_strip->tab_at(1));
+  const gfx::Point tab_2_center_screen =
+      GetCenterInScreenCoordinates(tab_strip->tab_at(2));
+
+  ASSERT_TRUE(PressInput(tab_1_center_screen));
+  ASSERT_TRUE(DragInputTo(tab_0_center_screen));
+
+  ASSERT_TRUE(TabDragController::IsActive());
+  StopAnimating(tab_strip);
+
+  ASSERT_TRUE(ReleaseInput());
+
+  // The drag is over...
+  ASSERT_FALSE(TabDragController::IsActive());
+  ASSERT_FALSE(tab_strip->GetDragContext()->IsDragSessionActive());
+
+  // But the tab is still animating and still belongs to the TabDragContext.
+  ASSERT_TRUE(tab_strip->IsAnimatingInTabStrip());
+  ASSERT_TRUE(tab_strip->tab_at(0)->dragging());
+  ASSERT_EQ(tab_strip->tab_at(0)->parent(), tab_strip->GetDragContext());
+
+  ASSERT_EQ("1 0 2", IDString(browser()->tab_strip_model()));
+
+  // Attempt to start *another* drag session while the animation is still going.
+  ASSERT_TRUE(PressInput(tab_2_center_screen));
+  ASSERT_TRUE(DragInputTo(tab_0_center_screen));
+
+  // This should not actually start.
+  EXPECT_FALSE(TabDragController::IsActive());
+  EXPECT_FALSE(tab_strip->GetDragContext()->IsDragSessionActive());
+  EXPECT_EQ("1 0 2", IDString(browser()->tab_strip_model()));
+
+  ASSERT_TRUE(ReleaseInput());
+}
+
 #if defined(USE_AURA)
 bool SubtreeShouldBeExplored(aura::Window* window,
                              const gfx::Point& local_point) {
@@ -1535,8 +1639,8 @@ bool SubtreeShouldBeExplored(aura::Window* window,
   gfx::Point point_in_root = local_point;
   aura::Window::ConvertPointToTarget(window, window->GetRootWindow(),
                                      &point_in_root);
-  ui::MouseEvent event(ui::ET_MOUSE_MOVED, point_in_parent, point_in_root,
-                       base::TimeTicks::Now(), 0, 0);
+  ui::MouseEvent event(ui::EventType::kMouseMoved, point_in_parent,
+                       point_in_root, base::TimeTicks::Now(), 0, 0);
   return window->targeter()->SubtreeShouldBeExploredForEvent(window, event);
 }
 
@@ -1592,8 +1696,9 @@ void DragToSeparateWindowStep2(DetachToBrowserTabDragControllerTest* test,
   // cleared on the source tabstrip.
   EXPECT_TRUE(test->IsTabDraggingInfoCleared(not_attached_tab_strip));
   // At this moment there should be a new browser window for the dragged tabs.
-  EXPECT_EQ(3u, test->browser_list()->size());
-  Browser* new_browser = test->browser_list()->get(2);
+  size_t num_browsers = test->browser_list()->size();
+  EXPECT_EQ(3u, num_browsers);
+  Browser* new_browser = test->browser_list()->get(num_browsers - 1);
   TabStrip* new_tab_strip = GetTabStripForBrowser(new_browser);
   EXPECT_TRUE(new_tab_strip->GetDragContext()->IsDragSessionActive());
   // Test that the tab dragging info should be correctly set on the new window.
@@ -1672,6 +1777,59 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTest,
   // mouse/touch was released.
   EXPECT_FALSE(tab_strip->GetWidget()->HasCapture());
   EXPECT_FALSE(tab_strip2->GetWidget()->HasCapture());
+}
+
+// Test is based on DragToSeparateWindow. https://crbug.com/1176998
+#if (BUILDFLAG(IS_MAC) && defined(ARCH_CPU_ARM64)) || BUILDFLAG(IS_LINUX) || \
+    BUILDFLAG(IS_CHROMEOS)
+#define MAYBE_DragToSeparateWindowDuringDragEnd \
+  DISABLED_DragToSeparateWindowDuringDragEnd
+#else
+#define MAYBE_DragToSeparateWindowDuringDragEnd \
+  DragToSeparateWindowDuringDragEnd
+#endif
+
+// Creates two browsers, starts and end a drag in the target browser, then drags
+// from source to target before the target browser finishes ending drags.
+IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTest,
+                       MAYBE_DragToSeparateWindowDuringDragEnd) {
+  TabStrip* tab_strip = GetTabStripForBrowser(browser());
+
+  AddTabsAndResetBrowser(browser(), 1);
+
+  // Create another browser.
+  Browser* browser2 = CreateAnotherBrowserAndResize();
+  AddTabsAndResetBrowser(browser2, 1);
+  TabStrip* tab_strip2 = GetTabStripForBrowser(browser2);
+
+  ASSERT_TRUE(PressInput(GetCenterInScreenCoordinates(tab_strip2->tab_at(0))));
+  ASSERT_TRUE(DragInputTo(GetCenterInScreenCoordinates(tab_strip2->tab_at(1))));
+
+  StopAnimating(tab_strip2);
+  ASSERT_TRUE(ReleaseInput());
+
+  // We should be doing the post-drag animation.
+  ASSERT_TRUE(tab_strip2->GetDragContext()->IsAnimatingDragEnd());
+  // The tab should still be considered as dragging.
+  ASSERT_TRUE(tab_strip2->tab_at(1)->dragging());
+
+  // Drag from `tab_strip` to `tab_strip2`.
+  DragTabAndNotify(tab_strip, base::BindOnce(&DragToSeparateWindowStep2, this,
+                                             tab_strip, tab_strip2));
+
+  // Should now be attached to `tab_strip2`.
+  ASSERT_TRUE(tab_strip2->GetDragContext()->IsDragSessionActive());
+  ASSERT_FALSE(tab_strip->GetDragContext()->IsDragSessionActive());
+  ASSERT_TRUE(TabDragController::IsActive());
+  EXPECT_FALSE(GetIsDragged(browser()));
+  EXPECT_TRUE(IsTabDraggingInfoCleared(tab_strip));
+  EXPECT_TRUE(IsTabDraggingInfoSet(tab_strip2, tab_strip));
+
+  // Release mouse or touch, stopping the drag session.
+  ASSERT_TRUE(ReleaseInput());
+  ASSERT_FALSE(tab_strip2->GetDragContext()->IsDragSessionActive());
+  ASSERT_FALSE(tab_strip->GetDragContext()->IsDragSessionActive());
+  ASSERT_FALSE(TabDragController::IsActive());
 }
 
 #if BUILDFLAG(IS_WIN)
@@ -1774,52 +1932,6 @@ bool HasUserChangedWindowPositionOrSize(gfx::NativeWindow window) {
 }
 #endif
 
-// Encapsulates waiting for the browser window to become maximized. This is
-// needed for example on Chrome desktop linux, where window maximization is done
-// asynchronously as an event received from a different process.
-class MaximizedBrowserWindowWaiter {
- public:
-  explicit MaximizedBrowserWindowWaiter(BrowserWindow* window)
-      : window_(window) {}
-  MaximizedBrowserWindowWaiter(const MaximizedBrowserWindowWaiter&) = delete;
-  MaximizedBrowserWindowWaiter& operator=(const MaximizedBrowserWindowWaiter&) =
-      delete;
-  ~MaximizedBrowserWindowWaiter() = default;
-
-  // Blocks until the browser window becomes maximized.
-  void Wait() {
-    if (CheckMaximized())
-      return;
-
-    base::RunLoop run_loop;
-    quit_ = run_loop.QuitClosure();
-    run_loop.Run();
-  }
-
- private:
-  bool CheckMaximized() {
-    if (!window_->IsMaximized()) {
-      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-          FROM_HERE,
-          base::BindOnce(
-              base::IgnoreResult(&MaximizedBrowserWindowWaiter::CheckMaximized),
-              base::Unretained(this)));
-      return false;
-    }
-
-    // Quit the run_loop to end the wait.
-    if (!quit_.is_null())
-      std::move(quit_).Run();
-    return true;
-  }
-
-  // The browser window observed by this waiter.
-  raw_ptr<BrowserWindow> window_;
-
-  // The waiter's RunLoop quit closure.
-  base::RepeatingClosure quit_;
-};
-
 }  // namespace
 
 // Drags from browser to separate window and releases mouse.
@@ -1879,7 +1991,7 @@ class TestDialog : public views::DialogDelegateView {
  public:
   TestDialog() {
     SetFocusBehavior(FocusBehavior::ALWAYS);
-    SetModalType(ui::MODAL_TYPE_CHILD);
+    SetModalType(ui::mojom::ModalType::kChild);
     // Dialogs that take focus must have a name and role to pass accessibility
     // checks.
     GetViewAccessibility().SetRole(ax::mojom::Role::kDialog);
@@ -2072,8 +2184,8 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTest,
   {
     auto waiter = ui_test_utils::CreateAsyncWidgetRequestWaiter(*browser());
     browser()->window()->Maximize();
-    MaximizedBrowserWindowWaiter(browser()->window()).Wait();
-    ASSERT_TRUE(browser()->window()->IsMaximized());
+    ASSERT_TRUE(base::test::RunUntil(
+        [&]() { return browser()->window()->IsMaximized(); }));
     waiter.Wait();
   }
 
@@ -2119,8 +2231,8 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTest,
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX)
 
   if (kMaximizedStateRetainedOnTabDrag) {
-    // The new window should be maximized.
-    MaximizedBrowserWindowWaiter(new_browser->window()).Wait();
+    ASSERT_TRUE(base::test::RunUntil(
+        [&]() { return new_browser->window()->IsMaximized(); }));
   }
   EXPECT_EQ(new_browser->window()->IsMaximized(),
             kMaximizedStateRetainedOnTabDrag);
@@ -2235,7 +2347,7 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTest,
   std::unique_ptr<content::WebContents> new_web_contents =
       content::WebContents::Create(
           content::WebContents::CreateParams(browser()->profile()));
-  browser()->tab_strip_model()->ReplaceWebContentsAt(
+  browser()->tab_strip_model()->DiscardWebContentsAt(
       0, std::move(new_web_contents));
 
   // The drag session should still exist, and still not be started.
@@ -2353,8 +2465,9 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTest,
 namespace {
 
 void PressEscapeWhileDetachedStep2(DetachToBrowserTabDragControllerTest* test) {
-  EXPECT_EQ(2u, test->browser_list()->size());
-  Browser* new_browser = test->browser_list()->get(1);
+  size_t num_browsers = test->browser_list()->size();
+  EXPECT_EQ(2u, num_browsers);
+  Browser* new_browser = test->browser_list()->get(num_browsers - 1);
   EXPECT_TRUE(ui_test_utils::SendKeyPressToWindowSync(
       new_browser->window()->GetNativeWindow(), ui::VKEY_ESCAPE, false, false,
       false, false));
@@ -2848,8 +2961,9 @@ namespace {
 void PressEscapeWhileDetachedHeaderStep2(
     DetachToBrowserTabDragControllerTest* test) {
   // At this moment there should be a new browser window for the dragged tabs.
-  EXPECT_EQ(2u, test->browser_list()->size());
-  Browser* new_browser = test->browser_list()->get(1);
+  size_t num_browsers = test->browser_list()->size();
+  EXPECT_EQ(2u, num_browsers);
+  Browser* new_browser = test->browser_list()->get(num_browsers - 1);
   std::vector<tab_groups::TabGroupId> new_browser_groups =
       new_browser->tab_strip_model()->group_model()->ListTabGroups();
   EXPECT_EQ(1u, new_browser_groups.size());
@@ -3048,7 +3162,7 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTest,
   EXPECT_FALSE(model->IsGroupCollapsed(group));
 }
 
-// TODO(crbug.com/1052397): Revisit once build flag switch of lacros-chrome is
+// TODO(crbug.com/40118868): Revisit once build flag switch of lacros-chrome is
 // complete.
 #if BUILDFLAG(IS_MAC) || (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS))
 // Bulk-disabled for arm64 bot stabilization: https://crbug.com/1154345
@@ -3106,8 +3220,8 @@ using DetachTabWithUrlControlledByWebApp = DetachToBrowserTabDragControllerTest;
 // browser window will be a normal browser window or an app window.
 IN_PROC_BROWSER_TEST_P(DetachTabWithUrlControlledByWebApp, TearOffWebApp) {
   // Install tabbed web app.
-  auto web_app_info = std::make_unique<web_app::WebAppInstallInfo>();
-  web_app_info->start_url = GURL("https://www.example.com");
+  auto web_app_info = web_app::WebAppInstallInfo::CreateWithStartUrlForTesting(
+      GURL("https://www.example.com"));
   web_app_info->title = u"A tabbed web app";
   web_app_info->user_display_mode =
       web_app::mojom::UserDisplayMode::kStandalone;
@@ -3165,8 +3279,9 @@ class DetachToBrowserTabDragControllerTestWithTabbedWebApp
   }
 
   webapps::AppId InstallMockApp(bool add_home_tab) {
-    auto web_app_info = std::make_unique<web_app::WebAppInstallInfo>();
-    web_app_info->start_url = GURL("https://www.example.com");
+    auto web_app_info =
+        web_app::WebAppInstallInfo::CreateWithStartUrlForTesting(
+            GURL("https://www.example.com"));
     web_app_info->title = u"A tabbed web app";
     web_app_info->user_display_mode =
         web_app::mojom::UserDisplayMode::kStandalone;
@@ -3182,6 +3297,7 @@ class DetachToBrowserTabDragControllerTestWithTabbedWebApp
   }
 
  private:
+  web_app::OsIntegrationTestOverrideBlockingRegistration faked_os_integration_;
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
@@ -3322,14 +3438,14 @@ class DetachToBrowserTabDragControllerTestWithScrollableTabStripEnabled
     : public DetachToBrowserTabDragControllerTest {
  public:
   DetachToBrowserTabDragControllerTestWithScrollableTabStripEnabled() {
-    scoped_feature_list_.InitWithFeatures({features::kScrollableTabStrip}, {});
+    scoped_feature_list_.InitWithFeatures({tabs::kScrollableTabStrip}, {});
   }
 
  private:
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
-// TODO(crbug.com/1052397): Revisit once build flag switch of lacros-chrome is
+// TODO(crbug.com/40118868): Revisit once build flag switch of lacros-chrome is
 // complete.
 // Disabling on macOS due to DCHECK crashes; see https://crbug.com/1183043.
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS) || \
@@ -3398,7 +3514,7 @@ void DragAllToSeparateWindowAndCancelStep2(
 #define MAYBE_DragAllToSeparateWindowAndCancel \
   DISABLED_DragAllToSeparateWindowAndCancel
 #else
-// TODO(https://crbug.com/1163775): Flaky on Windows and Linux.
+// TODO(crbug.com/40740354): Flaky on Windows and Linux.
 #define MAYBE_DragAllToSeparateWindowAndCancel \
   DISABLED_DragAllToSeparateWindowAndCancel
 #endif
@@ -3452,7 +3568,7 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTest,
 #define MAYBE_DragAllToSeparateWindowWithPinnedTabs \
   DISABLED_DragAllToSeparateWindowWithPinnedTabs
 #else
-// TODO(https://crbug.com/1163775): Flaky on Windows and Linux.
+// TODO(crbug.com/40740354): Flaky on Windows and Linux.
 #define MAYBE_DragAllToSeparateWindowWithPinnedTabs \
   DISABLED_DragAllToSeparateWindowWithPinnedTabs
 #endif
@@ -3783,9 +3899,12 @@ void DragInMaximizedWindowStep2(DetachToBrowserTabDragControllerTest* test,
                                 Browser* browser,
                                 TabStrip* tab_strip) {
   // There should be another browser.
-  EXPECT_EQ(2u, test->browser_list()->size());
-  Browser* new_browser = test->browser_list()->get(1);
+  size_t num_browsers = test->browser_list()->size();
+  EXPECT_EQ(2u, num_browsers);
+  Browser* new_browser = test->browser_list()->get(num_browsers - 1);
   EXPECT_NE(browser, new_browser);
+  ui_test_utils::BrowserActivationWaiter activation_waiter(new_browser);
+  activation_waiter.WaitForActivation();
   EXPECT_TRUE(new_browser->window()->IsActive());
   TabStrip* tab_strip2 = GetTabStripForBrowser(new_browser);
 
@@ -3805,8 +3924,13 @@ void DragInMaximizedWindowStep2(DetachToBrowserTabDragControllerTest* test,
 // Creates a browser with two tabs, maximizes it, drags the tab out.
 IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTest,
                        DragInMaximizedWindow) {
+  {
+    auto waiter = ui_test_utils::CreateAsyncWidgetRequestWaiter(*browser());
+    browser()->window()->Maximize();
+    waiter.Wait();
+  }
+  ASSERT_TRUE(browser()->window()->IsMaximized());
   AddTabsAndResetBrowser(browser(), 1);
-  browser()->window()->Maximize();
 
   TabStrip* tab_strip = GetTabStripForBrowser(browser());
 
@@ -4025,15 +4149,16 @@ void FastResizeDuringDraggingStep2(DetachToBrowserTabDragControllerTest* test,
                                    TabStrip* target_tab_strip) {
   // There should be three browser windows, including the newly created one for
   // the dragged tab.
-  EXPECT_EQ(3u, test->browser_list()->size());
+  size_t num_browsers = test->browser_list()->size();
+  EXPECT_EQ(3u, num_browsers);
 
-  // TODO(crbug.com/1110266): Remove explicit OS_CHROMEOS check once OS_LINUX
+  // TODO(crbug.com/40142064): Remove explicit OS_CHROMEOS check once OS_LINUX
   // CrOS cleanup is done.
-// TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
+// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
 // of lacros-chrome is complete.
 #if !(BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS))
   // Get this new created window for the drag. It should have fast resize set.
-  Browser* new_browser = test->browser_list()->get(2);
+  Browser* new_browser = test->browser_list()->get(num_browsers - 1);
   EXPECT_TRUE(WebContentsIsFastResized(new_browser));
   // The source window should also have fast resize set.
   EXPECT_TRUE(WebContentsIsFastResized(test->browser()));
@@ -4129,13 +4254,10 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTestWithTabbedSystemApp,
   EXPECT_EQ(Browser::Type::TYPE_APP, browser_list()->get(1)->type());
 }
 
+// TODO (crbug.com/1521327): Test fails after migrating to ChromeRefresh2023.
 // Move tab from TYPE_APP Browser to another TYPE_APP Browser.
 IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTestWithTabbedSystemApp,
-                       DragAppToAppWindow) {
-  // TODO (crbug/1521327): Test fails under ChromeRefresh2023. Skip for now.
-  if (features::IsChromeRefresh2023()) {
-    GTEST_SKIP();
-  }
+                       DISABLED_DragAppToAppWindow) {
   // Install and get 2 browsers with tabbed system app.
   webapps::AppId tabbed_app_id = InstallMockApp();
   Browser* app_browser1 = LaunchWebAppBrowser(tabbed_app_id);
@@ -4508,7 +4630,7 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserInSeparateDisplayTabDragControllerTest,
 IN_PROC_BROWSER_TEST_P(DetachToBrowserInSeparateDisplayTabDragControllerTest,
                        MAYBE_DragMaxTabToNonMaxWindowInSeparateDisplay) {
   AddTabsAndResetBrowser(browser(), 1);
-  browser()->window()->Maximize();
+  ASSERT_TRUE(ui_test_utils::MaximizeAndWaitUntilUIUpdateDone(*browser()));
   TabStrip* tab_strip = GetTabStripForBrowser(browser());
 
   // Create another browser on the second display.
@@ -4781,9 +4903,10 @@ void CancelDragTabToWindowInSeparateDisplayStep2(
     gfx::Point final_destination) {
   EXPECT_FALSE(tab_strip->GetDragContext()->IsDragSessionActive());
   EXPECT_TRUE(TabDragController::IsActive());
-  EXPECT_EQ(2u, test->browser_list()->size());
+  size_t num_browsers = test->browser_list()->size();
+  EXPECT_EQ(2u, num_browsers);
 
-  Browser* new_browser = test->browser_list()->get(1);
+  Browser* new_browser = test->browser_list()->get(num_browsers - 1);
   EXPECT_EQ(
       current_display.id(),
       display::Screen::GetScreen()
@@ -4838,9 +4961,8 @@ IN_PROC_BROWSER_TEST_P(
       ui_test_utils::SendMouseEventsSync(ui_controls::LEFT, ui_controls::UP));
 }
 
-// TODO(crbug.com/333085989): Re-enable flaky tests
-#if BUILDFLAG(IS_CHROMEOS) && defined(ADDRESS_SANITIZER) && \
-    defined(LEAK_SANITIZER)
+// TODO(crbug.com/333085989): Re-enable flaky tests on ChromeOS
+#if BUILDFLAG(IS_CHROMEOS)
 #define MAYBE_CancelDragTabToWindowIn1stDisplay \
   DISABLED_CancelDragTabToWindowIn1stDisplay
 #else
@@ -4890,6 +5012,10 @@ IN_PROC_BROWSER_TEST_P(
       ui_test_utils::SendMouseEventsSync(ui_controls::LEFT, ui_controls::UP));
 }
 
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+
+#if BUILDFLAG(IS_CHROMEOS)
+
 // Subclass of DetachToBrowserTabDragControllerTest that runs tests only with
 // touch input.
 class DetachToBrowserTabDragControllerTestTouch
@@ -4911,6 +5037,10 @@ class DetachToBrowserTabDragControllerTestTouch
   std::unique_ptr<base::SimpleTestTickClock> clock_;
 };
 
+#endif  // BUILDFLAG(IS_CHROMEOS)
+
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+
 namespace {
 void PressSecondFingerWhileDetachedStep3(
     DetachToBrowserTabDragControllerTest* test) {
@@ -4926,8 +5056,10 @@ void PressSecondFingerWhileDetachedStep2(
     DetachToBrowserTabDragControllerTest* test,
     const gfx::Point& target_point) {
   EXPECT_TRUE(TabDragController::IsActive());
-  EXPECT_EQ(2u, test->browser_list()->size());
-  EXPECT_TRUE(test->browser_list()->get(1)->window()->IsActive());
+  size_t num_browsers = test->browser_list()->size();
+  EXPECT_EQ(2u, num_browsers);
+  EXPECT_TRUE(
+      test->browser_list()->get(num_browsers - 1)->window()->IsActive());
 
   // Continue dragging after adding a second finger.
   EXPECT_TRUE(test->PressInput(gfx::Point(), 1));
@@ -5003,12 +5135,16 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTestTouch,
   EXPECT_EQ(2u, browser_list()->size());
 }
 
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+
+#if BUILDFLAG(IS_CHROMEOS)
+
 IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTestTouch,
                        FlingDownAtEndOfDrag) {
   // Reduce the minimum fling velocity for this specific test case to cause the
   // fling-down gesture in the middle of tab-dragging. This should end up with
   // minimizing the window. See https://crbug.com/902897 for the details.
-  ui::GestureConfiguration::GetInstance()->set_min_fling_velocity(1);
+  SetMinFlingVelocity(1);
 
   TabStrip* tab_strip = GetTabStripForBrowser(browser());
   test::QuitDraggingObserver observer(tab_strip);
@@ -5038,9 +5174,12 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTestTouch,
   EXPECT_FALSE(browser()->window()->IsVisible());
 }
 
+// TODO(http://crbug/343503164) This test seems to be attempting to induce a
+// fling gesture event, but it currently fails to do so. If a fling gesture
+// event was produced, the detached window should end up minimized.
 IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTestTouch,
-                       FlingOnStartingDrag) {
-  ui::GestureConfiguration::GetInstance()->set_min_fling_velocity(1);
+                       DISABLED_FlingOnStartingDrag) {
+  SetMinFlingVelocity(1);
   AddTabsAndResetBrowser(browser(), 1);
   TabStrip* tab_strip = GetTabStripForBrowser(browser());
   const gfx::Point tab_0_center =
@@ -5065,9 +5204,12 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTestTouch,
   ASSERT_FALSE(tab_strip->GetDragContext()->IsDragSessionActive());
   ASSERT_FALSE(TabDragController::IsActive());
   EXPECT_EQ(2u, browser_list()->size());
+  auto* browser2 = browser_list()->get(1);
+  EXPECT_TRUE(browser2->window()->IsMinimized());
+  EXPECT_FALSE(browser2->window()->IsVisible());
 }
 
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 namespace {
 
@@ -5111,33 +5253,108 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTest,
   ASSERT_TRUE(ReleaseInput());
 }
 
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+// Runs tests with a tabbed system web app that is locked for OnTask. This is
+// not related to normal web browsers.
+using DetachToBrowserTabDragControllerTestWithOnTaskLocked =
+    DetachToBrowserTabDragControllerTestWithTabbedSystemApp;
+
+IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTestWithOnTaskLocked,
+                       MoveTabOnDrag) {
+  // Install and launch mock app that can be locked for OnTask.
+  const webapps::AppId tabbed_app_id = InstallMockApp();
+  Browser* const app_browser = LaunchWebAppBrowser(tabbed_app_id);
+  ASSERT_EQ(2u, browser_list()->size());
+
+  // Close normal browser.
+  CloseBrowserSynchronously(browser());
+  ASSERT_EQ(1u, browser_list()->size());
+  SelectFirstBrowser();
+  ASSERT_EQ(app_browser, browser());
+  EXPECT_EQ(Browser::Type::TYPE_APP, browser_list()->get(0)->type());
+
+  // Lock the app for OnTask and set up app for testing drag behavior.
+  browser()->SetLockedForOnTask(true);
+  AddTabsAndResetBrowser(browser(), /*additional_tabs=*/3, GetAppUrl());
+  TabStripModel* const tab_strip_model = browser()->tab_strip_model();
+  ASSERT_EQ("0 1 2 3", IDString(tab_strip_model));
+
+  // Drag tab in the second index to the tab in the third index to switch tab
+  // positioning.
+  TabStrip* const tab_strip = GetTabStripForBrowser(browser());
+  ASSERT_TRUE(PressInput(GetCenterInScreenCoordinates(tab_strip->tab_at(1))));
+  ASSERT_TRUE(DragInputTo(GetCenterInScreenCoordinates(tab_strip->tab_at(2))));
+  ASSERT_TRUE(ReleaseInput());
+  StopAnimating(tab_strip);
+
+  // Verify tab is not detached and its position is updated.
+  ASSERT_EQ(1u, browser_list()->size());
+  EXPECT_EQ("0 2 1 3", IDString(tab_strip_model));
+}
+
+IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTestWithOnTaskLocked,
+                       TabDoesNotDetachOnDrag) {
+  // Install and launch mock app that can be locked for OnTask.
+  const webapps::AppId tabbed_app_id = InstallMockApp();
+  Browser* const app_browser = LaunchWebAppBrowser(tabbed_app_id);
+  ASSERT_EQ(2u, browser_list()->size());
+
+  // Close normal browser.
+  CloseBrowserSynchronously(browser());
+  ASSERT_EQ(1u, browser_list()->size());
+  SelectFirstBrowser();
+  ASSERT_EQ(app_browser, browser());
+  EXPECT_EQ(Browser::Type::TYPE_APP, browser_list()->get(0)->type());
+
+  // Lock the app for OnTask and set up app for testing drag behavior.
+  browser()->SetLockedForOnTask(true);
+  AddTabsAndResetBrowser(browser(), /*additional_tabs=*/3, GetAppUrl());
+
+  // Drag tab away from tab strip and verify it is not detached.
+  TabStrip* const tab_strip = GetTabStripForBrowser(browser());
+  const gfx::Point initial_drag_position =
+      GetCenterInScreenCoordinates(tab_strip->tab_at(1));
+  ASSERT_TRUE(PressInput(initial_drag_position));
+  ASSERT_TRUE(DragInputTo(initial_drag_position +
+                          gfx::Vector2d(0, GetDetachY(tab_strip) + 1)));
+  ASSERT_TRUE(ReleaseInput());
+  StopAnimating(tab_strip);
+  EXPECT_EQ(1u, browser_list()->size());
+}
+#endif
+
 #if BUILDFLAG(IS_CHROMEOS)
 INSTANTIATE_TEST_SUITE_P(
     TabDragging,
     DetachToBrowserTabDragControllerTest,
     ::testing::Combine(
-        ::testing::Bool(),
+        /*kSplitTabStrip=*/::testing::Bool(),
         /*kTearOffWebAppTabOpensWebAppWindow=*/::testing::Values(false),
-        ::testing::Values("mouse", "touch")));
+        /*input_source=*/::testing::Values("mouse", "touch")));
 INSTANTIATE_TEST_SUITE_P(
     TabDragging,
     DetachToBrowserTabDragControllerTestWithScrollableTabStripEnabled,
     ::testing::Combine(
-        ::testing::Bool(),
+        /*kSplitTabStrip=*/::testing::Bool(),
         /*kTearOffWebAppTabOpensWebAppWindow=*/::testing::Values(false),
-        ::testing::Values("mouse", "touch")));
+        /*input_source=*/::testing::Values("mouse", "touch")));
 #else
-INSTANTIATE_TEST_SUITE_P(TabDragging,
-                         DetachToBrowserTabDragControllerTest,
-                         ::testing::Combine(::testing::Bool(),
-                                            ::testing::Bool(),
-                                            ::testing::Values("mouse")));
+INSTANTIATE_TEST_SUITE_P(
+    TabDragging,
+    DetachToBrowserTabDragControllerTest,
+    ::testing::Combine(
+        /*kSplitTabStrip=*/::testing::Bool(),
+        /*kTearOffWebAppTabOpensWebAppWindow=*/::testing::Bool(),
+        /*input_source=*/::testing::Values("mouse"),
+        /*kAllowWindowDragUsingSystemDragDrop=*/::testing::Bool()));
 INSTANTIATE_TEST_SUITE_P(
     TabDragging,
     DetachToBrowserTabDragControllerTestWithScrollableTabStripEnabled,
-    ::testing::Combine(::testing::Bool(),
-                       ::testing::Bool(),
-                       ::testing::Values("mouse")));
+    ::testing::Combine(
+        /*kSplitTabStrip=*/::testing::Bool(),
+        /*kTearOffWebAppTabOpensWebAppWindow=*/::testing::Bool(),
+        /*input_source=*/::testing::Values("mouse"),
+        /*kAllowWindowDragUsingSystemDragDrop=*/::testing::Bool()));
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -5145,9 +5362,16 @@ INSTANTIATE_TEST_SUITE_P(
     TabDragging,
     DetachToBrowserInSeparateDisplayTabDragControllerTest,
     ::testing::Combine(
-        ::testing::Bool(),
+        /*kSplitTabStrip=*/::testing::Bool(),
         /*kTearOffWebAppTabOpensWebAppWindow=*/::testing::Values(false),
-        ::testing::Values("mouse")));
+        /*input_source=*/::testing::Values("mouse")));
+INSTANTIATE_TEST_SUITE_P(
+    TabDragging,
+    DetachToBrowserTabDragControllerTestTouch,
+    ::testing::Combine(
+        /*kSplitTabStrip=*/::testing::Bool(),
+        /*kTearOffWebAppTabOpensWebAppWindow=*/::testing::Values(false),
+        /*input_source=*/::testing::Values("touch")));
 #endif  // BUILDFLAG(IS_CHROMEOS)
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 // TODO(crbug.com/40283516): Enable Multi Display Test on lacros
@@ -5155,29 +5379,30 @@ INSTANTIATE_TEST_SUITE_P(
     TabDragging,
     DifferentDeviceScaleFactorDisplayTabDragControllerTest,
     ::testing::Combine(
-        ::testing::Bool(),
+        /*kSplitTabStrip=*/::testing::Bool(),
         /*kTearOffWebAppTabOpensWebAppWindow=*/::testing::Values(false),
-        ::testing::Values("mouse")));
+        /*input_source=*/::testing::Values("mouse")));
 INSTANTIATE_TEST_SUITE_P(
     TabDragging,
     DetachToBrowserInSeparateDisplayAndCancelTabDragControllerTest,
-    ::testing::Combine(::testing::Bool(),
-                       ::testing::Values(false),
-                       ::testing::Values("mouse")));
-INSTANTIATE_TEST_SUITE_P(
-    TabDragging,
-    DetachToBrowserTabDragControllerTestTouch,
     ::testing::Combine(
-        ::testing::Bool(),
+        /*kSplitTabStrip=*/::testing::Bool(),
         /*kTearOffWebAppTabOpensWebAppWindow=*/::testing::Values(false),
-        ::testing::Values("touch")));
+        /*input_source=*/::testing::Values("mouse")));
 INSTANTIATE_TEST_SUITE_P(
     TabDragging,
     DetachToBrowserTabDragControllerTestWithTabbedSystemApp,
     ::testing::Combine(
-        ::testing::Bool(),
+        /*kSplitTabStrip=*/::testing::Bool(),
         /*kTearOffWebAppTabOpensWebAppWindow=*/::testing::Values(false),
-        ::testing::Values("mouse", "touch")));
+        /*input_source=*/::testing::Values("mouse", "touch")));
+INSTANTIATE_TEST_SUITE_P(
+    TabDragging,
+    DetachToBrowserTabDragControllerTestWithOnTaskLocked,
+    ::testing::Combine(
+        /*kSplitTabStrip=*/::testing::Bool(),
+        /*kTearOffWebAppTabOpensWebAppWindow=*/::testing::Values(false),
+        /*input_source=*/::testing::Values("mouse", "touch")));
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -5185,21 +5410,36 @@ INSTANTIATE_TEST_SUITE_P(
     TabDragging,
     DetachToBrowserTabDragControllerTestWithTabbedWebApp,
     ::testing::Combine(
-        ::testing::Bool(),
+        /*kSplitTabStrip=*/::testing::Bool(),
         /*kTearOffWebAppTabOpensWebAppWindow=*/::testing::Values(false),
-        ::testing::Values("mouse", "touch")));
+        /*input_source=*/::testing::Values("mouse", "touch")));
 #elif !BUILDFLAG(IS_MAC)
 INSTANTIATE_TEST_SUITE_P(
     TabDragging,
     DetachToBrowserTabDragControllerTestWithTabbedWebApp,
     ::testing::Combine(
-        ::testing::Bool(),
+        /*kSplitTabStrip=*/::testing::Bool(),
         /*kTearOffWebAppTabOpensWebAppWindow=*/::testing::Values(false),
-        ::testing::Values("mouse")));
+        /*input_source=*/::testing::Values("mouse"),
+        /*kAllowWindowDragUsingSystemDragDrop=*/::testing::Bool()));
 #endif
 
-INSTANTIATE_TEST_SUITE_P(TabDragging,
-                         DetachTabWithUrlControlledByWebApp,
-                         ::testing::Combine(::testing::Bool(),
-                                            ::testing::Bool(),
-                                            ::testing::Values("mouse")));
+#if BUILDFLAG(IS_CHROMEOS)
+INSTANTIATE_TEST_SUITE_P(
+    TabDragging,
+    DetachTabWithUrlControlledByWebApp,
+    ::testing::Combine(
+        /*kSplitTabStrip=*/::testing::Bool(),
+        /*kTearOffWebAppTabOpensWebAppWindow=*/::testing::Bool(),
+        /*input_source=*/::testing::Values("mouse")));
+
+#else
+INSTANTIATE_TEST_SUITE_P(
+    TabDragging,
+    DetachTabWithUrlControlledByWebApp,
+    ::testing::Combine(
+        /*kSplitTabStrip=*/::testing::Bool(),
+        /*kTearOffWebAppTabOpensWebAppWindow=*/::testing::Bool(),
+        /*input_source=*/::testing::Values("mouse"),
+        /*kAllowWindowDragUsingSystemDragDrop=*/::testing::Bool()));
+#endif

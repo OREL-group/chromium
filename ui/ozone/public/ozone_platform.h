@@ -11,7 +11,6 @@
 
 #include "base/component_export.h"
 #include "base/containers/flat_set.h"
-#include "base/feature_list.h"
 #include "base/functional/callback.h"
 #include "base/message_loop/message_pump_type.h"
 #include "base/task/single_thread_task_runner.h"
@@ -93,6 +92,13 @@ class COMPONENT_EXPORT(OZONE) OzonePlatform {
     // TODO(fangzhoug): Some Chrome OS boards still use the legacy video
     // decoder. Remove this once ChromeOSVideoDecoder is on everywhere.
     bool allow_sync_and_real_buffer_page_flip_testing = false;
+
+    // TODO(b/331237773): Unfortunately, the kHandleOverlaysSwapFailure feature
+    // cannot be checked by the overlay manager in ozone/drm directly as it
+    // creates a circular dependency that gn complains about. That's why this
+    // control bool is here. Remove this once kHandleOverlaysSwapFailure is
+    // removed and DrmOverlayManager is always handling swap failures.
+    bool handle_overlays_swap_failure = false;
   };
 
   // Struct used to indicate platform properties.
@@ -154,9 +160,8 @@ class COMPONENT_EXPORT(OZONE) OzonePlatform {
   struct PlatformRuntimeProperties {
     PlatformRuntimeProperties();
 
-    // Values to override the value of the
-    // supports_server_side_window_decorations property in tests.
-    enum class SupportsSsdForTest {
+    // Values to override the value of a property in tests.
+    enum class SupportsForTest {
       kNotSet,  // The property is not overridden.
       kYes,     // The platform should return true.
       kNo,      // The plafrorm should return false.
@@ -173,7 +178,7 @@ class COMPONENT_EXPORT(OZONE) OzonePlatform {
     // this parameter allows setting the desired state in tests.  The platform
     // must have the appropriate logic in its GetPlatformRuntimeProperties()
     // method.
-    static SupportsSsdForTest override_supports_ssd_for_test;
+    static SupportsForTest override_supports_ssd_for_test;
 
     // Wayland only: determines whether solid color overlays can be delegated
     // without a backing image via a wayland protocol.
@@ -215,6 +220,13 @@ class COMPONENT_EXPORT(OZONE) OzonePlatform {
 
     // Wayland only: whether bubble widgets can use platform objects.
     bool supports_subwindows_as_accelerated_widgets = false;
+
+    // Indicates whether the platform supports system-controlled per-window
+    // scaling.
+    bool supports_per_window_scaling = false;
+
+    // Allows overriding whether per window scaling is enabled in tests.
+    static SupportsForTest override_supports_per_window_scaling_for_test;
   };
 
   // Corresponds to chrome_browser_main_extra_parts.h.
@@ -395,7 +407,6 @@ class COMPONENT_EXPORT(OZONE) OzonePlatform {
   bool initialized_ui_ = false;
   bool initialized_gpu_ = false;
   bool prearly_initialized_ = false;
-  bool pre_feature_list_initialized_ = false;
 
   // This value is checked on multiple threads. Declaring it volatile makes
   // modifications to |single_process_| visible by other threads. Mutex is not

@@ -6,6 +6,8 @@
 #define COMPONENTS_PERMISSIONS_PERMISSION_UMA_UTIL_H_
 
 #include <optional>
+#include <set>
+#include <string>
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
@@ -43,7 +45,7 @@ enum class ActivityIndicatorState {
   kBlockedOnSystemLevel = 2,
 
   // Always keep at the end.
-  kMaxValue = kBlockedOnSystemLevel
+  kMaxValue = kBlockedOnSystemLevel,
 };
 
 // Used for UMA to record the types of permission prompts shown.
@@ -100,8 +102,10 @@ enum class RequestTypeForUma {
   PERMISSION_KEYBOARD_LOCK = 37,
   PERMISSION_POINTER_LOCK = 38,
   MULTIPLE_KEYBOARD_AND_POINTER_LOCK = 39,
+  PERMISSION_HAND_TRACKING = 40,
+  PERMISSION_WEB_APP_INSTALLATION = 41,
   // NUM must be the last value in the enum.
-  NUM
+  NUM,
 };
 
 // Any new values should be inserted immediately prior to kMaxValue.
@@ -296,7 +300,7 @@ enum class DismissedReason {
   // around the prompt).
   DISMISSED_SCRIM = 1,
 
-  kMaxValue = DISMISSED_SCRIM
+  kMaxValue = DISMISSED_SCRIM,
 };
 
 enum class OsScreen {
@@ -306,7 +310,7 @@ enum class OsScreen {
   // Informs the user that they need to go to OS system settings.
   OS_SYSTEM_SETTINGS = 1,
 
-  kMaxValue = OS_SYSTEM_SETTINGS
+  kMaxValue = OS_SYSTEM_SETTINGS,
 };
 
 enum class OsScreenAction {
@@ -320,7 +324,13 @@ enum class OsScreenAction {
   // around the prompt).
   DISMISSED_SCRIM = 2,
 
-  kMaxValue = DISMISSED_SCRIM
+  // Os prompt denied.
+  OS_PROMPT_DENIED = 3,
+
+  // Os prompt allowed.
+  OS_PROMPT_ALLOWED = 4,
+
+  kMaxValue = OS_PROMPT_ALLOWED,
 };
 
 // These values are logged to UMA. Entries should not be renumbered and
@@ -348,7 +358,7 @@ enum class OneTimePermissionEvent {
   // Recorded when a one time grant expires because the device was suspended.
   EXPIRED_ON_SUSPEND = 5,
 
-  kMaxValue = EXPIRED_ON_SUSPEND
+  kMaxValue = EXPIRED_ON_SUSPEND,
 };
 
 // Prompt views shown after the user clicks on the embedded permission prompt.
@@ -379,7 +389,7 @@ enum class ElementAnchoredBubbleVariant {
   // Informs the user that the permission was denied by their administrator.
   ADMINISTRATOR_DENIED = 7,
 
-  kMaxValue = ADMINISTRATOR_DENIED
+  kMaxValue = ADMINISTRATOR_DENIED,
 };
 
 enum class PermissionAutoRevocationHistory {
@@ -453,7 +463,7 @@ enum class PageInfoDialogAccessType {
   LOCK_CLICK_SHORTLY_AFTER_CONFIRMATION_CHIP = 3,
 
   // Always keep at the end.
-  kMaxValue = LOCK_CLICK_SHORTLY_AFTER_CONFIRMATION_CHIP
+  kMaxValue = LOCK_CLICK_SHORTLY_AFTER_CONFIRMATION_CHIP,
 };
 
 constexpr auto kConfirmationConsiderationDurationForUma = base::Seconds(20);
@@ -487,7 +497,35 @@ enum class PermissionChangeAction {
   REMEMBER_CHECKBOX_TOGGLED = 4,
 
   // Always keep at the end.
-  kMaxValue = REMEMBER_CHECKBOX_TOGGLED
+  kMaxValue = REMEMBER_CHECKBOX_TOGGLED,
+};
+
+// This enum backs up the 'ElementAnchoredBubbleAction' histograms enum.
+enum class ElementAnchoredBubbleAction {
+  // Site level permission was granted.
+  kGranted = 0,
+
+  // Site level permission was granted once.
+  kGrantedOnce = 1,
+
+  // Site level permission was denied.
+  kDenied = 2,
+
+  // Acknowledging the prompt informing the user a permission is managed by
+  // admin.
+  kOk = 3,
+
+  // The prompt was dismissed by the user clicking on the [X] button.
+  kDismissedXButton = 4,
+
+  // The prompt was dismissed by the user clicking outside of the prompt area.
+  kDismissedScrim = 5,
+
+  // User clicked "Open system settings" to manage OS level permission prompts.
+  kSystemSettings = 6,
+
+  // Always keep at the end.
+  kMaxValue = kSystemSettings,
 };
 
 // The reason the permission action `PermissionAction::IGNORED` was triggered.
@@ -505,7 +543,7 @@ enum class PermissionIgnoredReason {
   UNKNOWN = 3,
 
   // Always keep at the end
-  NUM
+  NUM,
 };
 
 // This enum backs up the
@@ -534,7 +572,7 @@ enum class PermissionChangeInfo {
   kInfobarNotShownNoPageReloadPermissionNotUsed = 7,
 
   // Always keep at the end.
-  kMaxValue = kInfobarNotShownNoPageReloadPermissionNotUsed
+  kMaxValue = kInfobarNotShownNoPageReloadPermissionNotUsed,
 };
 
 // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.components.permissions
@@ -581,6 +619,7 @@ class PermissionUmaUtil {
   static const char kPermissionsPromptDenied[];
   static const char kPermissionsPromptDeniedGesture[];
   static const char kPermissionsPromptDeniedNoGesture[];
+  static const char kPermissionsPromptDismissed[];
 
   static const char kPermissionsExperimentalUsagePrefix[];
   static const char kPermissionsActionPrefix[];
@@ -653,7 +692,7 @@ class PermissionUmaUtil {
           requests,
       content::WebContents* web_contents,
       PermissionAction permission_action,
-      base::TimeDelta time_to_decision,
+      base::TimeDelta time_to_action,
       PermissionPromptDisposition ui_disposition,
       std::optional<PermissionPromptDispositionReason> ui_reason,
       std::optional<std::vector<ElementAnchoredBubbleVariant>> variants,
@@ -676,11 +715,12 @@ class PermissionUmaUtil {
           requests,
       DismissedReason reason);
 
-  static void RecordElementAnchoredBubbleOsScreenAction(
+  static void RecordElementAnchoredBubbleOsMetrics(
       const std::vector<raw_ptr<PermissionRequest, VectorExperimental>>&
           requests,
       OsScreen screen,
-      OsScreenAction action);
+      OsScreenAction action,
+      base::TimeDelta time_to_action);
 
   static void RecordElementAnchoredBubbleVariantUMA(
       const std::vector<raw_ptr<PermissionRequest, VectorExperimental>>&
@@ -795,6 +835,22 @@ class PermissionUmaUtil {
       base::Time current_time,
       HostContentSettingsMap* hcsm);
 
+  // Records UKM metrics for ContentSettingsTypes that have user facing
+  // permission prompts triggered by the user clicking on the Embedded
+  // Permission Element. The passed in `permission` must be such that
+  // PermissionUtil::IsPermission(permission) returns true.
+  static void RecordElementAnchoredPermissionPromptAction(
+      const std::vector<raw_ptr<PermissionRequest, VectorExperimental>>&
+          requests,
+      const std::vector<raw_ptr<PermissionRequest, VectorExperimental>>&
+          screen_requests,
+      ElementAnchoredBubbleAction action,
+      ElementAnchoredBubbleVariant variant,
+      int screen_counter,
+      const GURL& requesting_origin,
+      content::WebContents* web_contents,
+      content::BrowserContext* browser_context);
+
   // A scoped class that will check the current resolved content setting on
   // construction and report a revocation metric accordingly if the revocation
   // condition is met (from ALLOW to something else).
@@ -839,7 +895,7 @@ class PermissionUmaUtil {
       PermissionAction action,
       PermissionSourceUI source_ui,
       PermissionRequestGestureType gesture_type,
-      base::TimeDelta time_to_decision,
+      base::TimeDelta time_to_action,
       PermissionPromptDisposition ui_disposition,
       std::optional<PermissionPromptDispositionReason> ui_reason,
       std::optional<std::vector<ElementAnchoredBubbleVariant>> variants,

@@ -25,11 +25,8 @@ enum class CannotFreezeReason {
   kBeingMirrored,
   kCapturingWindow,
   kCapturingDisplay,
+  kWebRTC,
   kLoading,
-  // TODO(crbug.com/325954772): Remove this when frames on the same page can be
-  // frozen independently
-  // (go/page-freezing-on-energy-saver-design#bookmark=id.3v3a6fkt5esr)
-  kManyBrowsingInstances,
 };
 
 const char* CannotFreezeReasonToString(CannotFreezeReason reason);

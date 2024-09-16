@@ -10,15 +10,12 @@
 #include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/defaults.h"
 #include "chrome/browser/ui/global_error/global_error_service_factory.h"
-#include "chrome/browser/ui/startup/default_browser_prompt_manager.h"
+#include "chrome/browser/ui/startup/default_browser_prompt/default_browser_prompt_manager.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/upgrade_detector/upgrade_detector.h"
 #include "chrome/common/channel_info.h"
 #include "components/version_info/channel.h"
 #include "ui/gfx/paint_vector_icon.h"
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "chrome/browser/ash/crosapi/browser_util.h"
-#endif
 
 namespace {
 
@@ -114,13 +111,7 @@ void AppMenuIconController::UpdateDelegate() {
 
 AppMenuIconController::TypeAndSeverity
 AppMenuIconController::GetTypeAndSeverity() const {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  // In ash-chrome, the upgrade icon styling is used for upgrading the browser
-  // from ash-chrome to lacros-chrome.
-  // It can be done if Profile can be migrated into Lacros.
-  if (crosapi::browser_util::IsProfileMigrationAvailable())
-    return {IconType::UPGRADE_NOTIFICATION, Severity::LOW};
-#else
+#if !BUILDFLAG(IS_CHROMEOS_ASH)
   if (browser_defaults::kShowUpgradeMenuItem &&
       upgrade_detector_->notify_upgrade()) {
     UpgradeDetector::UpgradeNotificationAnnoyanceLevel level =
@@ -140,21 +131,16 @@ AppMenuIconController::GetTypeAndSeverity() const {
     return {IconType::GLOBAL_ERROR, Severity::MEDIUM};
   }
 #endif
+
 #if !BUILDFLAG(IS_CHROMEOS)
-  if (DefaultBrowserPromptManager::GetInstance()->get_show_app_menu_prompt()) {
-    return {IconType::DEFAULT_BROWSER_PROMPT, Severity::LOW};
+  if (DefaultBrowserPromptManager::GetInstance()->get_show_app_menu_prompt() &&
+      !profile_->IsIncognitoProfile() && !profile_->IsGuestSession()) {
+    CHECK(base::FeatureList::IsEnabled(features::kDefaultBrowserPromptRefresh));
+    return {IconType::DEFAULT_BROWSER_PROMPT, Severity::LOW,
+            features::kAppMenuChipColorPrimary.Get()};
   }
 #endif
   return {IconType::NONE, Severity::NONE};
-}
-
-SkColor AppMenuIconController::GetIconColor(
-    const std::optional<SkColor>& severity_none_color) const {
-  const Severity severity = GetTypeAndSeverity().severity;
-  return ((severity == AppMenuIconController::Severity::NONE) &&
-          severity_none_color.has_value())
-             ? severity_none_color.value()
-             : delegate_->GetDefaultColorForSeverity(severity);
 }
 
 void AppMenuIconController::OnGlobalErrorsChanged() {

@@ -112,6 +112,18 @@ class ExtensionsToolbarUnitTest : public TestWithBrowserView {
       extensions::PermissionsManager::UserSiteSetting site_setting,
       const GURL& url);
 
+  // Adds a site access request with an optional `filter` for `extension` in
+  // `web_contents`.
+  void AddSiteAccessRequest(
+      const extensions::Extension& extension,
+      content::WebContents* web_contents,
+      const std::optional<URLPattern>& filter = std::nullopt);
+
+  // Removes the site access request for `extension` in `web_contents`, if
+  // existent.
+  void RemoveSiteAccessRequest(const extensions::Extension& extension,
+                               content::WebContents* web_contents);
+
   // Returns the user's site setting for `url`.
   extensions::PermissionsManager::UserSiteSetting GetUserSiteSetting(
       const GURL& url);

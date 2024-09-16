@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 /** @fileoverview Definitions for chrome.autofillPrivate API */
-// TODO(crbug.com/1203307): Auto-generate this file.
+// TODO(crbug.com/40179454): Auto-generate this file.
 
 import {ChromeEvent} from './chrome_event.js';
 
@@ -116,9 +116,10 @@ declare global {
         ADDRESS_HOME_APT_TYPE,
         ADDRESS_HOME_HOUSE_NUMBER_AND_APT,
         SINGLE_USERNAME_WITH_INTERMEDIATE_VALUES,
+        IMPROVED_PREDICTION,
       }
 
-      export enum AddressSource {
+      export enum AddressRecordType {
         LOCAL_OR_SYNCABLE = 'LOCAL_OR_SYNCABLE',
         ACCOUNT = 'ACCOUNT',
       }
@@ -126,7 +127,7 @@ declare global {
       export interface AutofillMetadata {
         summaryLabel: string;
         summarySublabel?: string;
-        source?: AddressSource;
+        recordType?: AddressRecordType;
         isLocal?: boolean;
         isMigratable?: boolean;
         isVirtualCardEnrollmentEligible?: boolean;
@@ -197,9 +198,16 @@ declare global {
         countryCode: string;
       }
 
+      export interface UserAnnotationsEntry {
+        entryId: number;
+        key: string;
+        value: string;
+      }
+
       export function getAccountInfo(): Promise<AccountInfo|undefined>;
       export function saveAddress(address: AddressEntry): void;
-      export function getCountryList(): Promise<CountryEntry[]>;
+      export function getCountryList(forAccountAddressProfile: boolean):
+          Promise<CountryEntry[]>;
       export function getAddressComponents(
           countryCode: string): Promise<AddressComponents>;
       export function getAddressList(): Promise<AddressEntry[]>;
@@ -214,7 +222,6 @@ declare global {
       export function migrateCreditCards(): void;
       export function logServerCardLinkClicked(): void;
       export function logServerIbanLinkClicked(): void;
-      export function setCreditCardFIDOAuthEnabledState(enabled: boolean): void;
       export function addVirtualCard(cardId: string): void;
       export function removeVirtualCard(cardId: string): void;
       export function authenticateUserAndFlipMandatoryAuthToggle(): void;
@@ -222,6 +229,10 @@ declare global {
       export function checkIfDeviceAuthAvailable(): Promise<boolean>;
       export function bulkDeleteAllCvcs(): void;
       export function setAutofillSyncToggleEnabled(enabled: boolean): void;
+      export function getUserAnnotationsEntries():
+          Promise<UserAnnotationsEntry[]>;
+      export function deleteUserAnnotationsEntry(entryId: number): void;
+      export function deleteAllUserAnnotationsEntries(): void;
 
       export const onPersonalDataChanged: ChromeEvent<
           (addresses: AddressEntry[], creditCards: CreditCardEntry[],

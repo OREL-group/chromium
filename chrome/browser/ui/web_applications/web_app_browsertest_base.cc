@@ -38,7 +38,6 @@
 #include "components/services/app_service/public/cpp/app_launch_util.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
-#include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/page_type.h"
@@ -94,8 +93,8 @@ Profile* WebAppBrowserTestBase::profile() {
 }
 
 webapps::AppId WebAppBrowserTestBase::InstallPWA(const GURL& start_url) {
-  auto web_app_info = std::make_unique<WebAppInstallInfo>();
-  web_app_info->start_url = start_url;
+  auto web_app_info =
+      WebAppInstallInfo::CreateWithStartUrlForTesting(start_url);
   web_app_info->scope = start_url.GetWithoutFilename();
   web_app_info->user_display_mode = mojom::UserDisplayMode::kStandalone;
   web_app_info->title = u"A Web App";
@@ -226,8 +225,7 @@ WebAppBrowserTestBase::os_integration_override() {
 content::WebContents* WebAppBrowserTestBase::OpenApplication(
     const webapps::AppId& app_id) {
   ui_test_utils::UrlLoadObserver url_observer(
-      provider().registrar_unsafe().GetAppStartUrl(app_id),
-      content::NotificationService::AllSources());
+      provider().registrar_unsafe().GetAppStartUrl(app_id));
 
   apps::AppLaunchParams params(
       app_id, apps::LaunchContainer::kLaunchContainerWindow,
@@ -252,15 +250,15 @@ const char* WebAppBrowserTestBase::GetInstallableAppName() {
 void WebAppBrowserTestBase::SetUp() {
   https_server_.AddDefaultHandlers(GetChromeTestDataDir());
   webapps::TestAppBannerManagerDesktop::SetUp();
-  InProcessBrowserTest::SetUp();
+  WebAppBrowserTestBaseParent::SetUp();
 }
 
 void WebAppBrowserTestBase::TearDown() {
-  InProcessBrowserTest::TearDown();
+  WebAppBrowserTestBaseParent::TearDown();
 }
 
 void WebAppBrowserTestBase::SetUpInProcessBrowserTestFixture() {
-  InProcessBrowserTest::SetUpInProcessBrowserTestFixture();
+  WebAppBrowserTestBaseParent::SetUpInProcessBrowserTestFixture();
   cert_verifier_.SetUpInProcessBrowserTestFixture();
   create_services_subscription_ =
       BrowserContextDependencyManager::GetInstance()
@@ -270,7 +268,7 @@ void WebAppBrowserTestBase::SetUpInProcessBrowserTestFixture() {
 }
 
 void WebAppBrowserTestBase::TearDownInProcessBrowserTestFixture() {
-  InProcessBrowserTest::TearDownInProcessBrowserTestFixture();
+  WebAppBrowserTestBaseParent::TearDownInProcessBrowserTestFixture();
   cert_verifier_.TearDownInProcessBrowserTestFixture();
 }
 
@@ -286,7 +284,8 @@ void WebAppBrowserTestBase::TearDownOnMainThread() {
     CloseAllAshBrowserWindows();
   }
 #endif
-  InProcessBrowserTest::TearDownOnMainThread();
+
+  WebAppBrowserTestBaseParent::TearDownOnMainThread();
 }
 
 void WebAppBrowserTestBase::SetUpCommandLine(
@@ -303,7 +302,8 @@ void WebAppBrowserTestBase::SetUpOnMainThread() {
   }
 #endif
 
-  InProcessBrowserTest::SetUpOnMainThread();
+  WebAppBrowserTestBaseParent::SetUpOnMainThread();
+
   host_resolver()->AddRule("*", "127.0.0.1");
   ASSERT_TRUE(https_server()->Start());
 

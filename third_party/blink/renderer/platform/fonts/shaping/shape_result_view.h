@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_FONTS_SHAPING_SHAPE_RESULT_VIEW_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_FONTS_SHAPING_SHAPE_RESULT_VIEW_H_
 
@@ -130,7 +135,7 @@ class PLATFORM_EXPORT ShapeResultView final
   bool IsLtr() const { return blink::IsLtr(Direction()); }
   bool IsRtl() const { return blink::IsRtl(Direction()); }
   bool HasVerticalOffsets() const { return has_vertical_offsets_; }
-  void FallbackFonts(HeapHashSet<Member<const SimpleFontData>>* fallback) const;
+  HeapHashSet<Member<const SimpleFontData>> UsedFonts() const;
 
   unsigned PreviousSafeToBreakOffset(unsigned index) const;
 

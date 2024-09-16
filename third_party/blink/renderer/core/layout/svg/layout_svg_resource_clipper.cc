@@ -59,8 +59,9 @@ ClipStrategy DetermineClipStrategy(const SVGGraphicsElement& element) {
     return ClipStrategy::kNone;
   const ComputedStyle& style = layout_object->StyleRef();
   if (style.Display() == EDisplay::kNone ||
-      style.Visibility() != EVisibility::kVisible)
+      style.UsedVisibility() != EVisibility::kVisible) {
     return ClipStrategy::kNone;
+  }
   ClipStrategy strategy = ClipStrategy::kNone;
   // Only shapes, paths and texts are allowed for clipping.
   if (layout_object->IsSVGShape()) {
@@ -193,6 +194,7 @@ PaintRecord LayoutSVGResourceClipper::CreatePaintRecord() {
   // - stroke is set to the initial stroke paint server (none)
   PaintInfo info(
       builder.Context(), CullRect::Infinite(), PaintPhase::kForeground,
+      ChildPaintBlockedByDisplayLock(),
       PaintFlag::kPaintingClipPathAsMask | PaintFlag::kPaintingResourceSubtree);
 
   for (const SVGElement& child_element :

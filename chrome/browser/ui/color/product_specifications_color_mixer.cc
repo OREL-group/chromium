@@ -13,8 +13,39 @@
 void AddProductSpecificationsColorMixer(ui::ColorProvider* provider,
                                         const ui::ColorProviderKey& key) {
   ui::ColorMixer& mixer = provider->AddMixer();
-  mixer[kColorProductSpecificationsContentBackground] = {
+  mixer[kColorProductSpecificationsButtonBackground] = {ui::kColorSysSurface2};
+  mixer[kColorProductSpecificationsCitationBackground] = {
       ui::kColorSysBaseContainer};
+  mixer[kColorProductSpecificationsDetailChipBackground] = {
+      ui::kColorSysBaseContainer};
+  mixer[kColorProductSpecificationsDisclosureBackground] = {
+      ui::kColorPrimaryBackground};
+  mixer[kColorProductSpecificationsDisclosureForeground] = {
+      ui::kColorPrimaryForeground};
+  mixer[kColorProductSpecificationsDisclosureGradientEnd] = {
+      ui::kColorSysGradientTertiary};
+  mixer[kColorProductSpecificationsDisclosureGradientStart] = {
+      ui::kColorSysGradientPrimary};
+  mixer[kColorProductSpecificationsDisclosureSummaryBackground] = {
+      ui::kColorSysSurface4};
+  mixer[kColorProductSpecificationsDivider] = {ui::kColorSysDivider};
+  mixer[kColorProductSpecificationsHorizontalCarouselScrollbarThumb] = {
+      ui::kColorSysTonalOutline};
+  mixer[kColorProductSpecificationsIcon] = {ui::kColorSysOnSurfaceSubtle};
+  mixer[kColorProductSpecificationsIconButtonBackground] = {
+      ui::kColorSysSurface};
+  mixer[kColorProductSpecificationsIconButtonHoveredBackground] = {
+      ui::kColorSysStateHoverOnSubtle};
+  mixer[kColorProductSpecificationsLink] = {ui::kColorSysPrimary};
+  mixer[kColorProductSpecificationsPageBackground] = {ui::kColorSysSurface2};
+  mixer[kColorProductSpecificationsPrimaryTitle] = {
+      ui::kColorPrimaryForeground};
+  mixer[kColorProductSpecificationsSecondaryTitle] = {
+      ui::kColorSysOnSurfaceSecondary};
   mixer[kColorProductSpecificationsSummaryBackground] = {
-      ui::kColorSysBaseContainerElevated};
+      ui::kColorPrimaryBackground};
+  mixer[kColorProductSpecificationsSummaryBackgroundDragging] = {
+      ui::kColorSysStateRippleNeutralOnSubtle};
+  mixer[kColorProductSpecificationsTonalButtonBackground] = {
+      ui::kColorSysTonalContainer};
 }

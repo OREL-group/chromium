@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/net/system_network_context_manager.h"
 
 #include <algorithm>
@@ -29,7 +34,7 @@
 #include "chrome/browser/component_updater/pki_metadata_component_installer.h"
 #include "chrome/browser/net/chrome_mojo_proxy_resolver_factory.h"
 #include "chrome/browser/net/convert_explicitly_allowed_network_ports_pref.h"
-#include "chrome/browser/net/network_annotation_monitor.h"
+#include "chrome/browser/net/default_dns_over_https_config_source.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
 #include "chrome/browser/ssl/sct_reporting_service.h"
 #include "chrome/browser/ssl/ssl_config_service_manager.h"
@@ -67,7 +72,6 @@
 #include "mojo/public/cpp/bindings/receiver_set.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "net/base/features.h"
-#include "net/cert/internal/trust_store_features.h"
 #include "net/cookies/cookie_util.h"
 #include "net/net_buildflags.h"
 #include "net/third_party/uri_template/uri_template.h"
@@ -86,13 +90,17 @@
 #include "third_party/blink/public/common/features.h"
 #include "url/gurl.h"
 
+#if BUILDFLAG(IS_CHROMEOS)
+#include "chrome/browser/net/network_annotation_monitor.h"
+#endif  // BUILDFLAG(IS_CHROMEOS)
+
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 #include "chrome/browser/ash/net/dhcp_wpad_url_client.h"
 #include "chrome/browser/ash/policy/core/browser_policy_connector_ash.h"
 #include "chrome/browser/browser_process_platform_part.h"
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
-// TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
+// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
 // of lacros-chrome is complete.
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
 #include "chrome/common/chrome_paths_internal.h"
@@ -105,7 +113,6 @@
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 #if BUILDFLAG(IS_WIN)
-#include "chrome/browser/browser_features.h"
 #include "chrome/browser/net/chrome_mojo_proxy_resolver_win.h"
 #endif  // BUILDFLAG(IS_WIN)
 
@@ -607,17 +614,6 @@ SystemNetworkContextManager::SystemNetworkContextManager(
       true, base::DoNothing());
 #endif
 
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
-    BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
-  pref_change_registrar_.Add(
-      prefs::kEnforceLocalAnchorConstraintsEnabled,
-      base::BindRepeating(&SystemNetworkContextManager::
-                              UpdateEnforceLocalAnchorConstraintsEnabled,
-                          base::Unretained(this)));
-  // Call the update function immediately to set the initial value, if any.
-  UpdateEnforceLocalAnchorConstraintsEnabled();
-#endif
-
   if (content::IsOutOfProcessNetworkService() &&
       base::FeatureList::IsEnabled(
           features::kRestartNetworkServiceUnsandboxedForFailedLaunch)) {
@@ -639,6 +635,7 @@ SystemNetworkContextManager::~SystemNetworkContextManager() {
 // static
 void SystemNetworkContextManager::RegisterPrefs(PrefRegistrySimple* registry) {
   StubResolverConfigReader::RegisterPrefs(registry);
+  DefaultDnsOverHttpsConfigSource::RegisterPrefs(registry);
 
   // Static auth params
   registry->RegisterStringPref(prefs::kAuthSchemes,
@@ -685,14 +682,6 @@ void SystemNetworkContextManager::RegisterPrefs(PrefRegistrySimple* registry) {
   registry->RegisterBooleanPref(prefs::kQuickCheckEnabled, true);
 
   registry->RegisterIntegerPref(prefs::kMaxConnectionsPerProxy, -1);
-
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
-    BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
-  // Note that the default value is not relevant because the pref is only
-  // evaluated when it is managed.
-  registry->RegisterBooleanPref(prefs::kEnforceLocalAnchorConstraintsEnabled,
-                                true);
-#endif
 
   registry->RegisterListPref(prefs::kExplicitlyAllowedNetworkPorts);
 
@@ -793,13 +782,11 @@ void SystemNetworkContextManager::OnNetworkServiceCreated(
   // process, send it the required key.
   if (content::IsOutOfProcessNetworkService()) {
 #if BUILDFLAG(IS_WIN)
-    // On Windows, if OSCrypt async is enabled, and DPAPI key provider is also
-    // enabled, then OSCrypt manages the encryption key, and there is no need to
-    // send the key separately to OSCrypt sync.
+    // On Windows, if OSCrypt Async is enabled then OSCrypt manages the
+    // encryption key via the DPAPI key provider, and there is no need to send
+    // the key separately to OSCrypt sync.
     if (!base::FeatureList::IsEnabled(
-            features::kUseOsCryptAsyncForCookieEncryption) ||
-        !base::FeatureList::IsEnabled(
-            features::kEnableDPAPIEncryptionProvider)) {
+            features::kUseOsCryptAsyncForCookieEncryption)) {
       network_service->SetEncryptionKey(OSCrypt::GetRawEncryptionKey());
     }
 #else
@@ -817,6 +804,7 @@ void SystemNetworkContextManager::OnNetworkServiceCreated(
 
   UpdateIPv6ReachabilityOverrideEnabled();
 
+#if BUILDFLAG(IS_CHROMEOS)
   if (base::FeatureList::IsEnabled(features::kNetworkAnnotationMonitoring)) {
     // Create NetworkAnnotationMonitor.
     if (!network_annotation_monitor_) {
@@ -829,6 +817,19 @@ void SystemNetworkContextManager::OnNetworkServiceCreated(
     network_service->SetNetworkAnnotationMonitor(
         network_annotation_monitor_->GetClient());
   }
+#endif  // BUILDFLAG(IS_CHROMEOS)
+
+  // cert_verifier_time_updater_ does not depend on the network service, but
+  // can't be initialized from the constructor since network_time_tracker()
+  // requires the SystemNetworkContextManager to be ready. It does not need to
+  // be recreated every time the network service is restarted (and should not,
+  // since it expects to outlive the NetworkTimeTracker).
+  if (base::FeatureList::IsEnabled(features::kCertVerificationNetworkTime) &&
+      !cert_verifier_time_updater_) {
+    cert_verifier_time_updater_ =
+        std::make_unique<CertVerifierServiceTimeUpdater>(
+            g_browser_process->network_time_tracker());
+  }
 }
 
 void SystemNetworkContextManager::DisableQuic() {
@@ -840,14 +841,12 @@ void SystemNetworkContextManager::DisableQuic() {
   content::GetNetworkService()->DisableQuic();
 }
 
-#if BUILDFLAG(IS_WIN)
 void SystemNetworkContextManager::
     AddCookieEncryptionManagerToNetworkContextParams(
         network::mojom::NetworkContextParams* network_context_params) {
   network_context_params->cookie_encryption_provider =
       cookie_encryption_provider_.BindNewRemote();
 }
-#endif  // BUILDFLAG(IS_WIN)
 
 void SystemNetworkContextManager::AddSSLConfigToNetworkContextParams(
     network::mojom::NetworkContextParams* network_context_params) {
@@ -994,11 +993,13 @@ void SystemNetworkContextManager::FlushNetworkInterfaceForTesting() {
     url_loader_factory_.FlushForTesting();
 }
 
+#if BUILDFLAG(IS_CHROMEOS)
 void SystemNetworkContextManager::FlushNetworkAnnotationMonitorForTesting() {
   if (network_annotation_monitor_) {
     network_annotation_monitor_->FlushForTesting();  // IN-TEST
   }
 }
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 network::mojom::HttpAuthStaticParamsPtr
 SystemNetworkContextManager::GetHttpAuthStaticParamsForTesting() {
@@ -1053,25 +1054,6 @@ void SystemNetworkContextManager::UpdateExplicitlyAllowedNetworkPorts() {
   content::GetNetworkService()->SetExplicitlyAllowedPorts(
       ConvertExplicitlyAllowedNetworkPortsPref(local_state_));
 }
-
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
-    BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
-void SystemNetworkContextManager::UpdateEnforceLocalAnchorConstraintsEnabled() {
-  const PrefService::Preference* enforce_local_anchor_constraints_enabled_pref =
-      local_state_->FindPreference(
-          prefs::kEnforceLocalAnchorConstraintsEnabled);
-  if (enforce_local_anchor_constraints_enabled_pref->IsManaged()) {
-    // This depends on the CertVerifierService running in the browser process.
-    // If that changes, this would need to become a mojo message.
-    net::SetLocalAnchorConstraintsEnforcementEnabled(
-        enforce_local_anchor_constraints_enabled_pref->GetValue()->GetBool());
-  } else {
-    net::SetLocalAnchorConstraintsEnforcementEnabled(
-        base::FeatureList::IsEnabled(
-            net::features::kEnforceLocalAnchorConstraints));
-  }
-}
-#endif
 
 void SystemNetworkContextManager::UpdateReferrersEnabled() {
   GetContext()->SetEnableReferrers(enable_referrers_.GetValue());

@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import {html} from '//resources/lit/v3_0/lit.rollup.js';
+
 import type {NuxNtpBackgroundElement} from './nux_ntp_background.js';
 
 export function getHtml(this: NuxNtpBackgroundElement) {
@@ -38,7 +39,7 @@ export function getHtml(this: NuxNtpBackgroundElement) {
     <step-indicator .model="${this.indicatorModel}"></step-indicator>
     <cr-button class="action-button" @click="${this.onNextClicked_}">
       $i18n{next}
-      <iron-icon icon="cr:chevron-right"></iron-icon>
+      <cr-icon icon="cr:chevron-right"></cr-icon>
     </cr-button>
   </div>
 </div>

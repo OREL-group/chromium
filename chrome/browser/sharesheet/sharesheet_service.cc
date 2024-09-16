@@ -464,7 +464,7 @@ void SharesheetService::RecordUserActionMetrics(
             SharesheetMetrics::UserAction::kCopyAction);
         return;
       default:
-        NOTREACHED_NORETURN();
+        NOTREACHED();
     }
   }
 
@@ -496,7 +496,7 @@ void SharesheetService::RecordUserActionMetrics(
       case apps::AppType::kExtension:
       case apps::AppType::kStandaloneBrowserExtension:
       case apps::AppType::kUnknown:
-        NOTREACHED_NORETURN();
+        NOTREACHED();
     }
   }
 }
@@ -516,7 +516,7 @@ void SharesheetService::RecordTargetCountMetrics(
       case TargetType::kAction:
         break;
       case TargetType::kUnknown:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
     }
   }
   SharesheetMetrics::RecordSharesheetArcAppCount(arc_app_count);

@@ -33,6 +33,7 @@
 #include "ui/accessibility/platform/ax_platform_node.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/gfx/color_utils.h"
+#include "ui/native_theme/native_theme.h"
 
 namespace content {
 
@@ -165,6 +166,7 @@ ui::AXMode FilterAccessibilityModeInvariants(ui::AXMode mode) {
              : (mode & ui::AXMode::kNativeAPIs);
 }
 
+
 }  // namespace
 
 // static
@@ -190,6 +192,7 @@ BrowserAccessibilityStateImpl::Create() {
 
 BrowserAccessibilityStateImpl::BrowserAccessibilityStateImpl()
     : BrowserAccessibilityState(),
+      ax_platform_(*this),
       histogram_delay_(base::Seconds(ACCESSIBILITY_HISTOGRAM_DELAY_SECS)),
       scoped_modes_for_process_(base::BindRepeating(
           &BrowserAccessibilityStateImpl::OnModeChangedForProcess,
@@ -367,14 +370,6 @@ void BrowserAccessibilityStateImpl::UpdateHistogramsForTesting() {
   UpdateHistogramsOnOtherThread();
 }
 
-void BrowserAccessibilityStateImpl::SetCaretBrowsingState(bool enabled) {
-  caret_browsing_enabled_ = enabled;
-}
-
-bool BrowserAccessibilityStateImpl::IsCaretBrowsingEnabled() const {
-  return caret_browsing_enabled_;
-}
-
 void BrowserAccessibilityStateImpl::SetPerformanceFilteringAllowed(
     bool allowed) {
   performance_filtering_allowed_ = allowed;
@@ -392,6 +387,14 @@ void BrowserAccessibilityStateImpl::UpdateHistogramsOnUIThread() {
   UMA_HISTOGRAM_BOOLEAN(
       "Accessibility.ManuallyEnabled",
       !GetAccessibilityMode().is_mode_off() && !allow_ax_mode_changes_);
+
+#if BUILDFLAG(IS_WIN)
+  base::UmaHistogramEnumeration(
+      "Accessibility.WinHighContrastTheme",
+      ui::NativeTheme::GetInstanceForNativeUi()
+          ->GetPlatformHighContrastColorScheme(),
+      ui::NativeTheme::PlatformHighContrastColorScheme::kMaxValue);
+#endif
 
   ui_thread_done_ = true;
   if (other_thread_done_ && background_thread_done_callback_)
@@ -416,6 +419,10 @@ void BrowserAccessibilityStateImpl::OnOtherThreadDone() {
 }
 
 void BrowserAccessibilityStateImpl::UpdateAccessibilityActivityTask() {
+  if (!g_instance) {
+    // There can be a race on shutdown since this is posted as a delayed task.
+    return;
+  }
   base::TimeTicks now = ui::EventTimeForNow();
   accessibility_last_usage_time_ = now;
   if (accessibility_active_start_time_.is_null())
@@ -487,23 +494,6 @@ void BrowserAccessibilityStateImpl::OnUserInputEvent() {
       accessibility_disabled_time_ = now;
       DisableAccessibility();
     }
-  }
-}
-
-void BrowserAccessibilityStateImpl::OnAccessibilityApiUsage() {
-  // See OnUserInputEvent for how this is used to disable accessibility.
-  user_input_event_count_ = 0;
-
-  // See comment above kOnAccessibilityUsageUpdateDelaySecs for why we post a
-  // delayed task.
-  if (!accessibility_update_task_pending_) {
-    accessibility_update_task_pending_ = true;
-    GetUIThreadTaskRunner({})->PostDelayedTask(
-        FROM_HERE,
-        base::BindOnce(
-            &BrowserAccessibilityStateImpl::UpdateAccessibilityActivityTask,
-            base::Unretained(this)),
-        base::Seconds(kOnAccessibilityUsageUpdateDelaySecs));
   }
 }
 
@@ -581,6 +571,36 @@ void BrowserAccessibilityStateImpl::SetProcessMode(ui::AXMode new_mode) {
   }
 
   process_accessibility_mode_ = CreateScopedModeForProcess(new_mode);
+}
+
+void BrowserAccessibilityStateImpl::OnAccessibilityApiUsage() {
+  // See OnUserInputEvent for how this is used to disable accessibility.
+  user_input_event_count_ = 0;
+
+  // See comment above kOnAccessibilityUsageUpdateDelaySecs for why we post a
+  // delayed task.
+  if (!accessibility_update_task_pending_) {
+    accessibility_update_task_pending_ = true;
+    GetUIThreadTaskRunner({})->PostDelayedTask(
+        FROM_HERE,
+        base::BindOnce(
+            &BrowserAccessibilityStateImpl::UpdateAccessibilityActivityTask,
+            base::Unretained(this)),
+        base::Seconds(kOnAccessibilityUsageUpdateDelaySecs));
+  }
+}
+
+void BrowserAccessibilityStateImpl::OnInputEvent(
+    const blink::WebInputEvent& event) {
+  // |this| observer cares about user input events (specifically keyboard,
+  // mouse & touch events) to decide if the accessibility APIs can be disabled.
+  if (event.GetType() == blink::WebInputEvent::Type::kMouseDown ||
+      event.GetType() == blink::WebInputEvent::Type::kGestureTapDown ||
+      event.GetType() == blink::WebInputEvent::Type::kTouchStart ||
+      event.GetType() == blink::WebInputEvent::Type::kRawKeyDown ||
+      event.GetType() == blink::WebInputEvent::Type::kKeyDown) {
+    OnUserInputEvent();
+  }
 }
 
 std::unique_ptr<ScopedAccessibilityMode>

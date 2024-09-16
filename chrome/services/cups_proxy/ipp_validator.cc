@@ -10,18 +10,19 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "base/containers/span.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "chrome/services/cups_proxy/ipp_attribute_validator.h"
 #include "chrome/services/cups_proxy/public/cpp/cups_util.h"
 #include "net/http/http_util.h"
 #include "printing/backend/cups_ipp_helper.h"
+#include "printing/backend/cups_weak_functions.h"
 
 namespace cups_proxy {
 namespace {
@@ -86,7 +87,7 @@ size_t GetAttributeValuesSize(const ipp_parser::mojom::IppAttributePtr& attr) {
       return attr_value->get_resolutions().size();
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return 0;
 }
 
@@ -104,9 +105,9 @@ bool StartsWith(base::span<uint8_t const> data,
 // request-line. On success, returns a wrapper obj containing the verified
 // request-line.
 std::optional<HttpRequestLine> IppValidator::ValidateHttpRequestLine(
-    base::StringPiece method,
-    base::StringPiece endpoint,
-    base::StringPiece http_version) {
+    std::string_view method,
+    std::string_view endpoint,
+    std::string_view http_version) {
   if (method != "POST") {
     return std::nullopt;
   }
@@ -291,7 +292,7 @@ ipp_t* IppValidator::ValidateIppMessage(
         break;
       }
       default:
-        NOTREACHED() << "Unknown IPP attribute type found.";
+        NOTREACHED_IN_MIGRATION() << "Unknown IPP attribute type found.";
     }
   }
 

@@ -6,19 +6,24 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "base/auto_reset.h"
 #include "base/containers/contains.h"
 #include "base/containers/fixed_flat_map.h"
 #include "base/files/file_path.h"
+#include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/scoped_observation.h"
-#include "base/strings/string_piece.h"
 #include "base/test/scoped_feature_list.h"
+#include "base/time/time.h"
+#include "base/time/time_override.h"
+#include "base/timer/elapsed_timer.h"
 #include "build/branding_buildflags.h"
+#include "build/build_config.h"
 #include "build/buildflag.h"
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/browser_process.h"
@@ -31,6 +36,11 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
+#include "chrome/browser/ui/hats/mock_trust_safety_sentiment_service.h"
+#include "chrome/browser/ui/hats/trust_safety_sentiment_service_factory.h"
+#include "chrome/browser/ui/safety_hub/safety_hub_hats_service.h"
+#include "chrome/browser/ui/safety_hub/safety_hub_hats_service_factory.h"
+#include "chrome/browser/ui/safety_hub/safety_hub_test_util.h"
 #include "chrome/browser/ui/test/test_browser_ui.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/frame/app_menu_button_observer.h"
@@ -38,6 +48,7 @@
 #include "chrome/browser/ui/views/toolbar/browser_app_menu_button.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
 #include "chrome/browser/upgrade_detector/upgrade_detector.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/password_manager/core/common/password_manager_features.h"
 #include "components/signin/public/base/signin_pref_names.h"
@@ -45,6 +56,7 @@
 #include "components/signin/public/identity_manager/identity_test_utils.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/menu/menu_item_view.h"
 #include "ui/views/controls/menu/menu_runner.h"
 #include "ui/views/controls/menu/menu_scroll_view_container.h"
@@ -95,7 +107,7 @@ void AppMenuBrowserTest::ShowUi(const std::string& name) {
     return;
   }
 
-  constexpr auto kSubmenus = base::MakeFixedFlatMap<base::StringPiece, int>({
+  constexpr auto kSubmenus = base::MakeFixedFlatMap<std::string_view, int>({
       // Submenus present in all versions.
       {"history", IDC_RECENT_TABS_MENU},
       {"bookmarks", IDC_BOOKMARKS_MENU},
@@ -177,10 +189,10 @@ class AppMenuBrowserTestRefreshOnly : public AppMenuBrowserTest {
     // testing that seemed to result in them always being skipped when the
     // default feature state wasn't correct, even when setting the correct state
     // via command-line flags. Probably I was doing something wrong...
-    scoped_feature_list_.InitWithFeatures({features::kChromeRefresh2023,
-                                           // Needed for the "extensions" test
-                                           features::kExtensionsMenuInAppMenu},
-                                          {});
+    scoped_feature_list_.InitWithFeatures(
+        {// Needed for the "extensions" test
+         features::kExtensionsMenuInAppMenu},
+        {});
   }
 
  private:
@@ -230,8 +242,15 @@ IN_PROC_BROWSER_TEST_F(AppMenuBrowserTestRefreshOnly, InvokeUi_main) {
   ShowAndVerifyUi();
 }
 
+// TODO(crbug.com/343368219): Flaky on Windows 10 x64 builds.
+#if BUILDFLAG(IS_WIN) && defined(ARCH_CPU_X86_64)
+#define MAYBE_InvokeUi_main_upgrade_available \
+  DISABLED_InvokeUi_main_upgrade_available
+#else
+#define MAYBE_InvokeUi_main_upgrade_available InvokeUi_main_upgrade_available
+#endif
 IN_PROC_BROWSER_TEST_F(AppMenuBrowserTestRefreshOnly,
-                       InvokeUi_main_upgrade_available) {
+                       MAYBE_InvokeUi_main_upgrade_available) {
   UpgradeDetector::GetInstance()->set_upgrade_notification_stage_for_testing(
       UpgradeDetector::UPGRADE_ANNOYANCE_CRITICAL);
   UpgradeDetector::GetInstance()->NotifyUpgradeForTesting();
@@ -276,6 +295,16 @@ IN_PROC_BROWSER_TEST_F(AppMenuBrowserTest, InvokeUi_bookmarks) {
 }
 IN_PROC_BROWSER_TEST_F(AppMenuBrowserTest, InvokeUi_more_tools) {
   ShowAndVerifyUi();
+}
+
+IN_PROC_BROWSER_TEST_F(AppMenuBrowserTest, AppMenuViewAccessibleProperties) {
+  menu_button()->ShowMenu(views::MenuRunner::SHOULD_SHOW_MNEMONICS);
+  auto* app_menu_view = menu_button()->app_menu()->GetZoomAppMenuViewForTest();
+  ui::AXNodeData data;
+
+  ASSERT_TRUE(app_menu_view);
+  app_menu_view->GetViewAccessibility().GetAccessibleNodeData(&data);
+  EXPECT_EQ(data.role, ax::mojom::Role::kMenu);
 }
 
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
@@ -340,4 +369,46 @@ IN_PROC_BROWSER_TEST_F(AppMenuBrowserTestRefreshOnly,
 }
 
 #endif
+
+// Test case for Safety Hub notification.
+class AppMenuBrowserTestSafetyHub : public AppMenuBrowserTest {
+ public:
+  AppMenuBrowserTestSafetyHub() {
+    scoped_feature_list_.InitAndEnableFeature(features::kSafetyHub);
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+IN_PROC_BROWSER_TEST_F(AppMenuBrowserTestSafetyHub,
+                       Safety_Hub_shown_notification) {
+  auto* mock_sentiment_service = static_cast<MockTrustSafetySentimentService*>(
+      TrustSafetySentimentServiceFactory::GetInstance()
+          ->SetTestingFactoryAndUse(
+              browser()->profile(),
+              base::BindRepeating(&BuildMockTrustSafetySentimentService)));
+  safety_hub_test_util::RunUntilPasswordCheckCompleted(browser()->profile());
+  safety_hub_test_util::GenerateSafetyHubMenuNotification(browser()->profile());
+  menu_button()->ShowMenu(views::MenuRunner::SHOULD_SHOW_MNEMONICS);
+  // Set the elapsed timer of the menu to start 10 seconds ago.
+  {
+    base::subtle::ScopedTimeClockOverrides override(
+        /*time_override=*/
+        nullptr,
+        /*time_ticks_override=*/
+        []() {
+          return base::subtle::TimeTicksNowIgnoringOverride() -
+                 base::Seconds(10);
+        },
+        /*thread_ticks_override=*/nullptr);
+    menu_button()->SetMenuTimerForTesting(base::ElapsedTimer());
+  }
+  EXPECT_CALL(
+      *mock_sentiment_service,
+      TriggerSafetyHubSurvey(
+          TrustSafetySentimentService::FeatureArea::kSafetyHubNotification,
+          testing::_));
+  menu_button()->CloseMenu();
+}
 }  // namespace

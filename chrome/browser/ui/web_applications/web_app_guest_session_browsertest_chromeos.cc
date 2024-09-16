@@ -14,7 +14,6 @@
 #include "chrome/browser/ui/web_applications/web_app_browsertest_base.h"
 #include "chrome/browser/web_applications/test/with_crosapi_param.h"
 #include "chrome/browser/web_applications/web_app_id_constants.h"
-#include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -45,7 +44,7 @@ class WebAppGuestSessionBrowserTest : public WebAppBrowserTestBase,
     if (browser() == nullptr) {
       // Create a new Ash browser window so test code using browser() can work
       // even when Lacros is the only browser.
-      // TODO(crbug.com/1450158): Remove uses of browser() from such tests.
+      // TODO(crbug.com/40270051): Remove uses of browser() from such tests.
       chrome::NewEmptyWindow(ProfileManager::GetActiveUserProfile());
       SelectFirstBrowser();
     }

@@ -20,14 +20,13 @@
 #import "components/omnibox/browser/omnibox_popup_selection.h"
 #import "components/open_from_clipboard/clipboard_recent_content.h"
 #import "ios/chrome/browser/ntp/model/new_tab_page_tab_helper.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/ntp/shared/metrics/home_metrics.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/public/features/system_flags.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
-#import "ios/chrome/browser/ui/ntp/metrics/home_metrics.h"
 #import "ios/chrome/browser/ui/omnibox/omnibox_util.h"
 #import "ios/chrome/browser/ui/omnibox/popup/omnibox_popup_mediator.h"
 #import "ios/chrome/browser/ui/omnibox/popup/omnibox_popup_view_suggestions_delegate.h"
-#import "ios/chrome/browser/ui/omnibox/web_location_bar.h"
 #import "ios/chrome/grit/ios_theme_resources.h"
 #import "ios/web/public/thread/web_thread.h"
 #import "net/url_request/url_request_context_getter.h"
@@ -36,10 +35,8 @@ using base::UserMetricsAction;
 
 OmniboxPopupViewIOS::OmniboxPopupViewIOS(
     OmniboxController* controller,
-    WebLocationBar* location_bar,
     OmniboxPopupViewSuggestionsDelegate* delegate)
     : OmniboxPopupView(controller),
-      location_bar_(location_bar),
       delegate_(delegate) {
   DCHECK(delegate);
   DCHECK(controller);
@@ -90,12 +87,6 @@ void OmniboxPopupViewIOS::OnMatchSelected(
     size_t row,
     WindowOpenDisposition disposition) {
   base::RecordAction(UserMetricsAction("MobileOmniboxUse"));
-  NewTabPageTabHelper* NTPTabHelper =
-      NewTabPageTabHelper::FromWebState(location_bar_->GetWebState());
-  if (NTPTabHelper->IsActive()) {
-    RecordHomeAction(IOSHomeActionType::kOmnibox,
-                     NTPTabHelper->ShouldShowStartSurface());
-  }
 
   // OpenMatch() may close the popup, which will clear the result set and, by
   // extension, `match` and its contents.  So copy the relevant match out to
@@ -135,4 +126,8 @@ void OmniboxPopupViewIOS::OnMatchSelectedForDeletion(
 
 void OmniboxPopupViewIOS::OnScroll() {
   delegate_->OnPopupDidScroll();
+}
+
+void OmniboxPopupViewIOS::OnCallActionTap() {
+  delegate_->OnCallActionTap();
 }

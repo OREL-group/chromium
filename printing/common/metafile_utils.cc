@@ -12,6 +12,7 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "printing/buildflags/buildflags.h"
+#include "printing/mojom/print.mojom.h"
 #include "skia/ext/font_utils.h"
 #include "third_party/skia/include/codec/SkPngDecoder.h"
 #include "third_party/skia/include/core/SkCanvas.h"
@@ -115,7 +116,7 @@ bool RecursiveBuildStructureTree(const ui::AXNode* ax_node,
                                  SkPDF::StructureElementNode* tag) {
   bool valid = false;
 
-  tag->fNodeId = ax_node->GetIntAttribute(ax::mojom::IntAttribute::kDOMNodeId);
+  tag->fNodeId = ax_node->data().GetDOMNodeId();
   switch (ax_node->GetRole()) {
     case ax::mojom::Role::kRootWebArea:
       tag->fTypeString = kPDFStructureTypeDocument;
@@ -171,8 +172,7 @@ bool RecursiveBuildStructureTree(const ui::AXNode* ax_node,
       std::vector<int> header_ids;
       header_ids.reserve(header_nodes.size());
       for (ui::AXNode* header_node : header_nodes) {
-        header_ids.push_back(header_node->GetIntAttribute(
-            ax::mojom::IntAttribute::kDOMNodeId));
+        header_ids.push_back(header_node->data().GetDOMNodeId());
       }
       tag->fAttributes.appendNodeIdArray(
           kPDFTableAttributeOwner, kPDFTableCellHeadersAttribute, header_ids);
@@ -239,7 +239,7 @@ sk_sp<SkDocument> MakePdfDocument(
     std::string_view creator,
     std::string_view title,
     const ui::AXTreeUpdate& accessibility_tree,
-    GeneratePdfDocumentOutline generate_document_outline,
+    mojom::GenerateDocumentOutline generate_document_outline,
     SkWStream* stream) {
   SkPDF::Metadata metadata;
   SkPDF::DateTime now = TimeToSkTime(base::Time::Now());
@@ -256,9 +256,9 @@ sk_sp<SkDocument> MakePdfDocument(
     if (RecursiveBuildStructureTree(tree.root(), &tag_root)) {
       metadata.fStructureElementTreeRoot = &tag_root;
       metadata.fOutline =
-          generate_document_outline == GeneratePdfDocumentOutline::kFromHeaders
-              ? SkPDF::Metadata::Outline::StructureElementHeaders
-              : SkPDF::Metadata::Outline::None;
+          generate_document_outline == mojom::GenerateDocumentOutline::kNone
+              ? SkPDF::Metadata::Outline::None
+              : SkPDF::Metadata::Outline::StructureElementHeaders;
     }
   }
 
@@ -295,7 +295,8 @@ sk_sp<SkPicture> DeserializeOopPicture(const void* data,
                                        void* ctx) {
   uint32_t pic_id;
   if (length < sizeof(pic_id)) {
-    NOTREACHED();  // Should not happen if the content is as written.
+    NOTREACHED_IN_MIGRATION();  // Should not happen if the content is as
+                                // written.
     return GetEmptyPicture();
   }
   memcpy(&pic_id, data, sizeof(pic_id));
@@ -333,7 +334,8 @@ sk_sp<SkTypeface> DeserializeOopTypeface(const void* data,
                                          void* ctx) {
   SkStream* stream = *(reinterpret_cast<SkStream**>(const_cast<void*>(data)));
   if (length < sizeof(stream)) {
-    NOTREACHED();  // Should not happen if the content is as written.
+    NOTREACHED_IN_MIGRATION();  // Should not happen if the content is as
+                                // written.
     return nullptr;
   }
 
@@ -370,7 +372,7 @@ sk_sp<SkData> SerializeRasterImage(SkImage* img, void*) {
     return data;
   }
 
-  // TODO(crbug.com/1486503) Convert texture-backed images to raster
+  // TODO(crbug.com/40073326) Convert texture-backed images to raster
   // *before* they get this far if possible.
   if (img->isTextureBacked()) {
     GrDirectContext* ctx = SkImages::GetContext(img);

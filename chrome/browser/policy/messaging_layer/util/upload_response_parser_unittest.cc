@@ -30,8 +30,6 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-using std::literals::string_view_literals::operator""sv;
-
 using ::testing::AllOf;
 using ::testing::Eq;
 using ::testing::IsEmpty;
@@ -46,12 +44,12 @@ constexpr Priority kPriority = Priority::FAST_BATCH;
 constexpr int64_t kSequencingId = 10L;
 constexpr int64_t kGenerationId = 1234L;
 
-constexpr std::string_view kEncryptionKey = "Encryption_Key"sv;
+constexpr std::string_view kEncryptionKey = "Encryption_Key";
 constexpr int kPublicKeyId = 12345;
-constexpr std::string_view kEncryptionSignature = "Encryption_Signature"sv;
+constexpr std::string_view kEncryptionSignature = "Encryption_Signature";
 
 constexpr int kConfigVersion = 11;
-constexpr std::string_view kConfigSignature = "Config_Signature"sv;
+constexpr std::string_view kConfigSignature = "Config_Signature";
 
 base::Value::Dict ComposeSequencingInfo(
     std::optional<Priority> priority,
@@ -103,7 +101,8 @@ class ResponseBuilder {
 
   void SetConfigFile() {
     base::Value::Dict config_file_dict;
-    config_file_dict.Set(json_keys::kConfigurationFileVersion, kConfigVersion);
+    config_file_dict.Set(json_keys::kConfigurationFileVersionResponse,
+                         kConfigVersion);
     config_file_dict.Set(json_keys::kConfigurationFileSignature,
                          base::Base64Encode(kConfigSignature));
     // Leave the list empty.
@@ -111,7 +110,7 @@ class ResponseBuilder {
     result_.Set(json_keys::kConfigurationFile, std::move(config_file_dict));
   }
 
-  void SetLastSuccessfullRecord(base::Value::Dict&& seq_info) {
+  void SetLastSuccessfulRecord(base::Value::Dict&& seq_info) {
     result_.Set(json_keys::kLastSucceedUploadedRecord, std::move(seq_info));
   }
 
@@ -210,7 +209,7 @@ class UploadResponseParserTest
 TEST_P(UploadResponseParserTest, SuccessfulUpload) {
   auto seq_info = ComposeSequencingInfo(kPriority, kSequencingId, kGenerationId,
                                         kGenerationGuid);
-  builder_.SetLastSuccessfullRecord(std::move(seq_info));
+  builder_.SetLastSuccessfulRecord(std::move(seq_info));
 
   UploadResponseParser response(/*is_generation_guid_required=*/true,
                                 builder_.Build());
@@ -231,7 +230,7 @@ TEST_P(UploadResponseParserTest, SuccessfulUpload) {
 TEST_P(UploadResponseParserTest, MissingPriorityField) {
   auto seq_info = ComposeSequencingInfo(std::nullopt, kSequencingId,
                                         kGenerationId, kGenerationGuid);
-  builder_.SetLastSuccessfullRecord(std::move(seq_info));
+  builder_.SetLastSuccessfulRecord(std::move(seq_info));
 
   UploadResponseParser response(/*is_generation_guid_required=*/true,
                                 builder_.Build());
@@ -246,7 +245,7 @@ TEST_P(UploadResponseParserTest, MissingPriorityField) {
 TEST_P(UploadResponseParserTest, InvalidPriorityField) {
   auto seq_info = ComposeSequencingInfo(kPriority, kSequencingId, kGenerationId,
                                         kGenerationGuid);
-  builder_.SetLastSuccessfullRecord(std::move(seq_info));
+  builder_.SetLastSuccessfulRecord(std::move(seq_info));
 
   auto response_dict = builder_.Build();
   response_dict.SetByDottedPath("lastSucceedUploadedRecord.priority", "abc");
@@ -264,7 +263,7 @@ TEST_P(UploadResponseParserTest, InvalidPriorityField) {
 TEST_P(UploadResponseParserTest, MissingSequenceInformation) {
   auto seq_info = ComposeSequencingInfo(kPriority, std::nullopt, kGenerationId,
                                         kGenerationGuid);
-  builder_.SetLastSuccessfullRecord(std::move(seq_info));
+  builder_.SetLastSuccessfulRecord(std::move(seq_info));
 
   auto response_dict = builder_.Build();
   response_dict.SetByDottedPath("lastSucceedUploadedRecord.priority", "abc");
@@ -282,7 +281,7 @@ TEST_P(UploadResponseParserTest, MissingSequenceInformation) {
 TEST_P(UploadResponseParserTest, ContainsGenerationGuid) {
   auto seq_info = ComposeSequencingInfo(kPriority, kSequencingId, kGenerationId,
                                         kGenerationGuid);
-  builder_.SetLastSuccessfullRecord(std::move(seq_info));
+  builder_.SetLastSuccessfulRecord(std::move(seq_info));
 
   auto response_dict = builder_.Build();
   // Verify generation guid exists and equals kGenerationGuid.
@@ -313,7 +312,7 @@ TEST_P(UploadResponseParserTest, ContainsGenerationGuid) {
 TEST_P(UploadResponseParserTest, InvalidGenerationGuid) {
   auto seq_info = ComposeSequencingInfo(kPriority, kSequencingId, kGenerationId,
                                         kGenerationGuid);
-  builder_.SetLastSuccessfullRecord(std::move(seq_info));
+  builder_.SetLastSuccessfulRecord(std::move(seq_info));
 
   auto response_dict = builder_.Build();
   // Generation guids must be parsable into `base::Uuid`.
@@ -333,7 +332,7 @@ TEST_P(UploadResponseParserTest, InvalidGenerationGuid) {
 TEST_P(UploadResponseParserTest, MissingGenerationGuidFailsWhenRequired) {
   auto seq_info = ComposeSequencingInfo(kPriority, kSequencingId, kGenerationId,
                                         std::nullopt);
-  builder_.SetLastSuccessfullRecord(std::move(seq_info));
+  builder_.SetLastSuccessfulRecord(std::move(seq_info));
 
   auto response_dict = builder_.Build();
   // Remove the generation guid.
@@ -352,7 +351,7 @@ TEST_P(UploadResponseParserTest, MissingGenerationGuidFailsWhenRequired) {
 TEST_P(UploadResponseParserTest, MissingGenerationGuidOkWhenNotRequired) {
   auto seq_info = ComposeSequencingInfo(kPriority, kSequencingId, kGenerationId,
                                         std::nullopt);
-  builder_.SetLastSuccessfullRecord(std::move(seq_info));
+  builder_.SetLastSuccessfulRecord(std::move(seq_info));
 
   UploadResponseParser response(/*is_generation_guid_required=*/false,
                                 builder_.Build());
@@ -371,7 +370,7 @@ TEST_P(UploadResponseParserTest, MissingGenerationGuidOkWhenNotRequired) {
 TEST_P(UploadResponseParserTest, GapUponPermanentFailure) {
   auto seq_info = ComposeSequencingInfo(kPriority, kSequencingId, kGenerationId,
                                         kGenerationGuid);
-  builder_.SetLastSuccessfullRecord(std::move(seq_info));
+  builder_.SetLastSuccessfulRecord(std::move(seq_info));
 
   // Matching failure.
   auto failure_seq_info = ComposeSequencingInfo(kPriority, kSequencingId + 1L,
@@ -412,7 +411,7 @@ TEST_P(UploadResponseParserTest, GapUponPermanentFailure) {
 TEST_P(UploadResponseParserTest, GapUponPermanentFailureLoss) {
   auto seq_info = ComposeSequencingInfo(kPriority, kSequencingId, kGenerationId,
                                         kGenerationGuid);
-  builder_.SetLastSuccessfullRecord(std::move(seq_info));
+  builder_.SetLastSuccessfulRecord(std::move(seq_info));
 
   // Mismatching failure.
   auto failure_seq_info = ComposeSequencingInfo(kPriority, kSequencingId,

@@ -9,8 +9,8 @@ import 'chrome://resources/cr_elements/cr_menu_selector/cr_menu_selector.js';
 import 'chrome://resources/cr_elements/cr_nav_menu_item_style.css.js';
 import 'chrome://resources/cr_elements/cr_ripple/cr_ripple.js';
 import 'chrome://resources/cr_elements/icons.html.js';
+import 'chrome://resources/cr_elements/cr_icon/cr_icon.js';
 import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
-import 'chrome://resources/polymer/v3_0/iron-icon/iron-icon.js';
 import './shared_icons.html.js';
 import './shared_vars.css.js';
 import './strings.m.js';
@@ -93,6 +93,8 @@ export class HistorySideBarElement extends PolymerElement {
         computed: 'computeShowHistoryClusters_(' +
             'historyClustersEnabled, historyClustersVisible)',
       },
+
+      compareHistoryEnabled_: Boolean,
     };
   }
 
@@ -105,6 +107,8 @@ export class HistorySideBarElement extends PolymerElement {
   private historyClustersVisibleManagedByPolicy_: boolean;
   private showFooter_: boolean;
   private showHistoryClusters_: boolean;
+  private compareHistoryEnabled_: boolean =
+      loadTimeData.getBoolean('compareHistoryEnabled');
 
   override ready() {
     super.ready();
@@ -138,7 +142,7 @@ export class HistorySideBarElement extends PolymerElement {
 
   /**
    * Prevent clicks on sidebar items from navigating. These are only links for
-   * accessibility purposes, taps are handled separately by <iron-selector>.
+   * accessibility purposes, taps are handled separately.
    */
   private onItemClick_(e: Event) {
     e.preventDefault();

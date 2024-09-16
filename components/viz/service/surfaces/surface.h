@@ -120,10 +120,13 @@ class VIZ_SERVICE_EXPORT Surface final {
   using CommitPredicate =
       base::FunctionRef<bool(const SurfaceId&, const BeginFrameId&)>;
 
+  // `pending_copy_surface_id`, when valid, becomes an
+  // `active_referenced_surfaces_` of `this`.
   Surface(const SurfaceInfo& surface_info,
           SurfaceManager* surface_manager,
           SurfaceAllocationGroup* allocation_group,
           base::WeakPtr<SurfaceClient> surface_client,
+          const SurfaceId& pending_copy_surface_id,
           size_t max_uncommitted_frames);
 
   Surface(const Surface&) = delete;
@@ -200,10 +203,11 @@ class VIZ_SERVICE_EXPORT Surface final {
   // Returns the most recent frame or frame metadata that is eligible to be
   // rendered. You must check whether HasActiveFrame() returns true before
   // calling these methods.
-  // Note that we prefer to call GetActiveFrameMetadata if the only thing that
-  // is required from the frame is the metadata.
+  // Note that we prefer to call GetActiveFrameMetadata or
+  // GetFrameIntervalInputs if the only thing that is required from the frame.
   const CompositorFrame& GetActiveFrame() const;
   const CompositorFrameMetadata& GetActiveFrameMetadata() const;
+  const FrameIntervalInputs& GetFrameIntervalInputs() const;
 
   // ViewTransition needs to interpolate a new CompositorFrame from the active
   // one of this Surface. The interpolated new frame replaces the currently
@@ -323,6 +327,14 @@ class VIZ_SERVICE_EXPORT Surface final {
   std::optional<uint64_t> GetUncommitedFrameIndexNewerThan(
       uint64_t frame_index);
 
+  // Called when `pending_copy_surface_id_` no longer needs to be referenced
+  // from `this`. `activation_dependencies_` will also recomputed.
+  void ResetPendingCopySurfaceId();
+
+  const SurfaceId& pending_copy_surface_id_for_testing() const {
+    return pending_copy_surface_id_;
+  }
+
  private:
   struct FrameData {
     FrameData(CompositorFrame&& frame, uint64_t frame_index);
@@ -410,12 +422,6 @@ class VIZ_SERVICE_EXPORT Surface final {
   // avoid recompution.
   base::flat_set<SurfaceId> active_referenced_surfaces_;
 
-  // Keeps track of the referenced surface for each SurfaceRange. i.e the i-th
-  // element is the referenced SurfaceId in the i-th SurfaceRange. If a
-  // SurfaceRange doesn't contain any active surfaces then the corresponding
-  // entry in this vector is an unvalid SurfaceId.
-  std::vector<SurfaceId> last_surface_id_for_range_;
-
   // Allocation groups that this surface references by its active frame.
   base::flat_set<raw_ptr<SurfaceAllocationGroup, CtnExperimental>>
       referenced_allocation_groups_;
@@ -434,6 +440,12 @@ class VIZ_SERVICE_EXPORT Surface final {
   bool is_fallback_ = false;
 
   bool is_latency_info_taken_ = false;
+
+  // Indicates there is a pending `CopyOutputRequest` against
+  // `pending_copy_surface_id_`. When valid, it keeps `pending_copy_surface_id_`
+  // reachable from `this`, and keeps `pending_copy_surface_id_` alive during
+  // the aggregation.
+  SurfaceId pending_copy_surface_id_;
 
   const raw_ptr<SurfaceAllocationGroup> allocation_group_;
 

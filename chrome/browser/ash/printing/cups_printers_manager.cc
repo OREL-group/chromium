@@ -23,12 +23,12 @@
 #include "base/timer/timer.h"
 #include "chrome/browser/ash/printing/automatic_usb_printer_configurer.h"
 #include "chrome/browser/ash/printing/cups_printer_status_creator.h"
-#include "chrome/browser/ash/printing/enterprise_printers_provider.h"
+#include "chrome/browser/ash/printing/enterprise/enterprise_printers_provider.h"
+#include "chrome/browser/ash/printing/enterprise/print_servers_policy_provider.h"
+#include "chrome/browser/ash/printing/enterprise/print_servers_provider.h"
 #include "chrome/browser/ash/printing/oauth2/client_ids_database.h"
 #include "chrome/browser/ash/printing/ppd_provider_factory.h"
 #include "chrome/browser/ash/printing/ppd_resolution_tracker.h"
-#include "chrome/browser/ash/printing/print_servers_policy_provider.h"
-#include "chrome/browser/ash/printing/print_servers_provider.h"
 #include "chrome/browser/ash/printing/printer_configurer.h"
 #include "chrome/browser/ash/printing/printer_event_tracker.h"
 #include "chrome/browser/ash/printing/printer_event_tracker_factory.h"
@@ -43,7 +43,6 @@
 #include "chrome/browser/ash/scanning/zeroconf_scanner_detector.h"
 #include "chrome/browser/printing/print_preview_sticky_settings.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "chromeos/ash/components/dbus/dlcservice/dlcservice_client.h"
 #include "chromeos/ash/components/dbus/printscanmgr/printscanmgr_client.h"
@@ -278,7 +277,6 @@ class CupsPrintersManagerImpl
   // Public API function.
   void AddLocalPrintersObserver(
       CupsPrintersManager::LocalPrintersObserver* observer) override {
-    CHECK(base::FeatureList::IsEnabled(::features::kLocalPrinterObserving));
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_);
 
     if (!local_printers_observer_list_.HasObserver(observer)) {
@@ -293,8 +291,6 @@ class CupsPrintersManagerImpl
   // Public API function.
   void RemoveLocalPrintersObserver(
       CupsPrintersManager::LocalPrintersObserver* observer) override {
-    CHECK(base::FeatureList::IsEnabled(::features::kLocalPrinterObserving));
-
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_);
     local_printers_observer_list_.RemoveObserver(observer);
   }
@@ -453,7 +449,6 @@ class CupsPrintersManagerImpl
   // Resets the overall polling timer then executes the first round of printer
   // status queries for good and unreachable printers.
   void StartPrinterStatusPolling() {
-    CHECK(base::FeatureList::IsEnabled(::features::kLocalPrinterObserving));
     printer_status_polling_total_duration_timer_ =
         std::make_unique<base::ElapsedTimer>();
     OnPrinterStatusTimerElapsed(/*for_unreachable_printers=*/true);
@@ -936,15 +931,13 @@ class CupsPrintersManagerImpl
                                const Printer& printer) {
     printers_.Insert(printer_class, printer);
 
-    if (base::FeatureList::IsEnabled(::features::kLocalPrinterObserving)) {
-      // If we've seen this printer before, don't trigger a new detection event.
-      if (detected_printers_seen_.contains(printer.id())) {
-        return;
-      }
-
-      detected_printers_seen_.insert(printer.id());
-      NotifyLocalPrinterObservers();
+    // If we've seen this printer before, don't trigger a new detection event.
+    if (detected_printers_seen_.contains(printer.id())) {
+      return;
     }
+
+    detected_printers_seen_.insert(printer.id());
+    NotifyLocalPrinterObservers();
   }
 
   // Returns true if we've disconnected from our current network. Updates

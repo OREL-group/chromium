@@ -30,6 +30,7 @@
 
 #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
 
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/choosers/date_time_chooser.mojom-blink.h"
 #include "third_party/blink/public/mojom/input/focus_type.mojom-blink.h"
 #include "third_party/blink/public/mojom/scroll/scroll_into_view_params.mojom-blink.h"
@@ -61,7 +62,6 @@
 #include "third_party/blink/renderer/core/fileapi/file_list.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
-#include "third_party/blink/renderer/core/geometry/dom_rect.h"
 #include "third_party/blink/renderer/core/html/forms/color_chooser.h"
 #include "third_party/blink/renderer/core/html/forms/date_time_chooser.h"
 #include "third_party/blink/renderer/core/html/forms/email_input_type.h"
@@ -107,8 +107,6 @@ using mojom::blink::FormControlType;
 namespace {
 
 const unsigned kMaxEmailFieldLength = 254;
-
-const unsigned kMinStrongPasswordLabelWidth = 220;
 
 static bool is_default_font_prewarmed_ = false;
 
@@ -345,7 +343,7 @@ void HTMLInputElement::UpdateSelectionOnFocus(
       if (GetLayoutObject()) {
         scroll_into_view_util::ScrollRectToVisible(
             *GetLayoutObject(), BoundingBoxForScrollIntoView(),
-            ScrollAlignment::CreateScrollIntoViewParams());
+            scroll_into_view_util::CreateScrollIntoViewParams());
       }
       if (GetDocument().GetFrame())
         GetDocument().GetFrame()->Selection().RevealSelection();
@@ -629,9 +627,13 @@ void HTMLInputElement::UpdateType(const AtomicString& type_attribute_value) {
 
 void HTMLInputElement::SubtreeHasChanged() {
   input_type_view_->SubtreeHasChanged();
-  // When typing in an input field, childrenChanged is not called, so we need to
-  // force the directionality check.
-  CalculateAndAdjustAutoDirectionality();
+
+  if (HasDirectionAuto() ||
+      !RuntimeEnabledFeatures::TextInputNotAlwaysDirAutoEnabled()) {
+    // When typing in an input field, childrenChanged is not called, so we
+    // need to force the directionality check.
+    CalculateAndAdjustAutoDirectionality();
+  }
 }
 
 FormControlType HTMLInputElement::FormControlType() const {
@@ -851,9 +853,7 @@ void HTMLInputElement::ParseAttribute(
         autocomplete_ = kOn;
     }
   } else if (name == html_names::kTypeAttr) {
-    if ((!RuntimeEnabledFeatures::
-             SkipUpdateTypeForHTMLInputElementCreatedByParserEnabled() ||
-         params.reason != AttributeModificationReason::kByParser) &&
+    if (params.reason != AttributeModificationReason::kByParser &&
         params.old_value != value) {
       UpdateType(value);
     }
@@ -950,10 +950,8 @@ void HTMLInputElement::ParseAttribute(
     input_type_view_->ReadonlyAttributeChanged();
   } else if (name == html_names::kListAttr) {
     has_non_empty_list_ = !value.empty();
-    if (has_non_empty_list_) {
-      ResetListAttributeTargetObserver();
-      ListAttributeTargetChanged();
-    }
+    ResetListAttributeTargetObserver();
+    ListAttributeTargetChanged();
     PseudoStateChanged(CSSSelector::kPseudoHasDatalist);
     UseCounter::Count(GetDocument(), WebFeature::kListAttribute);
   } else if (name == html_names::kWebkitdirectoryAttr) {
@@ -1127,15 +1125,18 @@ void HTMLInputElement::SetChecked(bool now_checked,
       cache->CheckedStateChanged(this);
   }
 
-  // Only send a change event for items in the document (avoid firing during
-  // parsing) and don't send a change event for a radio button that's getting
-  // unchecked to match other browsers. DOM is not a useful standard for this
-  // because it says only to fire change events at "lose focus" time, which is
-  // definitely wrong in practice for these types of elements.
-  if (event_behavior == TextFieldEventBehavior::kDispatchInputAndChangeEvent &&
-      isConnected() &&
-      input_type_->ShouldSendChangeEventAfterCheckedChanged()) {
-    DispatchInputEvent();
+  if (!RuntimeEnabledFeatures::AllowJavaScriptToResetAutofillStateEnabled()) {
+    // Only send a change event for items in the document (avoid firing during
+    // parsing) and don't send a change event for a radio button that's getting
+    // unchecked to match other browsers. DOM is not a useful standard for this
+    // because it says only to fire change events at "lose focus" time, which is
+    // definitely wrong in practice for these types of elements.
+    if (event_behavior ==
+            TextFieldEventBehavior::kDispatchInputAndChangeEvent &&
+        isConnected() &&
+        input_type_->ShouldSendChangeEventAfterCheckedChanged()) {
+      DispatchInputEvent();
+    }
   }
 
   // We set the Autofilled state again because setting the autofill value
@@ -1201,7 +1202,7 @@ String HTMLInputElement::Value() const {
     case ValueMode::kValue:
       return non_attribute_value_;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return g_empty_string;
 }
 
@@ -1238,17 +1239,6 @@ void HTMLInputElement::SetSuggestedValue(const String& value) {
       placeholder->classList().Add(reveal);
     } else {
       placeholder->classList().Remove(reveal);
-    }
-
-    // Prevent fade out and displaying strong password label in narrow forms.
-    if (GetBoundingClientRect()->width() < kMinStrongPasswordLabelWidth) {
-      should_show_strong_password_label_ = false;
-    }
-    const AtomicString fade_out("fade-out-password");
-    if (should_show_strong_password_label_) {
-      placeholder->classList().Add(fade_out);
-    } else {
-      placeholder->classList().Remove(fade_out);
     }
   }
 
@@ -1326,12 +1316,17 @@ void HTMLInputElement::SetValue(const String& value,
     }
   }
 
-  // We set the Autofilled state again because setting the autofill value
-  // triggers JavaScript events and the site may override the autofilled value,
-  // which resets the autofill state. Even if the website modifies the form
-  // control element's content during the autofill operation, we want the state
-  // to show as autofilled.
-  SetAutofillState(autofill_state);
+  if (!RuntimeEnabledFeatures::AllowJavaScriptToResetAutofillStateEnabled()) {
+    // We set the Autofilled state again because setting the autofill value
+    // triggers JavaScript events and the site may override the autofilled
+    // value, which resets the autofill state. Even if the website modifies the
+    // form control element's content during the autofill operation, we want the
+    // state to show as autofilled.
+    // If AllowJavaScriptToResetAutofillState is enabled, the WebAutofillClient
+    // will monitor JavaScript induced changes and take care of resetting the
+    // autofill state when appropriate.
+    SetAutofillState(autofill_state);
+  }
 }
 
 void HTMLInputElement::SetNonAttributeValue(const String& sanitized_value) {
@@ -1850,19 +1845,30 @@ void HTMLInputElement::EndColorChooserForTesting() {
   input_type_view_->ClosePopupView();
 }
 
-HTMLElement* HTMLInputElement::list() const {
-  return DataList();
-}
-
 HTMLDataListElement* HTMLInputElement::DataList() const {
-  if (!has_non_empty_list_)
+  if (!has_non_empty_list_) {
     return nullptr;
+  }
 
-  if (!input_type_->ShouldRespectListAttribute())
+  if (!input_type_->ShouldRespectListAttribute()) {
     return nullptr;
+  }
 
   return DynamicTo<HTMLDataListElement>(
-      GetTreeScope().getElementById(FastGetAttribute(html_names::kListAttr)));
+      GetElementAttributeResolvingReferenceTarget(html_names::kListAttr));
+}
+
+HTMLElement* HTMLInputElement::listForBinding() const {
+  if (!has_non_empty_list_) {
+    return nullptr;
+  }
+
+  if (!input_type_->ShouldRespectListAttribute()) {
+    return nullptr;
+  }
+
+  return DynamicTo<HTMLDataListElement>(
+      GetElementAttribute(html_names::kListAttr));
 }
 
 bool HTMLInputElement::HasValidDataListOptions() const {
@@ -2136,7 +2142,7 @@ void HTMLInputElement::setWidth(unsigned width) {
 ListAttributeTargetObserver::ListAttributeTargetObserver(
     const AtomicString& id,
     HTMLInputElement* element)
-    : IdTargetObserver(element->GetTreeScope().GetIdTargetObserverRegistry(),
+    : IdTargetObserver(element->GetTreeScope().EnsureIdTargetObserverRegistry(),
                        id),
       element_(element) {}
 
@@ -2281,15 +2287,6 @@ bool HTMLInputElement::IsInteractiveContent() const {
   return input_type_->IsInteractiveContent();
 }
 
-const ComputedStyle* HTMLInputElement::CustomStyleForLayoutObject(
-    const StyleRecalcContext& style_recalc_context) {
-  // TODO(crbug.com/953707): Avoid marking style dirty in
-  // HTMLImageFallbackHelper and use AdjustStyle instead.
-  const ComputedStyle* original_style =
-      OriginalStyleForLayoutObject(style_recalc_context);
-  return input_type_view_->CustomStyleForLayoutObject(original_style);
-}
-
 void HTMLInputElement::AdjustStyle(ComputedStyleBuilder& builder) {
   return input_type_view_->AdjustStyle(builder);
 }
@@ -2410,32 +2407,34 @@ void HTMLInputElement::showPicker(ExceptionState& exception_state) {
         "HTMLInputElement::showPicker() requires a user gesture.");
     return;
   }
+  LocalFrame::ConsumeTransientUserActivation(frame);
 
   input_type_view_->OpenPopupView();
 }
 
-bool HTMLInputElement::IsValidInvokeAction(HTMLElement& invoker,
-                                           InvokeAction action) {
-  bool parent_is_valid = HTMLElement::IsValidInvokeAction(invoker, action);
+bool HTMLInputElement::IsValidCommand(HTMLElement& invoker,
+                                      CommandEventType command) {
+  bool parent_is_valid = HTMLElement::IsValidCommand(invoker, command);
   if (!RuntimeEnabledFeatures::HTMLInvokeActionsV2Enabled() ||
       parent_is_valid) {
     return parent_is_valid;
   }
 
   if (input_type_->IsNumberInputType()) {
-    if (action == InvokeAction::kStepUp || action == InvokeAction::kStepDown) {
+    if (command == CommandEventType::kStepUp ||
+        command == CommandEventType::kStepDown) {
       return true;
     }
   }
 
-  return action == InvokeAction::kShowPicker;
+  return command == CommandEventType::kShowPicker;
 }
 
-bool HTMLInputElement::HandleInvokeInternal(HTMLElement& invoker,
-                                            InvokeAction action) {
-  CHECK(IsValidInvokeAction(invoker, action));
+bool HTMLInputElement::HandleCommandInternal(HTMLElement& invoker,
+                                             CommandEventType command) {
+  CHECK(IsValidCommand(invoker, command));
 
-  if (HTMLElement::HandleInvokeInternal(invoker, action)) {
+  if (HTMLElement::HandleCommandInternal(invoker, command)) {
     return true;
   }
 
@@ -2444,7 +2443,7 @@ bool HTMLInputElement::HandleInvokeInternal(HTMLElement& invoker,
     return false;
   }
 
-  if (action == InvokeAction::kShowPicker) {
+  if (command == CommandEventType::kShowPicker) {
     // Step 2. If this's relevant settings object's origin is not same origin
     // with this's relevant settings object's top-level origin, [...], then
     // return.
@@ -2474,18 +2473,33 @@ bool HTMLInputElement::HandleInvokeInternal(HTMLElement& invoker,
   }
 
   if (input_type_->IsNumberInputType()) {
-    if (action == InvokeAction::kStepUp) {
+    if (command == CommandEventType::kStepUp) {
       input_type_->StepUp(1.0, ASSERT_NO_EXCEPTION);
       return true;
     }
 
-    if (action == InvokeAction::kStepDown) {
+    if (command == CommandEventType::kStepDown) {
       input_type_->StepUp(-1.0, ASSERT_NO_EXCEPTION);
       return true;
     }
   }
 
   return false;
+}
+
+void HTMLInputElement::SetFocused(bool is_focused,
+                                  mojom::blink::FocusType focus_type) {
+  TextControlElement::SetFocused(is_focused, focus_type);
+  // Multifield inputs will call SetFocused when switching between the
+  // individual parts, but we don't want to start matching
+  // :user-valid/:user-invalid at that time. However, for other inputs, we want
+  // to start matching :user-valid/:user-invalid as soon as possible, especially
+  // to support the case where the user types something, then deletes it, then
+  // blurs the input.
+  if (!is_focused && !input_type_view_->IsMultipleFieldsTemporal() &&
+      UserHasEditedTheField()) {
+    SetUserHasEditedTheFieldAndBlurred();
+  }
 }
 
 }  // namespace blink

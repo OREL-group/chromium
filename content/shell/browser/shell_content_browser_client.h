@@ -58,7 +58,7 @@ class ShellContentBrowserClient : public ContentBrowserClient {
       BrowserContext* browser_context,
       const base::RepeatingCallback<WebContents*()>& wc_getter,
       NavigationUIData* navigation_ui_data,
-      int frame_tree_node_id,
+      FrameTreeNodeId frame_tree_node_id,
       std::optional<int64_t> navigation_id) override;
   bool AreIsolatedWebAppsEnabled(BrowserContext* browser_context) override;
   void AppendExtraCommandLineSwitches(base::CommandLine* command_line,
@@ -74,12 +74,14 @@ class ShellContentBrowserClient : public ContentBrowserClient {
       content::RenderFrameHost* rfh,
       const url::Origin& top_frame_origin,
       const url::Origin& accessing_origin,
-      std::string* out_debug_message = nullptr) override;
+      std::string* out_debug_message,
+      bool* out_block_is_site_setting_specific) override;
   bool IsSharedStorageSelectURLAllowed(
       content::BrowserContext* browser_context,
       const url::Origin& top_frame_origin,
       const url::Origin& accessing_origin,
-      std::string* out_debug_message = nullptr) override;
+      std::string* out_debug_message,
+      bool* out_block_is_site_setting_specific) override;
   bool IsCookieDeprecationLabelAllowed(
       content::BrowserContext* browser_context) override;
   bool IsCookieDeprecationLabelAllowedForContext(
@@ -90,6 +92,7 @@ class ShellContentBrowserClient : public ContentBrowserClient {
       content::BrowserContext* context) override;
   base::OnceClosure SelectClientCertificate(
       BrowserContext* browser_context,
+      int process_id,
       WebContents* web_contents,
       net::SSLCertRequestInfo* cert_request_info,
       net::ClientCertIdentityList client_certs,
@@ -161,6 +164,7 @@ class ShellContentBrowserClient : public ContentBrowserClient {
   void GetHyphenationDictionary(
       base::OnceCallback<void(const base::FilePath&)>) override;
   bool HasErrorPage(int http_status_code) override;
+  void OnWebContentsCreated(WebContents* web_contents) override;
 
   // Turns on features via permissions policy for Isolated App
   // Web Platform Tests.

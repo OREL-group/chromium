@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "ash/capture_mode/base_capture_mode_session.h"
+#include "ash/capture_mode/capture_mode_camera_controller.h"
 #include "ash/capture_mode/capture_mode_constants.h"
 #include "ash/capture_mode/capture_mode_controller.h"
 #include "ash/capture_mode/capture_mode_metrics.h"
@@ -16,12 +17,15 @@
 #include "ash/capture_mode/capture_mode_util.h"
 #include "ash/capture_mode/game_capture_bar_view.h"
 #include "ash/capture_mode/normal_capture_bar_view.h"
+#include "ash/capture_mode/sunfish_capture_bar_view.h"
 #include "ash/constants/ash_features.h"
 #include "ash/projector/projector_controller_impl.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shelf/shelf.h"
 #include "ash/shelf/shelf_layout_manager.h"
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
+#include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_forward.h"
@@ -123,14 +127,17 @@ class ProjectorBehavior : public CaptureModeBehavior {
     switch (mode) {
       case AudioRecordingMode::kOff:
       case AudioRecordingMode::kSystem:
+        // Projector does not support turning off audio recording nor recording
+        // the system audio separately without the microphone.
         return false;
       case AudioRecordingMode::kMicrophone:
-        return true;
       case AudioRecordingMode::kSystemAndMicrophone:
-        return features::IsCaptureModeAudioMixingEnabled();
+        return true;
     }
   }
-  bool ShouldCreateRecordingOverlayController() const override { return true; }
+  bool ShouldCreateAnnotationsOverlayController() const override {
+    return true;
+  }
   bool ShouldShowUserNudge() const override { return false; }
   bool ShouldAutoSelectFirstCamera() const override { return true; }
   bool RequiresCaptureFolderCreation() const override { return true; }
@@ -176,13 +183,11 @@ class GameDashboardBehavior : public CaptureModeBehavior,
                               public aura::WindowObserver {
  public:
   GameDashboardBehavior()
-      : CaptureModeBehavior({CaptureModeType::kVideo,
-                             CaptureModeSource::kWindow, RecordingType::kWebM,
-                             features::IsCaptureModeAudioMixingEnabled()
-                                 ? AudioRecordingMode::kSystemAndMicrophone
-                                 : AudioRecordingMode::kMicrophone,
-                             /*demo_tools_enabled=*/false},
-                            BehaviorType::kGameDashboard) {}
+      : CaptureModeBehavior(
+            {CaptureModeType::kVideo, CaptureModeSource::kWindow,
+             RecordingType::kWebM, AudioRecordingMode::kSystemAndMicrophone,
+             /*demo_tools_enabled=*/false},
+            BehaviorType::kGameDashboard) {}
 
   GameDashboardBehavior(const GameDashboardBehavior&) = delete;
   GameDashboardBehavior operator=(const GameDashboardBehavior&) = delete;
@@ -230,7 +235,11 @@ class GameDashboardBehavior : public CaptureModeBehavior,
   bool ShouldDemoToolsSettingsBeIncluded() const override { return false; }
   bool ShouldGifBeSupported() const override { return false; }
   bool ShouldShowUserNudge() const override { return false; }
-  bool ShouldAutoSelectFirstCamera() const override { return true; }
+  bool ShouldAutoSelectFirstCamera() const override {
+    return !CaptureModeController::Get()
+                ->camera_controller()
+                ->did_user_ever_change_camera();
+  }
 
   std::unique_ptr<CaptureModeBarView> CreateCaptureModeBarView() override {
     return std::make_unique<GameCaptureBarView>();
@@ -290,6 +299,44 @@ class GameDashboardBehavior : public CaptureModeBehavior,
   base::WeakPtrFactory<GameDashboardBehavior> weak_ptr_factory_{this};
 };
 
+// -----------------------------------------------------------------------------
+// SunfishBehavior:
+// Implements the `CaptureModeBehavior` interface with behavior defined for the
+// sunfish capture mode.
+class SunfishBehavior : public CaptureModeBehavior {
+ public:
+  SunfishBehavior()
+      : CaptureModeBehavior(
+            {CaptureModeType::kImage, CaptureModeSource::kRegion,
+             RecordingType::kWebM, AudioRecordingMode::kOff,
+             /*demo_tools_enabled=*/false},
+            BehaviorType::kSunfish) {}
+
+  SunfishBehavior(const SunfishBehavior&) = delete;
+  SunfishBehavior& operator=(const SunfishBehavior&) = delete;
+  ~SunfishBehavior() override = default;
+
+  // CaptureModeBehavior:
+  bool ShouldShowUserNudge() const override { return false; }
+  bool ShouldReShowUisAtPerformingCapture() const override { return true; }
+  const std::u16string GetCaptureLabelRegionText() const override {
+    return l10n_util::GetStringUTF16(IDS_ASH_SUNFISH_CAPTURE_LABEL);
+  }
+  int GetCaptureBarWidth() const override {
+    // Return the height so the button is circular.
+    return capture_mode::kCaptureBarHeight;
+  }
+  std::unique_ptr<CaptureModeBarView> CreateCaptureModeBarView() override {
+    return std::make_unique<SunfishCaptureBarView>();
+  }
+  void OnRegionSelected() override {
+    // `CaptureModeController` will perform DLP restriction checks and determine
+    // whether the image can be sent for search.
+    CaptureModeController::Get()->PerformCapture();
+  }
+  void OnEnterKeyPressed() override {}
+};
+
 }  // namespace
 
 // -----------------------------------------------------------------------------
@@ -310,6 +357,8 @@ std::unique_ptr<CaptureModeBehavior> CaptureModeBehavior::Create(
       return std::make_unique<GameDashboardBehavior>();
     case BehaviorType::kDefault:
       return std::make_unique<DefaultBehavior>();
+    case BehaviorType::kSunfish:
+      return std::make_unique<SunfishBehavior>();
   }
 }
 
@@ -342,10 +391,9 @@ bool CaptureModeBehavior::SupportsAudioRecordingMode(
   switch (mode) {
     case AudioRecordingMode::kOff:
     case AudioRecordingMode::kMicrophone:
-      return true;
     case AudioRecordingMode::kSystem:
     case AudioRecordingMode::kSystemAndMicrophone:
-      return features::IsCaptureModeAudioMixingEnabled();
+      return true;
   }
 }
 
@@ -373,7 +421,10 @@ bool CaptureModeBehavior::ShouldSkipVideoRecordingCountDown() const {
   return false;
 }
 
-bool CaptureModeBehavior::ShouldCreateRecordingOverlayController() const {
+bool CaptureModeBehavior::ShouldCreateAnnotationsOverlayController() const {
+  if (base::FeatureList::IsEnabled(ash::features::kAnnotatorMode)) {
+    return true;
+  }
   return false;
 }
 
@@ -387,6 +438,15 @@ bool CaptureModeBehavior::ShouldAutoSelectFirstCamera() const {
 
 bool CaptureModeBehavior::RequiresCaptureFolderCreation() const {
   return false;
+}
+
+bool CaptureModeBehavior::ShouldReShowUisAtPerformingCapture() const {
+  // We don't need to bring capture mode UIs back if `type_` is
+  // `CaptureModeType::kImage`, since the session is about to shutdown anyways
+  // at these use cases, so it's better to avoid any wasted effort. In the case
+  // of video recording, we need to reshow the UIs so that we can start the
+  // 3-second count down animation.
+  return CaptureModeController::Get()->type() != CaptureModeType::kImage;
 }
 
 void CaptureModeBehavior::CreateCaptureFolder(
@@ -427,6 +487,15 @@ CaptureModeBehavior::GetNotificationButtonsInfo(bool for_video) const {
       l10n_util::GetStringUTF16(IDS_ASH_SCREEN_CAPTURE_BUTTON_DELETE));
 
   return buttons_info;
+}
+
+const std::u16string CaptureModeBehavior::GetCaptureLabelRegionText() const {
+  CaptureModeController* controller = CaptureModeController::Get();
+  DCHECK(controller->user_capture_region().IsEmpty());
+  return l10n_util::GetStringUTF16(
+      controller->type() == CaptureModeType::kImage
+          ? IDS_ASH_SCREEN_CAPTURE_LABEL_REGION_IMAGE_CAPTURE
+          : IDS_ASH_SCREEN_CAPTURE_LABEL_REGION_VIDEO_RECORD);
 }
 
 std::unique_ptr<CaptureModeBarView>
@@ -477,5 +546,11 @@ int CaptureModeBehavior::GetCaptureBarWidth() const {
 void CaptureModeBehavior::OnAudioRecordingModeChanged() {}
 
 void CaptureModeBehavior::OnDemoToolsSettingsChanged() {}
+
+void CaptureModeBehavior::OnRegionSelected() {}
+
+void CaptureModeBehavior::OnEnterKeyPressed() {
+  CaptureModeController::Get()->PerformCapture();
+}
 
 }  // namespace ash

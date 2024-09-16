@@ -71,6 +71,7 @@ class PLATFORM_EXPORT LayerTreeView
   cc::AnimationHost* animation_host() { return animation_host_.get(); }
 
   void SetVisible(bool visible);
+  void SetShouldWarmUp();
 
   // cc::LayerTreeHostClient implementation.
   // NOTE: LayerTreeView allows re-attaching itself to a different delegate.
@@ -104,7 +105,6 @@ class PLATFORM_EXPORT LayerTreeView
                  base::TimeTicks commit_start_time,
                  base::TimeTicks commit_finish_time) override;
   void DidCommitAndDrawFrame(int source_frame_number) override;
-  void DidReceiveCompositorFrameAck() override {}
   void DidCompletePageScaleAnimation(int source_frame_number) override;
   void DidPresentCompositorFrame(
       uint32_t frame_token,
@@ -115,7 +115,6 @@ class PLATFORM_EXPORT LayerTreeView
       cc::ActiveFrameSequenceTrackers trackers) override;
   std::unique_ptr<cc::BeginMainFrameMetrics> GetBeginMainFrameMetrics()
       override;
-  std::unique_ptr<cc::WebVitalMetrics> GetWebVitalMetrics() override;
   void NotifyThroughputTrackerResults(
       cc::CustomTrackerResults results) override;
   void DidObserveFirstScrollDelay(

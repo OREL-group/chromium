@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -22,11 +23,11 @@
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
 #include "base/test/gmock_callback_support.h"
+#include "base/test/metrics/user_action_tester.h"
 #include "base/test/simple_test_clock.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_future.h"
@@ -49,6 +50,8 @@
 #include "chrome/browser/hid/hid_chooser_context_factory.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/permissions/permission_decision_auto_blocker_factory.h"
+#include "chrome/browser/permissions/system/mock_platform_handle.h"
+#include "chrome/browser/permissions/system/system_permission_settings.h"
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/browser/privacy_sandbox/mock_privacy_sandbox_service.h"
 #include "chrome/browser/privacy_sandbox/privacy_sandbox_service_factory.h"
@@ -96,6 +99,7 @@
 #include "components/permissions/test/object_permission_context_base_mock_permission_observer.h"
 #include "components/permissions/test/permission_test_util.h"
 #include "components/prefs/testing_pref_service.h"
+#include "components/privacy_sandbox/privacy_sandbox_features.h"
 #include "components/services/app_service/public/cpp/app_registry_cache.h"
 #include "components/services/app_service/public/cpp/app_types.h"
 #include "components/services/app_service/public/cpp/app_update.h"
@@ -207,11 +211,12 @@ net::SchemefulSite ConvertEtldToSchemefulSite(const std::string etld_plus1) {
                                  "/"));
 }
 
-// Validates that the list of sites are aligned with the first party sets
+// Validates that the list of sites are aligned with the related website sets
 // mapping.
-void ValidateSitesWithFps(
+void ValidateSitesWithRws(
     const base::Value::List& storage_and_cookie_list,
-    base::flat_map<net::SchemefulSite, net::SchemefulSite>& first_party_sets) {
+    base::flat_map<net::SchemefulSite, net::SchemefulSite>&
+        related_website_sets) {
   for (const base::Value& site_group_value : storage_and_cookie_list) {
     const base::Value::Dict& site_group = site_group_value.GetDict();
     GroupingKey grouping_key = GroupingKey::Deserialize(
@@ -222,25 +227,25 @@ void ValidateSitesWithFps(
     std::string etld_plus1 = *grouping_key.GetEtldPlusOne();
     auto schemeful_site = ConvertEtldToSchemefulSite(etld_plus1);
 
-    if (first_party_sets.count(schemeful_site)) {
+    if (related_website_sets.count(schemeful_site)) {
       // Ensure that the `fpsOwner` is set correctly and aligned with
-      // |first_party_sets| mapping of site group owners.
+      // |related_website_sets| mapping of site group owners.
       std::string owner_etldplus1 =
-          first_party_sets[schemeful_site].GetURL().host();
+          related_website_sets[schemeful_site].GetURL().host();
       ASSERT_EQ(owner_etldplus1, *site_group.FindString("fpsOwner"));
       if (owner_etldplus1 == "google.com") {
-        ASSERT_EQ(2, *site_group.FindInt("fpsNumMembers"));
-        ASSERT_EQ(false, *site_group.FindBool("fpsEnterpriseManaged"));
+        ASSERT_EQ(2, *site_group.FindInt("rwsNumMembers"));
+        ASSERT_EQ(false, *site_group.FindBool("rwsEnterpriseManaged"));
       } else if (owner_etldplus1 == "example.com") {
-        ASSERT_EQ(1, *site_group.FindInt("fpsNumMembers"));
-        ASSERT_EQ(true, *site_group.FindBool("fpsEnterpriseManaged"));
+        ASSERT_EQ(1, *site_group.FindInt("rwsNumMembers"));
+        ASSERT_EQ(true, *site_group.FindBool("rwsEnterpriseManaged"));
       }
     } else {
-      // The site is not part of a FPS therefore doesn't have `fpsOwner` or
-      // `fpsNumMembers` set. `FindString` and `FindInt` should return null.
+      // The site is not part of a RWS therefore doesn't have `fpsOwner` or
+      // `rwsNumMembers` set. `FindString` and `FindInt` should return null.
       ASSERT_FALSE(site_group.FindString("fpsOwner"));
-      ASSERT_FALSE(site_group.FindInt("fpsNumMembers"));
-      ASSERT_FALSE(site_group.FindBool("fpsEnterpriseManaged"));
+      ASSERT_FALSE(site_group.FindInt("rwsNumMembers"));
+      ASSERT_FALSE(site_group.FindBool("rwsEnterpriseManaged"));
     }
   }
 }
@@ -316,7 +321,7 @@ class ContentSettingSourceSetter {
         return prefs::kManagedDefaultNotificationsSetting;
       default:
         // Add support as needed.
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
         return "";
     }
   }
@@ -336,8 +341,9 @@ class SiteSettingsHandlerBaseTest : public testing::Test {
     EXPECT_TRUE(testing_profile_manager_->SetUp());
     profile_ = testing_profile_manager_->CreateTestingProfile(
         kTestUserEmail,
-        {{HistoryServiceFactory::GetInstance(),
-          HistoryServiceFactory::GetDefaultFactory()}},
+        {TestingProfile::TestingFactory{
+            HistoryServiceFactory::GetInstance(),
+            HistoryServiceFactory::GetDefaultFactory()}},
         /*is_main_profile=*/true);
     EXPECT_TRUE(profile_);
 
@@ -444,7 +450,7 @@ class SiteSettingsHandlerBaseTest : public testing::Test {
   }
 
   void ValidateDefault(const ContentSetting expected_setting,
-                       const site_settings::SiteSettingSource expected_source,
+                       const std::string expected_source,
                        size_t expected_total_calls) {
     EXPECT_EQ(expected_total_calls, web_ui()->call_data().size());
 
@@ -460,12 +466,13 @@ class SiteSettingsHandlerBaseTest : public testing::Test {
     const base::Value::Dict& default_value = data.arg3()->GetDict();
     const std::string* setting = default_value.FindString(kSetting);
     ASSERT_TRUE(setting);
-    EXPECT_EQ(content_settings::ContentSettingToString(expected_setting),
-              *setting);
+    EXPECT_EQ(*setting,
+              content_settings::ContentSettingToString(expected_setting));
     const std::string* source = default_value.FindString(kSource);
     if (source) {
-      EXPECT_EQ(site_settings::SiteSettingSourceToString(expected_source),
-                *source);
+      EXPECT_EQ(*source, expected_source);
+    } else {
+      EXPECT_TRUE(expected_source.empty());
     }
   }
 
@@ -819,8 +826,8 @@ class SiteSettingsHandlerBaseTest : public testing::Test {
   void ValidateUsageInfo(const std::string& expected_usage_origin,
                          const std::string& expected_usage_string,
                          const std::string& expected_cookie_string,
-                         const std::string& expected_fps_member_count_string,
-                         const bool expected_fps_policy) {
+                         const std::string& expected_rws_member_count_string,
+                         const bool expected_rws_policy) {
     const content::TestWebUI::CallData& data = *web_ui()->call_data().back();
     EXPECT_EQ("cr.webUIListenerCallback", data.function_name());
 
@@ -837,10 +844,10 @@ class SiteSettingsHandlerBaseTest : public testing::Test {
     EXPECT_EQ(expected_cookie_string, data.arg_nth(3)->GetString());
 
     ASSERT_TRUE(data.arg_nth(4)->is_string());
-    EXPECT_EQ(expected_fps_member_count_string, data.arg_nth(4)->GetString());
+    EXPECT_EQ(expected_rws_member_count_string, data.arg_nth(4)->GetString());
 
     ASSERT_TRUE(data.arg_nth(5)->is_bool());
-    EXPECT_EQ(expected_fps_policy, data.arg_nth(5)->GetBool());
+    EXPECT_EQ(expected_rws_policy, data.arg_nth(5)->GetBool());
   }
 
   void CreateIncognitoProfile() {
@@ -919,13 +926,13 @@ class SiteSettingsHandlerBaseTest : public testing::Test {
     return data.arg2()->GetList().Clone();
   }
 
-  void SetupDefaultFirstPartySets(MockPrivacySandboxService* mock_service) {
+  void SetupDefaultRelatedWebsiteSets(MockPrivacySandboxService* mock_service) {
     EXPECT_CALL(*mock_service, GetFirstPartySetOwner(_))
         .WillRepeatedly(
             [&](const GURL& url) -> std::optional<net::SchemefulSite> {
-              auto first_party_sets = GetTestFirstPartySets();
-              if (first_party_sets.count(net::SchemefulSite(url))) {
-                return first_party_sets[net::SchemefulSite(url)];
+              auto related_website_sets = GetTestRelatedWebsiteSets();
+              if (related_website_sets.count(net::SchemefulSite(url))) {
+                return related_website_sets[net::SchemefulSite(url)];
               }
 
               return std::nullopt;
@@ -933,18 +940,18 @@ class SiteSettingsHandlerBaseTest : public testing::Test {
   }
 
   base::flat_map<net::SchemefulSite, net::SchemefulSite>
-  GetTestFirstPartySets() {
-    base::flat_map<net::SchemefulSite, net::SchemefulSite> first_party_sets = {
-        {ConvertEtldToSchemefulSite("google.com"),
-         ConvertEtldToSchemefulSite("google.com")},
-        {ConvertEtldToSchemefulSite("google.com.au"),
-         ConvertEtldToSchemefulSite("google.com")},
-        {ConvertEtldToSchemefulSite("example.com"),
-         ConvertEtldToSchemefulSite("example.com")},
-        {ConvertEtldToSchemefulSite("unrelated.com"),
-         ConvertEtldToSchemefulSite("unrelated.com")}};
+  GetTestRelatedWebsiteSets() {
+    base::flat_map<net::SchemefulSite, net::SchemefulSite>
+        related_website_sets = {{ConvertEtldToSchemefulSite("google.com"),
+                                 ConvertEtldToSchemefulSite("google.com")},
+                                {ConvertEtldToSchemefulSite("google.com.au"),
+                                 ConvertEtldToSchemefulSite("google.com")},
+                                {ConvertEtldToSchemefulSite("example.com"),
+                                 ConvertEtldToSchemefulSite("example.com")},
+                                {ConvertEtldToSchemefulSite("unrelated.com"),
+                                 ConvertEtldToSchemefulSite("unrelated.com")}};
 
-    return first_party_sets;
+    return related_website_sets;
   }
 
   scoped_refptr<const extensions::Extension> LoadExtension(
@@ -992,6 +999,12 @@ class SiteSettingsHandlerBaseTest : public testing::Test {
   const std::string_view kCookies =
       site_settings::ContentSettingsTypeToGroupName(
           ContentSettingsType::COOKIES);
+  const std::string_view kTrackingProtection =
+      site_settings::ContentSettingsTypeToGroupName(
+          ContentSettingsType::TRACKING_PROTECTION);
+  const std::string_view kStorageAccess =
+      site_settings::ContentSettingsTypeToGroupName(
+          ContentSettingsType::STORAGE_ACCESS);
 
   const ContentSettingsType kPermissionNotifications =
       ContentSettingsType::NOTIFICATIONS;
@@ -1279,8 +1292,7 @@ TEST_F(SiteSettingsHandlerTest, GetAndSetDefault) {
   get_args.Append(kCallbackId);
   get_args.Append(kNotifications);
   handler()->HandleGetDefaultValueForContentType(get_args);
-  ValidateDefault(CONTENT_SETTING_ASK,
-                  site_settings::SiteSettingSource::kDefault, 1U);
+  ValidateDefault(CONTENT_SETTING_ASK, "", 1U);
 
   // Set the default to 'Blocked'.
   base::Value::List set_args;
@@ -1293,8 +1305,19 @@ TEST_F(SiteSettingsHandlerTest, GetAndSetDefault) {
 
   // Verify that the default has been set to 'Blocked'.
   handler()->HandleGetDefaultValueForContentType(get_args);
-  ValidateDefault(CONTENT_SETTING_BLOCK,
-                  site_settings::SiteSettingSource::kDefault, 3U);
+  ValidateDefault(CONTENT_SETTING_BLOCK, "", 3U);
+}
+
+TEST_F(SiteSettingsHandlerTest, GetEnforcedDefault) {
+  ContentSettingSourceSetter source_setter(profile(),
+                                           ContentSettingsType::NOTIFICATIONS);
+  source_setter.SetPolicyDefault(CONTENT_SETTING_ALLOW);
+
+  base::Value::List get_args;
+  get_args.Append(kCallbackId);
+  get_args.Append(kNotifications);
+  handler()->HandleGetDefaultValueForContentType(get_args);
+  ValidateDefault(CONTENT_SETTING_ALLOW, "policy", 1U);
 }
 
 // Flaky on CrOS and Linux. https://crbug.com/930481
@@ -1528,6 +1551,76 @@ TEST_F(SiteSettingsHandlerTest, GetAllSites) {
   // to run at the end of the test.
   base::RunLoop run_loop;
   run_loop.RunUntilIdle();
+}
+
+TEST_F(SiteSettingsHandlerTest, GetAllSitesIncludesStorage) {
+  SetupModel();
+
+  base::Value::List get_all_sites_args;
+  get_all_sites_args.Append(kCallbackId);
+
+  // Test all sites is empty when there are no preferences.
+  handler()->HandleGetAllSites(get_all_sites_args);
+  EXPECT_EQ(1U, web_ui()->call_data().size());
+
+  // Add a couple of double-keyed exceptions and check that they appear for the
+  // primary (embedded) site using a representative URL.
+  HostContentSettingsMap* map =
+      HostContentSettingsMapFactory::GetForProfile(profile());
+
+  const GURL embedded_url("https://altostrat.com");
+  const GURL embedding_url1("https://examplepetstore.com");
+  const GURL embedding_url2("https://cymbalgroup.com");
+  map->SetContentSettingDefaultScope(embedded_url, embedding_url1,
+                                     ContentSettingsType::STORAGE_ACCESS,
+                                     CONTENT_SETTING_ALLOW);
+  map->SetContentSettingDefaultScope(embedded_url, embedding_url2,
+                                     ContentSettingsType::STORAGE_ACCESS,
+                                     CONTENT_SETTING_ALLOW);
+  handler()->HandleGetAllSites(get_all_sites_args);
+
+  {
+    const content::TestWebUI::CallData& data = *web_ui()->call_data().back();
+    EXPECT_EQ("cr.webUIResponse", data.function_name());
+    EXPECT_EQ(kCallbackId, data.arg1()->GetString());
+    ASSERT_TRUE(data.arg2()->GetBool());
+    const base::Value::List& site_groups = data.arg3()->GetList();
+    EXPECT_EQ(1UL, site_groups.size());
+    for (const base::Value& site_group_val : site_groups) {
+      const base::Value::Dict& site_group = site_group_val.GetDict();
+      const base::Value::List& origin_list =
+          CHECK_DEREF(site_group.FindList("origins"));
+      EXPECT_THAT(CHECK_DEREF(site_group.FindString("groupingKey")),
+                  IsEtldPlus1("altostrat.com"));
+      EXPECT_EQ(1UL, origin_list.size());
+    }
+  }
+
+  // Now remove the double-keyed exceptions using SetOriginPermissions and
+  // verify that the list is empty.
+  base::Value::List reset_args;
+  reset_args.Append(embedded_url.spec());
+  reset_args.Append(std::move(kStorageAccess));
+  reset_args.Append(
+      content_settings::ContentSettingToString(CONTENT_SETTING_DEFAULT));
+
+  handler()->HandleSetOriginPermissions(reset_args);
+
+  handler()->HandleGetAllSites(get_all_sites_args);
+
+  {
+    const content::TestWebUI::CallData& data = *web_ui()->call_data().back();
+    EXPECT_EQ("cr.webUIResponse", data.function_name());
+    EXPECT_EQ(kCallbackId, data.arg1()->GetString());
+    ASSERT_TRUE(data.arg2()->GetBool());
+    const base::Value::List& site_groups = data.arg3()->GetList();
+    EXPECT_EQ(0UL, site_groups.size());
+  }
+
+  // Each call to HandleGetAllSites() above added a callback to the profile's
+  // browsing_data::LocalStorageHelper, so make sure these aren't stuck waiting
+  // to run at the end of the test.
+  base::RunLoop().RunUntilIdle();
 }
 
 TEST_F(SiteSettingsHandlerTest, Cookies) {
@@ -2259,6 +2352,82 @@ TEST_F(SiteSettingsHandlerTest, NotificationPermissionRevokeUkm) {
             static_cast<int64_t>(permissions::PermissionAction::REVOKED));
 }
 
+TEST_F(SiteSettingsHandlerTest, IncrementsTrackingProtectionMetrics) {
+  constexpr char kOrigin[] = "https://www.test.com:443";
+  base::UserActionTester user_actions;
+
+  base::Value::List set_args;
+  set_args.Append(kOrigin);        // Primary pattern.
+  set_args.Append(std::string());  // Secondary pattern.
+  set_args.Append(kTrackingProtection);
+  set_args.Append(
+      content_settings::ContentSettingToString(CONTENT_SETTING_ALLOW));
+  set_args.Append(false);  // Incognito
+  handler()->HandleSetCategoryPermissionForPattern(set_args);
+  EXPECT_EQ(user_actions.GetActionCount(
+                "Settings.TrackingProtection.SiteExceptionAdded"),
+            1);
+
+  base::Value::List reset_args;
+  reset_args.Append(kOrigin);        // Primary pattern.
+  reset_args.Append(std::string());  // Secondary pattern.
+  reset_args.Append(kTrackingProtection);
+  reset_args.Append(false);  // Incognito
+  handler()->HandleResetCategoryPermissionForPattern(reset_args);
+  EXPECT_EQ(user_actions.GetActionCount(
+                "Settings.TrackingProtection.SiteExceptionRemoved"),
+            1);
+}
+
+class Reset3pcCategoryPermissionTest
+    : public SiteSettingsHandlerBaseTest,
+      public testing::WithParamInterface<bool> {
+ public:
+  Reset3pcCategoryPermissionTest() {
+    if (GetParam()) {
+      feature_list_.InitAndEnableFeature(
+          privacy_sandbox::kTrackingProtectionContentSettingInSettings);
+    }
+  }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+};
+
+INSTANTIATE_TEST_SUITE_P(All, Reset3pcCategoryPermissionTest, testing::Bool());
+
+TEST_P(Reset3pcCategoryPermissionTest,
+       RemovesTrackingProtectionExceptionsWhenFeatureIsOff) {
+  constexpr char kOrigin[] = "https://www.test.com:443";
+  base::Value::List set_args;
+  set_args.Append("*");        // Primary pattern.
+  set_args.Append(kOrigin);  // Secondary pattern.
+  set_args.Append(kTrackingProtection);
+  set_args.Append(
+      content_settings::ContentSettingToString(CONTENT_SETTING_ALLOW));
+  set_args.Append(false);  // Incognito
+  handler()->HandleSetCategoryPermissionForPattern(set_args);
+  // We should have 1 Tracking Protection exception
+  base::Value::List initial_exceptions;
+  site_settings::GetExceptionsForContentType(
+      ContentSettingsType::TRACKING_PROTECTION, profile(), web_ui(),
+      /*incognito=*/false, &initial_exceptions);
+  EXPECT_EQ(initial_exceptions.size(), 1U);
+
+  base::Value::List reset_args;
+  reset_args.Append("*");      // Primary pattern.
+  reset_args.Append(kOrigin);  // Secondary pattern.
+  reset_args.Append(kCookies);
+  reset_args.Append(false);  // Incognito
+  handler()->HandleResetCategoryPermissionForPattern(reset_args);
+  base::Value::List actual_exceptions;
+  site_settings::GetExceptionsForContentType(
+      ContentSettingsType::TRACKING_PROTECTION, profile(), web_ui(),
+      /*incognito=*/false, &actual_exceptions);
+  // The exception should only have been removed if the feature is off.
+  EXPECT_EQ(actual_exceptions.size(), GetParam() ? 1U : 0U);
+}
+
 // TODO(crbug.com/40688152): Test flakes on TSAN and ASAN.
 #if defined(THREAD_SANITIZER) || defined(ADDRESS_SANITIZER)
 #define MAYBE_DefaultSettingSource DISABLED_DefaultSettingSource
@@ -2382,6 +2551,64 @@ TEST_F(SiteSettingsHandlerTest, GetAndSetOriginPermissions) {
   ValidateOrigin(origin_with_port, origin_with_port, origin,
                  CONTENT_SETTING_ASK,
                  site_settings::SiteSettingSource::kDefault, 4U);
+}
+
+TEST_F(SiteSettingsHandlerTest, SetOriginPermissionsForStorageAccess) {
+  const GURL origin_a_with_port("https://www.example.com:443");
+  const GURL origin_b_with_port("https://www.examplepetstore.com:443");
+  // The display name won't show the port if it's default for that scheme.
+  const std::string origin_a_display_name("example.com");
+  const std::string origin_b_display_name("examplepetstore.com");
+  // The resulting pattern will be broadened to the scheme+eTLD+1 level.
+  const std::string origin_a_pattern("https://[*.]example.com");
+  const std::string origin_b_pattern("https://[*.]examplepetstore.com");
+
+  HostContentSettingsMap* map =
+      HostContentSettingsMapFactory::GetForProfile(profile());
+
+  // Allow storage access for this origin/embedding pair, in both directions.
+  // This is an unlikely scenario in practice but we want users to be able to
+  // clear an embedding relationship between two sites from either site.
+  map->SetContentSettingDefaultScope(origin_a_with_port, origin_b_with_port,
+                                     ContentSettingsType::STORAGE_ACCESS,
+                                     CONTENT_SETTING_ALLOW);
+  map->SetContentSettingDefaultScope(origin_b_with_port, origin_a_with_port,
+                                     ContentSettingsType::STORAGE_ACCESS,
+                                     CONTENT_SETTING_ALLOW);
+
+  base::Value::List get_exception_list_args;
+  get_exception_list_args.Append(kCallbackId);
+  get_exception_list_args.Append(
+      content_settings::ContentSettingToString(CONTENT_SETTING_ALLOW));
+  handler()->HandleGetStorageAccessExceptionList(get_exception_list_args);
+
+  // Verify that the group exception was created correctly.
+  ValidateStorageAccessList(/*expected_total_calls=*/3U,
+                            /*expected_num_groups=*/2U);
+
+  ValidateStorageAccessException(
+      origin_a_pattern, origin_a_display_name, CONTENT_SETTING_ALLOW,
+      {{origin_b_pattern, origin_b_display_name, /*incognito=*/false}},
+      /*index=*/0U);
+
+  ValidateStorageAccessException(
+      origin_b_pattern, origin_b_display_name, CONTENT_SETTING_ALLOW,
+      {{origin_a_pattern, origin_a_display_name, /*incognito=*/false}},
+      /*index=*/1U);
+
+  // Reset things to default for STORAGE_ACCESS on origin_a.
+  base::Value::List reset_args;
+  reset_args.Append(origin_a_with_port.spec());
+  reset_args.Append(std::move(kStorageAccess));
+  reset_args.Append(
+      content_settings::ContentSettingToString(CONTENT_SETTING_DEFAULT));
+  handler()->HandleSetOriginPermissions(reset_args);
+  EXPECT_EQ(5U, web_ui()->call_data().size());
+
+  // Verify that there are no storage access exceptions after resetting.
+  handler()->HandleGetStorageAccessExceptionList(get_exception_list_args);
+  ValidateStorageAccessList(/*expected_total_calls=*/6U,
+                            /*expected_num_groups=*/0U);
 }
 
 TEST_F(SiteSettingsHandlerTest, GetAndSetForInvalidURLs) {
@@ -2553,9 +2780,7 @@ TEST_F(SiteSettingsHandlerTest,
   base::Value::Dict exception = site_settings::GetExceptionForPage(
       ContentSettingsType::NOTIFICATIONS, /*profile=*/nullptr, pattern,
       ContentSettingsPattern::Wildcard(), pattern.ToString(),
-      CONTENT_SETTING_BLOCK,
-      site_settings::SiteSettingSourceToString(
-          site_settings::SiteSettingSource::kPreference),
+      CONTENT_SETTING_BLOCK, site_settings::SiteSettingSource::kPreference,
       /*expiration=*/base::Time::Now(), /*incognito=*/false);
 
   CHECK(exception.FindString(site_settings::kOrigin));
@@ -2919,9 +3144,10 @@ class SiteSettingsHandlerInfobarTest : public BrowserWithTestWindowTest {
   }
 
   void TearDown() override {
-    // SiteSettingsHandler maintains a HostZoomMap::Subscription internally, so
-    // make sure that's cleared before BrowserContext / profile destruction.
-    handler()->DisallowJavascript();
+    // SiteSettingsHandler maintains a HostZoomMap::Subscription internally and
+    // has a PrefChangeRegistrar that observes the profile's preference, so make
+    // sure that it's cleared before profile destruction.
+    handler_.reset();
 
     // Also destroy `browser2_` before the profile.
     browser2()->tab_strip_model()->CloseAllTabs();
@@ -3249,7 +3475,7 @@ TEST_F(SiteSettingsHandlerTest, ExcludeWebUISchemesInLists) {
                                              kWebUIOrigins[0].GetURL(),
                                              content_settings_type, &info);
   EXPECT_EQ(CONTENT_SETTING_ALLOW, value.GetInt());
-  EXPECT_EQ(content_settings::SETTING_SOURCE_ALLOWLIST, info.source);
+  EXPECT_EQ(content_settings::SettingSource::kAllowList, info.source);
 
   // Register an ordinary website permission.
   const GURL kWebUrl = GURL("https://example.com");
@@ -3814,8 +4040,8 @@ class PersistentPermissionsSiteSettingsHandlerTest
   }
 
  protected:
-  std::unique_ptr<SiteSettingsHandler> handler_;
   TestingProfile profile_;
+  std::unique_ptr<SiteSettingsHandler> handler_;
 
  private:
   base::test::ScopedFeatureList feature_list_;
@@ -4155,7 +4381,7 @@ class SiteSettingsHandlerChooserExceptionTest
   // Iterate through the exception's sites array and return true if a site
   // exception matches |requesting_origin| and |embedding_origin|.
   bool ChooserExceptionContainsSiteException(const base::Value::Dict& exception,
-                                             base::StringPiece origin) {
+                                             std::string_view origin) {
     const base::Value::List* sites = exception.FindList(site_settings::kSites);
     if (!sites)
       return false;
@@ -4176,8 +4402,8 @@ class SiteSettingsHandlerChooserExceptionTest
   // |origin|.
   bool ChooserExceptionContainsSiteException(
       const base::Value::List& exceptions,
-      base::StringPiece display_name,
-      base::StringPiece origin) {
+      std::string_view display_name,
+      std::string_view origin) {
     for (const auto& exception : exceptions) {
       const std::string* exception_display_name =
           exception.GetDict().FindString(site_settings::kDisplayName);
@@ -4271,7 +4497,7 @@ class SiteSettingsHandlerChooserExceptionTest
                                  GetDevicesFromVendor18D2DisplayName()));
         break;
       default:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
         break;
     }
 
@@ -4333,7 +4559,7 @@ class SiteSettingsHandlerChooserExceptionTest
                           GetUnknownProductDisplayName()));
           break;
         default:
-          NOTREACHED();
+          NOTREACHED_IN_MIGRATION();
           break;
       }
     }
@@ -4374,7 +4600,7 @@ class SiteSettingsHandlerChooserExceptionTest
                                    GetDevicesFromVendor18D2DisplayName()));
           break;
         default:
-          NOTREACHED();
+          NOTREACHED_IN_MIGRATION();
           break;
       }
     }
@@ -4433,7 +4659,7 @@ class SiteSettingsHandlerChooserExceptionTest
                                    GetDevicesFromVendor18D2DisplayName()));
           break;
         default:
-          NOTREACHED();
+          NOTREACHED_IN_MIGRATION();
           break;
       }
     }
@@ -4488,7 +4714,7 @@ class SiteSettingsHandlerChooserExceptionTest
                                    GetDevicesFromVendor18D2DisplayName()));
           break;
         default:
-          NOTREACHED();
+          NOTREACHED_IN_MIGRATION();
           break;
       }
 
@@ -4552,7 +4778,7 @@ class SiteSettingsHandlerChooserExceptionTest
                           GetUnknownProductDisplayName()));
           break;
         default:
-          NOTREACHED();
+          NOTREACHED_IN_MIGRATION();
           break;
       }
 
@@ -4620,7 +4846,7 @@ class SiteSettingsHandlerChooserExceptionTest
                                    GetUnknownProductDisplayName()));
           break;
         default:
-          NOTREACHED();
+          NOTREACHED_IN_MIGRATION();
           break;
       }
       EXPECT_FALSE(ChooserExceptionContainsSiteException(
@@ -4629,7 +4855,7 @@ class SiteSettingsHandlerChooserExceptionTest
   }
 
   void TestHandleSetOriginPermissions() {
-    constexpr base::StringPiece kYoutubeOriginStr = "https://youtube.com/";
+    constexpr std::string_view kYoutubeOriginStr = "https://youtube.com/";
     const GURL kYoutubeUrl{kYoutubeOriginStr};
     const auto kYoutubeOrigin = url::Origin::Create(kYoutubeUrl);
 
@@ -4663,7 +4889,7 @@ class SiteSettingsHandlerChooserExceptionTest
                           GetUnknownProductDisplayName()));
           break;
         default:
-          NOTREACHED();
+          NOTREACHED_IN_MIGRATION();
           break;
       }
       EXPECT_TRUE(ChooserExceptionContainsSiteException(
@@ -4707,7 +4933,7 @@ class SiteSettingsHandlerChooserExceptionTest
                                    GetUnknownProductDisplayName()));
           break;
         default:
-          NOTREACHED();
+          NOTREACHED_IN_MIGRATION();
           break;
       }
       EXPECT_FALSE(ChooserExceptionContainsSiteException(
@@ -4745,7 +4971,7 @@ class SiteSettingsHandlerChooserExceptionTest
                                    GetUnknownProductDisplayName()));
           break;
         default:
-          NOTREACHED();
+          NOTREACHED_IN_MIGRATION();
           break;
       }
     }
@@ -4782,7 +5008,7 @@ class SiteSettingsHandlerChooserExceptionTest
                                    GetUnknownProductDisplayName()));
           break;
         default:
-          NOTREACHED();
+          NOTREACHED_IN_MIGRATION();
           break;
       }
     }
@@ -6138,16 +6364,16 @@ TEST_F(SiteSettingsHandlerTest, HandleClearPartitionedUsage) {
       expected_browsing_data_model_entries);
 }
 
-TEST_F(SiteSettingsHandlerTest, HandleGetFpsMembershipLabel) {
+TEST_F(SiteSettingsHandlerTest, HandleGetRwsMembershipLabel) {
   base::Value::List args;
-  args.Append("getFpsMembershipLabel");
+  args.Append("getRwsMembershipLabel");
   args.Append(5);
   args.Append("google.com");
-  handler()->HandleGetFpsMembershipLabel(args);
+  handler()->HandleGetRwsMembershipLabel(args);
   const content::TestWebUI::CallData& data = *web_ui()->call_data().back();
 
   EXPECT_EQ("cr.webUIResponse", data.function_name());
-  EXPECT_EQ("getFpsMembershipLabel", data.arg1()->GetString());
+  EXPECT_EQ("getRwsMembershipLabel", data.arg1()->GetString());
   ASSERT_TRUE(data.arg2()->GetBool());
   EXPECT_EQ("5 sites in google.com's group", data.arg3()->GetString());
 }
@@ -6169,7 +6395,7 @@ TEST_F(SiteSettingsHandlerTest, HandleGetFormattedBytes) {
 }
 
 TEST_F(SiteSettingsHandlerTest, HandleGetUsageInfo) {
-  SetupDefaultFirstPartySets(mock_privacy_sandbox_service());
+  SetupDefaultRelatedWebsiteSets(mock_privacy_sandbox_service());
 
   EXPECT_CALL(*mock_privacy_sandbox_service(), IsPartOfManagedFirstPartySet(_))
       .Times(1)
@@ -6223,8 +6449,8 @@ TEST_F(SiteSettingsHandlerTest, HandleGetUsageInfo) {
   ValidateUsageInfo("http://ungrouped.com//", "", "1 cookie", "", false);
 }
 
-TEST_F(SiteSettingsHandlerTest, FirstPartySetsMembership) {
-  SetupDefaultFirstPartySets(mock_privacy_sandbox_service());
+TEST_F(SiteSettingsHandlerTest, RelatedWebsiteSetsMembership) {
+  SetupDefaultRelatedWebsiteSets(mock_privacy_sandbox_service());
 
   EXPECT_CALL(*mock_privacy_sandbox_service(), IsPartOfManagedFirstPartySet(_))
       .Times(2)
@@ -6250,9 +6476,9 @@ TEST_F(SiteSettingsHandlerTest, FirstPartySetsMembership) {
   const base::Value::List& storage_and_cookie_list = data.arg2()->GetList();
   EXPECT_EQ(4U, storage_and_cookie_list.size());
 
-  auto first_party_sets = GetTestFirstPartySets();
+  auto related_website_sets = GetTestRelatedWebsiteSets();
 
-  ValidateSitesWithFps(storage_and_cookie_list, first_party_sets);
+  ValidateSitesWithRws(storage_and_cookie_list, related_website_sets);
 }
 
 TEST_F(SiteSettingsHandlerTest, IsolatedWebAppUsageInfo) {
@@ -6269,7 +6495,7 @@ TEST_F(SiteSettingsHandlerTest, IsolatedWebAppUsageInfo) {
   ValidateUsageInfo(
       /*expected_usage_host=*/iwa_url, /*expected_usage_string=*/"1,000 B",
       /*expected_cookie_string=*/"",
-      /*expected_fps_member_count_string=*/"", /*expected_fps_policy=*/false);
+      /*expected_rws_member_count_string=*/"", /*expected_rws_policy=*/false);
 }
 
 TEST_F(SiteSettingsHandlerTest, IsolatedWebAppClearSiteGroupDataAndCookies) {
@@ -6323,7 +6549,7 @@ TEST_F(SiteSettingsHandlerTest, IsolatedWebAppClearUnpartitionedUsage) {
       /*expected_usage_origin=*/iwa_url.spec(),
       /*expected_usage_string=*/"1,000 B",
       /*expected_cookie_string=*/"",
-      /*expected_fps_member_count_string=*/"", /*expected_fps_policy=*/false);
+      /*expected_rws_member_count_string=*/"", /*expected_rws_policy=*/false);
 
   base::Value::List clear_args;
   clear_args.Append(iwa_url.spec());
@@ -6336,7 +6562,86 @@ TEST_F(SiteSettingsHandlerTest, IsolatedWebAppClearUnpartitionedUsage) {
       /*expected_usage_origin=*/iwa_url.spec(),
       /*expected_usage_string=*/"",
       /*expected_cookie_string=*/"",
-      /*expected_fps_member_count_string=*/"", /*expected_fps_policy=*/false);
+      /*expected_rws_member_count_string=*/"", /*expected_rws_policy=*/false);
 }
+
+#if BUILDFLAG(IS_CHROMEOS)
+class SiteSettingsGlobalPermissionTest
+    : public SiteSettingsHandlerBaseTest,
+      public testing::WithParamInterface<std::tuple<bool, bool, bool>> {
+ protected:
+  bool CamBlocked() const { return std::get<0>(GetParam()); }
+  bool MicBlocked() const { return std::get<1>(GetParam()); }
+  bool GeoBlocked() const { return std::get<2>(GetParam()); }
+};
+
+TEST_P(SiteSettingsGlobalPermissionTest, GetSystemDeniedPermissions) {
+  system_permission_settings::ScopedSettingsForTesting cam_settings(
+      ContentSettingsType::MEDIASTREAM_CAMERA, CamBlocked());
+  system_permission_settings::ScopedSettingsForTesting mic_settings(
+      ContentSettingsType::MEDIASTREAM_MIC, MicBlocked());
+  system_permission_settings::ScopedSettingsForTesting geo_settings(
+      ContentSettingsType::GEOLOCATION, GeoBlocked());
+
+  base::Value::List args;
+  args.Append(kCallbackId);
+  handler()->HandleGetSystemDeniedPermissions(args);
+  EXPECT_LT(0u, CHECK_DEREF(web_ui()).call_data().size());
+  const auto& call_data = *(CHECK_DEREF(web_ui()).call_data().back());
+  EXPECT_EQ(3u, call_data.args().size());
+  EXPECT_EQ(base::Value(kCallbackId), CHECK_DEREF(call_data.arg1()));
+  EXPECT_EQ(base::Value(true), CHECK_DEREF(call_data.arg2()));
+
+  base::Value::List expected_result;
+  if (CamBlocked()) {
+    expected_result.Append("media-stream-camera");
+  }
+  if (MicBlocked()) {
+    expected_result.Append("media-stream-mic");
+  }
+  if (GeoBlocked()) {
+    expected_result.Append("location");
+  }
+
+  EXPECT_EQ(expected_result, CHECK_DEREF(call_data.arg3()));
+}
+
+INSTANTIATE_TEST_SUITE_P(All,
+                         SiteSettingsGlobalPermissionTest,
+                         testing::Combine(testing::Bool(),
+                                          testing::Bool(),
+                                          testing::Bool()));
+
+class SiteSettingsOpenSystemSettingsTest
+    : public SiteSettingsHandlerBaseTest,
+      public testing::WithParamInterface<ContentSettingsType> {
+ public:
+  SiteSettingsOpenSystemSettingsTest() {
+    system_permission_settings::SetInstanceForTesting(&mock_platform_handle);
+  }
+  ~SiteSettingsOpenSystemSettingsTest() {
+    system_permission_settings::SetInstanceForTesting(nullptr);
+  }
+
+  ContentSettingsType PermissionType() const { return GetParam(); }
+
+  NiceMock<system_permission_settings::MockPlatformHandle> mock_platform_handle;
+};
+
+TEST_P(SiteSettingsOpenSystemSettingsTest, OpenSystemSettings) {
+  base::Value permission_type(
+      site_settings::ContentSettingsTypeToGroupName(PermissionType()));
+  auto args = base::Value::List().Append(std::move(permission_type));
+  EXPECT_CALL(mock_platform_handle, OpenSystemSettings(_, PermissionType()));
+  handler()->HandleOpenSystemPermissionSettings(args);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    All,
+    SiteSettingsOpenSystemSettingsTest,
+    testing::Values(ContentSettingsType::MEDIASTREAM_CAMERA,
+                    ContentSettingsType::MEDIASTREAM_MIC,
+                    ContentSettingsType::GEOLOCATION));
+#endif
 
 }  // namespace settings

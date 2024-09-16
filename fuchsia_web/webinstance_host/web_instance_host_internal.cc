@@ -40,7 +40,7 @@ namespace {
 // Returns true if DRM is supported in current configuration. Currently we
 // assume that it is supported on ARM64, but not on x64.
 //
-// TODO(crbug.com/1013412): Detect support for all features required for
+// TODO(crbug.com/42050020): Detect support for all features required for
 // FuchsiaCdm. Specifically we need to verify that protected memory is supported
 // and that mediacodec API provides hardware video decoders.
 bool IsFuchsiaCdmSupported() {
@@ -191,7 +191,7 @@ void HandleDisableCodeGenerationParam(
   // Blink.
   AppendToSwitch(kJavaScriptFlags, kV8JitlessFlag, launch_args);
 
-  // TODO(crbug.com/1290907): Disable use of VmexResource in this case, once
+  // TODO(crbug.com/42050417): Disable use of VmexResource in this case, once
   // migrated off of ambient VMEX.
 }
 

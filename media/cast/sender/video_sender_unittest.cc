@@ -35,9 +35,9 @@
 #include "media/video/fake_video_encode_accelerator.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/openscreen/src/cast/streaming/capture_recommendations.h"
-#include "third_party/openscreen/src/cast/streaming/environment.h"
-#include "third_party/openscreen/src/cast/streaming/sender.h"
+#include "third_party/openscreen/src/cast/streaming/public/capture_recommendations.h"
+#include "third_party/openscreen/src/cast/streaming/public/environment.h"
+#include "third_party/openscreen/src/cast/streaming/public/sender.h"
 #include "third_party/openscreen/src/cast/streaming/sender_packet_router.h"
 #include "third_party/openscreen/src/platform/api/time.h"
 
@@ -190,7 +190,7 @@ TEST_F(VideoSenderTest, ExternalEncoder) {
   InitEncoder(true, true);
   ASSERT_EQ(STATUS_INITIALIZED, operational_status_);
 
-  // The SizeAdaptableExternalVideoEncoder initally reports STATUS_INITIALIZED
+  // The SizeAdaptableExternalVideoEncoder initially reports STATUS_INITIALIZED
   // so that frames will be sent to it.  Therefore, no encoder activity should
   // have occurred at this point.  Send a frame to spurn creation of the
   // underlying ExternalVideoEncoder instance.
@@ -228,7 +228,7 @@ TEST_F(VideoSenderTest, ExternalEncoder) {
 TEST_F(VideoSenderTest, ExternalEncoderInitFails) {
   InitEncoder(true, false);
 
-  // The SizeAdaptableExternalVideoEncoder initally reports STATUS_INITIALIZED
+  // The SizeAdaptableExternalVideoEncoder initially reports STATUS_INITIALIZED
   // so that frames will be sent to it.  Send a frame to spurn creation of the
   // underlying ExternalVideoEncoder instance, which should result in failure.
   if (operational_status_ == STATUS_INITIALIZED ||

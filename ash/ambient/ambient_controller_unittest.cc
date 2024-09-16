@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "ash/ambient/ambient_constants.h"
@@ -198,8 +199,6 @@ class AmbientControllerTest : public AmbientAshTestBase {
   void SetUp() override {
     std::vector<base::test::FeatureRef> features_to_enable =
         personalization_app::GetTimeOfDayEnabledFeatures();
-    features_to_enable.emplace_back(features::kTimeOfDayDlc);
-    features_to_enable.emplace_back(features::kAmbientModeThrottleAnimation);
     feature_list_.InitWithFeatures(features_to_enable, {});
     AmbientAshTestBase::SetUp();
     GetSessionControllerClient()->set_show_lock_screen_views(true);
@@ -873,7 +872,7 @@ TEST_F(AmbientControllerTest, ShouldResetLockScreenInactivityTimerOnEvent) {
   // not hooked up to `UserActivityDetector` in this test environment, so
   // manually trigger `UserActivityDetector` ourselves.
   auto* user_activity_detector = ui::UserActivityDetector::Get();
-  ui::KeyEvent event(ui::ET_KEY_PRESSED, ui::VKEY_A, ui::EF_NONE);
+  ui::KeyEvent event(ui::EventType::kKeyPressed, ui::VKEY_A, ui::EF_NONE);
   user_activity_detector->DidProcessEvent(&event);
   EXPECT_EQ(AmbientUiVisibility::kShouldShow, ambient_ui_model->ui_visibility())
       << "Still shown because waiting for `OnKeyEvent` to be called";
@@ -1645,8 +1644,9 @@ TEST_F(AmbientControllerTest,
   ambient_controller()->SetUiVisibilityPreview();
   EXPECT_TRUE(ambient_controller()->ShouldShowAmbientUi());
 
-  ui::MouseEvent mouse_event(ui::ET_MOUSE_RELEASED, gfx::Point(), gfx::Point(),
-                             base::TimeTicks(), ui::EF_NONE, ui::EF_NONE);
+  ui::MouseEvent mouse_event(ui::EventType::kMouseReleased, gfx::Point(),
+                             gfx::Point(), base::TimeTicks(), ui::EF_NONE,
+                             ui::EF_NONE);
   ui::UserActivityDetector::Get()->DidProcessEvent(&mouse_event);
   FastForwardTiny();
 
@@ -1729,31 +1729,6 @@ TEST_F(AmbientControllerTest, ShouldDismissScreenSaverPreviewOnTouch) {
   GetEventGenerator()->PressTouch();
   GetEventGenerator()->ReleaseTouch();
   EXPECT_FALSE(ambient_controller()->ShouldShowAmbientUi());
-}
-
-TEST_F(AmbientControllerTest, InstallsVideoDlcInBackground) {
-  task_environment()->FastForwardBy(kAmbientDlcBackgroundInstallMinDelay * 2);
-  ASSERT_FALSE(ambient_controller()->ShouldShowAmbientUi());
-  base::test::TestFuture<const std::string&, const dlcservice::DlcsWithContent&>
-      future;
-  dlcservice_client_.GetExistingDlcs(future.GetCallback());
-  ASSERT_EQ(future.Get<0>(), dlcservice::kErrorNone);
-  EXPECT_THAT(future.Get<1>().dlc_infos(),
-              testing::Contains(HasVideoDlcPackageId()));
-}
-
-TEST_F(AmbientControllerTest, DoesNotInstallVideoDlcInBackground) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitWithFeatures(/*enabled_features=*/{},
-                                       {features::kTimeOfDayDlc});
-  task_environment()->FastForwardBy(kAmbientDlcBackgroundInstallMinDelay * 2);
-  ASSERT_FALSE(ambient_controller()->ShouldShowAmbientUi());
-  base::test::TestFuture<const std::string&, const dlcservice::DlcsWithContent&>
-      future;
-  dlcservice_client_.GetExistingDlcs(future.GetCallback());
-  ASSERT_EQ(future.Get<0>(), dlcservice::kErrorNone);
-  EXPECT_THAT(future.Get<1>().dlc_infos(),
-              testing::Not(testing::Contains(HasVideoDlcPackageId())));
 }
 
 class AmbientControllerForManagedScreensaverTest : public AmbientAshTestBase {

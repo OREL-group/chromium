@@ -18,10 +18,11 @@ class Insets;
 
 namespace views {
 
+class BoxLayoutFlexSpecification;
 class DialogDelegate;
 class FlexSpecification;
 class HighlightPathGenerator;
-class BoxLayoutFlexSpecification;
+class Widget;
 
 // The hit test component (e.g. HTCLIENT) for a View in a window frame. Defaults
 // to HTNOWHERE.
@@ -48,6 +49,15 @@ VIEWS_EXPORT extern const ui::ClassProperty<gfx::Insets*>* const
 // enable the bubble's contents to be included in the focus order.
 VIEWS_EXPORT extern const ui::ClassProperty<DialogDelegate*>* const
     kAnchoredDialogKey;
+
+// A property to store the anchor widget used for anchoring a bubble dialog
+// to this view. If unset, the anchor widget is this view's containing widget.
+//
+// This is useful in macOS fullscreen where a sub views tree is moved to a
+// separate overlay widget that has a higher z-order level. We anchor the bubble
+// to the overlay widget to prevent the bubble from being occluded.
+VIEWS_EXPORT extern const ui::ClassProperty<Widget*>* const
+    kWidgetForAnchoringKey;
 
 // A property to store how a view should flex when placed in a layout.
 // Only supported by BoxLayout.
@@ -79,15 +89,11 @@ VIEWS_EXPORT extern const ui::ClassProperty<LayoutAlignment*>* const
     kTableVertAlignKey;
 
 // Property indicating whether a view should be ignored by a layout. Supported
-// by View::DefaultFillLayout and BoxLayout.
+// by View::DefaultFillLayout, BoxLayout, and all LayoutManagerBase-derived
+// layouts including FlexLayout.
 // TODO(kylixrd): Use for other layouts.
 VIEWS_EXPORT extern const ui::ClassProperty<bool>* const
     kViewIgnoredByLayoutKey;
-
-// A decorative view, e.g. FocusRing, is a view that logically attaches to other
-// views and decorates them. It manages its own visibility and layout and does
-// not participate in its container's layout.
-VIEWS_EXPORT extern const ui::ClassProperty<bool>* const kIsDecorativeViewKey;
 
 // Tag for the view associated with ui::ElementTracker.
 VIEWS_EXPORT extern const ui::ClassProperty<ui::ElementIdentifier>* const
@@ -109,5 +115,7 @@ DECLARE_EXPORTED_UI_CLASS_PROPERTY_TYPE(VIEWS_EXPORT, views::LayoutAlignment*)
 DECLARE_EXPORTED_UI_CLASS_PROPERTY_TYPE(VIEWS_EXPORT, gfx::Size*)
 DECLARE_EXPORTED_UI_CLASS_PROPERTY_TYPE(VIEWS_EXPORT, ui::ElementIdentifier)
 DECLARE_EXPORTED_UI_CLASS_PROPERTY_TYPE(VIEWS_EXPORT, bool)
+DECLARE_EXPORTED_UI_CLASS_PROPERTY_TYPE(VIEWS_EXPORT, views::View*)
+DECLARE_EXPORTED_UI_CLASS_PROPERTY_TYPE(VIEWS_EXPORT, views::Widget*)
 
 #endif  // UI_VIEWS_VIEW_CLASS_PROPERTIES_H_

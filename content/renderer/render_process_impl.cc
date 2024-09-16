@@ -97,10 +97,11 @@ GetThreadPoolInitParams() {
 
 #if BUILDFLAG(DCHECK_IS_CONFIGURABLE)
 void V8DcheckCallbackHandler(const char* file, int line, const char* message) {
-  // TODO(siggi): Set a crash key or a breadcrumb so the fact that we hit a
-  //     V8 DCHECK gets out in the crash report.
-  ::logging::LogMessage(file, line, logging::LOGGING_DCHECK).stream()
-      << message;
+  // Only file/line are used from base::Location::Current() inside DCHECKs right
+  // now so this should correctly pretend to be the original v8 point of
+  // failure.
+  ::logging::CheckError::DCheck(message,
+                                base::Location::Current("", file, line));
 }
 #endif  // BUILDFLAG(DCHECK_IS_CONFIGURABLE)
 
@@ -150,10 +151,6 @@ RenderProcessImpl::RenderProcessImpl()
   SetV8FlagIfFeature(features::kJavaScriptExperimentalSharedMemory,
                      "--shared-string-table --harmony-struct");
 
-  SetV8FlagIfOverridden(features::kJavaScriptArrayGrouping,
-                        "--harmony-array-grouping",
-                        "--no-harmony-array-grouping");
-
   SetV8FlagIfOverridden(features::kV8VmFuture, "--future", "--no-future");
 
   SetV8FlagIfOverridden(features::kWebAssemblyBaseline, "--liftoff",
@@ -169,15 +166,19 @@ RenderProcessImpl::RenderProcessImpl()
                         "--wasm-lazy-compilation",
                         "--no-wasm-lazy-compilation");
 
+  SetV8FlagIfOverridden(features::kWebAssemblyMemory64,
+                        "--experimental-wasm-memory64",
+                        "--no-experimental-wasm-memory64");
+
   SetV8FlagIfOverridden(features::kWebAssemblyTiering, "--wasm-tier-up",
                         "--no-wasm-tier-up");
 
   SetV8FlagIfOverridden(features::kWebAssemblyDynamicTiering,
                         "--wasm-dynamic-tiering", "--no-wasm-dynamic-tiering");
 
-  constexpr char kImportAssertionsFlag[] = "--harmony-import-assertions";
-  v8::V8::SetFlagsFromString(kImportAssertionsFlag,
-                             sizeof(kImportAssertionsFlag));
+  SetV8FlagIfOverridden(blink::features::kWebAssemblyJSStringBuiltins,
+                        "--experimental-wasm-imported-strings",
+                        "--no-experimental-wasm-imported-strings");
 
   bool enable_shared_array_buffer_unconditionally =
       base::FeatureList::IsEnabled(features::kSharedArrayBuffer);
@@ -228,11 +229,11 @@ std::unique_ptr<RenderProcess> RenderProcessImpl::Create() {
 }
 
 void RenderProcessImpl::AddRefProcess() {
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 void RenderProcessImpl::ReleaseProcess() {
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 }  // namespace content

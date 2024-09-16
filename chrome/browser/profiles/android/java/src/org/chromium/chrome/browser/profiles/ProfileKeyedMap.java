@@ -12,7 +12,9 @@ import org.chromium.base.lifetime.Destroyable;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 
@@ -110,6 +112,10 @@ public class ProfileKeyedMap<T> {
     public T getForProfile(Profile profile, Function<Profile, T> factory) {
         profile = getProfileToUse(profile, mProfileSelection);
 
+        // TODO(365814339): Convert to checked exception once all callsites are fixed.
+        assert !profile.shutdownStarted()
+                : "Attempting to access profile keyed data on destroyed Profile";
+
         T obj = mData.get(profile);
         if (obj == null) {
             obj = factory.apply(profile);
@@ -148,5 +154,13 @@ public class ProfileKeyedMap<T> {
     /** @return The number of Profile -> obj mappings that exist. */
     public int size() {
         return mData.size();
+    }
+
+    /**
+     * Return the list of {@link Profile}s that have be used in a successful call to {@link
+     * #getForProfile(Profile, Function)} on this map.
+     */
+    public List<Profile> getTrackedProfiles() {
+        return new ArrayList<>(mData.keySet());
     }
 }

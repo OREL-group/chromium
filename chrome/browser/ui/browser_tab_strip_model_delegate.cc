@@ -9,6 +9,7 @@
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "build/build_config.h"
 #include "chrome/browser/lifetime/browser_shutdown.h"
 #include "chrome/browser/profiles/profile.h"
@@ -24,7 +25,9 @@
 #include "chrome/browser/ui/tab_helpers.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_keyed_service.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_service_factory.h"
+#include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
 #include "chrome/browser/ui/tabs/tab_group.h"
+#include "chrome/browser/ui/tabs/tab_group_deletion_dialog_controller.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/tabs/tab_menu_model_delegate.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -199,15 +202,55 @@ void BrowserTabStripModelDelegate::CreateHistoricalGroup(
     service->CreateHistoricalGroup(
         BrowserLiveTabContext::FindContextWithGroup(group, browser_->profile()),
         group);
+  }
+}
 
-    tab_groups::SavedTabGroupKeyedService* saved_tab_group_service =
-        tab_groups::SavedTabGroupServiceFactory::GetForProfile(
-            browser_->profile());
-    CHECK(saved_tab_group_service);
+void BrowserTabStripModelDelegate::GroupAdded(
+    const tab_groups::TabGroupId& group) {
+  if (tab_groups::IsTabGroupSyncServiceDesktopMigrationEnabled()) {
+    return;
+  }
 
-    if (saved_tab_group_service->model()->Contains(group)) {
-      saved_tab_group_service->DisconnectLocalTabGroup(group);
-    }
+  if (!tab_groups::IsTabGroupsSaveV2Enabled()) {
+    return;
+  }
+
+  tab_groups::SavedTabGroupKeyedService* saved_tab_group_service =
+      tab_groups::SavedTabGroupServiceFactory::GetForProfile(
+          browser_->profile());
+  if (!saved_tab_group_service) {
+    return;
+  }
+
+  if (saved_tab_group_service->model()->Contains(group)) {
+    return;
+  }
+
+  saved_tab_group_service->SaveGroup(
+      group,
+      /*is_pinned=*/tab_groups::SavedTabGroupUtils::ShouldAutoPinNewTabGroups(
+          browser_->profile()));
+}
+
+void BrowserTabStripModelDelegate::WillCloseGroup(
+    const tab_groups::TabGroupId& group) {
+  // First the saved group must be stored in tab restore so that it keeps the
+  // SavedTabGroup/TabIDs
+  CreateHistoricalGroup(group);
+
+  if (tab_groups::IsTabGroupSyncServiceDesktopMigrationEnabled()) {
+    return;
+  }
+
+  // When closing, the group should stay available in revisit UIs so disconnect
+  // the group to prevent deletion.
+  tab_groups::SavedTabGroupKeyedService* saved_tab_group_service =
+      tab_groups::SavedTabGroupServiceFactory::GetForProfile(
+          browser_->profile());
+
+  if (saved_tab_group_service &&
+      saved_tab_group_service->model()->Contains(group)) {
+    saved_tab_group_service->DisconnectLocalTabGroup(group);
   }
 }
 
@@ -260,22 +303,12 @@ bool BrowserTabStripModelDelegate::SupportsReadLater() {
   return !browser_->profile()->IsGuestSession() && !IsForWebApp();
 }
 
-void BrowserTabStripModelDelegate::FollowSite(
-    content::WebContents* web_contents) {
-  chrome::FollowSite(web_contents);
-}
-
-void BrowserTabStripModelDelegate::UnfollowSite(
-    content::WebContents* web_contents) {
-  chrome::UnfollowSite(web_contents);
-}
-
 bool BrowserTabStripModelDelegate::IsForWebApp() {
   return web_app::AppBrowserController::IsWebApp(browser_);
 }
 
 void BrowserTabStripModelDelegate::CopyURL(content::WebContents* web_contents) {
-  chrome::CopyURL(web_contents);
+  chrome::CopyURL(browser_, web_contents);
 }
 
 void BrowserTabStripModelDelegate::GoBack(content::WebContents* web_contents) {
@@ -289,6 +322,29 @@ bool BrowserTabStripModelDelegate::CanGoBack(
 
 bool BrowserTabStripModelDelegate::IsNormalWindow() {
   return browser_->is_type_normal();
+}
+
+BrowserWindowInterface*
+BrowserTabStripModelDelegate::GetBrowserWindowInterface() {
+  return browser_;
+}
+
+void BrowserTabStripModelDelegate::OnGroupsDestruction(
+    const std::vector<tab_groups::TabGroupId>& group_ids,
+    base::OnceCallback<void()> callback) {
+  tab_groups::SavedTabGroupUtils::MaybeShowSavedTabGroupDeletionDialog(
+      browser_,
+      tab_groups::DeletionDialogController::DialogType::CloseTabAndDelete,
+      group_ids, std::move(callback));
+}
+
+void BrowserTabStripModelDelegate::OnRemovingAllTabsFromGroups(
+    const std::vector<tab_groups::TabGroupId>& group_ids,
+    base::OnceCallback<void()> callback) {
+  tab_groups::SavedTabGroupUtils::MaybeShowSavedTabGroupDeletionDialog(
+      browser_,
+      tab_groups::DeletionDialogController::DialogType::RemoveTabAndDelete,
+      group_ids, std::move(callback));
 }
 
 ////////////////////////////////////////////////////////////////////////////////

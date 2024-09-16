@@ -4,23 +4,27 @@
 
 #include "services/network/cors/cors_url_loader_factory.h"
 
+#include <optional>
 #include <utility>
 
 #include "base/debug/crash_logging.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
-#include "base/metrics/histogram_functions.h"
+#include "base/metrics/histogram_macros.h"
+#include "base/time/time.h"
+#include "base/timer/elapsed_timer.h"
 #include "base/trace_event/typed_macros.h"
 #include "base/types/optional_util.h"
 #include "mojo/public/cpp/bindings/message.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "net/base/load_flags.h"
-#include "net/extras/shared_dictionary/shared_dictionary_isolation_key.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_util.h"
+#include "net/shared_dictionary/shared_dictionary_isolation_key.h"
 #include "services/network/cors/cors_url_loader.h"
 #include "services/network/cors/preflight_controller.h"
 #include "services/network/network_service.h"
+#include "services/network/prefetch_matching_url_loader_factory.h"
 #include "services/network/private_network_access_checker.h"
 #include "services/network/public/cpp/cors/cors.h"
 #include "services/network/public/cpp/features.h"
@@ -70,7 +74,7 @@ bool VerifyTrustTokenParamsIntegrityIfPresent(
     return false;
   }
 
-  // TODO(crbug.com/1145346): There's no current way to get a trusted
+  // TODO(crbug.com/40729410): There's no current way to get a trusted
   // browser-side view of whether a request "came from" a secure context, so we
   // don't implement a check for the second criterion in the function comment.
 
@@ -117,7 +121,7 @@ bool IsTrustedNavigationRequestFromSecureContext(
   }
 
   // `client_security_state` is not set for top-level navigation requests.
-  // TODO(crbug.com/1129326): Remove this when we set it for top-level
+  // TODO(crbug.com/40149351): Remove this when we set it for top-level
   // navigation requests.
   if (!request.trusted_params->client_security_state) {
     return IsUrlPotentiallyTrustworthy(request.url);
@@ -206,7 +210,8 @@ CorsURLLoaderFactory::CorsURLLoaderFactory(
     mojom::URLLoaderFactoryParamsPtr params,
     scoped_refptr<ResourceSchedulerClient> resource_scheduler_client,
     mojo::PendingReceiver<mojom::URLLoaderFactory> receiver,
-    const OriginAccessList* origin_access_list)
+    const OriginAccessList* origin_access_list,
+    PrefetchMatchingURLLoaderFactory* owner)
     : context_(context),
       is_trusted_(params->is_trusted),
       disable_web_security_(params->disable_web_security),
@@ -231,7 +236,8 @@ CorsURLLoaderFactory::CorsURLLoaderFactory(
           std::move(params->shared_dictionary_observer)),
       require_cross_site_request_for_cookies_(
           params->require_cross_site_request_for_cookies),
-      origin_access_list_(origin_access_list) {
+      origin_access_list_(origin_access_list),
+      owner_(owner) {
   TRACE_EVENT("loading", "CorsURLLoaderFactory::CorsURLLoaderFactory",
               perfetto::Flow::FromPointer(this));
   DCHECK(context_);
@@ -268,7 +274,9 @@ CorsURLLoaderFactory::CorsURLLoaderFactory(
     network_loader_factory_ = std::move(network_loader_factory);
   }
 
-  receivers_.Add(this, std::move(receiver));
+  if (receiver.is_valid()) {
+    receivers_.Add(this, std::move(receiver));
+  }
   receivers_.set_disconnect_handler(base::BindRepeating(
       &CorsURLLoaderFactory::DeleteIfNeeded, base::Unretained(this)));
 }
@@ -328,13 +336,16 @@ void CorsURLLoaderFactory::CreateLoaderAndStart(
     const net::MutableNetworkTrafficAnnotationTag& traffic_annotation) {
   TRACE_EVENT("loading", "CorsURLLoaderFactory::CreateLoaderAndStart",
               perfetto::Flow::FromPointer(this));
-#if BUILDFLAG(IS_ANDROID)
-  // Use pseudo flag to investigate histogram issue.
-  // See https://crbug.com/1439721.
-  const bool observed = true;
-  base::UmaHistogramBoolean("NetworkService.CorsURLLoaderFactoryStart",
-                            observed);
-#endif
+
+  std::optional<base::ElapsedTimer> timer;
+  std::optional<base::ElapsedThreadTimer> thread_timer;
+
+  if (metrics_subsampler_.ShouldSample(0.001)) {
+    timer.emplace();
+    if (base::ThreadTicks::IsSupported()) {
+      thread_timer.emplace();
+    }
+  }
 
   debug::ScopedResourceRequestCrashKeys request_crash_keys(resource_request);
   SCOPED_CRASH_KEY_NUMBER("net", "traffic_annotation_hash",
@@ -395,8 +406,12 @@ void CorsURLLoaderFactory::CreateLoaderAndStart(
   }
 
   if (!disable_web_security_) {
-    mojo::PendingRemote<mojom::DevToolsObserver> devtools_observer =
-        GetDevToolsObserver(resource_request);
+    mojo::PendingRemote<mojom::DevToolsObserver> devtools_observer;
+    const bool always_clone = !base::FeatureList::IsEnabled(
+        network::features::kCloneDevToolsConnectionOnlyIfRequested);
+    if (always_clone || resource_request.devtools_request_id.has_value()) {
+      devtools_observer = GetDevToolsObserver(resource_request);
+    }
 
     scoped_refptr<SharedDictionaryStorage> shared_dictionary_storage =
         shared_dictionary_storage_;
@@ -461,6 +476,19 @@ void CorsURLLoaderFactory::CreateLoaderAndStart(
         std::move(receiver), request_id, options, resource_request,
         std::move(client), traffic_annotation);
   }
+
+  if (timer.has_value()) {
+    UMA_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES(
+        "NetworkService.CorsURLLoaderFactory.CreateLoaderAndStart2.Duration",
+        timer->Elapsed(), base::Microseconds(1), base::Milliseconds(16), 100);
+  }
+  if (thread_timer.has_value()) {
+    UMA_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES(
+        "NetworkService.CorsURLLoaderFactory.CreateLoaderAndStart2."
+        "ThreadDuration",
+        thread_timer->Elapsed(), base::Microseconds(1), base::Milliseconds(16),
+        100);
+  }
 }
 
 void CorsURLLoaderFactory::Clone(
@@ -475,8 +503,9 @@ void CorsURLLoaderFactory::ClearBindings() {
 }
 
 void CorsURLLoaderFactory::DeleteIfNeeded() {
-  if (receivers_.empty() && url_loaders_.empty() && cors_url_loaders_.empty()) {
-    context_->DestroyURLLoaderFactory(this);
+  if (receivers_.empty() && url_loaders_.empty() && cors_url_loaders_.empty() &&
+      !owner_->HasAdditionalReferences()) {
+    owner_->DestroyURLLoaderFactory(this);
   }
 }
 
@@ -500,13 +529,7 @@ bool CorsURLLoaderFactory::IsValidRequest(const ResourceRequest& request,
                                           uint32_t options) {
   if (request.url.SchemeIs(url::kDataScheme)) {
     LOG(WARNING) << "CorsURLLoaderFactory doesn't support `data` scheme.";
-    mojo::ReportBadMessage(
-        "CorsURLLoaderFactory: data: URL is not supported."
-#if BUILDFLAG(IS_ANDROID)
-        " Request created location is " +
-        request.created_location
-#endif
-    );
+    mojo::ReportBadMessage("CorsURLLoaderFactory: data: URL is not supported.");
     return false;
   }
 
@@ -536,10 +559,11 @@ bool CorsURLLoaderFactory::IsValidRequest(const ResourceRequest& request,
   bool request_network_isolation_info_present =
       request.trusted_params &&
       !request.trusted_params->isolation_info.IsEmpty();
-  if (request.load_flags & net::LOAD_RESTRICTED_PREFETCH &&
+  if (request.load_flags & net::LOAD_RESTRICTED_PREFETCH_FOR_MAIN_FRAME &&
       !request_network_isolation_info_present) {
     mojo::ReportBadMessage(
-        "CorsURLLoaderFactory: Request with LOAD_RESTRICTED_PREFETCH flag is "
+        "CorsURLLoaderFactory: Request with "
+        "LOAD_RESTRICTED_PREFETCH_FOR_MAIN_FRAME flag is "
         "not trusted");
     return false;
   }
@@ -655,14 +679,14 @@ bool CorsURLLoaderFactory::IsValidRequest(const ResourceRequest& request,
       // `request_initiator_origin_lock` should always be set in a
       // URLLoaderFactory vended to a renderer process.  See also
       // https://crbug.com/1114906.
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       mojo::ReportBadMessage(
           "CorsURLLoaderFactory: no initiator lock in a renderer request");
       return false;
 
     case InitiatorLockCompatibility::kNoInitiator:
       // Requests from the renderer need to always specify an initiator.
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       mojo::ReportBadMessage(
           "CorsURLLoaderFactory: no initiator in a renderer request");
       return false;
@@ -747,7 +771,7 @@ bool CorsURLLoaderFactory::IsValidRequest(const ResourceRequest& request,
   // Check only when `disable_web_security_` is false because
   // PreflightControllerTest use CorsURLLoaderFactory with this flag true
   // instead of network::URLLoaderFactory.
-  // TODO(https://crbug.com/1264298): consider if we can remove this exemption.
+  // TODO(crbug.com/40203308): consider if we can remove this exemption.
   if (!disable_web_security_) {
     // `net_log_create_info` field is expected to be used within network
     // service.
@@ -831,6 +855,32 @@ mojom::SharedDictionaryAccessObserver*
 CorsURLLoaderFactory::GetSharedDictionaryAccessObserver() const {
   return shared_dictionary_observer_ ? shared_dictionary_observer_.get()
                                      : nullptr;
+}
+
+net::handles::NetworkHandle CorsURLLoaderFactory::GetBoundNetworkForTesting()
+    const {
+  CHECK(!factory_override_);
+  return network_loader_factory_->GetBoundNetworkForTesting();  // IN-TEST
+}
+
+void CorsURLLoaderFactory::CancelRequestsIfNonceMatchesAndUrlNotExempted(
+    const base::UnguessableToken& nonce,
+    const std::set<GURL>& exemptions) {
+  auto iterate_over_set = [&nonce, &exemptions](auto& url_loaders) {
+    // Cancelling the request may cause the URL loader to be deleted from the
+    // data structure, invalidating the iterator if it is currently pointing to
+    // that element. So advance to the next element first and delete the
+    // previous one.
+    for (auto loader_it = url_loaders.begin(); loader_it != url_loaders.end();
+         /* iteration performed inside the loop */) {
+      auto* loader = loader_it->get();
+      ++loader_it;
+      loader->CancelRequestIfNonceMatchesAndUrlNotExempted(nonce, exemptions);
+    }
+  };
+
+  iterate_over_set(url_loaders_);
+  iterate_over_set(cors_url_loaders_);
 }
 
 }  // namespace network::cors

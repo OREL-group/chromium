@@ -15,6 +15,7 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_future.h"
+#include "base/time/time.h"
 #include "chrome/test/base/chrome_ash_test_base.h"
 #include "chromeos/dbus/power_manager/backlight.pb.h"
 #include "content/public/test/browser_task_environment.h"
@@ -24,6 +25,8 @@
 namespace ash::settings {
 
 namespace {
+
+constexpr base::TimeDelta kMetricsDelayTimerInterval = base::Seconds(2);
 
 // A mock observer that records current tablet mode status and counts when
 // OnTabletModeChanged function is called.
@@ -104,7 +107,8 @@ class FakeDisplayBrightnessSettingsObserver
   double current_brightness() { return current_brightness_; }
 
   // mojom::DisplayBrightnessSettingsObserver:
-  void OnDisplayBrightnessChanged(double brightness_percent) override {
+  void OnDisplayBrightnessChanged(double brightness_percent,
+                                  bool triggered_by_als) override {
     ++num_display_brightness_changed_calls_;
     current_brightness_ = brightness_percent;
 
@@ -128,6 +132,45 @@ class FakeDisplayBrightnessSettingsObserver
   base::OnceClosure quit_callback_;
 };
 
+// A mock observer that counts when OnAmbientLightSensorEnabledChanged function
+// is called.
+class FakeAmbientLightSensorObserver
+    : public mojom::AmbientLightSensorObserver {
+ public:
+  uint32_t num_ambient_light_sensor_enabled_changed_calls() const {
+    return num_ambient_light_sensor_enabled_changed_calls_;
+  }
+
+  double is_ambient_light_sensor_enabled() {
+    return is_ambient_light_sensor_enabled_;
+  }
+
+  // mojom::AmbientLightSensorObserver:
+  void OnAmbientLightSensorEnabledChanged(
+      bool is_ambient_light_sensor_enabled) override {
+    ++num_ambient_light_sensor_enabled_changed_calls_;
+    is_ambient_light_sensor_enabled_ = is_ambient_light_sensor_enabled;
+
+    if (quit_callback_) {
+      std::move(quit_callback_).Run();
+    }
+  }
+
+  void WaitForAmbientLightSensorEnabledChanged() {
+    DCHECK(quit_callback_.is_null());
+    base::RunLoop loop;
+    quit_callback_ = loop.QuitClosure();
+    loop.Run();
+  }
+
+  mojo::Receiver<mojom::AmbientLightSensorObserver> receiver{this};
+
+ private:
+  uint32_t num_ambient_light_sensor_enabled_changed_calls_ = 0;
+  bool is_ambient_light_sensor_enabled_ = true;
+  base::OnceClosure quit_callback_;
+};
+
 class FakeBrightnessControlDelegate : public BrightnessControlDelegate {
  public:
   FakeBrightnessControlDelegate() = default;
@@ -140,15 +183,25 @@ class FakeBrightnessControlDelegate : public BrightnessControlDelegate {
 
   void HandleBrightnessDown() override {}
   void HandleBrightnessUp() override {}
-  void SetBrightnessPercent(double percent, bool gradual) override {
+  void SetBrightnessPercent(double percent,
+                            bool gradual,
+                            BrightnessChangeSource source) override {
     brightness_percent_ = percent;
+    last_brightness_change_source_ = source;
   }
   void GetBrightnessPercent(
       base::OnceCallback<void(std::optional<double>)> callback) override {
     std::move(callback).Run(brightness_percent_);
   }
-  void SetAmbientLightSensorEnabled(bool enabled) override {
+  void SetAmbientLightSensorEnabled(
+      bool enabled,
+      BrightnessControlDelegate::AmbientLightSensorEnabledChangeSource source)
+      override {
     is_ambient_light_sensor_enabled_ = enabled;
+  }
+  void GetAmbientLightSensorEnabled(
+      base::OnceCallback<void(std::optional<bool>)> callback) override {
+    std::move(callback).Run(is_ambient_light_sensor_enabled_);
   }
   void HasAmbientLightSensor(
       base::OnceCallback<void(std::optional<bool>)> callback) override {
@@ -156,6 +209,9 @@ class FakeBrightnessControlDelegate : public BrightnessControlDelegate {
   }
 
   double brightness_percent() const { return brightness_percent_; }
+  BrightnessChangeSource last_brightness_change_source() const {
+    return last_brightness_change_source_;
+  }
   bool is_ambient_light_sensor_enabled() const {
     return is_ambient_light_sensor_enabled_;
   }
@@ -165,6 +221,8 @@ class FakeBrightnessControlDelegate : public BrightnessControlDelegate {
 
  private:
   double brightness_percent_;
+  BrightnessChangeSource last_brightness_change_source_ =
+      BrightnessChangeSource::kUnknown;
   // Enabled by default to match system behavior.
   bool is_ambient_light_sensor_enabled_ = true;
   bool has_ambient_light_sensor_ = true;
@@ -181,6 +239,8 @@ class DisplaySettingsProviderTest : public ChromeAshTestBase {
 
   void SetUp() override {
     ChromeAshTestBase::SetUp();
+    feature_list_.InitAndDisableFeature(
+        features::kEnableBrightnessControlInSettings);
     provider_ = std::make_unique<DisplaySettingsProvider>();
     brightness_control_delegate_ =
         std::make_unique<FakeBrightnessControlDelegate>();
@@ -554,10 +614,6 @@ TEST_F(DisplaySettingsProviderTest, DisplayBrightnessSettingsObservation) {
 // the feature flag is disabled).
 TEST_F(DisplaySettingsProviderTest,
        SetInternalDisplayScreenBrightness_FeatureDisabled) {
-  feature_list_.Reset();
-  feature_list_.InitAndDisableFeature(
-      ash::features::kEnableBrightnessControlInSettings);
-
   // No histograms should have been recorded yet.
   histogram_tester_.ExpectTotalCount(
       "ChromeOS.Settings.Display.Internal.BrightnessSliderAdjusted",
@@ -566,8 +622,10 @@ TEST_F(DisplaySettingsProviderTest,
   // Set the brightness with a sentinel value, so we can test that the
   // brightness doesn't change if the feature flag is disabled.
   double brightness_before_setting = 50.0;
-  brightness_control_delegate_->SetBrightnessPercent(brightness_before_setting,
-                                                     false);
+  brightness_control_delegate_->SetBrightnessPercent(
+      brightness_before_setting,
+      /*gradual=*/false, /*source=*/
+      BrightnessControlDelegate::BrightnessChangeSource::kQuickSettings);
 
   provider_->SetBrightnessControlDelegateForTesting(
       brightness_control_delegate_.get());
@@ -600,32 +658,51 @@ TEST_F(DisplaySettingsProviderTest,
       "ChromeOS.Settings.Display.Internal.BrightnessSliderAdjusted",
       /*expected_count=*/0);
 
-  double brightness_percent = 33.3;
-  provider_->SetInternalDisplayScreenBrightness(brightness_percent);
+  double first_brightness_percent = 33.3;
+  double second_brightness_percent = 44.4;
+  double third_brightness_percent = 55.5;
+  // Move the brightness slider rapidly in succession.
+  provider_->SetInternalDisplayScreenBrightness(first_brightness_percent);
+  FastForwardBy(kMetricsDelayTimerInterval / 4);
+  provider_->SetInternalDisplayScreenBrightness(second_brightness_percent);
+  FastForwardBy(kMetricsDelayTimerInterval / 4);
+  provider_->SetInternalDisplayScreenBrightness(third_brightness_percent);
 
-  // The BrightnessControlDelegate should have been called with the new
+  // The BrightnessControlDelegate should have been called with the most recent
   // brightness percent.
-  EXPECT_EQ(brightness_percent,
+  EXPECT_EQ(third_brightness_percent,
             brightness_control_delegate_->brightness_percent());
+  // The BrightnessChangeSource should indicate that this change came from the
+  // Settings app.
+  EXPECT_EQ(BrightnessControlDelegate::BrightnessChangeSource::kSettingsApp,
+            brightness_control_delegate_->last_brightness_change_source());
 
-  // Histogram should have been recorded for this change.
+  // Wait for the metrics delay timer to resolve.
+  FastForwardBy(kMetricsDelayTimerInterval);
+
+  // Histogram should have been recorded for this change, but only for the most
+  // recent brightness percent.
   histogram_tester_.ExpectTotalCount(
       "ChromeOS.Settings.Display.Internal.BrightnessSliderAdjusted",
       /*expected_count=*/1);
-  histogram_tester_.ExpectUniqueSample(
+  histogram_tester_.ExpectBucketCount(
       "ChromeOS.Settings.Display.Internal.BrightnessSliderAdjusted",
-      /*sample=*/brightness_percent,
-      /*expected_bucket_count=*/1);
+      /*sample=*/first_brightness_percent,
+      /*expected_count=*/0);
+  histogram_tester_.ExpectBucketCount(
+      "ChromeOS.Settings.Display.Internal.BrightnessSliderAdjusted",
+      /*sample=*/second_brightness_percent,
+      /*expected_count=*/0);
+  histogram_tester_.ExpectBucketCount(
+      "ChromeOS.Settings.Display.Internal.BrightnessSliderAdjusted",
+      /*sample=*/third_brightness_percent,
+      /*expected_count=*/1);
 }
 
 // Test the behavior when setting the internal display screen brightness (when
 // the feature flag is disabled).
 TEST_F(DisplaySettingsProviderTest,
        SetAmbientLightSensorEnabled_FeatureDisabled) {
-  feature_list_.Reset();
-  feature_list_.InitAndDisableFeature(
-      ash::features::kEnableBrightnessControlInSettings);
-
   // No histograms should have been recorded.
   histogram_tester_.ExpectTotalCount(
       "ChromeOS.Settings.Display.Internal.AutoBrightnessEnabled",
@@ -635,7 +712,9 @@ TEST_F(DisplaySettingsProviderTest,
   // that the value doesn't change if the feature flag is disabled.
   bool initial_sensor_enabled = true;
   brightness_control_delegate_->SetAmbientLightSensorEnabled(
-      initial_sensor_enabled);
+      initial_sensor_enabled,
+      BrightnessControlDelegate::AmbientLightSensorEnabledChangeSource::
+          kSettingsApp);
 
   provider_->SetBrightnessControlDelegateForTesting(
       brightness_control_delegate_.get());
@@ -672,7 +751,9 @@ TEST_F(DisplaySettingsProviderTest,
   // that the value changes if the feature flag is enabled.
   bool initial_sensor_enabled = true;
   brightness_control_delegate_->SetAmbientLightSensorEnabled(
-      initial_sensor_enabled);
+      initial_sensor_enabled,
+      BrightnessControlDelegate::AmbientLightSensorEnabledChangeSource::
+          kSettingsApp);
 
   provider_->SetBrightnessControlDelegateForTesting(
       brightness_control_delegate_.get());
@@ -711,6 +792,64 @@ TEST_F(DisplaySettingsProviderTest,
       /*expected_count=*/2);
 }
 
+// Test that the ambient light sensor observer returns the correct information
+// when the ambient light sensor status changes.
+TEST_F(DisplaySettingsProviderTest, AmbientLightSensorObservation) {
+  feature_list_.Reset();
+  feature_list_.InitAndEnableFeature(
+      ash::features::kEnableBrightnessControlInSettings);
+
+  FakeAmbientLightSensorObserver fake_observer;
+  base::test::TestFuture<bool> future;
+
+  provider_->SetInternalDisplayAmbientLightSensorEnabled(false);
+
+  provider_->ObserveAmbientLightSensor(
+      fake_observer.receiver.BindNewPipeAndPassRemote(), future.GetCallback());
+  base::RunLoop().RunUntilIdle();
+
+  // The TestFuture should have been called with 'false', indicating that the
+  // ambient light sensor is not enabled.
+  EXPECT_FALSE(future.Get());
+
+  // Observer should not have been called yet.
+  EXPECT_EQ(0u, fake_observer.num_ambient_light_sensor_enabled_changed_calls());
+
+  {
+    bool is_ambient_light_sensor_enabled = true;
+    power_manager::AmbientLightSensorChange change;
+    change.set_cause(
+        power_manager::AmbientLightSensorChange_Cause_BRIGHTNESS_USER_REQUEST);
+    change.set_sensor_enabled(is_ambient_light_sensor_enabled);
+    provider_->AmbientLightSensorEnabledChanged(change);
+
+    fake_observer.WaitForAmbientLightSensorEnabledChanged();
+
+    // Observer should have been called.
+    EXPECT_EQ(1u,
+              fake_observer.num_ambient_light_sensor_enabled_changed_calls());
+    EXPECT_EQ(is_ambient_light_sensor_enabled,
+              fake_observer.is_ambient_light_sensor_enabled());
+  }
+
+  {
+    bool is_ambient_light_sensor_enabled = false;
+    power_manager::AmbientLightSensorChange change;
+    change.set_cause(
+        power_manager::AmbientLightSensorChange_Cause_BRIGHTNESS_USER_REQUEST);
+    change.set_sensor_enabled(is_ambient_light_sensor_enabled);
+    provider_->AmbientLightSensorEnabledChanged(change);
+
+    fake_observer.WaitForAmbientLightSensorEnabledChanged();
+
+    // Observer should have been called a second time.
+    EXPECT_EQ(2u,
+              fake_observer.num_ambient_light_sensor_enabled_changed_calls());
+    EXPECT_EQ(is_ambient_light_sensor_enabled,
+              fake_observer.is_ambient_light_sensor_enabled());
+  }
+}
+
 // Test the behavior when setting the internal display screen brightness (when
 // the feature flag is enabled).
 TEST_F(DisplaySettingsProviderTest, HasAmbientLightSensor) {
@@ -733,6 +872,64 @@ TEST_F(DisplaySettingsProviderTest, HasAmbientLightSensor) {
       base::BindOnce([](bool has_ambient_light_sensor) {
         EXPECT_FALSE(has_ambient_light_sensor);
       }));
+}
+
+TEST_F(DisplaySettingsProviderTest, RecordUserInitiatedALSDisabledCause) {
+  feature_list_.Reset();
+  feature_list_.InitAndEnableFeature(
+      ash::features::kEnableBrightnessControlInSettings);
+
+  // No histograms should have been recorded yet.
+  histogram_tester_.ExpectTotalCount(
+      "ChromeOS.Settings.Display.Internal.UserInitiated."
+      "AmbientLightSensorDisabledCause",
+      /*expected_count=*/0);
+
+  // Verify histogram recording when ALS is disabled via settings app.
+  {
+    power_manager::AmbientLightSensorChange cause_settings_app;
+    cause_settings_app.set_sensor_enabled(false);
+    cause_settings_app.set_cause(
+        power_manager::
+            AmbientLightSensorChange_Cause_USER_REQUEST_SETTINGS_APP);
+    provider_->AmbientLightSensorEnabledChanged(cause_settings_app);
+    histogram_tester_.ExpectUniqueSample(
+        "ChromeOS.Settings.Display.Internal.UserInitiated."
+        "AmbientLightSensorDisabledCause",
+        DisplaySettingsProvider::
+            UserInitiatedDisplayAmbientLightSensorDisabledCause::
+                kUserRequestSettingsApp,
+        1);
+  }
+
+  // Ensure enabling ALS does not emit histogram.
+  {
+    power_manager::AmbientLightSensorChange cause_settings_app;
+    cause_settings_app.set_sensor_enabled(true);
+    cause_settings_app.set_cause(
+        power_manager::AmbientLightSensorChange_Cause_BRIGHTNESS_USER_REQUEST);
+    provider_->AmbientLightSensorEnabledChanged(cause_settings_app);
+    histogram_tester_.ExpectTotalCount(
+        "ChromeOS.Settings.Display.Internal.UserInitiated."
+        "AmbientLightSensorDisabledCause",
+        /*expected_count=*/1);
+  }
+
+  // Test histogram update when ALS is disabled due to brightness change.
+  {
+    power_manager::AmbientLightSensorChange cause_settings_app;
+    cause_settings_app.set_sensor_enabled(false);
+    cause_settings_app.set_cause(
+        power_manager::AmbientLightSensorChange_Cause_BRIGHTNESS_USER_REQUEST);
+    provider_->AmbientLightSensorEnabledChanged(cause_settings_app);
+    histogram_tester_.ExpectBucketCount(
+        "ChromeOS.Settings.Display.Internal.UserInitiated."
+        "AmbientLightSensorDisabledCause",
+        DisplaySettingsProvider::
+            UserInitiatedDisplayAmbientLightSensorDisabledCause::
+                kBrightnessUserRequest,
+        1);
+  }
 }
 
 }  // namespace ash::settings

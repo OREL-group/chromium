@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/filters/source_buffer_stream.h"
 
 #include <algorithm>
@@ -11,7 +16,6 @@
 #include <string>
 
 #include "base/functional/bind.h"
-#include "base/logging.h"
 #include "base/trace_event/trace_event.h"
 #include "media/base/demuxer_memory_limit.h"
 #include "media/base/media_switches.h"
@@ -80,7 +84,7 @@ std::string StatusToString(const SourceBufferStreamStatus& status) {
     case SourceBufferStreamStatus::kEndOfStream:
       return "kEndOfStream";
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 // Helper method for logging, converts a range into a readable string.
@@ -506,9 +510,10 @@ void SourceBufferStream::UpdateLastAppendStateForRemove(
         ResetLastAppendedState();
       }
     } else {
-      NOTREACHED() << __func__ << " " << GetStreamTypeName()
-                   << " range_for_next_append_ set, but not tracking last"
-                   << " append nor new coded frame group.";
+      NOTREACHED_IN_MIGRATION()
+          << __func__ << " " << GetStreamTypeName()
+          << " range_for_next_append_ set, but not tracking last"
+          << " append nor new coded frame group.";
     }
   }
 }
@@ -1804,6 +1809,21 @@ bool SourceBufferStream::UpdateAudioConfig(const AudioDecoderConfig& config,
   DVLOG(2) << "New audio config - index: " << append_config_index_;
   audio_configs_.resize(audio_configs_.size() + 1);
   audio_configs_[append_config_index_] = config;
+
+  if (memory_limit_overridden_) {
+    DVLOG(2)
+        << __func__
+        << ": Skipping updating memory limit as memory limit was overridden.";
+  } else {
+    // Dynamically increase |memory_limit_| on audio config changes.
+    size_t new_memory_limit = GetDemuxerStreamAudioMemoryLimit(&config);
+    if (new_memory_limit > memory_limit_) {
+      DVLOG(2) << __func__ << ": Increase memory limit from " << memory_limit_
+               << " to " << new_memory_limit << ".";
+      memory_limit_ = new_memory_limit;
+    }
+  }
+
   return true;
 }
 
@@ -1838,6 +1858,22 @@ bool SourceBufferStream::UpdateVideoConfig(const VideoDecoderConfig& config,
   DVLOG(2) << "New video config - index: " << append_config_index_;
   video_configs_.resize(video_configs_.size() + 1);
   video_configs_[append_config_index_] = config;
+
+  if (memory_limit_overridden_) {
+    DVLOG(2)
+        << __func__
+        << ": Skipping updating memory limit as memory limit was overridden.";
+  } else {
+    // Dynamically increase |memory_limit_| on video config changes.
+    size_t new_memory_limit = GetDemuxerStreamVideoMemoryLimit(
+        Demuxer::DemuxerTypes::kChunkDemuxer, &config);
+    if (new_memory_limit > memory_limit_) {
+      DVLOG(2) << __func__ << ": Increase memory limit from " << memory_limit_
+               << " to " << new_memory_limit << ".";
+      memory_limit_ = new_memory_limit;
+    }
+  }
+
   return true;
 }
 
@@ -1956,7 +1992,7 @@ std::string SourceBufferStream::GetStreamTypeName() const {
     case SourceBufferStreamType::kVideo:
       return "VIDEO";
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 SourceBufferStreamType SourceBufferStream::GetType() const {

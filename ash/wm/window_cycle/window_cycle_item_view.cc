@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "ash/shell.h"
+#include "ash/strings/grit/ash_strings.h"
 #include "ash/wm/snap_group/snap_group.h"
 #include "ash/wm/snap_group/snap_group_controller.h"
 #include "ash/wm/window_cycle/window_cycle_controller.h"
@@ -20,12 +21,14 @@
 #include "chromeos/constants/chromeos_features.h"
 #include "ui/accessibility/ax_action_data.h"
 #include "ui/aura/window.h"
+#include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/compositor/layer.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/gfx/geometry/rrect_f.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/view.h"
 
@@ -71,7 +74,7 @@ int GetPreviewFixedHeight(const aura::Window* window) {
 }  // namespace
 
 WindowCycleItemView::WindowCycleItemView(aura::Window* window)
-    : WindowMiniView(window),
+    : WindowMiniView(window, /*use_custom_focus_predicate=*/true),
       window_cycle_controller_(Shell::Get()->window_cycle_controller()) {
   SetFocusBehavior(FocusBehavior::ALWAYS);
   SetNotifyEnterExitOnChild(true);
@@ -163,7 +166,8 @@ void WindowCycleItemView::Layout(PassKey) {
                       source_window(), /*include_header_rounding=*/false)));
 }
 
-gfx::Size WindowCycleItemView::CalculatePreferredSize() const {
+gfx::Size WindowCycleItemView::CalculatePreferredSize(
+    const views::SizeBounds& available_size) const {
   // Previews can range in width from half to double of
   // |kFixedPreviewHeightDp|. Padding will be added to the
   // sides to achieve this if the preview is too narrow.
@@ -214,10 +218,10 @@ END_METADATA
 
 GroupContainerCycleView::GroupContainerCycleView(SnapGroup* snap_group)
     : is_layout_horizontal_(snap_group->IsSnapGroupLayoutHorizontal()) {
-  mini_views_.push_back(AddChildView(
-      std::make_unique<WindowCycleItemView>(snap_group->window1())));
-  mini_views_.push_back(AddChildView(
-      std::make_unique<WindowCycleItemView>(snap_group->window2())));
+  mini_views_.push_back(AddChildView(std::make_unique<WindowCycleItemView>(
+      snap_group->GetPhysicallyLeftOrTopWindow())));
+  mini_views_.push_back(AddChildView(std::make_unique<WindowCycleItemView>(
+      snap_group->GetPhysicallyRightOrBottomWindow())));
   SetShowPreview(/*show=*/true);
   RefreshItemVisuals();
 
@@ -232,6 +236,10 @@ GroupContainerCycleView::GroupContainerCycleView(SnapGroup* snap_group)
           kInsideContainerBorderInset, kBetweenCycleItemsSpacing));
   layout->set_cross_axis_alignment(
       views::BoxLayout::CrossAxisAlignment::kCenter);
+
+  GetViewAccessibility().SetRole(ax::mojom::Role::kGroup);
+  GetViewAccessibility().SetDescription(
+      l10n_util::GetStringUTF16(IDS_ASH_SNAP_GROUP_WINDOW_CYCLE_DESCRIPTION));
 }
 
 GroupContainerCycleView::~GroupContainerCycleView() = default;
@@ -295,11 +303,12 @@ int GroupContainerCycleView::TryRemovingChildItem(
 }
 
 void GroupContainerCycleView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  views::View::GetAccessibleNodeData(node_data);
-  node_data->role = ax::mojom::Role::kGroup;
-  // TODO(b/297062026): Update the string after been finalized by consulting
-  // with a11y team.
-  node_data->SetName(u"Group container view");
+  for (WindowCycleItemView* mini_view : mini_views_) {
+    if (mini_view->is_mini_view_focused()) {
+      mini_view->GetViewAccessibility().GetAccessibleNodeData(node_data);
+      break;
+    }
+  }
 }
 
 gfx::RoundedCornersF GroupContainerCycleView::GetRoundedCorners() const {
@@ -346,12 +355,14 @@ void GroupContainerCycleView::SetSelectedWindowForFocus(aura::Window* window) {
   if (old_is_first_focus_selection_request &&
       window_util::GetActiveWindow() == mini_views_[1]->source_window()) {
     mini_views_[0]->UpdateFocusState(/*focus=*/true);
+    NotifyAccessibilityEvent(ax::mojom::Event::kSelection, true);
   } else {
     // For normal use case, follow the window cycle order and `UpdateFocusState`
     // on the cycle item that contains the target window.
     for (WindowCycleItemView* mini_view : mini_views_) {
       if (mini_view->Contains(window)) {
         mini_view->UpdateFocusState(/*focus=*/true);
+        NotifyAccessibilityEvent(ax::mojom::Event::kSelection, true);
         break;
       }
     }

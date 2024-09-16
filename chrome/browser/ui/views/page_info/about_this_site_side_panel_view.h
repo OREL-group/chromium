@@ -39,9 +39,6 @@ class AboutThisSiteSidePanelView final
 
   void OpenUrl(const content::OpenURLParams& params);
 
-  // views::View:
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
-
   base::WeakPtr<AboutThisSiteSidePanelView> AsWeakPtr() {
     return weak_ptr_factory_.GetWeakPtr();
   }
@@ -75,9 +72,8 @@ class AboutThisSiteSidePanelView final
       const content::OpenURLParams& params,
       base::OnceCallback<void(content::NavigationHandle&)>
           navigation_handle_callback) override;
-  bool HandleKeyboardEvent(
-      content::WebContents* source,
-      const content::NativeWebKeyboardEvent& event) override;
+  bool HandleKeyboardEvent(content::WebContents* source,
+                           const input::NativeWebKeyboardEvent& event) override;
 
   BrowserView* outer_browser_view();
   content::WebContentsDelegate* outer_delegate();

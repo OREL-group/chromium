@@ -24,6 +24,20 @@ CapabilityResult FetchCapabilityCompleted(
 
 }  // anonymous namespace
 
+SystemIdentityManager::PresentDialogConfiguration::
+    PresentDialogConfiguration() {}
+
+SystemIdentityManager::PresentDialogConfiguration::
+    ~PresentDialogConfiguration() {}
+
+SystemIdentityManager::PresentDialogConfiguration::PresentDialogConfiguration(
+    SystemIdentityManager::PresentDialogConfiguration&& configuration) {
+  identity = configuration.identity;
+  view_controller = configuration.view_controller;
+  animated = configuration.animated;
+  dismissal_completion = std::move(configuration.dismissal_completion);
+}
+
 SystemIdentityManager::SystemIdentityManager() = default;
 
 SystemIdentityManager::~SystemIdentityManager() {
@@ -62,10 +76,52 @@ void SystemIdentityManager::RemoveObserver(
   observers_.RemoveObserver(observer);
 }
 
-void SystemIdentityManager::FireIdentityListChanged(bool notify_user) {
+DismissViewCallback SystemIdentityManager::PresentAccountDetailsController(
+    id<SystemIdentity> identity,
+    UIViewController* view_controller,
+    bool animated,
+    base::OnceClosure dismissal_completion) {
+  SystemIdentityManager::PresentDialogConfiguration configuration;
+  configuration.identity = identity;
+  configuration.view_controller = view_controller;
+  configuration.animated = animated;
+  configuration.dismissal_completion = std::move(dismissal_completion);
+  return PresentAccountDetailsController(std::move(configuration));
+}
+
+DismissViewCallback
+SystemIdentityManager::PresentWebAndAppSettingDetailsController(
+    id<SystemIdentity> identity,
+    UIViewController* view_controller,
+    bool animated,
+    base::OnceClosure dismissal_completion) {
+  SystemIdentityManager::PresentDialogConfiguration configuration;
+  configuration.identity = identity;
+  configuration.view_controller = view_controller;
+  configuration.animated = animated;
+  configuration.dismissal_completion = std::move(dismissal_completion);
+  return PresentWebAndAppSettingDetailsController(std::move(configuration));
+}
+
+DismissViewCallback
+SystemIdentityManager::PresentLinkedServicesSettingsDetailsController(
+    id<SystemIdentity> identity,
+    UIViewController* view_controller,
+    bool animated,
+    base::OnceClosure dismissal_completion) {
+  SystemIdentityManager::PresentDialogConfiguration configuration;
+  configuration.identity = identity;
+  configuration.view_controller = view_controller;
+  configuration.animated = animated;
+  configuration.dismissal_completion = std::move(dismissal_completion);
+  return PresentLinkedServicesSettingsDetailsController(
+      std::move(configuration));
+}
+
+void SystemIdentityManager::FireIdentityListChanged() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   for (auto& observer : observers_) {
-    observer.OnIdentityListChanged(notify_user);
+    observer.OnIdentityListChanged();
   }
 }
 

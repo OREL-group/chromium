@@ -23,11 +23,12 @@
 #include "chrome/browser/chromeos/policy/dlp/dlp_files_utils.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/enterprise/data_controls/component.h"
-#include "components/enterprise/data_controls/dlp_histogram_helper.h"
+#include "components/enterprise/data_controls/core/browser/component.h"
+#include "components/enterprise/data_controls/core/browser/dlp_histogram_helper.h"
 #include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/chromeos/strings/grit/ui_chromeos_strings.h"
 #include "ui/gfx/text_constants.h"
 #include "ui/views/accessibility/view_accessibility.h"
@@ -77,7 +78,7 @@ const std::u16string GetDestinationComponent(DlpFileDestination destination) {
       return l10n_util::GetStringUTF16(
           IDS_FILE_BROWSER_DLP_COMPONENT_MICROSOFT_ONEDRIVE);
     case data_controls::Component::kUnknownComponent:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return u"";
   }
 }
@@ -134,8 +135,8 @@ FilesPolicyWarnDialog::FilesPolicyWarnDialog(
   SetCancelCallback(base::BindOnce(&FilesPolicyWarnDialog::CancelWarning,
                                    weak_ptr_factory_.GetWeakPtr(),
                                    std::move(split.second)));
-  SetButtonLabel(ui::DIALOG_BUTTON_OK, GetOkButton());
-  SetButtonLabel(ui::DialogButton::DIALOG_BUTTON_CANCEL, GetCancelButton());
+  SetButtonLabel(ui::mojom::DialogButton::kOk, GetOkButton());
+  SetButtonLabel(ui::mojom::DialogButton::kCancel, GetCancelButton());
 
   AddGeneralInformation();
   if (dialog_info_.GetLearnMoreURL().has_value()) {
@@ -198,7 +199,7 @@ std::u16string FilesPolicyWarnDialog::GetTitle() {
         return l10n_util::GetStringUTF16(
             IDS_POLICY_DLP_FILES_OPEN_REVIEW_TITLE);
       case dlp::FileAction::kTransfer:
-      case dlp::FileAction::kUnknown:  // TODO(crbug.com/1361900)
+      case dlp::FileAction::kUnknown:  // TODO(crbug.com/40238129)
                                        // Set proper text when file
                                        // action is unknown
         return l10n_util::GetStringUTF16(
@@ -224,7 +225,7 @@ std::u16string FilesPolicyWarnDialog::GetTitle() {
       return l10n_util::GetPluralStringFUTF16(
           IDS_POLICY_DLP_FILES_OPEN_WARN_TITLE, file_count_);
     case dlp::FileAction::kTransfer:
-    case dlp::FileAction::kUnknown:  // TODO(crbug.com/1361900)
+    case dlp::FileAction::kUnknown:  // TODO(crbug.com/40238129)
                                      // Set proper text when file
                                      // action is unknown
       return l10n_util::GetPluralStringFUTF16(
@@ -301,7 +302,7 @@ void FilesPolicyWarnDialog::MaybeAddJustificationPanel() {
   }
 
   // Disable the proceed button until some text is entered.
-  DialogDelegate::SetButtonEnabled(ui::DIALOG_BUTTON_OK, false);
+  DialogDelegate::SetButtonEnabled(ui::mojom::DialogButton::kOk, false);
 
   views::View* justification_panel =
       AddChildView(std::make_unique<views::View>());
@@ -338,7 +339,8 @@ void FilesPolicyWarnDialog::MaybeAddJustificationPanel() {
       std::make_unique<views::Textarea>());
   justification_field_->SetID(
       PolicyDialogBase::kEnterpriseConnectorsJustificationTextareaId);
-  justification_field_->SetAccessibleName(justification_label_text);
+  justification_field_->GetViewAccessibility().SetName(
+      justification_label_text);
   justification_field_->GetViewAccessibility().SetDescription(
       l10n_util::GetStringFUTF16(
           IDS_POLICY_DLP_FILES_JUSTIFICATION_TEXTAREA_ACCESSIBLE_DESCRIPTION,
@@ -383,9 +385,9 @@ void FilesPolicyWarnDialog::ContentsChanged(
 
   if (new_contents.size() == 0 ||
       new_contents.size() > kMaxBypassJustificationLength) {
-    DialogDelegate::SetButtonEnabled(ui::DIALOG_BUTTON_OK, false);
+    DialogDelegate::SetButtonEnabled(ui::mojom::DialogButton::kOk, false);
   } else {
-    DialogDelegate::SetButtonEnabled(ui::DIALOG_BUTTON_OK, true);
+    DialogDelegate::SetButtonEnabled(ui::mojom::DialogButton::kOk, true);
   }
 }
 

@@ -35,6 +35,7 @@ import org.chromium.chrome.browser.app.tabmodel.CustomTabsTabModelOrchestrator;
 import org.chromium.chrome.browser.browserservices.intents.ColorProvider;
 import org.chromium.chrome.browser.compositor.CompositorViewHolder;
 import org.chromium.chrome.browser.content.WebContentsFactory;
+import org.chromium.chrome.browser.crypto.CipherFactory;
 import org.chromium.chrome.browser.customtabs.CloseButtonNavigator;
 import org.chromium.chrome.browser.customtabs.CustomTabDelegateFactory;
 import org.chromium.chrome.browser.customtabs.CustomTabIncognitoManager;
@@ -105,6 +106,8 @@ public class CustomTabActivityContentTestEnvironment extends TestWatcher {
     @Mock public WebContents webContents;
     @Mock public CustomTabMinimizationManagerHolder mMinimizationManagerHolder;
     @Mock public ProfileProvider profileProvider;
+    @Mock public CipherFactory cipherFactory;
+
     public AsyncTabParamsManager realAsyncTabParamsManager =
             AsyncTabParamsManagerFactory.createAsyncTabParamsManager();
 
@@ -117,7 +120,7 @@ public class CustomTabActivityContentTestEnvironment extends TestWatcher {
 
     public Tab tabFromFactory;
 
-    public boolean isIncognito;
+    public boolean isOffTheRecord;
 
     @Override
     protected void starting(Description description) {
@@ -182,13 +185,18 @@ public class CustomTabActivityContentTestEnvironment extends TestWatcher {
                 () -> realAsyncTabParamsManager,
                 () -> activity.getSavedInstanceState(),
                 activity.getWindowAndroid(),
-                tabModelInitializer);
+                tabModelInitializer,
+                cipherFactory);
     }
 
     public CustomTabActivityNavigationController createNavigationController(
             CustomTabActivityTabController tabController) {
+        OneshotSupplierImpl<ProfileProvider> profileProviderSupplier = new OneshotSupplierImpl<>();
+        profileProviderSupplier.set(profileProvider);
+
         CustomTabActivityNavigationController controller =
                 new CustomTabActivityNavigationController(
+                        profileProviderSupplier,
                         tabController,
                         tabProvider,
                         intentDataProvider,
@@ -280,7 +288,10 @@ public class CustomTabActivityContentTestEnvironment extends TestWatcher {
         when(tab.getWebContents()).thenReturn(webContents);
         NavigationController navigationController = mock(NavigationController.class);
         when(webContents.getNavigationController()).thenReturn(navigationController);
-        when(tab.isIncognito()).thenAnswer((mock) -> isIncognito);
+        when(tab.isIncognito()).thenAnswer((mock) -> isOffTheRecord);
+        when(tab.isOffTheRecord()).thenAnswer((mock) -> isOffTheRecord);
+        when(tab.isIncognitoBranded()).thenAnswer((mock) -> isOffTheRecord);
+        when(intentDataProvider.isOffTheRecord()).thenReturn(isOffTheRecord);
         return tab;
     }
 }

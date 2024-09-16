@@ -35,8 +35,6 @@
 #include "services/on_device_model/on_device_model_service.h"
 #include "services/screen_ai/buildflags/buildflags.h"
 #include "services/tracing/public/cpp/trace_startup.h"
-#include "third_party/icu/source/common/unicode/unistr.h"
-#include "third_party/icu/source/i18n/unicode/timezone.h"
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 #include "base/file_descriptor_store.h"
@@ -87,6 +85,7 @@
 #if BUILDFLAG(IS_WIN)
 #include "base/native_library.h"
 #include "base/rand_util.h"
+#include "base/win/scoped_com_initializer.h"
 #include "base/win/win_util.h"
 #include "base/win/windows_version.h"
 #include "content/utility/sandbox_delegate_data.mojom.h"
@@ -151,12 +150,12 @@ bool ShouldUseAmdGpuPolicy(sandbox::mojom::Sandbox sandbox_type) {
 #if BUILDFLAG(IS_WIN)
 // Handle pre-lockdown sandbox hooks
 bool PreLockdownSandboxHook(base::span<const uint8_t> delegate_blob) {
-  // TODO(1435571) Migrate other settable things to delegate_data.
+  // TODO(crbug.com/40265190) Migrate other settable things to delegate_data.
   CHECK(!delegate_blob.empty());
   content::mojom::sandbox::UtilityConfigPtr sandbox_config;
   if (!content::mojom::sandbox::UtilityConfig::Deserialize(
           delegate_blob.data(), delegate_blob.size(), &sandbox_config)) {
-    NOTREACHED_NORETURN();
+    NOTREACHED();
   }
   if (!sandbox_config->preload_libraries.empty()) {
     for (const auto& library_path : sandbox_config->preload_libraries) {
@@ -173,7 +172,7 @@ bool PreLockdownSandboxHook(base::span<const uint8_t> delegate_blob) {
         base::wcslcpy(dll_name, library_path.value().c_str(), MAX_PATH);
         base::debug::Alias(dll_name);
         base::debug::Alias(&lib_error);
-        NOTREACHED_NORETURN();
+        NOTREACHED();
       }
     }
   }
@@ -202,11 +201,6 @@ int UtilityMain(MainFunctionParams parameters) {
           ? base::MessagePumpType::UI
           : base::MessagePumpType::DEFAULT;
 
-  if (parameters.command_line->GetSwitchValueASCII(switches::kUtilitySubType) ==
-      on_device_model::mojom::OnDeviceModelService::Name_) {
-    CHECK(on_device_model::OnDeviceModelService::PreSandboxInit());
-  }
-
 #if BUILDFLAG(IS_MAC)
   auto sandbox_type =
       sandbox::policy::SandboxTypeFromCommandLine(*parameters.command_line);
@@ -230,13 +224,6 @@ int UtilityMain(MainFunctionParams parameters) {
     message_pump_type = base::MessagePumpType::IO;
 #endif  // BUILDFLAG(IS_FUCHSIA)
 
-  if (parameters.command_line->HasSwitch(switches::kTimeZoneForTesting)) {
-    std::string time_zone = parameters.command_line->GetSwitchValueASCII(
-        switches::kTimeZoneForTesting);
-    icu::TimeZone::adoptDefault(
-        icu::TimeZone::createTimeZone(icu::UnicodeString(time_zone.c_str())));
-  }
-
   // The main task executor of the utility process.
   base::SingleThreadTaskExecutor main_thread_task_executor(message_pump_type);
   const std::string utility_sub_type =
@@ -249,6 +236,10 @@ int UtilityMain(MainFunctionParams parameters) {
     if (dialog_match.empty() || dialog_match == utility_sub_type) {
       WaitForDebugger(utility_sub_type.empty() ? "Utility" : utility_sub_type);
     }
+  }
+
+  if (utility_sub_type == on_device_model::mojom::OnDeviceModelService::Name_) {
+    CHECK(on_device_model::OnDeviceModelService::PreSandboxInit());
   }
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
@@ -301,6 +292,9 @@ int UtilityMain(MainFunctionParams parameters) {
                              screen_ai::GetBinaryPathSwitch()));
       break;
 #endif
+    case sandbox::mojom::Sandbox::kVideoEffects:
+      // TODO(crbug.com/361128453): Implement this.
+      NOTREACHED() << "kVideoEffects sandbox not implemented.";
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_ASH)
     case sandbox::mojom::Sandbox::kHardwareVideoDecoding:
       pre_sandbox_hook =
@@ -350,6 +344,14 @@ int UtilityMain(MainFunctionParams parameters) {
   }
 
 #elif BUILDFLAG(IS_WIN)
+  std::optional<base::win::ScopedCOMInitializer> scoped_com_initializer;
+  if (message_pump_type == base::MessagePumpType::UI &&
+      base::FeatureList::IsEnabled(
+          features::kUtilityWithUiPumpInitializesCom)) {
+    scoped_com_initializer.emplace();
+    CHECK(scoped_com_initializer->Succeeded());
+  }
+
   g_utility_target_services = parameters.sandbox_info->target_services;
 
   // Call hooks with data provided by UtilitySandboxedProcessLauncherDelegate.
@@ -389,7 +391,7 @@ int UtilityMain(MainFunctionParams parameters) {
   // base::HighResolutionTimerManager here for future possible usage of high
   // resolution timer in service utility process.
   std::optional<base::HighResolutionTimerManager> hi_res_timer_manager;
-  if (base::PowerMonitor::IsInitialized()) {
+  if (base::PowerMonitor::GetInstance()->IsInitialized()) {
     hi_res_timer_manager.emplace();
   }
 
@@ -437,6 +439,10 @@ int UtilityMain(MainFunctionParams parameters) {
       switches::kUtilityProcess);
 
   run_loop.Run();
+
+  if (utility_sub_type == on_device_model::mojom::OnDeviceModelService::Name_) {
+    CHECK(on_device_model::OnDeviceModelService::Shutdown());
+  }
 
 #if defined(LEAK_SANITIZER)
   // Invoke LeakSanitizer before shutting down the utility thread, to avoid

@@ -159,16 +159,15 @@ void MultipartUploadRequest::SetRequestHeaders(
       data_size = data_size_;
       break;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
   request->headers.SetHeader("X-Goog-Upload-Header-Content-Length",
                              base::NumberToString(data_size));
 
-  if (access_token_.empty()) {
-    request->credentials_mode = network::mojom::CredentialsMode::kOmit;
-  } else {
+  if (!access_token_.empty()) {
     SetAccessTokenAndClearCookieInResourceRequest(request, access_token_);
   }
+  request->credentials_mode = network::mojom::CredentialsMode::kOmit;
 }
 
 void MultipartUploadRequest::MarkScanAsCompleteForTesting() {
@@ -192,7 +191,7 @@ void MultipartUploadRequest::SendRequest() {
       SendPageRequest(std::move(resource_request));
       break;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 }
 
@@ -300,6 +299,11 @@ void MultipartUploadRequest::OnURLLoaderComplete(
   if (url_loader_->ResponseInfo() && url_loader_->ResponseInfo()->headers)
     response_code = url_loader_->ResponseInfo()->headers->response_code();
 
+  if (!access_token_.empty()) {
+    MaybeLogCookieReset(*url_loader_,
+                        SafeBrowsingAuthenticatedEndpoint::kDeepScanning);
+  }
+
   RetryOrFinish(url_loader_->NetError(), response_code,
                 std::move(response_body));
 }
@@ -364,8 +368,12 @@ MultipartUploadRequest::CreateFileRequest(
         traffic_annotation, std::move(callback));
   }
 
+  // Note that multipart uploads only handle data that is less than
+  // `kMaxUploadSizeBytes` and not encrypted.  Therefore `Result::SUCCESS` is
+  // passed as the `get_data_result` argument.
   return factory_->CreateFileRequest(url_loader_factory, base_url, metadata,
-                                     path, file_size, traffic_annotation,
+                                     BinaryUploadService::Result::SUCCESS, path,
+                                     file_size, traffic_annotation,
                                      std::move(callback));
 }
 
@@ -385,6 +393,7 @@ MultipartUploadRequest::CreatePageRequest(
   }
 
   return factory_->CreatePageRequest(url_loader_factory, base_url, metadata,
+                                     BinaryUploadService::Result::SUCCESS,
                                      std::move(page_region), traffic_annotation,
                                      std::move(callback));
 }

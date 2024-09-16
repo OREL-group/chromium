@@ -4,6 +4,9 @@
 
 #import "ios/chrome/browser/ui/settings/google_services/manage_sync_settings_mediator.h"
 
+#import <optional>
+#import <string>
+
 #import "base/apple/foundation_util.h"
 #import "base/auto_reset.h"
 #import "base/check_op.h"
@@ -20,15 +23,17 @@
 #import "components/signin/public/identity_manager/account_info.h"
 #import "components/signin/public/identity_manager/objc/identity_manager_observer_bridge.h"
 #import "components/strings/grit/components_strings.h"
-#import "components/sync/base/model_type.h"
+#import "components/sync/base/data_type.h"
 #import "components/sync/base/user_selectable_type.h"
 #import "components/sync/service/local_data_description.h"
 #import "components/sync/service/sync_service.h"
 #import "components/sync/service/sync_user_settings.h"
 #import "ios/chrome/browser/net/model/crurl.h"
+#import "ios/chrome/browser/policy/ui_bundled/management_util.h"
 #import "ios/chrome/browser/settings/model/sync/utils/account_error_ui_info.h"
 #import "ios/chrome/browser/settings/model/sync/utils/identity_error_util.h"
 #import "ios/chrome/browser/settings/model/sync/utils/sync_util.h"
+#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/list_model/list_model.h"
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_detail_icon_item.h"
@@ -126,6 +131,8 @@ constexpr CGFloat kBatchUploadSymbolPointSize = 22.;
   BOOL _ignoreSyncStateChanges;
   // Sync service.
   raw_ptr<syncer::SyncService> _syncService;
+  // Identity manager.
+  raw_ptr<signin::IdentityManager> _identityManager;
   // Observer for `IdentityManager`.
   std::unique_ptr<signin::IdentityManagerObserverBridge>
       _identityManagerObserver;
@@ -155,6 +162,7 @@ constexpr CGFloat kBatchUploadSymbolPointSize = 22.;
     CHECK(authenticationService);
     _syncService = syncService;
     _syncObserver = std::make_unique<SyncObserverBridge>(self, syncService);
+    _identityManager = identityManager;
     _identityManagerObserver =
         std::make_unique<signin::IdentityManagerObserverBridge>(identityManager,
                                                                 self);
@@ -180,6 +188,7 @@ constexpr CGFloat kBatchUploadSymbolPointSize = 22.;
 - (void)disconnect {
   _syncObserver.reset();
   _syncService = nullptr;
+  _identityManager = nullptr;
   _identityManagerObserver.reset();
   _authenticationService = nullptr;
   _chromeAccountManagerService = nullptr;
@@ -227,20 +236,27 @@ constexpr CGFloat kBatchUploadSymbolPointSize = 22.;
           toSectionWithIdentifier:SyncDataTypeSectionIdentifier];
       break;
     case SyncSettingsAccountState::kSignedIn:
+      BOOL would_clear_data_on_signout =
+          _authenticationService->ShouldClearDataForSignedInPeriodOnSignOut();
       [model addSectionWithIdentifier:SyncDataTypeSectionIdentifier];
       TableViewTextHeaderFooterItem* headerItem =
           [[TableViewTextHeaderFooterItem alloc]
               initWithType:TypesListHeaderOrFooterType];
       headerItem.text = l10n_util::GetNSString(
           IDS_IOS_GOOGLE_ACCOUNT_SETTINGS_TYPES_LIST_HEADER);
+
       [model setHeader:headerItem
           forSectionWithIdentifier:SyncDataTypeSectionIdentifier];
 
       TableViewTextHeaderFooterItem* footerItem =
           [[TableViewTextHeaderFooterItem alloc]
               initWithType:TypesListHeaderOrFooterType];
-      footerItem.subtitle = l10n_util::GetNSString(
-          IDS_IOS_GOOGLE_ACCOUNT_SETTINGS_TYPES_LIST_DESCRIPTION);
+      footerItem.subtitle =
+          would_clear_data_on_signout
+              ? l10n_util::GetNSString(
+                    IDS_IOS_GOOGLE_ACCOUNT_SETTINGS_TYPES_LIST_DESCRIPTION_FOR_MANAGED_ACCOUNT)
+              : l10n_util::GetNSString(
+                    IDS_IOS_GOOGLE_ACCOUNT_SETTINGS_TYPES_LIST_DESCRIPTION);
       [model setFooter:footerItem
           forSectionWithIdentifier:SyncDataTypeSectionIdentifier];
       break;
@@ -305,6 +321,12 @@ constexpr CGFloat kBatchUploadSymbolPointSize = 22.;
   }
 }
 
+// Returns the management state for this browser and profile.
+- (ManagementState)managementState {
+  return GetManagementState(_identityManager, _authenticationService,
+                            _prefService);
+}
+
 // Updates the consumer when the primary account is updated.
 - (void)updatePrimaryAccountDetails {
   switch (self.syncAccountState) {
@@ -317,7 +339,8 @@ constexpr CGFloat kBatchUploadSymbolPointSize = 22.;
               _chromeAccountManagerService->GetIdentityAvatarWithIdentity(
                   _signedInIdentity, IdentityAvatarSize::Large)
                                          name:_signedInIdentity.userFullName
-                                        email:_signedInIdentity.userEmail];
+                                        email:_signedInIdentity.userEmail
+                              managementState:self.managementState];
       break;
   }
 }
@@ -488,7 +511,7 @@ constexpr CGFloat kBatchUploadSymbolPointSize = 22.;
           toSectionWithIdentifier:AdvancedSettingsSectionIdentifier];
       break;
     case SyncSettingsAccountState::kSignedOut:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 }
 
@@ -557,7 +580,7 @@ constexpr CGFloat kBatchUploadSymbolPointSize = 22.;
   NSInteger syncDataTypeSectionIndex =
       [model sectionForSectionIdentifier:SyncDataTypeSectionIdentifier];
   CHECK_NE(NSNotFound, syncDataTypeSectionIndex);
-  [model insertSectionWithIdentifier:SignOutSectionIdentifier
+  [model insertSectionWithIdentifier:ManageAndSignOutSectionIdentifier
                              atIndex:syncDataTypeSectionIndex + 1];
   TableViewTextItem* item =
       [[TableViewTextItem alloc] initWithType:SignOutAndTurnOffSyncItemType];
@@ -565,18 +588,18 @@ constexpr CGFloat kBatchUploadSymbolPointSize = 22.;
   item.textColor = [UIColor colorNamed:kRedColor];
   self.signOutAndTurnOffSyncItem = item;
   [model addItem:self.signOutAndTurnOffSyncItem
-      toSectionWithIdentifier:SignOutSectionIdentifier];
+      toSectionWithIdentifier:ManageAndSignOutSectionIdentifier];
 
   if (self.forcedSigninEnabled) {
     [model setFooter:[self createForcedSigninFooterItem]
-        forSectionWithIdentifier:SignOutSectionIdentifier];
+        forSectionWithIdentifier:ManageAndSignOutSectionIdentifier];
   }
 }
 
 - (void)updateSignOutSection {
   TableViewModel* model = self.consumer.tableViewModel;
   BOOL hasSignOutSection =
-      [model hasSectionForSectionIdentifier:SignOutSectionIdentifier];
+      [model hasSectionForSectionIdentifier:ManageAndSignOutSectionIdentifier];
 
   switch (self.syncAccountState) {
     case SyncSettingsAccountState::kSignedOut:
@@ -585,8 +608,8 @@ constexpr CGFloat kBatchUploadSymbolPointSize = 22.;
       // There should be a sign-out section. Load it if it's not there yet.
       if (!hasSignOutSection) {
         [self loadSignOutAndManageAccountsSection];
-        NSUInteger sectionIndex =
-            [model sectionForSectionIdentifier:SignOutSectionIdentifier];
+        NSUInteger sectionIndex = [model
+            sectionForSectionIdentifier:ManageAndSignOutSectionIdentifier];
         [self.consumer
             insertSections:[NSIndexSet indexSetWithIndex:sectionIndex]
               rowAnimation:NO];
@@ -597,8 +620,8 @@ constexpr CGFloat kBatchUploadSymbolPointSize = 22.;
       if (!hasSignOutSection) {
         [self loadSignOutAndTurnOffSyncSection];
         DCHECK(self.signOutAndTurnOffSyncItem);
-        NSUInteger sectionIndex =
-            [model sectionForSectionIdentifier:SignOutSectionIdentifier];
+        NSUInteger sectionIndex = [model
+            sectionForSectionIdentifier:ManageAndSignOutSectionIdentifier];
         [self.consumer
             insertSections:[NSIndexSet indexSetWithIndex:sectionIndex]
               rowAnimation:NO];
@@ -622,7 +645,7 @@ constexpr CGFloat kBatchUploadSymbolPointSize = 22.;
                 sectionForSectionIdentifier:AdvancedSettingsSectionIdentifier]
           : [model sectionForSectionIdentifier:SyncDataTypeSectionIdentifier];
   CHECK_NE(NSNotFound, previousSection);
-  [model insertSectionWithIdentifier:SignOutSectionIdentifier
+  [model insertSectionWithIdentifier:ManageAndSignOutSectionIdentifier
                              atIndex:previousSection + 1];
 
   // Creates items in the manage accounts and sign-out section.
@@ -632,23 +655,26 @@ constexpr CGFloat kBatchUploadSymbolPointSize = 22.;
   item.text =
       GetNSString(IDS_IOS_GOOGLE_ACCOUNT_SETTINGS_MANAGE_GOOGLE_ACCOUNT_ITEM);
   item.textColor = [UIColor colorNamed:kBlueColor];
-  [model addItem:item toSectionWithIdentifier:SignOutSectionIdentifier];
+  [model addItem:item
+      toSectionWithIdentifier:ManageAndSignOutSectionIdentifier];
 
   // Manage accounts on this device item.
   item = [[TableViewTextItem alloc] initWithType:ManageAccountsItemType];
   item.text = GetNSString(IDS_IOS_GOOGLE_ACCOUNT_SETTINGS_MANAGE_ACCOUNTS_ITEM);
   item.textColor = [UIColor colorNamed:kBlueColor];
-  [model addItem:item toSectionWithIdentifier:SignOutSectionIdentifier];
+  [model addItem:item
+      toSectionWithIdentifier:ManageAndSignOutSectionIdentifier];
 
   // Sign out item.
   item = [[TableViewTextItem alloc] initWithType:SignOutItemType];
   item.text = GetNSString(IDS_IOS_GOOGLE_ACCOUNT_SETTINGS_SIGN_OUT_ITEM);
   item.textColor = [UIColor colorNamed:kBlueColor];
-  [model addItem:item toSectionWithIdentifier:SignOutSectionIdentifier];
+  [model addItem:item
+      toSectionWithIdentifier:ManageAndSignOutSectionIdentifier];
 
   if (self.forcedSigninEnabled) {
     [model setFooter:[self createForcedSigninFooterItem]
-        forSectionWithIdentifier:SignOutSectionIdentifier];
+        forSectionWithIdentifier:ManageAndSignOutSectionIdentifier];
   }
 }
 
@@ -670,7 +696,7 @@ constexpr CGFloat kBatchUploadSymbolPointSize = 22.;
   // which also checks for the case of having no items to upload, thus this case
   // is not reached here.
   if (!_localPasswordsToUpload && !_localItemsToUpload) {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
   }
 
   std::u16string userEmail =
@@ -728,18 +754,18 @@ constexpr CGFloat kBatchUploadSymbolPointSize = 22.;
   }
 
   // Types that are disabled by policy will be ignored.
-  syncer::ModelTypeSet requestedTypes;
+  syncer::DataTypeSet requestedTypes;
   for (syncer::UserSelectableType userSelectableType : kAccountSwitchItems) {
     if (![self isManagedSyncSettingsDataType:userSelectableType]) {
       requestedTypes.Put(
-          syncer::UserSelectableTypeToCanonicalModelType(userSelectableType));
+          syncer::UserSelectableTypeToCanonicalDataType(userSelectableType));
     }
   }
 
   __weak __typeof__(self) weakSelf = self;
   _syncService->GetLocalDataDescriptions(
       requestedTypes,
-      base::BindOnce(^(std::map<syncer::ModelType, syncer::LocalDataDescription>
+      base::BindOnce(^(std::map<syncer::DataType, syncer::LocalDataDescription>
                            description) {
         [weakSelf localDataDescriptionsFetchedWithDescription:description
                                                     firstLoad:firstLoad];
@@ -748,7 +774,7 @@ constexpr CGFloat kBatchUploadSymbolPointSize = 22.;
 
 // Saves the local data description, and update the batch upload section.
 - (void)localDataDescriptionsFetchedWithDescription:
-            (std::map<syncer::ModelType, syncer::LocalDataDescription>)
+            (std::map<syncer::DataType, syncer::LocalDataDescription>)
                 description
                                           firstLoad:(BOOL)firstLoad {
   self.localPasswordsToUpload = 0;
@@ -899,8 +925,9 @@ constexpr CGFloat kBatchUploadSymbolPointSize = 22.;
     case syncer::UserSelectableType::kApps:
     case syncer::UserSelectableType::kSavedTabGroups:
     case syncer::UserSelectableType::kSharedTabGroupData:
-    case syncer::UserSelectableType::kCompare:
-      NOTREACHED();
+    case syncer::UserSelectableType::kProductComparison:
+    case syncer::UserSelectableType::kCookies:
+      NOTREACHED_IN_MIGRATION();
       break;
   }
   DCHECK_NE(itemType, 0);
@@ -944,23 +971,8 @@ constexpr CGFloat kBatchUploadSymbolPointSize = 22.;
 #pragma mark - Properties
 
 - (BOOL)disabledBecauseOfSyncError {
-  switch (_syncService->GetUserActionableError()) {
-    case syncer::SyncService::UserActionableError::kGenericUnrecoverableError:
-      return YES;
-    case syncer::SyncService::UserActionableError::kSignInNeedsUpdate:
-    case syncer::SyncService::UserActionableError::kNone:
-    case syncer::SyncService::UserActionableError::kNeedsPassphrase:
-    case syncer::SyncService::UserActionableError::
-        kNeedsTrustedVaultKeyForPasswords:
-    case syncer::SyncService::UserActionableError::
-        kNeedsTrustedVaultKeyForEverything:
-    case syncer::SyncService::UserActionableError::
-        kTrustedVaultRecoverabilityDegradedForPasswords:
-    case syncer::SyncService::UserActionableError::
-        kTrustedVaultRecoverabilityDegradedForEverything:
-      return NO;
-  }
-  NOTREACHED();
+  return _syncService->GetDisableReasons().Has(
+      syncer::SyncService::DISABLE_REASON_UNRECOVERABLE_ERROR);
 }
 
 - (BOOL)shouldSyncDataItemEnabled {
@@ -1079,7 +1091,7 @@ constexpr CGFloat kBatchUploadSymbolPointSize = 22.;
 
 - (void)onChromeAccountManagerServiceShutdown:
     (ChromeAccountManagerService*)accountManagerService {
-  // TODO(crbug.com/1489595): Remove `[self disconnect]`.
+  // TODO(crbug.com/40284086): Remove `[self disconnect]`.
   [self disconnect];
 }
 
@@ -1171,7 +1183,7 @@ constexpr CGFloat kBatchUploadSymbolPointSize = 22.;
       case AccountErrorMessageItemType:
       case BatchUploadButtonItemType:
       case BatchUploadRecommendationItemType:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
         break;
     }
   }
@@ -1463,7 +1475,7 @@ constexpr CGFloat kBatchUploadSymbolPointSize = 22.;
 }
 
 // Returns the sync error item type or std::nullopt if the item
-// is not an error.
+// is not an actionable error.
 - (std::optional<SyncSettingsItemType>)syncErrorItemType {
   if (self.isSyncDisabledByAdministrator) {
     return SyncDisabledByAdministratorErrorItemType;
@@ -1483,11 +1495,10 @@ constexpr CGFloat kBatchUploadSymbolPointSize = 22.;
     case syncer::SyncService::UserActionableError::
         kTrustedVaultRecoverabilityDegradedForEverything:
       return SyncTrustedVaultRecoverabilityDegradedErrorItemType;
-    case syncer::SyncService::UserActionableError::kGenericUnrecoverableError:
     case syncer::SyncService::UserActionableError::kNone:
       return std::nullopt;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return std::nullopt;
 }
 

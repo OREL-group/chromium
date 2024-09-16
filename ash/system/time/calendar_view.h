@@ -190,9 +190,8 @@ class ASH_EXPORT CalendarView : public CalendarModel::Observer,
   friend class CalendarViewPixelTest;
   friend class CalendarViewAnimationTest;
 
-  // For GlanceablesV2: Creates the new header of the calendar view, which
-  // includes a `CalendarHeaderView`, a reset to today button, and up/down
-  // buttons.
+  // Creates the new header of the calendar view, which includes a
+  // `CalendarHeaderView`, a reset to today button, and up/down buttons.
   views::View* CreateCalendarHeaderRow();
 
   // Creates the calendar view title that includes a label,
@@ -279,6 +278,9 @@ class ASH_EXPORT CalendarView : public CalendarModel::Observer,
 
   // Returns whether or not we've finished fetching CalendarEvents.
   bool EventsFetchComplete();
+
+  // Creates and adds the `up_next_view_` if it's not created yet.
+  void MaybeCreateUpNextView();
 
   // Checks if all months in the visible window have finished fetching. If so,
   // stop showing the loading bar.

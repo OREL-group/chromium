@@ -29,8 +29,10 @@
 #include "chrome/browser/web_applications/test/web_app_test_utils.h"
 #include "chrome/browser/web_applications/web_app.h"
 #include "chrome/browser/web_applications/web_app_command_manager.h"
+#include "chrome/browser/web_applications/web_app_command_scheduler.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/browser/web_applications/web_app_registry_update.h"
+#include "chrome/browser/web_applications/web_app_sync_bridge.h"
 #include "chrome/common/url_constants.h"
 #include "components/web_package/signed_web_bundles/signed_web_bundle_id.h"
 #include "components/webapps/browser/install_result_code.h"
@@ -47,6 +49,7 @@ namespace {
 
 using base::test::ErrorIs;
 using base::test::ValueIs;
+using ::testing::_;
 using ::testing::Eq;
 using ::testing::Field;
 using ::testing::HasSubstr;
@@ -148,7 +151,7 @@ class IsolatedWebAppUpdatePrepareAndStoreCommandTest : public WebAppTest {
   FakeWebContentsManager::FakePageState& CreateDefaultPageState() {
     GURL url(
         base::StrCat({chrome::kIsolatedAppScheme, url::kStandardSchemeSeparator,
-                      kTestEd25519WebBundleId,
+                      test::GetDefaultEd25519WebBundleId().id(),
                       "/.well-known/_generated_install_page.html"}));
     auto& page_state = fake_web_contents_manager().GetOrCreatePageState(url);
 
@@ -193,11 +196,10 @@ class IsolatedWebAppUpdatePrepareAndStoreCommandTest : public WebAppTest {
   data_decoder::test::InProcessDataDecoder in_process_data_decoder_;
   base::ScopedTempDir scoped_temp_dir_;
 
-  web_package::WebBundleSigner::Ed25519KeyPair key_pair_ =
-      web_package::WebBundleSigner::Ed25519KeyPair(kTestPublicKey,
-                                                   kTestPrivateKey);
+  web_package::test::Ed25519KeyPair key_pair_ =
+      test::GetDefaultEd25519KeyPair();
   web_package::SignedWebBundleId web_bundle_id_ =
-      *web_package::SignedWebBundleId::Create(kTestEd25519WebBundleId);
+      test::GetDefaultEd25519WebBundleId();
   IsolatedWebAppUrlInfo url_info_ =
       IsolatedWebAppUrlInfo::CreateFromSignedWebBundleId(web_bundle_id_);
 
@@ -230,11 +232,13 @@ TEST_F(IsolatedWebAppUpdatePrepareAndStoreCommandTest, Succeeds) {
       provider()->registrar_unsafe().GetAppById(url_info_.app_id());
   EXPECT_THAT(web_app,
               test::IwaIs(Eq("installed app"),
-                          Eq(WebApp::IsolationData(
-                              installed_location_, installed_version_,
-                              /*controlled_frame_partitions=*/{},
-                              WebApp::IsolationData::PendingUpdateInfo(
-                                  pending_location, update_version_)))));
+                          test::IsolationDataIs(
+                              Eq(installed_location_), Eq(installed_version_),
+                              /*controlled_frame_partitions=*/_,
+                              test::PendingUpdateInfoIs(
+                                  Eq(pending_location), Eq(update_version_),
+                                  /*integrity_block_data=*/_),
+                              /*integrity_block_data=*/_)));
 }
 
 TEST_F(IsolatedWebAppUpdatePrepareAndStoreCommandTest,
@@ -259,11 +263,13 @@ TEST_F(IsolatedWebAppUpdatePrepareAndStoreCommandTest,
 
   EXPECT_THAT(web_app,
               test::IwaIs(Eq("installed app"),
-                          Eq(WebApp::IsolationData(
-                              installed_location_, installed_version_,
-                              /*controlled_frame_partitions=*/{},
-                              WebApp::IsolationData::PendingUpdateInfo(
-                                  result.location, update_version_)))));
+                          test::IsolationDataIs(
+                              Eq(installed_location_), Eq(installed_version_),
+                              /*controlled_frame_partitions=*/_,
+                              test::PendingUpdateInfoIs(
+                                  Eq(result.location), Eq(update_version_),
+                                  /*integrity_block_data=*/_),
+                              /*integrity_block_data=*/_)));
 }
 
 TEST_F(IsolatedWebAppUpdatePrepareAndStoreCommandTest, FailsWhenShuttingDown) {
@@ -320,11 +326,13 @@ TEST_F(IsolatedWebAppUpdatePrepareAndStoreCommandTest,
 
   const WebApp* web_app =
       provider()->registrar_unsafe().GetAppById(url_info_.app_id());
-  EXPECT_THAT(web_app, test::IwaIs(Eq("installed app"),
-                                   Eq(WebApp::IsolationData(
-                                       installed_location_, installed_version_,
-                                       /*controlled_frame_partitions=*/{},
-                                       /*pending_update_info=*/std::nullopt))));
+  EXPECT_THAT(web_app,
+              test::IwaIs(Eq("installed app"),
+                          Eq(WebApp::IsolationData(
+                              installed_location_, installed_version_,
+                              /*controlled_frame_partitions=*/{},
+                              /*pending_update_info=*/std::nullopt,
+                              /*integrity_block_data=*/std::nullopt))));
   CheckCleanup(existing_dirs);
 }
 
@@ -344,11 +352,13 @@ TEST_F(IsolatedWebAppUpdatePrepareAndStoreCommandTest,
 
   const WebApp* web_app =
       provider()->registrar_unsafe().GetAppById(url_info_.app_id());
-  EXPECT_THAT(web_app, test::IwaIs(Eq("installed app"),
-                                   Eq(WebApp::IsolationData(
-                                       installed_location_, installed_version_,
-                                       /*controlled_frame_partitions=*/{},
-                                       /*pending_update_info=*/std::nullopt))));
+  EXPECT_THAT(web_app,
+              test::IwaIs(Eq("installed app"),
+                          Eq(WebApp::IsolationData(
+                              installed_location_, installed_version_,
+                              /*controlled_frame_partitions=*/{},
+                              /*pending_update_info=*/std::nullopt,
+                              /*integrity_block_data=*/std::nullopt))));
   CheckCleanup(existing_dirs);
 }
 
@@ -369,11 +379,13 @@ TEST_F(IsolatedWebAppUpdatePrepareAndStoreCommandTest,
 
   const WebApp* web_app =
       provider()->registrar_unsafe().GetAppById(url_info_.app_id());
-  EXPECT_THAT(web_app, test::IwaIs(Eq("installed app"),
-                                   Eq(WebApp::IsolationData(
-                                       installed_location_, installed_version_,
-                                       /*controlled_frame_partitions=*/{},
-                                       /*pending_update_info=*/std::nullopt))));
+  EXPECT_THAT(web_app,
+              test::IwaIs(Eq("installed app"),
+                          Eq(WebApp::IsolationData(
+                              installed_location_, installed_version_,
+                              /*controlled_frame_partitions=*/{},
+                              /*pending_update_info=*/std::nullopt,
+                              /*integrity_block_data=*/std::nullopt))));
 
   CheckCleanup(existing_dirs);
 }
@@ -392,11 +404,13 @@ TEST_F(IsolatedWebAppUpdatePrepareAndStoreCommandTest, FailsIfAppNotTrusted) {
 
   const WebApp* web_app =
       provider()->registrar_unsafe().GetAppById(url_info_.app_id());
-  EXPECT_THAT(web_app, test::IwaIs(Eq("installed app"),
-                                   Eq(WebApp::IsolationData(
-                                       installed_location_, installed_version_,
-                                       /*controlled_frame_partitions=*/{},
-                                       /*pending_update_info=*/std::nullopt))));
+  EXPECT_THAT(web_app,
+              test::IwaIs(Eq("installed app"),
+                          Eq(WebApp::IsolationData(
+                              installed_location_, installed_version_,
+                              /*controlled_frame_partitions=*/{},
+                              /*pending_update_info=*/std::nullopt,
+                              /*integrity_block_data=*/std::nullopt))));
 
   CheckCleanup(existing_dirs);
 }
@@ -415,11 +429,13 @@ TEST_F(IsolatedWebAppUpdatePrepareAndStoreCommandTest, FailsIfUrlLoadingFails) {
 
   const WebApp* web_app =
       provider()->registrar_unsafe().GetAppById(url_info_.app_id());
-  EXPECT_THAT(web_app, test::IwaIs(Eq("installed app"),
-                                   Eq(WebApp::IsolationData(
-                                       installed_location_, installed_version_,
-                                       /*controlled_frame_partitions=*/{},
-                                       /*pending_update_info=*/std::nullopt))));
+  EXPECT_THAT(web_app,
+              test::IwaIs(Eq("installed app"),
+                          Eq(WebApp::IsolationData(
+                              installed_location_, installed_version_,
+                              /*controlled_frame_partitions=*/{},
+                              /*pending_update_info=*/std::nullopt,
+                              /*integrity_block_data=*/std::nullopt))));
 
   CheckCleanup(existing_dirs);
 }
@@ -442,11 +458,13 @@ TEST_F(IsolatedWebAppUpdatePrepareAndStoreCommandTest,
 
   const WebApp* web_app =
       provider()->registrar_unsafe().GetAppById(url_info_.app_id());
-  EXPECT_THAT(web_app, test::IwaIs(Eq("installed app"),
-                                   Eq(WebApp::IsolationData(
-                                       installed_location_, installed_version_,
-                                       /*controlled_frame_partitions=*/{},
-                                       /*pending_update_info=*/std::nullopt))));
+  EXPECT_THAT(web_app,
+              test::IwaIs(Eq("installed app"),
+                          Eq(WebApp::IsolationData(
+                              installed_location_, installed_version_,
+                              /*controlled_frame_partitions=*/{},
+                              /*pending_update_info=*/std::nullopt,
+                              /*integrity_block_data=*/std::nullopt))));
 
   CheckCleanup(existing_dirs);
 }
@@ -467,11 +485,13 @@ TEST_F(IsolatedWebAppUpdatePrepareAndStoreCommandTest,
 
   const WebApp* web_app =
       provider()->registrar_unsafe().GetAppById(url_info_.app_id());
-  EXPECT_THAT(web_app, test::IwaIs(Eq("installed app"),
-                                   Eq(WebApp::IsolationData(
-                                       installed_location_, installed_version_,
-                                       /*controlled_frame_partitions=*/{},
-                                       /*pending_update_info=*/std::nullopt))));
+  EXPECT_THAT(web_app,
+              test::IwaIs(Eq("installed app"),
+                          Eq(WebApp::IsolationData(
+                              installed_location_, installed_version_,
+                              /*controlled_frame_partitions=*/{},
+                              /*pending_update_info=*/std::nullopt,
+                              /*integrity_block_data=*/std::nullopt))));
 
   CheckCleanup(existing_dirs);
 }
@@ -490,11 +510,13 @@ TEST_F(IsolatedWebAppUpdatePrepareAndStoreCommandTest,
 
   const WebApp* web_app =
       provider()->registrar_unsafe().GetAppById(url_info_.app_id());
-  EXPECT_THAT(web_app, test::IwaIs(Eq("installed app"),
-                                   Eq(WebApp::IsolationData(
-                                       installed_location_, installed_version_,
-                                       /*controlled_frame_partitions=*/{},
-                                       /*pending_update_info=*/std::nullopt))));
+  EXPECT_THAT(web_app,
+              test::IwaIs(Eq("installed app"),
+                          Eq(WebApp::IsolationData(
+                              installed_location_, installed_version_,
+                              /*controlled_frame_partitions=*/{},
+                              /*pending_update_info=*/std::nullopt,
+                              /*integrity_block_data=*/std::nullopt))));
 
   CheckCleanup(existing_dirs);
 }

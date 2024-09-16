@@ -2,9 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "third_party/blink/renderer/modules/document_picture_in_picture/picture_in_picture_controller_impl.h"
-
 #include <memory>
+#include <utility>
 
 #include "base/containers/contains.h"
 #include "base/memory/raw_ptr.h"
@@ -15,7 +14,7 @@
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
@@ -32,11 +31,13 @@
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
 #include "third_party/blink/renderer/core/testing/wait_for_event.h"
 #include "third_party/blink/renderer/modules/document_picture_in_picture/document_picture_in_picture.h"
+#include "third_party/blink/renderer/modules/document_picture_in_picture/picture_in_picture_controller_impl.h"
 #include "third_party/blink/renderer/platform/graphics/unaccelerated_static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_component.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_descriptor.h"
 #include "third_party/blink/renderer/platform/testing/empty_web_media_player.h"
+#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/url_test_helpers.h"
 
@@ -81,7 +82,7 @@ LocalDOMWindow* OpenDocumentPictureInPictureWindow(
   auto* resolver =
       MakeGarbageCollected<ScriptPromiseResolver<DOMWindow>>(script_state);
   ExceptionState exception_state(script_state->GetIsolate(),
-                                 ExceptionContextType::kOperationInvoke,
+                                 v8::ExceptionContext::kOperation,
                                  "DocumentPictureInPicture", "requestWindow");
 
   v8::Local<v8::Object> v8_object = v8::Object::New(v8_scope.GetIsolate());
@@ -102,7 +103,7 @@ LocalDOMWindow* OpenDocumentPictureInPictureWindow(
   EXPECT_EQ(opener_url.GetString(), document.BaseURL().GetString());
 
   controller.CreateDocumentPictureInPictureWindow(
-      script_state, *document.domWindow(), options, resolver, exception_state);
+      script_state, *document.domWindow(), options, resolver);
 
   return controller.documentPictureInPictureWindow();
 }
@@ -262,7 +263,7 @@ class PictureInPictureTestWebFrameClient
       std::unique_ptr<WebMediaPlayer> web_media_player)
       : web_media_player_(std::move(web_media_player)) {}
 
-  WebMediaPlayer* CreateMediaPlayer(
+  std::unique_ptr<WebMediaPlayer> CreateMediaPlayer(
       const WebMediaPlayerSource&,
       WebMediaPlayerClient*,
       blink::MediaInspectorContext*,
@@ -271,7 +272,7 @@ class PictureInPictureTestWebFrameClient
       const WebString& sink_id,
       const cc::LayerTreeSettings* settings,
       scoped_refptr<base::TaskRunner> compositor_worker_task_runner) override {
-    return web_media_player_.release();
+    return std::move(web_media_player_);
   }
 
  private:
@@ -337,7 +338,7 @@ class PictureInPictureControllerTestWithWidget : public RenderingTest {
   WebViewImpl* GetWebView() const { return helper_.GetWebView(); }
 
   void ResetMediaPlayerAndMediaSource() {
-    DynamicTo<HTMLMediaElement>(Video())->ResetMediaPlayerAndMediaSource();
+    Video()->ResetMediaPlayerAndMediaSource();
   }
 
  private:
@@ -765,7 +766,7 @@ TEST_F(PictureInPictureControllerTestWithChromeClient,
         document->GetFrame(), mojom::UserActivationNotificationType::kTest);
     ExceptionState exception_state(
         ToScriptStateForMainWorld(document->GetFrame())->GetIsolate(),
-        ExceptionContextType::kOperationInvoke, "Window", "resizeTo");
+        v8::ExceptionContext::kOperation, "Window", "resizeTo");
     document->domWindow()->resizeTo(10, 10, exception_state);
     document->domWindow()->resizeTo(20, 20, exception_state);
     testing::Mock::VerifyAndClearExpectations(&GetPipChromeClient());
@@ -779,7 +780,7 @@ TEST_F(PictureInPictureControllerTestWithChromeClient,
         document->GetFrame(), mojom::UserActivationNotificationType::kTest);
     ExceptionState exception_state(
         ToScriptStateForMainWorld(document->GetFrame())->GetIsolate(),
-        ExceptionContextType::kOperationInvoke, "Window", "resizeBy");
+        v8::ExceptionContext::kOperation, "Window", "resizeBy");
     document->domWindow()->resizeBy(10, 10, exception_state);
     document->domWindow()->resizeBy(20, 20, exception_state);
     testing::Mock::VerifyAndClearExpectations(&GetPipChromeClient());
@@ -832,7 +833,7 @@ TEST_F(PictureInPictureControllerTestWithChromeClient,
   auto* resolver =
       MakeGarbageCollected<ScriptPromiseResolver<DOMWindow>>(script_state);
   ExceptionState exception_state(script_state->GetIsolate(),
-                                 ExceptionContextType::kOperationInvoke,
+                                 v8::ExceptionContext::kOperation,
                                  "DocumentPictureInPicture", "requestWindow");
 
   v8::Local<v8::Object> v8_object = v8::Object::New(v8_scope.GetIsolate());
@@ -847,7 +848,7 @@ TEST_F(PictureInPictureControllerTestWithChromeClient,
 
   // Create document picture in picture window.
   controller.CreateDocumentPictureInPictureWindow(
-      script_state, *document.domWindow(), options, resolver, exception_state);
+      script_state, *document.domWindow(), options, resolver);
 
   // Verify the document picture in picture window was not created.
   auto* pictureInPictureWindow = controller.documentPictureInPictureWindow();

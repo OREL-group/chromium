@@ -33,6 +33,7 @@ namespace blink {
 
 class LayoutSVGText;
 class SVGElement;
+class SVGRect;
 enum class SVGTransformChange;
 
 class CORE_EXPORT LayoutSVGRoot final : public LayoutReplaced {
@@ -47,8 +48,13 @@ class CORE_EXPORT LayoutSVGRoot final : public LayoutReplaced {
   bool IsEmbeddedThroughFrameContainingSVGDocument() const;
 
   void IntrinsicSizingInfoChanged();
-  void UnscaledIntrinsicSizingInfo(IntrinsicSizingInfo&,
-                                   bool use_correct_viewbox = true) const;
+  void UnscaledIntrinsicSizingInfo(const SVGRect* override_viewbox,
+                                   IntrinsicSizingInfo&) const;
+  void UnscaledIntrinsicSizingInfo(IntrinsicSizingInfo& sizing_info) const {
+    NOT_DESTROYED();
+    UnscaledIntrinsicSizingInfo(nullptr, sizing_info);
+  }
+
   // This is a special case for SVG documents with percentage dimensions which
   // would normally not change under zoom. See: https://crbug.com/222786.
   double LogicalSizeScaleFactorForPercentageLengths() const;
@@ -68,21 +74,9 @@ class CORE_EXPORT LayoutSVGRoot final : public LayoutReplaced {
     return content_.Children().LastChild();
   }
 
-  bool IsLayoutSizeChanged() const {
-    NOT_DESTROYED();
-    return is_layout_size_changed_;
-  }
-  bool DidScreenScaleFactorChange() const {
-    NOT_DESTROYED();
-    return did_screen_scale_factor_change_;
-  }
-  void SetNeedsBoundariesUpdate() override {
-    NOT_DESTROYED();
-    needs_boundaries_or_transform_update_ = true;
-  }
   void SetNeedsTransformUpdate() override {
     NOT_DESTROYED();
-    needs_boundaries_or_transform_update_ = true;
+    needs_transform_update_ = true;
   }
 
   void SetContainerSize(const PhysicalSize& container_size) {
@@ -213,9 +207,7 @@ class CORE_EXPORT LayoutSVGRoot final : public LayoutReplaced {
   // laid out.
   const PhysicalSize* new_content_size_ = nullptr;
 
-  bool is_layout_size_changed_ : 1;
-  bool did_screen_scale_factor_change_ : 1;
-  bool needs_boundaries_or_transform_update_ : 1;
+  bool needs_transform_update_ : 1;
   mutable bool has_non_isolated_blending_descendants_ : 1;
   mutable bool has_non_isolated_blending_descendants_dirty_ : 1;
 };

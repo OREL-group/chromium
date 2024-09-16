@@ -76,6 +76,9 @@ def _DoSpawn(args):
       '-dump-json',
       json_file,
       '-tag=purpose:user-debug-run-swarmed',
+      # 30 is try level. So use the same here.
+      '-priority',
+      '30',
   ]
   if args.target_os == 'fuchsia':
     trigger_args += [
@@ -93,10 +96,11 @@ def _DoSpawn(args):
       # run on emulators when building for x86 on Android.
       args.swarming_os = 'Linux'
       args.pool = 'chromium.tests.avd'
-      # generic_android28 == Android P emulator. See //tools/android/avd/proto/
-      # for other options.
+      # android_28_google_apis_x86 == Android P emulator.
+      # See //tools/android/avd/proto/ for other options.
       runner_args.append(
-          '--avd-config=../../tools/android/avd/proto/generic_android28.textpb')
+          '--avd-config=../../tools/android/avd/proto/android_28_google_apis_x86.textpb'
+      )
     elif args.device_type is None and args.device_os is None:
       # The aliases for device type are stored here:
       # luci/appengine/swarming/ui2/modules/alias.js
@@ -125,11 +129,18 @@ def _DoSpawn(args):
       raise Exception('Either both of --ios-sim-version and --ios-sim-platform '
                       'or --ios-device is required')
 
-    trigger_args.extend(['-service-account', args.service_account])
     trigger_args.extend(
         ['-named-cache', f'xcode_ios_{args.ios_xcode_build_version}=Xcode.app'])
     trigger_args.extend(
         ['-cipd-package', '.:infra/tools/mac_toolchain/${platform}=latest'])
+
+  if args.service_account:
+    account = args.service_account
+  elif args.swarming_instance == 'chromium-swarm':
+    account = 'chromium-tester@chops-service-accounts.iam.gserviceaccount.com'
+  elif args.swarming_instance == 'chrome-swarming':
+    account = 'chrome-tester@chops-service-accounts.iam.gserviceaccount.com'
+  trigger_args.extend(['-service-account', account])
 
   if args.arch != 'detect':
     trigger_args += [
@@ -271,11 +282,11 @@ def main():
                            '--system-log-file flags to the comment.')
   parser.add_argument('out_dir', type=str, help='Build directory.')
   parser.add_argument('target_name', type=str, help='Name of target to run.')
-  # ios only args
   parser.add_argument(
       '--service-account',
-      default='chromium-tester@chops-service-accounts.iam.gserviceaccount.com',
-      help='The service account that the swarming task will be run using')
+      help='Optional service account that the swarming task will be run using. '
+      'Default value will be set based on the "--swarming-instance".')
+  # ios only args
   parser.add_argument('--ios-xcode-build-version',
                       help='The version of xcode that will be used for all '
                       'xcodebuild CLI commands')

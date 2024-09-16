@@ -28,6 +28,17 @@ DefaultSupportedQuicVersions() {
   return quic::ParsedQuicVersionVector{quic::ParsedQuicVersion::RFCv1()};
 }
 
+// Return the QUIC version to be used for connections to proxies, for which
+// there is currently no other way to determine QUIC version.
+inline NET_EXPORT_PRIVATE quic::ParsedQuicVersion
+SupportedQuicVersionForProxying() {
+  // Assume that all QUIC proxies use RFCv1, as the current support for proxy
+  // configuration does not allow any way to indicate what version they
+  // support. RFCv1 is commonly supported and is valid for IP Protection
+  // proxies, but this may not be true more broadly.
+  return quic::ParsedQuicVersion::RFCv1();
+}
+
 // Obsolete QUIC supported versions are versions that are supported by the
 // QUIC shared code but that Chrome refuses to use because modern clients
 // should only use versions at least as recent as the oldest default version.
@@ -216,6 +227,21 @@ struct NET_EXPORT QuicParams {
 
   // If true, ALPS uses new codepoint to negotiates application settings.
   bool use_new_alps_codepoint = false;
+
+  // If true, read Explicit Congestion Notification (ECN) marks from QUIC
+  // sockets and report them to the peer.
+  bool report_ecn = false;
+
+  // If true, parse received ORIGIN frame.
+  bool enable_origin_frame = false;
+
+  // If true, skip DNS resolution for a hostname if the ORIGIN frame received
+  // during an ongoing session encompasses that hostname.
+  bool skip_dns_with_origin_frame = false;
+
+  // If true, a request will be sent on the existing session iff the hostname
+  // matches the certificate presented during the handshake.
+  bool ignore_ip_matching_when_finding_existing_sessions = false;
 };
 
 // QuicContext contains QUIC-related variables that are shared across all of the

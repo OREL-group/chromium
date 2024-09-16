@@ -14,7 +14,6 @@
 #include "components/permissions/features.h"
 #include "components/permissions/permission_request.h"
 #include "components/permissions/permissions_client.h"
-#include "ui/base/ui_base_features.h"
 
 #if BUILDFLAG(IS_ANDROID)
 #include "components/resources/android/theme_resources.h"
@@ -45,6 +44,8 @@ int GetIconIdAndroid(RequestType type) {
       return IDR_ANDROID_INFOBAR_FOLDER;
     case RequestType::kGeolocation:
       return IDR_ANDROID_INFOBAR_GEOLOCATION;
+    case RequestType::kHandTracking:
+      return IDR_ANDROID_INFOBAR_HAND_TRACKING;
     case RequestType::kIdentityProvider:
       return IDR_ANDROID_INFOBAR_IDENTITY_PROVIDER;
     case RequestType::kIdleDetection:
@@ -65,76 +66,66 @@ int GetIconIdAndroid(RequestType type) {
     case RequestType::kTopLevelStorageAccess:
       return IDR_ANDROID_STORAGE_ACCESS;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return 0;
 }
 #endif  // BUILDFLAG(IS_ANDROID)
 
 #if !BUILDFLAG(IS_ANDROID)
+// TODO(crbug.com/335848275): Migrate the icons in 2 steps.
+// 1 - Copy contents of refresh icons into current non-refresh icons.
+// 2 - In a separate change, remove the refresh icons.
 const gfx::VectorIcon& GetIconIdDesktop(RequestType type) {
-  const bool cr23 = ::features::IsChromeRefresh2023();
   switch (type) {
     case RequestType::kAccessibilityEvents:
       return kAccessibilityIcon;
     case RequestType::kArSession:
     case RequestType::kVrSession:
-      return cr23 ? vector_icons::kVrHeadsetChromeRefreshIcon
-                  : vector_icons::kVrHeadsetIcon;
+      return vector_icons::kVrHeadsetChromeRefreshIcon;
     case RequestType::kCameraPanTiltZoom:
     case RequestType::kCameraStream:
-      return cr23 ? vector_icons::kVideocamChromeRefreshIcon
-                  : vector_icons::kVideocamIcon;
+      return vector_icons::kVideocamChromeRefreshIcon;
     case RequestType::kCapturedSurfaceControl:
       return vector_icons::kTouchpadMouseIcon;
     case RequestType::kClipboard:
-      return cr23 ? vector_icons::kContentPasteChromeRefreshIcon
-                  : vector_icons::kContentPasteIcon;
+      return vector_icons::kContentPasteIcon;
     case RequestType::kDiskQuota:
-      return cr23 ? vector_icons::kFolderChromeRefreshIcon
-                  : vector_icons::kFolderIcon;
+      return vector_icons::kFolderChromeRefreshIcon;
     case RequestType::kGeolocation:
-      return cr23 ? vector_icons::kLocationOnChromeRefreshIcon
-                  : vector_icons::kLocationOnIcon;
+      return vector_icons::kLocationOnChromeRefreshIcon;
+    case RequestType::kHandTracking:
+      return vector_icons::kHandGestureIcon;
     case RequestType::kIdleDetection:
-      return cr23 ? vector_icons::kDevicesChromeRefreshIcon
-                  : vector_icons::kDevicesIcon;
+      return vector_icons::kDevicesIcon;
     case RequestType::kKeyboardLock:
-      // TODO: crbug.com/324147495 - Replace this placeholder icon with the
-      // actual icon.
-      return vector_icons::kTouchpadMouseIcon;
+      return vector_icons::kKeyboardLockIcon;
     case RequestType::kLocalFonts:
-      return cr23 ? vector_icons::kFontDownloadChromeRefreshIcon
-                  : vector_icons::kFontDownloadIcon;
+      return vector_icons::kFontDownloadChromeRefreshIcon;
     case RequestType::kMicStream:
-      return cr23 ? vector_icons::kMicChromeRefreshIcon
-                  : vector_icons::kMicIcon;
+      return vector_icons::kMicChromeRefreshIcon;
     case RequestType::kMidiSysex:
-      return cr23 ? vector_icons::kMidiChromeRefreshIcon
-                  : vector_icons::kMidiIcon;
+      return vector_icons::kMidiChromeRefreshIcon;
     case RequestType::kMultipleDownloads:
-      return cr23 ? vector_icons::kFileDownloadChromeRefreshIcon
-                  : vector_icons::kFileDownloadIcon;
+      return vector_icons::kFileDownloadChromeRefreshIcon;
     case RequestType::kNotifications:
-      return cr23 ? vector_icons::kNotificationsChromeRefreshIcon
-                  : vector_icons::kNotificationsIcon;
+      return vector_icons::kNotificationsChromeRefreshIcon;
     case RequestType::kPointerLock:
-      // TODO: crbug.com/324147495 - Replace this placeholder icon with the
-      // actual icon.
-      return vector_icons::kTouchpadMouseIcon;
+      return vector_icons::kPointerLockIcon;
 #if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_WIN)
     case RequestType::kProtectedMediaIdentifier:
       // This icon is provided by ChromePermissionsClient::GetOverrideIconId.
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return gfx::kNoneIcon;
 #endif
     case RequestType::kRegisterProtocolHandler:
       return vector_icons::kProtocolHandlerIcon;
 #if BUILDFLAG(IS_CHROMEOS)
     case RequestType::kSmartCard:
-      // TODO(crbug.com/40944087): Use a proper smart card icon.
-      return cr23 ? vector_icons::kDevicesChromeRefreshIcon
-                  : vector_icons::kDevicesIcon;
+      return vector_icons::kSmartCardReaderIcon;
 #endif
+    case RequestType::kWebAppInstallation:
+      // TODO(crbug.com/333795265): provide a dedicated icon.
+      return vector_icons::kTouchpadMouseIcon;
 #if BUILDFLAG(IS_CHROMEOS) && BUILDFLAG(USE_CUPS)
     case RequestType::kWebPrinting:
       return vector_icons::kPrinterIcon;
@@ -143,57 +134,56 @@ const gfx::VectorIcon& GetIconIdDesktop(RequestType type) {
     case RequestType::kTopLevelStorageAccess:
       return vector_icons::kStorageAccessIcon;
     case RequestType::kWindowManagement:
-      return cr23 ? vector_icons::kSelectWindowChromeRefreshIcon
-                  : vector_icons::kSelectWindowIcon;
+      return vector_icons::kSelectWindowChromeRefreshIcon;
     case RequestType::kFileSystemAccess:
       return vector_icons::kFolderIcon;
     case RequestType::kIdentityProvider:
-      // TODO(crbug.com/1406698): provide a dedicated icon.
+      // TODO(crbug.com/40252825): provide a dedicated icon.
       return vector_icons::kFolderIcon;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return gfx::kNoneIcon;
 }
 
 const gfx::VectorIcon& GetBlockedIconIdDesktop(RequestType type) {
-  const bool cr23 = ::features::IsChromeRefresh2023();
   switch (type) {
     case RequestType::kGeolocation:
-      return cr23 ? vector_icons::kLocationOffChromeRefreshIcon
-                  : vector_icons::kLocationOffIcon;
+      return vector_icons::kLocationOffChromeRefreshIcon;
     case RequestType::kNotifications:
-      return cr23 ? vector_icons::kNotificationsOffChromeRefreshIcon
-                  : vector_icons::kNotificationsOffIcon;
+      return vector_icons::kNotificationsOffChromeRefreshIcon;
     case RequestType::kArSession:
     case RequestType::kVrSession:
-      return cr23 ? vector_icons::kVrHeadsetOffChromeRefreshIcon
-                  : vector_icons::kVrHeadsetOffIcon;
+      return vector_icons::kVrHeadsetOffChromeRefreshIcon;
     case RequestType::kCameraStream:
-      return cr23 ? vector_icons::kVideocamOffChromeRefreshIcon
-                  : vector_icons::kVideocamOffIcon;
+      return vector_icons::kVideocamOffChromeRefreshIcon;
     case RequestType::kCapturedSurfaceControl:
       return vector_icons::kTouchpadMouseOffIcon;
     case RequestType::kClipboard:
-      return cr23 ? vector_icons::kContentPasteOffChromeRefreshIcon
-                  : vector_icons::kContentPasteOffIcon;
+      return vector_icons::kContentPasteOffIcon;
+    case RequestType::kHandTracking:
+      return vector_icons::kHandGestureOffIcon;
     case RequestType::kIdleDetection:
-      return cr23 ? vector_icons::kDevicesOffChromeRefreshIcon
-                  : vector_icons::kDevicesOffIcon;
+      return vector_icons::kDevicesOffIcon;
     case RequestType::kMicStream:
-      return cr23 ? vector_icons::kMicOffChromeRefreshIcon
-                  : vector_icons::kMicOffIcon;
+      return vector_icons::kMicOffChromeRefreshIcon;
     case RequestType::kMidiSysex:
-      return cr23 ? vector_icons::kMidiOffChromeRefreshIcon
-                  : vector_icons::kMidiOffIcon;
+      return vector_icons::kMidiOffChromeRefreshIcon;
     case RequestType::kStorageAccess:
       return vector_icons::kStorageAccessOffIcon;
     case RequestType::kIdentityProvider:
-      // TODO(crbug.com/1406698): use a dedicated icon
+      // TODO(crbug.com/40252825): use a dedicated icon
+      return gfx::kNoneIcon;
+    case RequestType::kKeyboardLock:
+      return vector_icons::kKeyboardLockOffIcon;
+    case RequestType::kPointerLock:
+      return vector_icons::kPointerLockOffIcon;
+    case RequestType::kWebAppInstallation:
+      // TODO(crbug.com/333795265): provide a dedicated icon.
       return gfx::kNoneIcon;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return gfx::kNoneIcon;
 }
 #endif  // !BUILDFLAG(IS_ANDROID)
@@ -227,6 +217,8 @@ std::optional<RequestType> ContentSettingsTypeToRequestTypeIfExists(
 #endif
     case ContentSettingsType::GEOLOCATION:
       return RequestType::kGeolocation;
+    case ContentSettingsType::HAND_TRACKING:
+      return RequestType::kHandTracking;
     case ContentSettingsType::IDLE_DETECTION:
       return RequestType::kIdleDetection;
 #if !BUILDFLAG(IS_ANDROID)
@@ -273,6 +265,8 @@ std::optional<RequestType> ContentSettingsTypeToRequestTypeIfExists(
     case ContentSettingsType::WEB_PRINTING:
       return RequestType::kWebPrinting;
 #endif
+    case ContentSettingsType::FEDERATED_IDENTITY_API:
+      return RequestType::kIdentityProvider;
     default:
       return std::nullopt;
   }
@@ -311,6 +305,8 @@ std::optional<ContentSettingsType> RequestTypeToContentSettingsType(
 #endif
     case RequestType::kGeolocation:
       return ContentSettingsType::GEOLOCATION;
+    case RequestType::kHandTracking:
+      return ContentSettingsType::HAND_TRACKING;
     case RequestType::kIdleDetection:
       return ContentSettingsType::IDLE_DETECTION;
 #if !BUILDFLAG(IS_ANDROID)
@@ -418,6 +414,8 @@ const char* PermissionKeyForRequestType(permissions::RequestType request_type) {
 #endif
     case permissions::RequestType::kGeolocation:
       return "geolocation";
+    case permissions::RequestType::kHandTracking:
+      return "hand_tracking";
     case permissions::RequestType::kIdleDetection:
       return "idle_detection";
 #if !BUILDFLAG(IS_ANDROID)
@@ -465,13 +463,10 @@ const char* PermissionKeyForRequestType(permissions::RequestType request_type) {
       return "web_printing";
 #endif
 #if !BUILDFLAG(IS_ANDROID)
+    case permissions::RequestType::kWebAppInstallation:
+      return "web_app_installation";
     case permissions::RequestType::kWindowManagement:
-      if (base::FeatureList::IsEnabled(
-              features::kWindowPlacementPermissionAlias)) {
-        return "window_placement";
-      } else {
-        return "window_management";
-      }
+      return "window_management";
 #endif
     case permissions::RequestType::kIdentityProvider:
       return "identity_provider";

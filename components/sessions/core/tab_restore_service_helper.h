@@ -154,10 +154,22 @@ class SESSIONS_EXPORT TabRestoreServiceHelper
   // will be respected instead. If a new LiveTabContext needs to be created for
   // this tab, If present, |live_tab| will be populated with the LiveTab of the
   // restored tab.
+  // |original_session_type| indicates the type of session entry the tab
+  // belongs to.
   LiveTabContext* RestoreTab(const Tab& tab,
                              LiveTabContext* context,
                              WindowOpenDisposition disposition,
+                             sessions::tab_restore::Type session_restore_type,
                              LiveTab** live_tab);
+
+  // This is a helper function for RestoreEntryById(). Restores a single entry
+  // from the `window`. The entry to restore is denoted by `id` and can either
+  // be a single tab or an entire group.
+  LiveTabContext* RestoreTabOrGroupFromWindow(Window& window,
+                                              SessionID id,
+                                              LiveTabContext* context,
+                                              WindowOpenDisposition disposition,
+                                              std::vector<LiveTab*>* live_tabs);
 
   // Helper function for CreateHistoricalGroup. Returns a Group populated with
   // metadta for the tab group `id`.

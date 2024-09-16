@@ -17,6 +17,7 @@
 #include "ash/system/notification_center/notification_center_test_api.h"
 #include "ash/system/status_area_widget.h"
 #include "ash/system/status_area_widget_test_helper.h"
+#include "base/containers/fixed_flat_set.h"
 #include "base/functional/bind.h"
 #include "base/metrics/metrics_hashes.h"
 #include "base/metrics/statistics_recorder.h"
@@ -121,6 +122,9 @@ static const char* kEnglishDictationCommands[] = {
     "select from phrase to another phrase",
     "move to the next sentence",
     "move to the previous sentence"};
+
+constexpr auto kOfflineNotSupportedLocaleSet =
+    base::MakeFixedFlatSet<std::string_view>({"af-ZA", "kn-IN"});
 
 PrefService* GetActiveUserPrefs() {
   return ProfileManager::GetActiveUserProfile()->GetPrefs();
@@ -286,7 +290,6 @@ class DictationTestBase : public AccessibilityFeatureBrowserTest,
   }
 
   DictationTestUtils* utils() { return utils_.get(); }
-
  private:
   std::unique_ptr<DictationTestUtils> utils_;
   base::test::ScopedFeatureList scoped_feature_list_;
@@ -329,13 +332,16 @@ IN_PROC_BROWSER_TEST_P(DictationTest, GetAllSupportedLocales) {
     bool installed = it.second.installed;
     if (speech_recognition_type() == speech::SpeechRecognitionType::kOnDevice &&
         locale == speech::kUsEnglishLocale) {
-      // Currently, the only locale supported by SODA is en-US. It should work
-      // offline and be installed.
+      // We are certain that en_US works offline, so that must be true. There
+      // are others too (depending on flags) but we can't test them.  We can be
+      // certain that we haven't installed them though.
       EXPECT_TRUE(works_offline);
       EXPECT_TRUE(installed);
     } else {
-      EXPECT_FALSE(works_offline);
-      EXPECT_FALSE(installed);
+      EXPECT_FALSE(installed) << " for locale " << locale;
+      if (base::Contains(kOfflineNotSupportedLocaleSet, locale)) {
+        EXPECT_FALSE(works_offline) << " for locale " << locale;
+      }
     }
   }
 
@@ -352,13 +358,16 @@ IN_PROC_BROWSER_TEST_P(DictationTest, GetAllSupportedLocales) {
     bool works_offline = it.second.works_offline;
     bool installed = it.second.installed;
     if (locale == speech::kUsEnglishLocale) {
-      // en-US should be marked as "works offline", but it shouldn't be
-      // installed.
+      // We are certain that en_US works offline, so that must be true. There
+      // are others too (depending on flags) but we can't test them.  We can be
+      // certain that we haven't installed them though.
       EXPECT_TRUE(works_offline);
       EXPECT_FALSE(installed);
     } else {
-      EXPECT_FALSE(works_offline);
-      EXPECT_FALSE(installed);
+      EXPECT_FALSE(installed) << " for locale " << locale;
+      if (base::Contains(kOfflineNotSupportedLocaleSet, locale)) {
+        EXPECT_FALSE(works_offline) << " for locale " << locale;
+      }
     }
   }
 }
@@ -1016,7 +1025,9 @@ IN_PROC_BROWSER_TEST_P(DictationRegexCommandsTest, DeleteCharacter) {
   SendFinalResultAndWaitForEditableValue(" Delete", "Veg");
   SendFinalResultAndWaitForEditableValue("delete", "Ve");
   SendFinalResultAndWaitForEditableValue("  delete ", "V");
-  SendFinalResultAndWaitForEditableValue("DELETE", "");
+  SendFinalResultAndWaitForEditableValue(
+      "DELETE",
+      (editable_type() == EditableType::kContentEditable) ? "\n" : "");
 }
 
 IN_PROC_BROWSER_TEST_P(DictationRegexCommandsTest, MoveByCharacter) {
@@ -1057,7 +1068,9 @@ IN_PROC_BROWSER_TEST_P(DictationRegexCommandsTest, SelectAllAndUnselect) {
   std::string first_text = "Vega is the brightest star in Lyra";
   SendFinalResultAndWaitForEditableValue(first_text, first_text);
   SendFinalResultAndWaitForSelection("Select all", 0, first_text.size());
-  SendFinalResultAndWaitForEditableValue("delete", "");
+  SendFinalResultAndWaitForEditableValue(
+      "delete",
+      (editable_type() == EditableType::kContentEditable) ? "\n" : "");
   std::string second_text = "Vega is the fifth brightest star in the sky";
   SendFinalResultAndWaitForEditableValue(second_text, second_text);
   SendFinalResultAndWaitForSelection("Select all", 0, second_text.size());
@@ -1077,7 +1090,8 @@ IN_PROC_BROWSER_TEST_P(DictationRegexCommandsTest, CutCopyPaste) {
   SendFinalResultAndWaitForSelection("select ALL ", 0, 8);
   SendFinalResultAndWaitForClipboardChanged("cut");
   EXPECT_EQ("StarStar", GetClipboardText());
-  WaitForEditableValue("");
+  WaitForEditableValue(
+      (editable_type() == EditableType::kContentEditable) ? "\n" : "");
   SendFinalResultAndWaitForEditableValue("  PaStE ", "StarStar");
 }
 
@@ -1139,7 +1153,9 @@ IN_PROC_BROWSER_TEST_P(DictationRegexCommandsTest, DeletePrevWordMiddleOfWord) {
 
 IN_PROC_BROWSER_TEST_P(DictationRegexCommandsTest, DeletePrevSentSimple) {
   SendFinalResultAndWaitForEditableValue("Hello, world.", "Hello, world.");
-  SendFinalResultAndWaitForEditableValue("delete the previous sentence", "");
+  SendFinalResultAndWaitForEditableValue(
+      "delete the previous sentence",
+      (editable_type() == EditableType::kContentEditable) ? "\n" : "");
 }
 
 IN_PROC_BROWSER_TEST_P(DictationRegexCommandsTest, DeletePrevSentWhiteSpace) {
@@ -1677,7 +1693,8 @@ IN_PROC_BROWSER_TEST_P(DictationPumpkinTest, CutCopyPasteSelectAll) {
   SendFinalResultAndWaitForSelection("highlight everything", 0, 8);
   SendFinalResultAndWaitForClipboardChanged("cut highlighted text");
   EXPECT_EQ("StarStar", GetClipboardText());
-  WaitForEditableValue("");
+  WaitForEditableValue(
+      (editable_type() == EditableType::kContentEditable) ? "\n" : "");
   SendFinalResultAndWaitForEditableValue("paste the copied text", "StarStar");
 }
 
@@ -1698,7 +1715,9 @@ IN_PROC_BROWSER_TEST_P(DictationPumpkinTest, DeletePrevWord) {
 
 IN_PROC_BROWSER_TEST_P(DictationPumpkinTest, DeletePrevSent) {
   SendFinalResultAndWaitForEditableValue("Hello, world.", "Hello, world.");
-  SendFinalResultAndWaitForEditableValue("erase sentence", "");
+  SendFinalResultAndWaitForEditableValue(
+      "erase sentence",
+      (editable_type() == EditableType::kContentEditable) ? "\n" : "");
 }
 
 IN_PROC_BROWSER_TEST_P(DictationPumpkinTest, MoveByWord) {
@@ -1751,7 +1770,8 @@ IN_PROC_BROWSER_TEST_P(DictationPumpkinTest, MoveBySentence) {
 
 IN_PROC_BROWSER_TEST_P(DictationPumpkinTest, DeleteAllText) {
   SendFinalResultAndWaitForEditableValue("Hello, world.", "Hello, world.");
-  SendFinalResultAndWaitForEditableValue("clear", "");
+  SendFinalResultAndWaitForEditableValue(
+      "clear", (editable_type() == EditableType::kContentEditable) ? "\n" : "");
 }
 
 IN_PROC_BROWSER_TEST_P(DictationPumpkinTest, NavStartText) {
@@ -1903,7 +1923,9 @@ class DictationContextCheckingTest : public DictationTest {
         /*icon=*/DictationBubbleIconType::kMacroFail,
         /*text=*/message,
         /*hints=*/std::optional<std::vector<std::u16string>>());
-    SendFinalResultAndWaitForEditableValue("delete all", "");
+    SendFinalResultAndWaitForEditableValue(
+        "delete all",
+        (editable_type() == EditableType::kContentEditable) ? "\n" : "");
   }
 
  private:

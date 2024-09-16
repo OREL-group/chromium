@@ -8,7 +8,7 @@
 #import "components/sync/service/sync_service.h"
 #import "components/sync/service/sync_user_settings.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/ui/authentication/authentication_flow.h"
 #import "ios/chrome/browser/ui/authentication/authentication_ui_util.h"
 #import "ios/chrome/browser/ui/authentication/signin/signin_constants.h"
@@ -76,7 +76,6 @@ using signin_metrics::PromoAction;
   _interruptionCompletion = nil;
   SigninCoordinatorResult result;
   if (success) {
-    [self enableBookmarkAndReadingListAccountStorageOptInIfNeeded];
     result = SigninCoordinatorResultSuccess;
   } else if (_interrupted) {
     result = SigninCoordinatorResultInterrupted;
@@ -87,18 +86,6 @@ using signin_metrics::PromoAction;
   if (interruptionCompletion) {
     interruptionCompletion();
   }
-}
-
-// Enables bookmark and reading list storage opt-in only if the sign-in has been
-// triggered from bookmark or reading list.
-- (void)enableBookmarkAndReadingListAccountStorageOptInIfNeeded {
-  if (_accessPoint !=
-          signin_metrics::AccessPoint::ACCESS_POINT_BOOKMARK_MANAGER &&
-      _accessPoint != signin_metrics::AccessPoint::ACCESS_POINT_READING_LIST) {
-    return;
-  }
-  // TODO(crbug.com/41488185): Turn on corresponding data type; Bookmarks or RL
-  // on sign-in to avoid double-promo flow, and consider renaming this method.
 }
 
 @end

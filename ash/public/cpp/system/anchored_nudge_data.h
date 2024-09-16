@@ -21,7 +21,8 @@
 
 namespace views {
 class View;
-}
+class Widget;
+}  // namespace views
 
 namespace ash {
 
@@ -41,8 +42,7 @@ enum class NudgeDuration {
   kMaxValue = kLongDuration
 };
 
-using HoverStateChangeCallback =
-    base::RepeatingCallback<void(bool is_hovering)>;
+using HoverChangedCallback = base::RepeatingCallback<void(bool is_hovered)>;
 using NudgeClickCallback = base::RepeatingCallback<void()>;
 using NudgeDismissCallback = base::RepeatingCallback<void()>;
 
@@ -123,8 +123,18 @@ struct ASH_PUBLIC_EXPORT AnchoredNudgeData {
   // If true, set the `anchor_view` as parent.
   bool set_anchor_view_as_parent = false;
 
-  // Nudge action callbacks.
-  HoverStateChangeCallback hover_state_change_callback;
+  // If false, the ChromeVox will not announce `body_text`.
+  bool announce_chromevox = true;
+
+  // If not null, the nudge will anchor inside the `anchor_widget`, which is a
+  // `views::Widget`. Used together with the `views::BubbleBorder::Arrow`, but
+  // currently only support anchoring to the bottom corners of the
+  // `anchor_widget`. NOTE: This is a new type of anchoring, which is different
+  // than the `anchor_view`. At most only one of them can be set.
+  raw_ptr<views::Widget> anchor_widget = nullptr;
+
+  // Nudge action custom callbacks.
+  HoverChangedCallback hover_changed_callback;
   NudgeClickCallback click_callback;
   NudgeDismissCallback dismiss_callback;
 

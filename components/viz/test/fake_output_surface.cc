@@ -58,10 +58,6 @@ void FakeSoftwareOutputSurface::BindToClient(OutputSurfaceClient* client) {
   client_ = client;
 }
 
-bool FakeSoftwareOutputSurface::IsDisplayedAsOverlayPlane() const {
-  return false;
-}
-
 void FakeSoftwareOutputSurface::SetUpdateVSyncParametersCallback(
     UpdateVSyncParametersCallback callback) {}
 
@@ -76,7 +72,7 @@ gfx::OverlayTransform FakeSoftwareOutputSurface::GetDisplayTransform() {
                                          : gfx::OVERLAY_TRANSFORM_NONE;
 }
 
-// TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
+// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
 // of lacros-chrome is complete.
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
 void FakeSoftwareOutputSurface::SetNeedsSwapSizeNotifications(

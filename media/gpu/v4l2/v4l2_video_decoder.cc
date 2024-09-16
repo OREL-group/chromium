@@ -29,9 +29,9 @@
 #include "media/gpu/chromeos/video_decoder_pipeline.h"
 #include "media/gpu/gpu_video_decode_accelerator_helpers.h"
 #include "media/gpu/macros.h"
+#include "media/gpu/v4l2/legacy/v4l2_video_decoder_backend_stateful.h"
 #include "media/gpu/v4l2/v4l2_status.h"
 #include "media/gpu/v4l2/v4l2_utils.h"
-#include "media/gpu/v4l2/v4l2_video_decoder_backend_stateful.h"
 #include "media/gpu/v4l2/v4l2_video_decoder_backend_stateless.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
 
@@ -58,7 +58,7 @@ constexpr int k480pArea = 720 * 480;
 constexpr int k1080pArea = 1920 * 1088;
 // We are aligning these with the Widevine spec for sample sizes for various
 // resolutions. 1MB for SD, 2MB for HD and 4MB for UHD.
-// Input bitstream buffer size fo rup to 480p streams.
+// Input bitstream buffer size for up to 480p streams.
 constexpr size_t kInputBuferMaxSizeFor480p = 1024 * 1024;
 // Input bitstream buffer size for up to 1080p streams.
 constexpr size_t kInputBufferMaxSizeFor1080p = 2 * kInputBuferMaxSizeFor480p;
@@ -273,8 +273,8 @@ void V4L2VideoDecoder::Initialize(const VideoDecoderConfig& config,
       LogAndRecordUMA(FROM_HERE,
                       V4l2VideoDecoderFunctions::kStopStreamV4L2Queue);
 
-      // TODO(crbug/1103510): Make StopStreamV4L2Queue return a StatusOr, and
-      // pipe that back instead.
+      // TODO(crbug.com/40139291): Make StopStreamV4L2Queue return a StatusOr,
+      // and pipe that back instead.
       std::move(init_cb).Run(
           DecoderStatus(DecoderStatus::Codes::kNotInitialized)
               .AddCause(
@@ -365,18 +365,18 @@ void V4L2VideoDecoder::Initialize(const VideoDecoderConfig& config,
 
 bool V4L2VideoDecoder::NeedsBitstreamConversion() const {
   DCHECK(output_cb_) << "V4L2VideoDecoder hasn't been initialized";
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return (profile_ >= H264PROFILE_MIN && profile_ <= H264PROFILE_MAX) ||
          (profile_ >= HEVCPROFILE_MIN && profile_ <= HEVCPROFILE_MAX);
 }
 
 bool V4L2VideoDecoder::CanReadWithoutStalling() const {
   NOTIMPLEMENTED();
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 int V4L2VideoDecoder::GetMaxDecodeRequests() const {
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 VideoDecoderType V4L2VideoDecoder::GetDecoderType() const {
@@ -515,7 +515,7 @@ void V4L2VideoDecoder::AllocateSecureBuffer(uint32_t size,
                   weak_this_for_callbacks_.GetWeakPtr(), std::move(callback))),
               mojo::PlatformHandle()));
 #else
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 }
 
@@ -674,10 +674,7 @@ CroStatus V4L2VideoDecoder::SetupOutputFormat(const gfx::Size& size,
     // P010 and NV12, and then down sample to NV12 if it is selected. This is
     // not desired, so drop the candidates that don't match the bit depth of the
     // stream.
-    size_t candidate_bit_depth =
-        (candidate == Fourcc(Fourcc::MT2T))
-            ? 10u
-            : BitDepth(candidate->ToVideoPixelFormat());
+    size_t candidate_bit_depth = BitDepth(candidate->ToVideoPixelFormat());
     if (candidate_bit_depth != bit_depth) {
       DVLOGF(1) << "Enumerated format " << candidate->ToString()
                 << " with a bit depth of " << candidate_bit_depth

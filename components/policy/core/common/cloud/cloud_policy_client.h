@@ -17,6 +17,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/feature_list.h"
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/observer_list.h"
@@ -50,6 +51,8 @@ struct DMServerJobResult;
 
 inline constexpr char kPolicyFetchingTimeHistogramName[] =
     "Enterprise.CloudManagement.PolicyFetchingTime";
+
+POLICY_EXPORT BASE_DECLARE_FEATURE(kPolicyFetchWithSha256);
 
 // Implements the core logic required to talk to the device management service.
 // Also keeps track of the current state of the association with the service,
@@ -186,6 +189,11 @@ class POLICY_EXPORT CloudPolicyClient {
     // kDemoRequisition ("cros-demo-mode").
     std::optional<enterprise_management::DemoModeDimensions>
         demo_mode_dimensions;
+
+    // The following field is relevant only to Browsers undergoing profile
+    // registration via the generic OIDC, and contains OIDC specific state
+    // details.
+    std::string oidc_state;
   };
 
   // If non-empty, |machine_id|, |machine_model|, |brand_code|,
@@ -258,16 +266,39 @@ class POLICY_EXPORT CloudPolicyClient {
       const std::string& sub_organization,
       std::unique_ptr<SigningService> signing_service);
 
+  // Attempts to enroll a browser with the device management service using an
+  // enrollment token. Results in a registration change or error notification.
+  // To emphasize, this method is used to register browser (e.g. for
+  // machine-level policies).
+  // Device registration with enrollment token should be performed using
+  // RegisterWithEnrollmentToken method, and this request will timeout after 30
+  // seconds if the enrollment is not mandatory.
+  virtual void RegisterBrowserWithEnrollmentToken(
+      const std::string& token,
+      const std::string& client_id,
+      const ClientDataDelegate& client_data_delegate,
+      bool is_mandatory);
+
   // Attempts to enroll with the device management service using an enrollment
   // token. Results in a registration change or error notification.
-  // This method is used to register browser (e.g. for machine-level policies).
-  // Device registration with enrollment token should be performed using
-  // RegisterWithCertificate method, and this request will timeout after 30
-  // seconds if the enrollment is not mandatory.
-  virtual void RegisterWithToken(const std::string& token,
-                                 const std::string& client_id,
-                                 const ClientDataDelegate& client_data_delegate,
-                                 bool is_mandatory);
+  //
+  // This method is used to register a ChromeOS device (currently only used for
+  // ChromeOS Flex Auto Enrollment). Browser registration should be performed
+  // using RegisterWithToken.
+  virtual void RegisterDeviceWithEnrollmentToken(
+      const RegistrationParameters& parameters,
+      const std::string& client_id,
+      DMAuth enrollment_token_auth);
+
+  // Attempts to enroll a policy agent, (i.e. Omaha, Keystone, or the Chrome
+  // Enterprise Companion App) with the device management service using an
+  // enrollment token. Results in a registration change or error notification.
+  // To emphasize, this method is used to register browser (e.g. for
+  // machine-level policies).
+  virtual void RegisterPolicyAgentWithEnrollmentToken(
+      const std::string& token,
+      const std::string& client_id,
+      const ClientDataDelegate& client_data_delegate);
 
   // Attempts to register the profile with the device management service using a
   // OIDC response from a third party IdP's authentication. Results in a
@@ -276,7 +307,8 @@ class POLICY_EXPORT CloudPolicyClient {
       const RegistrationParameters& parameters,
       const std::string& oauth_token,
       const std::string& oidc_id_token,
-      const std::string& client_id);
+      const std::string& client_id,
+      const base::TimeDelta& timeout_duration);
 
   // Sets information about a policy invalidation. Subsequent fetch operations
   // will use the given info, and callers can use fetched_invalidation_version
@@ -310,6 +342,7 @@ class POLICY_EXPORT CloudPolicyClient {
   virtual void UploadPolicyValidationReport(
       CloudPolicyValidatorBase::Status status,
       const std::vector<ValueValidationIssue>& value_validation_issues,
+      const ValidationAction action,
       const std::string& policy_type,
       const std::string& policy_token);
 
@@ -449,6 +482,11 @@ class POLICY_EXPORT CloudPolicyClient {
   virtual void ClientCertProvisioningRequest(
       enterprise_management::ClientCertificateProvisioningRequest request,
       ClientCertProvisioningRequestCallback callback);
+
+  // Sends a request to store FM registration token used for invalidations.
+  virtual void UploadFmRegistrationToken(
+      enterprise_management::FmRegistrationTokenUploadRequest request,
+      ResultCallback callback);
 
   // Used the update the current service account email associated with this
   // policy client and notify observers.
@@ -645,6 +683,9 @@ class POLICY_EXPORT CloudPolicyClient {
   // Callback for registration requests.
   void OnRegisterCompleted(DMServerJobResult result);
 
+  // Callback for token-based device registration requests.
+  void OnTokenBasedRegisterDeviceCompleted(DMServerJobResult result);
+
   // Callback for policy fetch requests. `start_time` is the timestamp of the
   // request creation, used for recording fetching time as a histogram.
   void OnPolicyFetchCompleted(base::Time start_time, DMServerJobResult result);
@@ -691,6 +732,10 @@ class POLICY_EXPORT CloudPolicyClient {
   void OnClientCertProvisioningRequestResponse(
       ClientCertProvisioningRequestCallback callback,
       DMServerJobResult result);
+
+  // Callback for `UploadFmRegistrationToken` request.
+  void OnUploadFmRegistrationTokenResponse(ResultCallback callback,
+                                           DMServerJobResult result);
 
   // Helper to remove a job from request_jobs_.
   void RemoveJob(const DeviceManagementService::Job* job);
@@ -826,6 +871,28 @@ class POLICY_EXPORT CloudPolicyClient {
   // Sets `unique_request_job_` with a new job created with `config`.
   void CreateUniqueRequestJob(
       std::unique_ptr<RegistrationJobConfiguration> config);
+
+  // Shared logic for reading fields out of DeviceRegisterResponse and
+  // notifying observers of the response status.
+  void ProcessDeviceRegisterResponse(
+      const enterprise_management::DeviceRegisterResponse& response,
+      DeviceManagementStatus dm_status);
+
+  // Records the fetch status for each supported type to fetch used by the
+  // client.
+  void RecordFetchStatus(DeviceManagementStatus status);
+
+  enterprise_management::PolicyFetchRequest::SignatureType
+  GetPolicyFetchRequestSignatureType();
+
+  // Fills a request and creates a job for browser or policy agent enrollment,
+  // which differ only by request type.
+  virtual void RegisterBrowserOrPolicyAgentWithEnrollmentToken(
+      const std::string& token,
+      const std::string& client_id,
+      const ClientDataDelegate& client_data_delegate,
+      bool is_mandatory,
+      DeviceManagementService::JobConfiguration::JobType type);
 
 #if BUILDFLAG(IS_WIN)
   // Callback to get browser device identifier.

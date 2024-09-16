@@ -29,7 +29,7 @@
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "base/trace_event/trace_event.h"
-#include "extensions/browser/api/content_settings/content_settings_custom_extension_provider.h"
+#include "extensions/browser/api/content_settings/content_settings_custom_extension_provider.h"  // nogncheck
 #include "extensions/browser/api/content_settings/content_settings_service.h"
 #endif
 
@@ -43,14 +43,19 @@
 #include "chrome/browser/sessions/exit_type_service_factory.h"
 #endif
 
+using content_settings::ProviderType;
+
 HostContentSettingsMapFactory::HostContentSettingsMapFactory()
     : RefcountedProfileKeyedServiceFactory(
           "HostContentSettingsMap",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kOwnInstance)
-              // TODO(crbug.com/1418376): Check if this service is needed in
+              // TODO(crbug.com/40257657): Check if this service is needed in
               // Guest mode.
               .WithGuest(ProfileSelection::kOwnInstance)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kOwnInstance)
               .Build()) {
   DependsOn(SupervisedUserSettingsServiceFactory::GetInstance());
 #if BUILDFLAG(IS_ANDROID)
@@ -107,15 +112,14 @@ scoped_refptr<RefcountedKeyedService>
 
   auto allowlist_provider = std::make_unique<WebUIAllowlistProvider>(
       WebUIAllowlist::GetOrCreate(profile));
-  settings_map->RegisterProvider(
-      HostContentSettingsMap::WEBUI_ALLOWLIST_PROVIDER,
-      std::move(allowlist_provider));
+  settings_map->RegisterProvider(ProviderType::kWebuiAllowlistProvider,
+                                 std::move(allowlist_provider));
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   // These must be registered before before the HostSettings are passed over to
   // the IOThread.  Simplest to do this on construction.
   settings_map->RegisterProvider(
-      HostContentSettingsMap::CUSTOM_EXTENSION_PROVIDER,
+      ProviderType::kCustomExtensionProvider,
       std::make_unique<content_settings::CustomExtensionProvider>(
           extensions::ContentSettingsService::Get(original_profile)
               ->content_settings_store(),
@@ -133,7 +137,7 @@ scoped_refptr<RefcountedKeyedService>
         supervised_provider(
             new supervised_user::SupervisedUserContentSettingsProvider(
                 supervised_service));
-    settings_map->RegisterProvider(HostContentSettingsMap::SUPERVISED_PROVIDER,
+    settings_map->RegisterProvider(ProviderType::kSupervisedProvider,
                                    std::move(supervised_provider));
   }
 
@@ -148,23 +152,20 @@ scoped_refptr<RefcountedKeyedService>
         TemplateURLServiceFactory::GetForProfile(profile));
 
     settings_map->RegisterUserModifiableProvider(
-        HostContentSettingsMap::NOTIFICATION_ANDROID_PROVIDER,
+        ProviderType::kNotificationAndroidProvider,
         std::move(channels_provider));
 
     auto webapp_provider = std::make_unique<InstalledWebappProvider>();
-    settings_map->RegisterProvider(
-        HostContentSettingsMap::INSTALLED_WEBAPP_PROVIDER,
-        std::move(webapp_provider));
+    settings_map->RegisterProvider(ProviderType::kInstalledWebappProvider,
+                                   std::move(webapp_provider));
   }
 #endif  // defined (OS_ANDROID)
-  if (base::FeatureList::IsEnabled(permissions::features::kOneTimePermission)) {
-    auto one_time_permission_provider =
-        std::make_unique<OneTimePermissionProvider>(
-            OneTimePermissionsTrackerFactory::GetForBrowserContext(context));
+  auto one_time_permission_provider =
+      std::make_unique<OneTimePermissionProvider>(
+          OneTimePermissionsTrackerFactory::GetForBrowserContext(context));
 
-    settings_map->RegisterUserModifiableProvider(
-        HostContentSettingsMap::ONE_TIME_PERMISSION_PROVIDER,
-        std::move(one_time_permission_provider));
-  }
+  settings_map->RegisterUserModifiableProvider(
+      ProviderType::kOneTimePermissionProvider,
+      std::move(one_time_permission_provider));
   return settings_map;
 }

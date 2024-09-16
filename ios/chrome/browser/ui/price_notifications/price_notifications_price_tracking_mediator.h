@@ -9,7 +9,8 @@
 
 #import <memory>
 
-#import "ios/chrome/browser/price_insights/coordinator/price_insights_mutator.h"
+#import "base/memory/weak_ptr.h"
+#import "ios/chrome/browser/price_insights/ui/price_insights_mutator.h"
 #import "ios/chrome/browser/ui/price_notifications/price_notifications_mutator.h"
 
 @protocol BookmarksCommands;
@@ -18,6 +19,10 @@
 @protocol PriceNotificationsConsumer;
 @protocol PriceInsightsConsumer;
 class PushNotificationService;
+
+namespace bookmarks {
+class BookmarkModel;
+}  // namespace bookmarks
 
 namespace commerce {
 class ShoppingService;
@@ -34,13 +39,16 @@ class WebState;
 @interface PriceNotificationsPriceTrackingMediator
     : NSObject <PriceNotificationsMutator, PriceInsightsMutator>
 
-// The designated initializer. `ShoppingService`, `ImageDataFetcher`,
 // `WebState`, and `PushNotificationService` must not be nil.
+// The designated initializer. `ShoppingService`, `BookmarkModel`,
+// `ImageDataFetcher`, `WebState`, and `PushNotificationService` must not be
+// nil.
 - (instancetype)
     initWithShoppingService:(commerce::ShoppingService*)service
+              bookmarkModel:(bookmarks::BookmarkModel*)bookmarkModel
                imageFetcher:(std::unique_ptr<image_fetcher::ImageDataFetcher>)
                                 imageFetcher
-                   webState:(web::WebState*)webState
+                   webState:(base::WeakPtr<web::WebState>)webState
     pushNotificationService:(PushNotificationService*)pushNotificationService
     NS_DESIGNATED_INITIALIZER;
 

@@ -13,6 +13,12 @@ up-to-date Chromium repo.  One way to start a shift is to run `git fetch`,
 `git checkout origin/main`, and `gclient sync` (but other workflows should also
 work - e.g. ones based on `git-new-workdir`).
 
+## Avoiding Conflicts
+
+Before creating a CL stack, check for open CLs with the [`cratesio-autoupdate`
+tag](https://chromium-review.googlesource.com/q/hashtag:%22cratesio-autoupdate%22+(status:open%20OR%20status:merged)).
+Such CLs tend to conflict, so coordinate with owners of any open CLs.
+
 ## Automated step: `create_update_cl.py`
 
 The first actual step of the rotation is running the script:
@@ -44,8 +50,10 @@ to be done first - see the sections below.
 
 The changes in the auto-generated CL need to go through a security audit, which
 will ensure that `cargo vet` criteria (e.g. `ub-risk-0`, `safe-to-deploy`,
-etc.). still hold for the new versions.  The CL description specifies which
-criteria apply to the updated crates.
+etc.). still hold for the new versions.  The CL description specifies what are
+the _minimum_ criteria required for the updated crates (note that
+`supply-chain/audits.toml` can and should record a stricter certification if
+possible).
 See the `//docs/rust-unsafe.md` doc for details on how to audit and certify
 the new crate versions (this may require looping in `unsafe` Rust experts
 and/or cryptography experts).
@@ -70,8 +78,7 @@ the git branch for each update CL. There are some known corner cases where
   `third_party/rust/chromium_crates_io/vet_config.toml.hbs` and then run
   `tools/crates/run_gnrt.py vendor` to regenerate `supply-chain/config.toml`.
 * Update to a crate version that is already covered by `audits.toml` of other
-  projects that Chromium's `run_cargo_vet.py` imports.  In such case (but only
-  once https://crrev.com/c/5368743 lands) you may
+  projects that Chromium's `run_cargo_vet.py` imports.  In such case you may
   need to commit changes that `cargo vet` generates in
   `third_party/rust/chromium_crates_io/supply-chain/imports.lock`.
 
@@ -89,16 +96,58 @@ closest to `origin/main`):
       that the automated script has listed in the CL description (e.g. if some
       of the criteria are already covered by `audits.toml` imported from other
       projects).
+    - Also note that `cargo vet` will list the _minimum_ required criteria
+      and `audits.toml` can and should record stricter certification if
+      possible. In particular:
+         - Record `does-not-implement-crypto` instead of `crypto-safe` if the
+           crate does not implement crypto.
+         - Record a lower-numbered `ub-risk-N` if appropriate.
+    - And also note that if the crate is currently covered by an exemption
+      in `config.toml`, then we want to bump the exemption instead of providing
+      a delta audit that is baselined on an exemption.
+      Note that `config.toml` shouldn't be edited manually - please edit
+      `vet_config.toml.hbs` and regenerate `config.toml` by running
+      `tools/crates/run_gnrt.py vendor`.
 1. Follow the cargo vet instructions to inspect diffs and certify the results
+    - Note that special guidelines may apply to
+      [delta audits](https://github.com/google/rust-crate-audits/blob/main/auditing_standards.md#delta-audits-should-describe-the-final-version)
 1. `git add third_party/rust/chromium_crates_io/supply-chain`.
-   `git commit -m 'cargo vet'`
+1. `git commit -m 'cargo vet'`
 1. `git cl upload -m 'cargo vet'`
+
+## New transitive dependencies
+
+If the roll brings in a new transitive dependency, it will need to be
+audited in its entirety and the results recorded in
+`third_party/rust/chromium_crates_io/supply-chain/audits.toml`.
+
+The addition of transitive Rust dependencies does not need ATL approval,
+but an FYI email should be sent to
+[chrome-atls-discuss@google.com](mailto:chrome-atls-discuss@google.com)
+in order to record the addition.
+
+### Optional: Adding the transitive dependency in its own CL.
+
+If the crate and/or audit are non-trivial, it's possible to split the
+additional crate into its own CL, however then it will default to global
+visibility and allowing non-test use.
+* `gnrt add` and `gnrt vendor` can add the dependency to a fresh checkout.
+* Mark the crate as being for third-party code only by setting
+  `allow_first_party_usage` to `false` for the crate in
+  `third_party/rust/chromium_crates_io/gnrt_config.toml`.
+* If the crates making use of the transitive dependency are only allowed
+  in tests, then set `group = 'test'` for the crate in
+  `third_party/rust/chromium_crates_io/gnrt_config.toml`. This reduces
+  the level of security review required for the library.
+* `gnrt gen` will then generate the GN rules.
+* Rebase the roll CL on top of the changes to make sure the choices made above
+  are correct. `gn gen` will fail in CQ if the crate was placed in the `'test'`
+  group but needs to be visible outside of tests.
 
 ## Potential additional steps
 
-* If updating `cxx`, you may need to also update its version in:
-    - `build/rust/BUILD.gn`
-    - `third_party/rust/cxx/v1/cxx.h`
+* If updating `cxx`, you will also need to update its version in
+    - `build/rust/cxx_version.gni`
 
 * The `create_update_cl.py` script may stop early if it detects that `gnrt
   vendor` or `gnrt gen` have reported any warnings or errors (e.g. a "License

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chromeos/components/cdm_factory_daemon/content_decryption_module_adapter.h"
 
 #include <utility>
@@ -293,7 +298,7 @@ void ContentDecryptionModuleAdapter::OnSessionClosed(
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DVLOG(2) << __func__;
   cdm_session_tracker_.RemoveSession(session_id);
-  // TODO(crbug.com/1208618): Update cdm::mojom::ContentDecryptionModuleClient
+  // TODO(crbug.com/40181810): Update cdm::mojom::ContentDecryptionModuleClient
   // to support CdmSessionClosedReason.
   session_closed_cb_.Run(session_id, media::CdmSessionClosedReason::kClose);
 }
@@ -404,19 +409,20 @@ void ContentDecryptionModuleAdapter::InitializeVideoDecoder(
 void ContentDecryptionModuleAdapter::DecryptAndDecodeAudio(
     scoped_refptr<media::DecoderBuffer> encrypted,
     AudioDecodeCB audio_decode_cb) {
-  NOTREACHED()
+  NOTREACHED_IN_MIGRATION()
       << "ContentDecryptionModuleAdapter does not support audio decoding";
 }
 
 void ContentDecryptionModuleAdapter::DecryptAndDecodeVideo(
     scoped_refptr<media::DecoderBuffer> encrypted,
     VideoDecodeCB video_decode_cb) {
-  NOTREACHED()
+  NOTREACHED_IN_MIGRATION()
       << "ContentDecryptionModuleAdapter does not support video decoding";
 }
 
 void ContentDecryptionModuleAdapter::ResetDecoder(StreamType stream_type) {
-  NOTREACHED() << "ContentDecryptionModuleAdapter does not support decoding";
+  NOTREACHED_IN_MIGRATION()
+      << "ContentDecryptionModuleAdapter does not support decoding";
 }
 
 void ContentDecryptionModuleAdapter::DeinitializeDecoder(
@@ -525,8 +531,7 @@ void ContentDecryptionModuleAdapter::OnDecrypt(
   }
 
   scoped_refptr<media::DecoderBuffer> decrypted =
-      media::DecoderBuffer::CopyFrom(decrypted_data.data(),
-                                     decrypted_data.size());
+      media::DecoderBuffer::CopyFrom(decrypted_data);
   // Copy the auxiliary fields.
   decrypted->set_timestamp(encrypted->timestamp());
   decrypted->set_duration(encrypted->duration());

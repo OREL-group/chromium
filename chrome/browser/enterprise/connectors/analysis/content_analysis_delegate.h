@@ -15,12 +15,12 @@
 #include "base/memory/read_only_shared_memory_region.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
-#include "chrome/browser/enterprise/connectors/analysis/analysis_settings.h"
 #include "chrome/browser/enterprise/connectors/analysis/content_analysis_delegate_base.h"
 #include "chrome/browser/enterprise/connectors/common.h"
 #include "chrome/browser/safe_browsing/cloud_content_scanning/binary_upload_service.h"
 #include "chrome/browser/safe_browsing/cloud_content_scanning/deep_scanning_utils.h"
 #include "components/enterprise/common/proto/connectors.pb.h"
+#include "components/enterprise/connectors/core/analysis_settings.h"
 #include "content/public/browser/clipboard_types.h"
 #include "url/gurl.h"
 
@@ -131,6 +131,11 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase {
     // code can let enterprise code know the user action triggering content
     // analysis.
     ContentAnalysisRequest::Reason reason = ContentAnalysisRequest::UNKNOWN;
+
+    // The clipboard source of data being pasted into the browser. Empty for
+    // non-clipboard pastes, and clipboard pastes in special cases (ex. OTR).
+    // TODO: Update description if special values are used
+    std::string clipboard_source;
 
     // The settings to use for the analysis of the data in this struct.
     AnalysisSettings settings;
@@ -291,7 +296,7 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase {
 
   // Callbacks from uploading data. Protected so they can be called from
   // testing derived classes.
-  // TODO(crbug.com/1324892): Adapt once TextRequestHandler and
+  // TODO(crbug.com/40839522): Adapt once TextRequestHandler and
   // PageRequestHandler are created and move reporting to the RequestHandlers.
   void StringRequestCallback(safe_browsing::BinaryUploadService::Result result,
                              ContentAnalysisResponse response);
@@ -343,9 +348,12 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase {
   // LCAC cannot establish connection with local client.
   bool ShouldFailOpenWithoutLocalClient(bool should_allow_by_default);
 
+  // Helper function to decide if the page request should be terminated early.
+  bool ShouldNotUploadLargePage(size_t page_size);
+
   // Prepares an upload request for the text in `data_`. If `data_.text` is
   // empty, this method does nothing.
-  // TODO(crbug.com/1324892): Move to TextRequestHandler.
+  // TODO(crbug.com/40839522): Move to TextRequestHandler.
   void PrepareTextRequest();
 
   // Prepares an upload request for the image in `data_`. If `data_.image` is
@@ -354,12 +362,12 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase {
 
   // Prepares an upload request for the printed page bytes in `data_`. If there
   // aren't any, this method does nothing.
-  // TODO(crbug.com/1324892): Move to PageRequestHandler.
+  // TODO(crbug.com/40839522): Move to PageRequestHandler.
   void PreparePageRequest();
 
   // Adds required fields to `request` before sending it to the binary upload
   // service.
-  // TODO(crbug.com/1324892): Remove once TextRequestHandler and
+  // TODO(crbug.com/40839522): Remove once TextRequestHandler and
   // PageRequestHandler are created.
   void PrepareRequest(AnalysisConnector connector,
                       safe_browsing::BinaryUploadService::Request* request);
@@ -371,7 +379,7 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase {
   // These methods exist so they can be overridden in tests as needed.
   // The `result` argument exists as an optimization to finish the request early
   // when the result is known in advance to avoid using the upload service.
-  // TODO(crbug.com/1324892): Remove once TextRequestHandler and
+  // TODO(crbug.com/40839522): Remove once TextRequestHandler and
   // PageRequestHandler are created.
   virtual void UploadTextForDeepScanning(
       std::unique_ptr<safe_browsing::BinaryUploadService::Request> request);
@@ -405,6 +413,10 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase {
   // Send an acknowledgement to the service provider of the final result
   // for the requests of this ContentAnalysisDelegate instance.
   void AckAllRequests();
+
+  void FinishLargeDataRequestEarly(
+      std::unique_ptr<safe_browsing::BinaryUploadService::Request> request,
+      safe_browsing::BinaryUploadService::Result result);
 
   // Returns the BinaryUploadService used to upload content for deep scanning.
   // Virtual to override in tests.
@@ -447,7 +459,7 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase {
   ContentAnalysisResponse page_response_;
 
   // Stores the scanned page's size since it moves from `data_` to be uploaded.
-  // TODO(crbug.com/1324892): Move to PageRequestHandler.
+  // TODO(crbug.com/40839522): Move to PageRequestHandler.
   int64_t page_size_bytes_ = 0;
 
   // Stores the total number of requests associated with one user action.

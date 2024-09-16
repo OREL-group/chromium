@@ -16,7 +16,6 @@
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/uuid.h"
-#include "chrome/android/chrome_jni_headers/OfflinePageDownloadBridge_jni.h"
 #include "chrome/browser/android/profile_key_util.h"
 #include "chrome/browser/android/tab_android.h"
 #include "chrome/browser/download/android/download_controller_base.h"
@@ -57,6 +56,9 @@
 #include "net/base/filename_util.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "url/gurl.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "chrome/android/chrome_jni_headers/OfflinePageDownloadBridge_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::ConvertJavaStringToUTF8;
@@ -253,9 +255,9 @@ content::WebContents* GetWebContentsByFrameID(int render_process_id,
 content::WebContents::Getter GetWebContentsGetter(
     content::WebContents* web_contents) {
   // The FrameTreeNode ID should be used to access the WebContents.
-  int frame_tree_node_id =
+  content::FrameTreeNodeId frame_tree_node_id =
       web_contents->GetPrimaryMainFrame()->GetFrameTreeNodeId();
-  if (frame_tree_node_id != content::RenderFrameHost::kNoFrameTreeNodeId) {
+  if (frame_tree_node_id) {
     return base::BindRepeating(content::WebContents::FromFrameTreeNodeId,
                                frame_tree_node_id);
   }

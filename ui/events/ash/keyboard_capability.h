@@ -14,7 +14,10 @@
 #include "base/containers/flat_map.h"
 #include "base/files/scoped_file.h"
 #include "ui/base/accelerators/accelerator.h"
+#include "ui/events/ash/modifier_split_dogfood_controller.h"
+#include "ui/events/ash/mojom/meta_key.mojom-shared.h"
 #include "ui/events/ash/mojom/modifier_key.mojom-shared.h"
+#include "ui/events/ash/top_row_action_keys.h"
 #include "ui/events/devices/input_device_event_observer.h"
 #include "ui/events/devices/keyboard_device.h"
 #include "ui/events/keycodes/keyboard_codes_posix.h"
@@ -22,38 +25,6 @@
 #include "ui/events/ozone/evdev/event_device_info.h"
 
 namespace ui {
-
-// TODO(dpad): Handle display mirror top row keys.
-// This enum should mirror the enum `KeyboardTopRowLayout` in
-// tools/metrics/histograms/enums.xml and values should not be changed.
-enum class TopRowActionKey {
-  kNone = 0,
-  kMinValue = kNone,
-  kUnknown,
-  kBack,
-  kForward,
-  kRefresh,
-  kFullscreen,
-  kOverview,
-  kScreenshot,
-  kScreenBrightnessDown,
-  kScreenBrightnessUp,
-  kMicrophoneMute,
-  kVolumeMute,
-  kVolumeDown,
-  kVolumeUp,
-  kKeyboardBacklightToggle,
-  kKeyboardBacklightDown,
-  kKeyboardBacklightUp,
-  kNextTrack,
-  kPreviousTrack,
-  kPlayPause,
-  kAllApplications,
-  kEmojiPicker,
-  kDictation,
-  kPrivacyScreenToggle,
-  kMaxValue = kPrivacyScreenToggle,
-};
 
 static const TopRowActionKey kLayout1TopRowActionKeys[] = {
     TopRowActionKey::kBack,
@@ -149,6 +120,16 @@ inline constexpr auto kSixPackKeyToSearchSystemKeyMap =
         {KeyboardCode::VKEY_END, KeyboardCode::VKEY_RIGHT},
         {KeyboardCode::VKEY_NEXT, KeyboardCode::VKEY_DOWN},
         {KeyboardCode::VKEY_INSERT, KeyboardCode::VKEY_BACK},
+    });
+
+// A map between six pack keys to function keys.
+inline constexpr auto kSixPackKeyToFnKeyMap =
+    base::MakeFixedFlatMap<KeyboardCode, KeyboardCode>({
+        {KeyboardCode::VKEY_DELETE, KeyboardCode::VKEY_BACK},
+        {KeyboardCode::VKEY_HOME, KeyboardCode::VKEY_LEFT},
+        {KeyboardCode::VKEY_PRIOR, KeyboardCode::VKEY_UP},
+        {KeyboardCode::VKEY_END, KeyboardCode::VKEY_RIGHT},
+        {KeyboardCode::VKEY_NEXT, KeyboardCode::VKEY_DOWN},
     });
 
 // A map between six pack keys to alt system keys.
@@ -271,6 +252,7 @@ class KeyboardCapability : public InputDeviceEventObserver {
   // Returns the set of modifier keys present on the given keyboard.
   std::vector<mojom::ModifierKey> GetModifierKeys(
       const KeyboardDevice& keyboard) const;
+  std::vector<mojom::ModifierKey> GetModifierKeys(int device_id) const;
 
   // Returns the device type of the given keyboard.
   DeviceType GetDeviceType(const KeyboardDevice& keyboard) const;
@@ -341,6 +323,7 @@ class KeyboardCapability : public InputDeviceEventObserver {
 
   // Check if the assistant key exists on the given keyboard.
   bool HasAssistantKey(const KeyboardDevice& keyboard) const;
+  bool HasAssistantKey(int device_id) const;
   bool HasAssistantKeyOnAnyKeyboard() const;
 
   // Check if the CapsLock key exists on the given keyboard.
@@ -349,9 +332,31 @@ class KeyboardCapability : public InputDeviceEventObserver {
   // Check if the Function key exists on the given keyboard.
   bool HasFunctionKey(const KeyboardDevice& keyboard) const;
   bool HasFunctionKey(int device_id) const;
+  bool HasFunctionKeyOnAnyKeyboard() const;
 
   // Check if the RightAlt key exists on the given keyboard.
   bool HasRightAltKey(const KeyboardDevice& keyboard) const;
+  bool HasRightAltKey(int device_id) const;
+
+  // Check if the RightAlt key exists, but only for on OOBE screen.
+  bool HasRightAltKeyForOobe(const KeyboardDevice& keyboard) const;
+  bool HasRightAltKeyForOobe(int device_id) const;
+
+  // Returns the appropriate meta key present on the given keyboard.
+  ui::mojom::MetaKey GetMetaKey(const KeyboardDevice& keyboard) const;
+  ui::mojom::MetaKey GetMetaKey(int device_id) const;
+
+  // Returns the meta key to display in the UI to represent the overall current
+  // keyboard situation. This will only return either Launcher, Search, or
+  // LauncherRefresh.
+  ui::mojom::MetaKey GetMetaKeyToDisplay() const;
+
+  // Whether or not to use the updated icons for the keyboard.
+  bool UseRefreshedIcons() const;
+
+  // Finds the keyboard with the corresponding  `device_id` and checks its
+  // `DeviceType` to determine if it's a split modifier keyboard.
+  bool IsSplitModifierKeyboard(const KeyboardDevice& keyboard) const;
 
   // Finds the keyboard with the corresponding  `device_id` and checks its
   // `DeviceType` to determine if it's a ChromeOS keyboard.
@@ -370,13 +375,26 @@ class KeyboardCapability : public InputDeviceEventObserver {
       KeyboardCode key_code) const;
 
   const std::vector<TopRowActionKey>* GetTopRowActionKeys(
-      const KeyboardDevice& keyboard);
+      const KeyboardDevice& keyboard) const;
+  const std::vector<TopRowActionKey>* GetTopRowActionKeys(int device_id) const;
+
+  // Whether or not the given keyboard is a split modifier keyboard and
+  // qualifies to forcibly enable features.
+  bool IsSplitModifierKeyboardForOverride(const KeyboardDevice& keyboard) const;
 
   void SetBoardNameForTesting(const std::string& board_name);
 
   const base::flat_map<int, KeyboardInfo>& keyboard_info_map() const {
     return keyboard_info_map_;
   }
+
+  bool IsModifierSplitEnabled() const {
+    return modifier_split_dogfood_controller_->IsEnabled();
+  }
+
+  void ForceEnableFeature();
+
+  void ResetModifierSplitDogfoodControllerForTesting();
 
  private:
   const KeyboardInfo* GetKeyboardInfo(const KeyboardDevice& keyboard) const;
@@ -395,6 +413,9 @@ class KeyboardCapability : public InputDeviceEventObserver {
 
   // Board name of the current ChromeOS device.
   std::string board_name_;
+
+  std::unique_ptr<ModifierSplitDogfoodController>
+      modifier_split_dogfood_controller_;
 };
 
 }  // namespace ui

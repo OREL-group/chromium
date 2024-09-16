@@ -64,7 +64,7 @@ const PaintPropertyNode& PaintPropertyNode::LowestCommonAncestorInternal(
 String PaintPropertyNode::ToString() const {
   String s = ToJSON()->ToJSONString();
 #if DCHECK_IS_ON()
-  return debug_name_ + " " + s;
+  return debug_name_ + String::Format(" %p ", this) + s;
 #else
   return s;
 #endif
@@ -137,7 +137,7 @@ void PropertyTreePrinter::BuildTreeString(StringBuilder& string_builder,
   }
 
   string_builder.Append(node.DebugName());
-  string_builder.Append(" ");
+  string_builder.Append(String::Format(" %p ", &node));
   auto json = node.ToJSON();
   json->Remove("parent");
   string_builder.Append(json->ToJSONString());
@@ -151,7 +151,7 @@ void PropertyTreePrinter::BuildTreeString(StringBuilder& string_builder,
 }
 
 const PaintPropertyNode& PropertyTreePrinter::RootNode() {
-  const auto* node = nodes_.back();
+  const auto* node = nodes_.back().Get();
   while (!node->IsRoot()) {
     node = node->Parent();
   }

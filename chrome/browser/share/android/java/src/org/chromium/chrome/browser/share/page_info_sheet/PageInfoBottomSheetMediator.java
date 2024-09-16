@@ -7,8 +7,10 @@ package org.chromium.chrome.browser.share.page_info_sheet;
 import android.text.TextUtils;
 import android.view.View;
 
+import org.chromium.base.Callback;
 import org.chromium.chrome.browser.share.page_info_sheet.PageInfoBottomSheetCoordinator.PageInfoContents;
 import org.chromium.chrome.browser.share.page_info_sheet.PageInfoBottomSheetProperties.PageInfoState;
+import org.chromium.chrome.browser.share.page_info_sheet.PageSummaryMetrics.PageSummarySheetEvents;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController.SheetState;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController.StateChangeReason;
@@ -22,6 +24,7 @@ class PageInfoBottomSheetMediator extends EmptyBottomSheetObserver {
     private final PageInfoBottomSheetCoordinator.Delegate mPageInfoDelegate;
     private final PageInfoBottomSheetContent mPageInfoBottomSheetContent;
     private final BottomSheetController mBottomSheetController;
+    private final Callback<PageInfoContents> mOnContentsChangedCallback = this::onContentsChanged;
 
     public PropertyModel getModel() {
         return mModel;
@@ -55,7 +58,7 @@ class PageInfoBottomSheetMediator extends EmptyBottomSheetObserver {
                         .build();
 
         mBottomSheetController.addObserver(this);
-        mPageInfoDelegate.getContentSupplier().addObserver(this::onContentsChanged);
+        mPageInfoDelegate.getContentSupplier().addObserver(mOnContentsChangedCallback);
     }
 
     private void onLearnMoreClicked(View view) {
@@ -96,20 +99,41 @@ class PageInfoBottomSheetMediator extends EmptyBottomSheetObserver {
             case StateChangeReason.BACK_PRESS,
                     StateChangeReason.SWIPE,
                     StateChangeReason.TAP_SCRIM -> {
-                mPageInfoDelegate.onCancel();
-                destroySheet();
+                dismissSheet();
             }
         }
     }
 
     private void onAcceptClicked(View view) {
         mPageInfoDelegate.onAccept();
-        destroySheet();
     }
 
     private void onCancelClicked(View view) {
+        dismissSheet();
+    }
+
+    private void dismissSheet() {
+        recordStateOnDismiss();
         mPageInfoDelegate.onCancel();
-        destroySheet();
+    }
+
+    private void recordStateOnDismiss() {
+        @PageInfoState int state = mModel.get(PageInfoBottomSheetProperties.STATE);
+        @PageSummarySheetEvents
+        int stateOnDismiss = PageSummarySheetEvents.CLOSE_SHEET_WHILE_INITIALIZING;
+        switch (state) {
+            case PageInfoState.ERROR:
+                stateOnDismiss = PageSummarySheetEvents.CLOSE_SHEET_ON_ERROR;
+                break;
+            case PageInfoState.LOADING:
+                stateOnDismiss = PageSummarySheetEvents.CLOSE_SHEET_WHILE_LOADING;
+                break;
+            case PageInfoState.SUCCESS:
+                stateOnDismiss = PageSummarySheetEvents.CLOSE_SHEET_AFTER_SUCCESS;
+                break;
+        }
+
+        PageSummaryMetrics.recordSummarySheetEvent(stateOnDismiss);
     }
 
     @Override
@@ -127,7 +151,7 @@ class PageInfoBottomSheetMediator extends EmptyBottomSheetObserver {
 
     void destroySheet() {
         mBottomSheetController.hideContent(mPageInfoBottomSheetContent, true);
-        mPageInfoDelegate.getContentSupplier().removeObserver(this::onContentsChanged);
+        mPageInfoDelegate.getContentSupplier().removeObserver(mOnContentsChangedCallback);
         mBottomSheetController.removeObserver(this);
     }
 }

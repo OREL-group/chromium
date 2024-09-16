@@ -39,6 +39,11 @@ void ChromeProfileRequestGenerator::Generate(ReportCallback callback) {
                      std::move(callback)));
 }
 
+void ChromeProfileRequestGenerator::ToggleExtensionReport(
+    ProfileReportGenerator::ExtensionsEnabledCallback callback) {
+  profile_report_generator_.SetExtensionsEnabledCallback(std::move(callback));
+}
+
 void ChromeProfileRequestGenerator::OnBrowserReportReady(
     std::unique_ptr<ReportRequest> request,
     ReportCallback callback,

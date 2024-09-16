@@ -62,7 +62,6 @@ const CGFloat kActivityIndicatorDimensionIPhone = 56;
 
 @synthesize applicationHandler = _applicationHandler;
 @synthesize browserHandler = _browserHandler;
-@synthesize browsingDataHandler = _browsingDataHandler;
 @synthesize settingsHandler = _settingsHandler;
 @synthesize snackbarHandler = _snackbarHandler;
 
@@ -88,7 +87,7 @@ const CGFloat kActivityIndicatorDimensionIPhone = 56;
   if (self.showCancelDuringEditing) {
     self.navigationItem.leftBarButtonItem =
         self.tableView.editing ? [self createEditModeCancelButton]
-                               : self.backButtonItem;
+                               : self.customLeftBarButtonItem;
   }
 
   // The following two lines cause the table view to refresh the cell heights
@@ -142,7 +141,6 @@ const CGFloat kActivityIndicatorDimensionIPhone = 56;
     (id<SettingsRootViewControlling>)controller {
   controller.applicationHandler = self.applicationHandler;
   controller.browserHandler = self.browserHandler;
-  controller.browsingDataHandler = self.browsingDataHandler;
   controller.settingsHandler = self.settingsHandler;
   controller.snackbarHandler = self.snackbarHandler;
 }
@@ -185,7 +183,7 @@ const CGFloat kActivityIndicatorDimensionIPhone = 56;
   self.navigationItem.largeTitleDisplayMode =
       UINavigationItemLargeTitleDisplayModeNever;
 
-  self.backButtonItem = self.navigationItem.leftBarButtonItem;
+  self.customLeftBarButtonItem = self.navigationItem.leftBarButtonItem;
   self.shouldShowDeleteButtonInToolbar = YES;
   self.extendedLayoutIncludesOpaqueBars = YES;
 }
@@ -449,7 +447,7 @@ const CGFloat kActivityIndicatorDimensionIPhone = 56;
       [self.navigationItem.leftBarButtonItem setEnabled:YES];
       break;
     default:
-      NOTREACHED();
+      DUMP_WILL_BE_NOTREACHED();
       break;
   }
   self.savedBarButtonItem = nil;

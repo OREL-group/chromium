@@ -115,8 +115,15 @@ enum class ProfileSignout {
   // Signout as part of the profile deletion procedure, to avoid that deletion
   // of data propagates via sync.
   kSignoutDuringProfileDeletion = 34,
+  // Signout, in the account menu, as part of switching to a new primary
+  // account.
+  kChangeAccountInAccountMenu = 35,
+  // User clicked to signout from the account menu view.
+  kUserClickedSignoutInAccountMenu = 36,
+  // User disabled allow chrome sign-in from google settings page.
+  kUserDisabledAllowChromeSignIn = 37,
   // Keep this as the last enum.
-  kMaxValue = kSignoutDuringProfileDeletion
+  kMaxValue = kUserDisabledAllowChromeSignIn
 };
 
 // Enum values which enumerates all access points where sign in could be
@@ -126,6 +133,7 @@ enum class ProfileSignout {
 // A Java counterpart will be generated for this enum.
 // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.components.signin.metrics
 // GENERATED_JAVA_CLASS_NAME_OVERRIDE: SigninAccessPoint
+// LINT.IfChange
 enum class AccessPoint : int {
   ACCESS_POINT_START_PAGE = 0,
   ACCESS_POINT_NTP_LINK = 1,
@@ -149,7 +157,7 @@ enum class AccessPoint : int {
   ACCESS_POINT_UNKNOWN = 17,
   ACCESS_POINT_PASSWORD_BUBBLE = 18,
   ACCESS_POINT_AUTOFILL_DROPDOWN = 19,
-  ACCESS_POINT_NTP_CONTENT_SUGGESTIONS = 20,
+  // ACCESS_POINT_NTP_CONTENT_SUGGESTIONS = 20, no longer used.
   ACCESS_POINT_RESIGNIN_INFOBAR = 21,
   ACCESS_POINT_TAB_SWITCHER = 22,
   // ACCESS_POINT_FORCE_SIGNIN_WARNING = 23, no longer used.
@@ -213,11 +221,36 @@ enum class AccessPoint : int {
   // allowing the user to reauth.
   ACCESS_POINT_PROFILE_MENU_SIGNOUT_CONFIRMATION_PROMPT = 61,
   ACCESS_POINT_SETTINGS_SIGNOUT_CONFIRMATION_PROMPT = 62,
+  // The identity disc (avatar) on the New Tab page. Note that this only covers
+  // signed-in avatars - interactions with the signed-out avatar are instead
+  // counted under ACCESS_POINT_NTP_SIGNED_OUT_ICON.
+  ACCESS_POINT_NTP_IDENTITY_DISC = 63,
+  // The identity is received through an interception of a 3rd party OIDC auth
+  // redirection.
+  ACCESS_POINT_OIDC_REDIRECTION_INTERCEPTION = 64,
+  // The "Sign in again" button on a Web Authentication modal dialog when
+  // reauthentication is necessary to sign in with or save a passkey from the
+  // Google Password Manager.
+  ACCESS_POINT_WEBAUTHN_MODAL_DIALOG = 65,
+  // Signin button from the profile menu that is labelled as a "Signin" button,
+  // but is followed by a Sync confirmation screen as a promo.
+  ACCESS_POINT_AVATAR_BUBBLE_SIGN_IN_WITH_SYNC_PROMO = 66,
+  // Signin using the account menu.
+  ACCESS_POINT_ACCOUNT_MENU = 67,
+  // Signin via Product Specifications.
+  ACCESS_POINT_PRODUCT_SPECIFICATIONS = 68,
+  // The user is signed-back into their previous account after failing to switch
+  // to a new one.
+  ACCESS_POINT_ACCOUNT_MENU_FAILED_SWITCH = 69,
+  // The user signs in from a sign in promo after an address save.
+  ACCESS_POINT_ADDRESS_BUBBLE = 70,
 
   // Add values above this line with a corresponding label to the
-  // "SigninAccessPoint" enum in tools/metrics/histograms/enums.xml
+  // "SigninAccessPoint" enum in
+  // tools/metrics/histograms/metadata/signin/enums.xml.
   ACCESS_POINT_MAX,  // This must be last.
 };
+// LINT.ThenChange(/tools/metrics/histograms/metadata/signin/enums.xml)
 
 // Enum values which enumerates all access points where transactional reauth
 // could be initiated. Transactional reauth is used when the user already has
@@ -443,6 +476,8 @@ enum class SourceForRefreshTokenOperation {
   kLogoutTabHelper_PrimaryPageChanged = 19,
   kForceSigninReauthWithDifferentAccount = 20,
   kAccountReconcilor_RevokeTokensNotInCookies = 21,
+  // DEPRECATED on 05/2024
+  // kDiceResponseHandler_PasswordPromoSignin = 22,
 
   kMaxValue = kAccountReconcilor_RevokeTokensNotInCookies,
 };
@@ -477,17 +512,31 @@ enum class FetchAccountCapabilitiesFromSystemLibraryResult {
 };
 
 // Tracks type of the button that was presented to the user.
+// GENERATED_JAVA_ENUM_PACKAGE: org.chromium.components.signin.metrics
 enum class SyncButtonsType : int {
   // These values are persisted to logs. Entries should not be renumbered and
   // numeric values should never be reused.
   kSyncEqualWeighted = 0,
   kSyncNotEqualWeighted = 1,
-  kHistorySyncEqualWeighted = 2,
+
+  // kHistorySyncEqualWeighted = 2,  // no longer used, split into
+  // `kHistorySyncEqualWeightedFromDeadline` and
+  // `kHistorySyncEqualWeightedFromCapability`
+
   kHistorySyncNotEqualWeighted = 3,
-  kMaxValue = kHistorySyncNotEqualWeighted,
+
+  // Either use one of the two or kSyncEqualWeighted.
+  kSyncEqualWeightedFromDeadline = 4,
+  kSyncEqualWeightedFromCapability = 5,
+
+  kHistorySyncEqualWeightedFromDeadline = 6,
+  kHistorySyncEqualWeightedFromCapability = 7,
+
+  kMaxValue = kHistorySyncEqualWeightedFromCapability,
 };
 
 // Tracks type of the button that was clicked by the user.
+// GENERATED_JAVA_ENUM_PACKAGE: org.chromium.components.signin.metrics
 enum class SyncButtonClicked : int {
   // These values are persisted to logs. Entries should not be renumbered and
   // numeric values should never be reused.
@@ -501,8 +550,19 @@ enum class SyncButtonClicked : int {
   kHistorySyncCancelEqualWeighted = 7,
   kHistorySyncOptInNotEqualWeighted = 8,
   kHistorySyncCancelNotEqualWeighted = 9,
-  kMaxValue = kHistorySyncCancelNotEqualWeighted,
+  kSyncSettingsUnknownWeighted = 10,
+  kMaxValue = kSyncSettingsUnknownWeighted,
 };
+
+#if BUILDFLAG(IS_IOS)
+// The reason an alert dialog is shown when the user is about to sign out.
+enum class SignoutDataLossAlertReason : int {
+  // The user has unsynced data that will be lost on signout.
+  kSignoutWithUnsyncedData = 0,
+  // A managed user is signing out and the data will be cleared from the device.
+  kSignoutWithClearDataForManagedUser = 1,
+};
+#endif  // BUILDFLAG(IS_IOS)
 
 // -----------------------------------------------------------------------------
 // Histograms
@@ -594,6 +654,16 @@ void RecordRefreshTokenUpdatedFromSource(bool refresh_token_is_valid,
 
 // Records the source that revoked a refresh token.
 void RecordRefreshTokenRevokedFromSource(SourceForRefreshTokenOperation source);
+
+#if BUILDFLAG(IS_IOS)
+// Records whether the user choose to "Sign Out" or "Cancel" when an alert for
+// data loss is displayed.
+void RecordSignoutConfirmationFromDataLossAlert(
+    SignoutDataLossAlertReason reason,
+    bool signout_confirmed);
+// Records whether the user chooses to "Clear Data" or "Keep Data" on signout.
+void RecordSignoutForceClearDataChoice(bool force_clear_data);
+#endif  // BUILDFLAG(IS_IOS)
 
 // -----------------------------------------------------------------------------
 // User actions

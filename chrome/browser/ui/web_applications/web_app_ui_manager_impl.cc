@@ -6,7 +6,6 @@
 
 #include <map>
 #include <memory>
-#include <string_view>
 #include <type_traits>
 #include <utility>
 
@@ -21,7 +20,6 @@
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
 #include "base/one_shot_event.h"
-#include "base/strings/string_piece.h"
 #include "base/task/sequenced_task_runner.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
@@ -85,9 +83,9 @@
 #include "ash/public/cpp/shelf_model.h"
 #include "chrome/browser/ash/app_list/app_list_syncable_service.h"
 #include "chrome/browser/ash/app_list/app_list_syncable_service_factory.h"
-#include "chrome/browser/ash/nonclosable_app_ui_utils.h"
 #include "chrome/browser/ui/ash/shelf/chrome_shelf_controller.h"
 #include "chrome/browser/ui/ash/shelf/chrome_shelf_controller_util.h"
+#include "chromeos/ash/components/nonclosable_app_ui/nonclosable_app_ui_utils.h"
 #include "components/sync/model/string_ordinal.h"
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
@@ -119,14 +117,10 @@ class AppLock;
 namespace {
 
 #if BUILDFLAG(IS_WIN)
-// ScopedKeepAlive not only keeps the process from terminating early
-// during uninstall, it also ensures the process will terminate in the next
-// message loop if there are no active browser windows.
-void UninstallWebAppWithDialogFromStartupSwitch(const webapps::AppId& app_id,
-                                                WebAppProvider* provider) {
-  std::unique_ptr<ScopedKeepAlive> scoped_keep_alive =
-      std::make_unique<ScopedKeepAlive>(KeepAliveOrigin::WEB_APP_UNINSTALL,
-                                        KeepAliveRestartOption::DISABLED);
+void UninstallWebAppWithDialogFromStartupSwitch(
+    std::unique_ptr<ScopedKeepAlive> scoped_keep_alive,
+    const webapps::AppId& app_id,
+    WebAppProvider* provider) {
   if (provider->registrar_unsafe().CanUserUninstallWebApp(app_id)) {
     provider->ui_manager().PresentUserUninstallDialog(
         app_id, webapps::WebappUninstallSource::kOsSettings,
@@ -334,12 +328,13 @@ bool WebAppUiManagerImpl::CanReparentAppTabToWindow(
 #endif
 }
 
-void WebAppUiManagerImpl::ReparentAppTabToWindow(content::WebContents* contents,
-                                                 const webapps::AppId& app_id,
-                                                 bool shortcut_created) {
+Browser* WebAppUiManagerImpl::ReparentAppTabToWindow(
+    content::WebContents* contents,
+    const webapps::AppId& app_id,
+    bool shortcut_created) {
   DCHECK(CanReparentAppTabToWindow(app_id, shortcut_created));
   // Reparent the tab into an app window immediately.
-  ReparentWebContentsIntoAppBrowser(contents, app_id);
+  return ReparentWebContentsIntoAppBrowser(contents, app_id);
 }
 
 void WebAppUiManagerImpl::ShowWebAppFileLaunchDialog(
@@ -575,7 +570,7 @@ void WebAppUiManagerImpl::MaybeCreateEnableSupportedLinksInfobar(
 }
 
 void WebAppUiManagerImpl::MaybeShowIPHPromoForAppsLaunchedViaLinkCapturing(
-    content::WebContents* web_contents,
+    Browser* browser,
     Profile* profile,
     const std::string& app_id) {
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
@@ -587,12 +582,12 @@ void WebAppUiManagerImpl::MaybeShowIPHPromoForAppsLaunchedViaLinkCapturing(
   }
 
   const Browser* app_browser =
-      AppBrowserController::FindForWebApp(*profile, app_id);
+      browser ? browser : AppBrowserController::FindForWebApp(*profile, app_id);
   if (!app_browser) {
     return;
   }
 
-  if (WebAppPrefGuardrails::GetForLinkCapturingIph(
+  if (WebAppPrefGuardrails::GetForNavigationCapturingIph(
           app_browser->profile()->GetPrefs())
           .IsBlockedByGuardrails(app_id)) {
     return;
@@ -683,8 +678,14 @@ void WebAppUiManagerImpl::TabCloseCancelled(
 void WebAppUiManagerImpl::UninstallWebAppFromStartupSwitch(
     const webapps::AppId& app_id) {
   WebAppProvider* provider = WebAppProvider::GetForWebApps(profile_);
+  // ScopedKeepAlive not only keeps the process from terminating early
+  // during uninstall, it also ensures the process will terminate in the next
+  // message loop if there are no active browser windows.
   provider->on_registry_ready().Post(
       FROM_HERE, base::BindOnce(&UninstallWebAppWithDialogFromStartupSwitch,
+                                std::make_unique<ScopedKeepAlive>(
+                                    KeepAliveOrigin::WEB_APP_UNINSTALL,
+                                    KeepAliveRestartOption::DISABLED),
                                 app_id, provider));
 }
 #endif  //  BUILDFLAG(IS_WIN)
@@ -842,7 +843,7 @@ void WebAppUiManagerImpl::OnIPHPromoResponseForLinkCapturing(
     case user_education::FeaturePromoClosedReason::kAction:
       base::RecordAction(
           base::UserMetricsAction("LinkCapturingIPHAppBubbleAccepted"));
-      WebAppPrefGuardrails::GetForLinkCapturingIph(
+      WebAppPrefGuardrails::GetForNavigationCapturingIph(
           browser->profile()->GetPrefs())
           .RecordAccept(app_id);
       break;
@@ -850,7 +851,7 @@ void WebAppUiManagerImpl::OnIPHPromoResponseForLinkCapturing(
     case user_education::FeaturePromoClosedReason::kCancel:
       base::RecordAction(
           base::UserMetricsAction("LinkCapturingIPHAppBubbleNotAccepted"));
-      WebAppPrefGuardrails::GetForLinkCapturingIph(
+      WebAppPrefGuardrails::GetForNavigationCapturingIph(
           browser->profile()->GetPrefs())
           .RecordDismiss(app_id, base::Time::Now());
       break;

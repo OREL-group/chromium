@@ -47,9 +47,6 @@ class ProfileOAuth2TokenServiceDelegateAndroid
 
   std::vector<CoreAccountId> GetAccounts() const override;
 
-  void ReloadAllAccountsFromSystemWithPrimaryAccount(
-      const std::optional<CoreAccountId>& primary_account_id) override;
-
   // Seeds the accounts with |core_account_infos| then resumes the reload of
   // accounts once the account seeding is complete.
   void SeedAccountsThenReloadAllAccountsWithPrimaryAccount(
@@ -57,7 +54,7 @@ class ProfileOAuth2TokenServiceDelegateAndroid
       const std::optional<CoreAccountId>& primary_account_id) override;
 
   // Resumes the reload of accounts once the account seeding is complete.
-  // TODO(crbug.com/934688) Once ProfileOAuth2TokenServiceDelegate.java is
+  // TODO(crbug.com/40615112) Once ProfileOAuth2TokenServiceDelegate.java is
   // internalized, use CoreAccountId instead of String.
   void ReloadAllAccountsWithPrimaryAccountAfterSeeding(
       JNIEnv* env,

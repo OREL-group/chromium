@@ -12,6 +12,7 @@
 #include "content/services/auction_worklet/bidder_lazy_filler.h"
 #include "content/services/auction_worklet/for_debugging_only_bindings.h"
 #include "content/services/auction_worklet/private_aggregation_bindings.h"
+#include "content/services/auction_worklet/real_time_reporting_bindings.h"
 #include "content/services/auction_worklet/register_ad_beacon_bindings.h"
 #include "content/services/auction_worklet/register_ad_macro_bindings.h"
 #include "content/services/auction_worklet/report_bindings.h"
@@ -45,27 +46,26 @@ void ContextRecycler::AddForDebuggingOnlyBindings() {
 }
 
 void ContextRecycler::AddPrivateAggregationBindings(
-    bool private_aggregation_permissions_policy_allowed) {
+    bool private_aggregation_permissions_policy_allowed,
+    bool reserved_once_allowed) {
   DCHECK(!private_aggregation_bindings_);
   private_aggregation_bindings_ = std::make_unique<PrivateAggregationBindings>(
-      v8_helper_, private_aggregation_permissions_policy_allowed);
+      v8_helper_, v8_logger_.get(),
+      private_aggregation_permissions_policy_allowed, reserved_once_allowed);
   AddBindings(private_aggregation_bindings_.get());
 }
 
-void ContextRecycler::AddSharedStorageBindings(
-    mojom::AuctionSharedStorageHost* shared_storage_host,
-    bool shared_storage_permissions_policy_allowed) {
-  DCHECK(!shared_storage_bindings_);
-  shared_storage_bindings_ = std::make_unique<SharedStorageBindings>(
-      v8_helper_, shared_storage_host,
-      shared_storage_permissions_policy_allowed);
-  AddBindings(shared_storage_bindings_.get());
+void ContextRecycler::AddRealTimeReportingBindings() {
+  DCHECK(!real_time_reporting_bindings_);
+  real_time_reporting_bindings_ =
+      std::make_unique<RealTimeReportingBindings>(v8_helper_);
+  AddBindings(real_time_reporting_bindings_.get());
 }
 
 void ContextRecycler::AddRegisterAdBeaconBindings() {
   DCHECK(!register_ad_beacon_bindings_);
   register_ad_beacon_bindings_ =
-      std::make_unique<RegisterAdBeaconBindings>(v8_helper_);
+      std::make_unique<RegisterAdBeaconBindings>(v8_helper_, v8_logger_.get());
   AddBindings(register_ad_beacon_bindings_.get());
 }
 
@@ -78,7 +78,8 @@ void ContextRecycler::AddRegisterAdMacroBindings() {
 
 void ContextRecycler::AddReportBindings() {
   DCHECK(!report_bindings_);
-  report_bindings_ = std::make_unique<ReportBindings>(v8_helper_);
+  report_bindings_ =
+      std::make_unique<ReportBindings>(v8_helper_, v8_logger_.get());
   AddBindings(report_bindings_.get());
 }
 
@@ -92,6 +93,17 @@ void ContextRecycler::AddSetPriorityBindings() {
   DCHECK(!set_priority_bindings_);
   set_priority_bindings_ = std::make_unique<SetPriorityBindings>(v8_helper_);
   AddBindings(set_priority_bindings_.get());
+}
+
+void ContextRecycler::AddSharedStorageBindings(
+    mojom::AuctionSharedStorageHost* shared_storage_host,
+    mojom::AuctionWorkletFunction source_auction_worklet_function,
+    bool shared_storage_permissions_policy_allowed) {
+  DCHECK(!shared_storage_bindings_);
+  shared_storage_bindings_ = std::make_unique<SharedStorageBindings>(
+      v8_helper_, shared_storage_host, source_auction_worklet_function,
+      shared_storage_permissions_policy_allowed);
+  AddBindings(shared_storage_bindings_.get());
 }
 
 void ContextRecycler::AddInterestGroupLazyFiller() {

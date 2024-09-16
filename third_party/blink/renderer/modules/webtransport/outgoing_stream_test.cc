@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/containers/span.h"
 #include "base/ranges/algorithm.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -77,9 +78,9 @@ class StreamCreator {
     mock_client_ = MakeGarbageCollected<StrictMock<MockClient>>();
     auto* outgoing_stream = MakeGarbageCollected<OutgoingStream>(
         script_state, mock_client_, std::move(data_pipe_producer));
-    ExceptionState exception_state(
-        scope.GetIsolate(), ExceptionContextType::kConstructorOperationInvoke,
-        "OutgoingStream");
+    ExceptionState exception_state(scope.GetIsolate(),
+                                   v8::ExceptionContext::kConstructor,
+                                   "OutgoingStream");
     outgoing_stream->Init(exception_state);
     CHECK(!exception_state.HadException());
     return outgoing_stream;
@@ -94,10 +95,9 @@ class StreamCreator {
   // Reads everything from |data_pipe_consumer_| and returns it in a vector.
   Vector<uint8_t> ReadAllPendingData() {
     Vector<uint8_t> data;
-    const void* buffer = nullptr;
-    size_t buffer_num_bytes = 0;
+    base::span<const uint8_t> buffer;
     MojoResult result = data_pipe_consumer_->BeginReadData(
-        &buffer, &buffer_num_bytes, MOJO_BEGIN_READ_DATA_FLAG_NONE);
+        MOJO_BEGIN_READ_DATA_FLAG_NONE, buffer);
 
     switch (result) {
       case MOJO_RESULT_OK:
@@ -111,8 +111,8 @@ class StreamCreator {
         return data;
     }
 
-    data.Append(static_cast<const uint8_t*>(buffer), buffer_num_bytes);
-    data_pipe_consumer_->EndReadData(buffer_num_bytes);
+    data.AppendRange(buffer.begin(), buffer.end());
+    data_pipe_consumer_->EndReadData(buffer.size());
     return data;
   }
 
@@ -138,7 +138,7 @@ TEST(OutgoingStreamTest, WriteArrayBuffer) {
   auto* script_state = scope.GetScriptState();
   auto* writer =
       outgoing_stream->Writable()->getWriter(script_state, ASSERT_NO_EXCEPTION);
-  auto* chunk = DOMArrayBuffer::Create("A", 1);
+  auto* chunk = DOMArrayBuffer::Create(base::byte_span_from_cstring("A"));
   ScriptPromiseUntyped result =
       writer->write(script_state, ScriptValue::From(script_state, chunk),
                     ASSERT_NO_EXCEPTION);
@@ -158,7 +158,7 @@ TEST(OutgoingStreamTest, WriteArrayBufferView) {
   auto* script_state = scope.GetScriptState();
   auto* writer =
       outgoing_stream->Writable()->getWriter(script_state, ASSERT_NO_EXCEPTION);
-  auto* buffer = DOMArrayBuffer::Create("*B", 2);
+  auto* buffer = DOMArrayBuffer::Create(base::byte_span_from_cstring("*B"));
   // Create a view into the buffer with offset 1, ie. "B".
   auto* chunk = DOMUint8Array::Create(buffer, 1, 1);
   ScriptPromiseUntyped result =
@@ -245,7 +245,7 @@ TEST(OutgoingStreamTest, WriteThenClose) {
   auto* script_state = scope.GetScriptState();
   auto* writer =
       outgoing_stream->Writable()->getWriter(script_state, ASSERT_NO_EXCEPTION);
-  auto* chunk = DOMArrayBuffer::Create("D", 1);
+  auto* chunk = DOMArrayBuffer::Create(base::byte_span_from_cstring("D"));
   ScriptPromiseUntyped write_promise =
       writer->write(script_state, ScriptValue::From(script_state, chunk),
                     ASSERT_NO_EXCEPTION);

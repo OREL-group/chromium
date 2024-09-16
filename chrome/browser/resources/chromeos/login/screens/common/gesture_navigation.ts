@@ -14,16 +14,17 @@ import '../../components/oobe_cr_lottie.js';
 
 import {assert} from '//resources/js/assert.js';
 import {PolymerElementProperties} from '//resources/polymer/v3_0/polymer/interfaces.js';
-import {mixinBehaviors, PolymerElement} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {PolymerElement} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {LoginScreenBehavior, LoginScreenBehaviorInterface} from '../../components/behaviors/login_screen_behavior.js';
-import {MultiStepBehavior, MultiStepBehaviorInterface} from '../../components/behaviors/multi_step_behavior.js';
 import {OobeAdaptiveDialog} from '../../components/dialogs/oobe_adaptive_dialog.js';
-import {OobeI18nMixin, OobeI18nMixinInterface} from '../../components/mixins/oobe_i18n_mixin.js';
+import {LoginScreenMixin} from '../../components/mixins/login_screen_mixin.js';
+import {MultiStepMixin} from '../../components/mixins/multi_step_mixin.js';
+import {OobeI18nMixin} from '../../components/mixins/oobe_i18n_mixin.js';
 import type {OobeCrLottie} from '../../components/oobe_cr_lottie.js';
+import {GestureNavigationPageHandler_GesturePages, GestureNavigationPageHandlerRemote} from '../../mojom-webui/screens_common.mojom-webui.js';
+import {OobeScreensFactoryBrowserProxy} from '../../oobe_screens_factory_proxy.js';
 
 import {getTemplate} from './gesture_navigation.html.js';
-
 
 /**
  * Enum to represent each page in the gesture navigation screen.
@@ -35,23 +36,8 @@ enum GesturePage {
   BACK = 'gestureBack',
 }
 
-/**
- * Available user actions.
- */
-enum UserAction {
-  SKIP = 'skip',
-  EXIT = 'exit',
-  PAGE_CHANGE = 'gesture-page-change',
-}
-
-
 export const GestureScreenElementBase =
-    mixinBehaviors(
-        [LoginScreenBehavior, MultiStepBehavior],
-        OobeI18nMixin(PolymerElement)) as {
-      new (): PolymerElement & OobeI18nMixinInterface &
-          LoginScreenBehaviorInterface & MultiStepBehaviorInterface,
-    };
+    LoginScreenMixin(MultiStepMixin(OobeI18nMixin(PolymerElement)));
 
 export class GestureNavigation extends GestureScreenElementBase {
   static get is() {
@@ -67,17 +53,18 @@ export class GestureNavigation extends GestureScreenElementBase {
     return {};
   }
 
+  private handler: GestureNavigationPageHandlerRemote;
+
   constructor() {
     super();
+    this.handler = new GestureNavigationPageHandlerRemote();
+    OobeScreensFactoryBrowserProxy.getInstance()
+        .screenFactory.establishGestureNavigationScreenPipe(
+            this.handler.$.bindNewPipeAndPassReceiver());
   }
 
   override get UI_STEPS() {
     return GesturePage;
-  }
-
-
-  override get EXTERNAL_API(): string[] {
-    return [];
   }
 
   // eslint-disable-next-line @typescript-eslint/naming-convention
@@ -94,7 +81,7 @@ export class GestureNavigation extends GestureScreenElementBase {
    * This is the 'on-tap' event handler for the skip button.
    */
   private onSkip_(): void {
-    this.userActed(UserAction.SKIP);
+    this.handler.onSkipClicked();
   }
 
   /**
@@ -116,7 +103,7 @@ export class GestureNavigation extends GestureScreenElementBase {
         // report exit. Keep the currentPage_ value so the UI does not get
         // updated until the next screen is shown.
         this.setPlayCurrentScreenAnimation(false);
-        this.userActed(UserAction.EXIT);
+        this.handler.onExitClicked();
         break;
     }
   }
@@ -145,8 +132,25 @@ export class GestureNavigation extends GestureScreenElementBase {
   private setCurrentPage_(newPage: GesturePage): void {
     this.setPlayCurrentScreenAnimation(false);
     this.setUIStep(newPage);
-    this.userActed([UserAction.PAGE_CHANGE, newPage]);
     this.setPlayCurrentScreenAnimation(true);
+    switch (this.uiStep) {
+      case GesturePage.INTRO:
+        this.handler.onPageChange(
+            GestureNavigationPageHandler_GesturePages.kIntro);
+        break;
+      case GesturePage.HOME:
+        this.handler.onPageChange(
+            GestureNavigationPageHandler_GesturePages.kHome);
+        break;
+      case GesturePage.OVERVIEW:
+        this.handler.onPageChange(
+            GestureNavigationPageHandler_GesturePages.kOverview);
+        break;
+      case GesturePage.BACK:
+        this.handler.onPageChange(
+            GestureNavigationPageHandler_GesturePages.kBack);
+        break;
+    }
   }
 
   /**

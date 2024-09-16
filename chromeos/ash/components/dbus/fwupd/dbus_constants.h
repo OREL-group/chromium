@@ -16,6 +16,7 @@ const char kFwupdGetUpgradesMethodName[] = "GetUpgrades";
 const char kFwupdGetDevicesMethodName[] = "GetDevices";
 const char kFwupdInstallMethodName[] = "Install";
 const char kFwupdSetFeatureFlagsMethodName[] = "SetFeatureFlags";
+const char kFwupdUpdateMetadataMethodName[] = "UpdateMetadata";
 
 // Names of keys returned by the "DeviceRequest" signal:
 // The RequestID is stored in the AppstreamId key in fwupd for legacy reasons.
@@ -69,6 +70,16 @@ const char kFwupdErrorName_BatteryLevelTooLow[] =
 const char kFwupdErrorName_NeedsUserAction[] =
     "org.freedesktop.fwupd.NeedsUserAction";
 const char kFwupdErrorName_AuthExpired[] = "org.freedesktop.fwupd.AuthExpired";
+
+// "1" is the bitflag for an internal device. Defined here:
+// https://github.com/fwupd/fwupd/blob/main/libfwupd/fwupd-enums.h
+const uint64_t kInternalDeviceFlag = 1;
+// "100000000"(9th bit) is the bit release flag for a trusted report.
+// Defined here: https://github.com/fwupd/fwupd/blob/main/libfwupd/fwupd-enums.h
+const uint64_t kTrustedReportsReleaseFlag = 1llu << 8;
+// "10000"(5th bit) is the fwupd feature flag to allow interactive requests.
+// Defined here: https://github.com/fwupd/fwupd/blob/main/libfwupd/fwupd-enums.h
+const uint64_t kRequestsFeatureFlag = 1llu << 4;
 
 }  // namespace ash
 

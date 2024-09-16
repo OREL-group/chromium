@@ -51,11 +51,9 @@ MultitaskingSection::MultitaskingSection(Profile* profile,
   CHECK(profile);
   CHECK(search_tag_registry);
 
-  if (ash::features::IsFasterSplitScreenSetupEnabled()) {
-    SearchTagRegistry::ScopedTagUpdater updater = registry()->StartUpdate();
-    updater.AddSearchTags(
-        GetSnapWindowSuggestionsSearchConcepts(GetSectionPath()));
-  }
+  SearchTagRegistry::ScopedTagUpdater updater = registry()->StartUpdate();
+  updater.AddSearchTags(
+      GetSnapWindowSuggestionsSearchConcepts(GetSectionPath()));
 }
 
 MultitaskingSection::~MultitaskingSection() = default;
@@ -88,8 +86,9 @@ mojom::Section MultitaskingSection::GetSection() const {
   // Note: This is a subsection that exists under System Preferences. This is
   // not a top-level section and does not have a respective declaration in
   // chromeos::settings::mojom::Section.
-  return ShouldShowMultitasking() ? mojom::Section::kSystemPreferences
-                                  : mojom::Section::kPersonalization;
+  return ash::features::IsOsSettingsRevampWayfindingEnabled()
+             ? mojom::Section::kSystemPreferences
+             : mojom::Section::kPersonalization;
 }
 
 mojom::SearchResultIcon MultitaskingSection::GetSectionIcon() const {
@@ -97,8 +96,9 @@ mojom::SearchResultIcon MultitaskingSection::GetSectionIcon() const {
 }
 
 const char* MultitaskingSection::GetSectionPath() const {
-  return ShouldShowMultitasking() ? mojom::kSystemPreferencesSectionPath
-                                  : mojom::kPersonalizationSectionPath;
+  return ash::features::IsOsSettingsRevampWayfindingEnabled()
+             ? mojom::kSystemPreferencesSectionPath
+             : mojom::kPersonalizationSectionPath;
 }
 
 bool MultitaskingSection::LogMetric(mojom::Setting setting,

@@ -231,7 +231,7 @@ TEST_F(HTMLInputElementTest, RadioKeyDownDCHECKFailure) {
   // Make layout-dirty.
   radio2.setAttribute(html_names::kStyleAttr, AtomicString("position:fixed"));
   KeyboardEventInit* init = KeyboardEventInit::Create();
-  init->setKey("ArrowRight");
+  init->setKey(keywords::kArrowRight);
   radio1.DefaultEventHandler(
       *MakeGarbageCollected<KeyboardEvent>(event_type_names::kKeydown, init));
   EXPECT_EQ(GetDocument().ActiveElement(), &radio2);
@@ -261,6 +261,21 @@ TEST_F(HTMLInputElementTest, StepDownOverflow) {
   // InputType::applyStep() should not pass an out-of-range value to
   // setValueAsDecimal, and WTF::msToYear() should not cause a DCHECK failure.
   input->stepDown(1, ASSERT_NO_EXCEPTION);
+}
+
+TEST_F(HTMLInputElementTest, StepDownDefaultToMin) {
+  AtomicString min_attr_value("7");
+
+  auto* input = MakeGarbageCollected<HTMLInputElement>(GetDocument());
+  input->setAttribute(html_names::kTypeAttr, AtomicString("number"));
+  input->setAttribute(html_names::kMinAttr, min_attr_value);
+
+  EXPECT_TRUE(input->Value().empty());
+
+  input->stepDown(1, ASSERT_NO_EXCEPTION);
+
+  // stepDown() should default to min value when the input has no initial value.
+  EXPECT_EQ(min_attr_value, input->Value());
 }
 
 TEST_F(HTMLInputElementTest, CheckboxHasNoShadowRoot) {

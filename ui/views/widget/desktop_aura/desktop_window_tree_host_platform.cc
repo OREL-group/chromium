@@ -114,7 +114,6 @@ ui::PlatformWindowType GetPlatformWindowType(
     default:
       return ui::PlatformWindowType::kPopup;
   }
-  NOTREACHED_NORETURN();
 }
 
 ui::PlatformWindowShadowType GetPlatformWindowShadowType(
@@ -127,7 +126,7 @@ ui::PlatformWindowShadowType GetPlatformWindowShadowType(
     case Widget::InitParams::ShadowType::kDrop:
       return ui::PlatformWindowShadowType::kDrop;
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 ui::PlatformWindowInitProperties ConvertWidgetInitParamsToInitProperties(
@@ -188,8 +187,9 @@ ui::PlatformWindowInitProperties ConvertWidgetInitParamsToInitProperties(
 }
 
 SkPath GetWindowMask(const Widget* widget) {
-  if (!widget->non_client_view())
+  if (!widget || !widget->non_client_view()) {
     return SkPath();
+  }
 
   SkPath window_mask;
   // Some frame views define a custom (non-rectanguar) window mask.
@@ -486,7 +486,7 @@ void DesktopWindowTreeHostPlatform::Show(ui::WindowShowState show_state,
 }
 
 bool DesktopWindowTreeHostPlatform::IsVisible() const {
-  return platform_window()->IsVisible();
+  return platform_window() && platform_window()->IsVisible();
 }
 
 void DesktopWindowTreeHostPlatform::SetSize(const gfx::Size& size) {
@@ -508,7 +508,7 @@ void DesktopWindowTreeHostPlatform::StackAtTop() {
 
 bool DesktopWindowTreeHostPlatform::IsStackedAbove(aura::Window* window) {
   // TODO(crbug.com/40238598) Implement Window layer check
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 void DesktopWindowTreeHostPlatform::CenterWindow(const gfx::Size& size) {
@@ -593,7 +593,7 @@ void DesktopWindowTreeHostPlatform::SetShape(
 }
 
 void DesktopWindowTreeHostPlatform::SetParent(gfx::AcceleratedWidget parent) {
-  // TODO(crbug.com/1490267): hook parent to the accelerated widget.
+  // TODO(crbug.com/40284685): hook parent to the accelerated widget.
   if (window_parent_) {
     window_parent_->window_children_.erase(this);
   }
@@ -713,6 +713,11 @@ void DesktopWindowTreeHostPlatform::EndMoveLoop() {
 void DesktopWindowTreeHostPlatform::SetVisibilityChangedAnimationsEnabled(
     bool value) {
   platform_window()->SetVisibilityChangedAnimationsEnabled(value);
+  if (desktop_native_widget_aura_->widget_type() !=
+      Widget::InitParams::TYPE_WINDOW) {
+    GetContentWindow()->SetProperty(aura::client::kAnimationsDisabledKey,
+                                    !value);
+  }
 }
 
 std::unique_ptr<NonClientFrameView>
@@ -758,14 +763,17 @@ void DesktopWindowTreeHostPlatform::SetFullscreen(bool fullscreen,
   if (!weak_ptr)
     return;
 
-  // The state must change synchronously to let media react on fullscreen
-  // changes.
-  DCHECK_EQ(fullscreen, IsFullscreen());
+  if (!base::FeatureList::IsEnabled(features::kAsyncFullscreenWindowState)) {
+    // The state must change synchronously to let media react on fullscreen
+    // changes.
+    DCHECK_EQ(fullscreen, IsFullscreen());
 
-  if (IsFullscreen() == fullscreen)
-    ScheduleRelayout();
-  // Else: the widget will be relaid out either when the window bounds change
-  // or when |platform_window|'s fullscreen state changes.
+    if (IsFullscreen() == fullscreen) {
+      ScheduleRelayout();
+    }
+    // Else: the widget will be relaid out either when the window bounds change
+    // or when |platform_window|'s fullscreen state changes.
+  }
 }
 
 bool DesktopWindowTreeHostPlatform::IsFullscreen() const {
@@ -781,7 +789,7 @@ void DesktopWindowTreeHostPlatform::SetOpacity(float opacity) {
 void DesktopWindowTreeHostPlatform::SetAspectRatio(
     const gfx::SizeF& aspect_ratio,
     const gfx::Size& excluded_margin) {
-  // TODO(crbug.com/1407629): send `excluded_margin`.
+  // TODO(crbug.com/40887946): send `excluded_margin`.
   if (excluded_margin.width() > 0 || excluded_margin.height() > 0) {
     NOTIMPLEMENTED_LOG_ONCE();
   }
@@ -794,7 +802,8 @@ void DesktopWindowTreeHostPlatform::SetWindowIcons(
   platform_window()->SetWindowIcons(window_icon, app_icon);
 }
 
-void DesktopWindowTreeHostPlatform::InitModalType(ui::ModalType modal_type) {
+void DesktopWindowTreeHostPlatform::InitModalType(
+    ui::mojom::ModalType modal_type) {
   NOTIMPLEMENTED_LOG_ONCE();
 }
 
@@ -840,20 +849,38 @@ void DesktopWindowTreeHostPlatform::SetBoundsInDIP(const gfx::Rect& bounds) {
   platform_window()->SetBoundsInDIP(bounds);
 }
 
+void DesktopWindowTreeHostPlatform::SetAllowScreenshots(bool allow) {
+  NOTIMPLEMENTED();
+}
+
+bool DesktopWindowTreeHostPlatform::AreScreenshotsAllowed() {
+  NOTIMPLEMENTED();
+  return true;
+}
+
 gfx::Transform DesktopWindowTreeHostPlatform::GetRootTransform() const {
-  // TODO(crbug.com/1306688): This can use wrong scale during initialization.
+  // TODO(crbug.com/40218466): This can use wrong scale during initialization.
   // Revisit this as a part of 'use dip' work.
 
-  display::Display display = display::Screen::GetScreen()->GetPrimaryDisplay();
   // This might be called before the |platform_window| is created. Thus,
   // explicitly check if that exists before trying to access its visibility and
   // the display where it is shown.
-  if (platform_window())
-    display = GetDisplayNearestRootWindow();
-  else if (window_parent_)
-    display = window_parent_->GetDisplayNearestRootWindow();
+  const aura::Window* root_window = nullptr;
+  if (platform_window()) {
+    root_window = window();
+  } else if (window_parent_) {
+    root_window = window_parent_->window();
+  }
+
+  auto* const screen = display::Screen::GetScreen();
+  const float scale = root_window
+                          ? screen
+                                ->GetPreferredScaleFactorForWindow(
+                                    const_cast<aura::Window*>(root_window))
+                                .value_or(1.0f)
+                          : screen->GetPrimaryDisplay().device_scale_factor();
+
   gfx::Transform transform;
-  float scale = display.device_scale_factor();
   transform.Scale(scale, scale);
   return transform;
 }
@@ -881,6 +908,14 @@ void DesktopWindowTreeHostPlatform::OnCompositorVisibilityChanging(
   // Make sure to show the content window before the compositor has become
   // visible.
   if (visible) {
+    // The UI compositor may not have a valid local surface ID if it was set to
+    // invalid during eviction. This can happen if native occlusion is enabled.
+    // Here we ensure the invariant that a visible UI compositor will always
+    // have a valid local surface ID.
+    if (!window()->GetLocalSurfaceId().is_valid()) {
+      window()->AllocateLocalSurfaceId();
+      compositor->SetLocalSurfaceIdFromParent(window()->GetLocalSurfaceId());
+    }
     GetContentWindow()->Show();
   }
 }
@@ -1020,7 +1055,7 @@ gfx::PointF DesktopWindowTreeHostPlatform::ConvertScreenPointToLocalDIP(
     const gfx::Point& screen_in_pixels) const {
 #if BUILDFLAG(IS_CHROMEOS_LACROS)
   // lacros should not use this.
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 #else
   // TODO(crbug.com/40222832): DIP should use gfx::PointF. Fix this as
   // a part of cleanup work(crbug.com/1318279).
@@ -1028,6 +1063,12 @@ gfx::PointF DesktopWindowTreeHostPlatform::ConvertScreenPointToLocalDIP(
   ConvertScreenInPixelsToDIP(&local_dip);
   return gfx::PointF(local_dip);
 #endif
+}
+
+gfx::Insets DesktopWindowTreeHostPlatform::ConvertInsetsToPixels(
+    const gfx::Insets& insets_dip) const {
+  auto scale = GetRootTransform().To2dScale();
+  return gfx::ScaleToCeiledInsets(insets_dip, scale.x(), scale.y());
 }
 
 void DesktopWindowTreeHostPlatform::OnWorkspaceChanged() {
@@ -1053,11 +1094,13 @@ gfx::Rect DesktopWindowTreeHostPlatform::ToPixelRect(
 }
 
 Widget* DesktopWindowTreeHostPlatform::GetWidget() {
-  return native_widget_delegate_->AsWidget();
+  return native_widget_delegate_ ? native_widget_delegate_->AsWidget()
+                                 : nullptr;
 }
 
 const Widget* DesktopWindowTreeHostPlatform::GetWidget() const {
-  return native_widget_delegate_->AsWidget();
+  return native_widget_delegate_ ? native_widget_delegate_->AsWidget()
+                                 : nullptr;
 }
 
 views::corewm::TooltipController*
@@ -1066,6 +1109,9 @@ DesktopWindowTreeHostPlatform::tooltip_controller() {
 }
 
 void DesktopWindowTreeHostPlatform::ScheduleRelayout() {
+  if (!native_widget_delegate_) {
+    return;
+  }
   Widget* widget = native_widget_delegate_->AsWidget();
   NonClientView* non_client_view = widget->non_client_view();
   // non_client_view may be NULL, especially during creation.

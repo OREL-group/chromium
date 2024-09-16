@@ -8,7 +8,7 @@
  * Autofill keyboard accessory.
  */
 
-// Requires functions from fill.js, form.js, and autofill_form_features.js.
+// Requires functions from fill.ts, form.ts, and autofill_form_features.ts.
 
 import {processChildFrameMessage} from '//components/autofill/ios/form_util/resources/child_frame_registration_lib.js';
 import {gCrWeb} from '//ios/web/public/js_messaging/resources/gcrweb.js';
@@ -83,15 +83,6 @@ function getFullyQualifiedUrl(originalURL: string): string {
 }
 
 /**
- * @param A form element to check.
- * @return Whether the element is an input of type password.
- */
-function isPasswordField(element: Element): boolean {
-  return element.tagName === 'INPUT' &&
-      (element as HTMLInputElement).type === 'password';
-}
-
-/**
  * Focus, input, change, keyup, blur and reset events for form elements (form
  * and input elements) are messaged to the main application for broadcast to
  * WebStateObservers.
@@ -149,9 +140,7 @@ function formActivity(evt: Event): void {
       target.tagName === 'FORM' ? target : (target as HTMLFormElement)['form'];
   const field = target.tagName === 'FORM' ? null : target;
 
-  gCrWeb.fill.setUniqueIDIfNeeded(form);
   const formRendererID = gCrWeb.fill.getUniqueID(form);
-  gCrWeb.fill.setUniqueIDIfNeeded(field);
   const fieldRendererID = gCrWeb.fill.getUniqueID(field);
 
   const fieldType = 'type' in target ? target.type : '';
@@ -224,11 +213,12 @@ function sendFormMutationMessagesAfterDelay(
       --numberOfPendingMessages;
       if (insertMetadata && numberOfPendingMessages === 0) {
         // Add the metadata.
+        const size = i + 1;
         msg = {
           ...msg,
           metadata: {
             dropCount: formMsgBatchMetadata.dropCount,
-            size: i + 1,
+            size: isNaN(size) ? null : size,
           },
         };
 
@@ -245,7 +235,7 @@ function sendFormMutationMessagesAfterDelay(
  * Checks if cross-frame filling is enabled and, if so, forwards messages to
  * the Child Frame Registration lib.
  */
-function maybeProcessChildFrame(event: MessageEvent<any>): void {
+function processInboundMessage(event: MessageEvent<any>): void {
   if (gCrWeb.autofill_form_features.isAutofillAcrossIframesEnabled()) {
     processChildFrameMessage(event);
   }
@@ -275,7 +265,7 @@ function attachListeners(): void {
    * Receipt of cross-frame messages for Child Frame Registration don't use the
    * `formActivity` handler, but need to be attached under the same conditions.
    */
-  window.addEventListener('message', maybeProcessChildFrame);
+  window.addEventListener('message', processInboundMessage);
 
   // Per specification, SubmitEvent is not triggered when calling form.submit().
   // Hook the method to call the handler in that case.
@@ -322,35 +312,17 @@ function findAllFormElementsInNodes(nodeList: NodeList): Element[] {
 }
 
 /**
- * Finds a password form element, which is defined as a form with
- * at least one password element as the immediate child (depth = 1).
- *
- * For example: <from><input type="password"></form> is considered as a password
- * form.
- *
- * @param elements Array of elements within which to search.
- * @return Extracted password form or undefined if there is no
- *   match.
- */
-function findPasswordForm(elements: Element[]): HTMLFormElement|undefined {
-  return elements.filter(e => e.tagName === 'FORM')
-             .find(
-                 e => [...(e as HTMLFormElement).elements].some(
-                     isPasswordField)) as HTMLFormElement;
-}
-
-/**
- * Finds the renderer IDs of the formless password input elements in an array of
+ * Finds the renderer IDs of the formless input elements in an array of
  * elements.
  *
  * @param elements Array of elements within which to search.
- * @return Renderer ids of the formless password fields.
+ * @return Renderer ids of the formless fields.
  */
-function findFormlessPasswordFieldsIds(elements: Element[]): string[] {
+function findFormlessFieldsIds(elements: Element[]): string[] {
   return elements
       .filter(
-          e => e.tagName === 'INPUT' && !(e as HTMLInputElement).form &&
-              isPasswordField(e))
+          e => gCrWeb.fill.isAutofillableElement(e) &&
+              !(e as HTMLInputElement).form)
       .map(gCrWeb.fill.getUniqueID);
 }
 
@@ -358,106 +330,11 @@ function findFormlessPasswordFieldsIds(elements: Element[]): string[] {
  * Installs a MutationObserver to track form related changes. Waits |delay|
  * milliseconds before sending a message to browser. A delay is used because
  * form mutations are likely to come in batches. An undefined or zero value for
- * |delay| would stop the MutationObserver, if any.
+ * |delay| would stop the MutationObserver, if any. Batches
+ * messages for removed and added forms together. This relaxes the messages
+ * throttling and allows correctly handling form replacements.
  */
-function trackFormMutationsOld(delay: number): void {
-  if (formMutationObserver) {
-    formMutationObserver.disconnect();
-    formMutationObserver = null;
-  }
-
-  if (!delay) {
-    return;
-  }
-
-  formMutationObserver = new MutationObserver(function(mutations) {
-    for (const mutation of mutations) {
-      // Only process mutations to the tree of nodes.
-      if (mutation.type !== 'childList') {
-        continue;
-      }
-
-      // Handle added nodes.
-      if (findAllFormElementsInNodes(mutation.addedNodes).length > 0) {
-        const msg = {
-          'command': 'form.activity',
-          'frameID': gCrWeb.message.getFrameId(),
-          'formName': '',
-          'formRendererID': '',
-          'fieldIdentifier': '',
-          'fieldRendererID': '',
-          'fieldType': '',
-          'type': 'form_changed',
-          'value': '',
-          'hasUserGesture': false,
-        };
-        sendFormMutationMessagesAfterDelay([msg], delay);
-        return;
-      }
-
-      // Handle removed nodes by starting from the specific removal cases down
-      // to the generic form modification case.
-
-      const removedFormElements =
-          findAllFormElementsInNodes(mutation.removedNodes);
-      const pwdFormGone = findPasswordForm(removedFormElements);
-      if (pwdFormGone) {
-        // Handle the removed password form case.
-        const formRendererID = gCrWeb.fill.getUniqueID(pwdFormGone);
-        const msg = {
-          'command': 'pwdform.removal',
-          'frameID': gCrWeb.message.getFrameId(),
-          // TODO(crbug.com/328464301): Send all removed forms to browser.
-          'removedFormIDs': gCrWeb.stringify([formRendererID]),
-        };
-        sendFormMutationMessagesAfterDelay([msg], delay);
-        return;
-      }
-
-      const removedFormlessPasswordFieldsIds =
-          findFormlessPasswordFieldsIds(removedFormElements);
-      if (removedFormlessPasswordFieldsIds.length > 0) {
-        // Handle the removed formless password field case.
-        const msg = {
-          'command': 'pwdform.removal',
-          'frameID': gCrWeb.message.getFrameId(),
-          'removedFieldIDs': gCrWeb.stringify(removedFormlessPasswordFieldsIds),
-        };
-        sendFormMutationMessagesAfterDelay([msg], delay);
-        return;
-      }
-
-      if (removedFormElements.length > 0) {
-        // Handle the removed form control element case as a form changed
-        // mutation that is treated the same way as adding a new form.
-        const msg = {
-          'command': 'form.activity',
-          'frameID': gCrWeb.message.getFrameId(),
-          'formName': '',
-          'formRendererID': '',
-          'fieldIdentifier': '',
-          'fieldRendererID': '',
-          'fieldType': '',
-          'type': 'form_changed',
-          'value': '',
-          'hasUserGesture': false,
-        };
-        sendFormMutationMessagesAfterDelay([msg], delay);
-        return;
-      }
-    }
-  });
-  formMutationObserver.observe(document, {childList: true, subtree: true});
-}
-
-/**
- * Installs a MutationObserver to track form related changes. Waits |delay|
- * milliseconds before sending a message to browser. A delay is used because
- * form mutations are likely to come in batches. An undefined or zero value for
- * |delay| would stop the MutationObserver, if any, allows batching an added
- * form message with a removed form message.
- */
-function trackFormMutationsNew(delay: number): void {
+function trackFormMutations(delay: number): void {
   if (formMutationObserver) {
     formMutationObserver.disconnect();
     formMutationObserver = null;
@@ -507,31 +384,38 @@ function trackFormMutationsNew(delay: number): void {
         continue;
       }
 
-      const pwdFormGone = findPasswordForm(removedFormElements);
-      if (!removedFormMessage && pwdFormGone) {
-        // Handle the removed password form case.
-        const formRendererID = gCrWeb.fill.getUniqueID(pwdFormGone);
-        removedFormMessage = {
-          'command': 'pwdform.removal',
-          'frameID': gCrWeb.message.getFrameId(),
-          'removedFormIDs': gCrWeb.stringify([formRendererID]),
-        };
-        continue;
-      } else if (pwdFormGone) {
-        ++formMsgBatchMetadata.dropCount;
-        continue;
+      const forms = removedFormElements.filter(e => e.tagName === 'FORM');
+
+      const removedFormlessFieldsIds =
+          findFormlessFieldsIds(removedFormElements);
+      const formlessFieldsWereRemoved = removedFormlessFieldsIds.length > 0;
+
+      // Send removed forms and unowned field id's in the same message.
+      if (forms.length > 0 || formlessFieldsWereRemoved) {
+        // Drop removed form message if there is one scheduled.
+        if (removedFormMessage) {
+          ++formMsgBatchMetadata.dropCount;
+          continue;
+        } else {
+          // Send the removed forms identifiers to the browser.
+          const filteredFormIDs =
+              forms.map(form => gCrWeb.fill.getUniqueID(form));
+          removedFormMessage = {
+            'command': 'form.removal',
+            'frameID': gCrWeb.message.getFrameId(),
+            'removedFormIDs': gCrWeb.stringify(filteredFormIDs),
+            'removedFieldIDs': gCrWeb.stringify(removedFormlessFieldsIds),
+          };
+          continue;
+        }
       }
 
-      const removedFormlessPasswordFieldsIds =
-          findFormlessPasswordFieldsIds(removedFormElements);
-      const formlessFieldsWereRemoved =
-          removedFormlessPasswordFieldsIds.length > 0;
       if (!removedFormMessage && formlessFieldsWereRemoved) {
-        // Handle the removed formless password field case.
+        // Handle the removed formless field case.
         removedFormMessage = {
-          'command': 'pwdform.removal',
+          'command': 'form.removal',
           'frameID': gCrWeb.message.getFrameId(),
-          'removedFieldIDs': gCrWeb.stringify(removedFormlessPasswordFieldsIds),
+          'removedFieldIDs': gCrWeb.stringify(removedFormlessFieldsIds),
         };
         continue;
       } else if (formlessFieldsWereRemoved) {
@@ -567,23 +451,6 @@ function trackFormMutationsNew(delay: number): void {
     }
   });
   formMutationObserver.observe(document, {childList: true, subtree: true});
-}
-
-/**
- * Installs a MutationObserver to track form related changes. Waits |delay|
- * milliseconds before sending a message to browser. A delay is used because
- * form mutations are likely to come in batches. An undefined or zero value for
- * |delay| would stop the MutationObserver, if any. Will allow batching
- * messages for removed and added forms together if `batchMessages` is true,
- * which relaxes the messages throttling and allows correctly handling form
- * replacements.
- */
-function trackFormMutations(delay: number, batchMessages: boolean): void {
-  if (batchMessages) {
-    trackFormMutationsNew(delay);
-  } else {
-    trackFormMutationsOld(delay);
-  }
 }
 
 

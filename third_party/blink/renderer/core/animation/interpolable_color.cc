@@ -114,8 +114,11 @@ InterpolableColor* InterpolableColor::Create(
       return Create(LayoutTheme::GetTheme().FocusRingColor(color_scheme));
     default:
       DCHECK(StyleColor::IsColorKeyword(keyword));
+      // TODO(crbug.com/40229450): Pass down if within installed webapp scope
+      // from Document.
       return Create(
-          StyleColor::ColorFromKeyword(keyword, color_scheme, color_provider));
+          StyleColor::ColorFromKeyword(keyword, color_scheme, color_provider,
+                                       /*is_in_web_app_scope=*/false));
   }
 }
 
@@ -173,7 +176,7 @@ Color InterpolableColor::GetColor() const {
     case Color::ColorSpace::kOklab:
       return Color::FromColorSpace(color_space_, param0, param1, param2, alpha);
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return Color();
   }
 }
@@ -319,7 +322,7 @@ Color InterpolableColor::Resolve(const Color& current_color,
       // used for interpolation, so sRGB (for legacy colors) and Oklab are
       // the only possibilities.
       // https://www.w3.org/TR/css-color-4/#interpolation-space
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return Color();
   }
 }

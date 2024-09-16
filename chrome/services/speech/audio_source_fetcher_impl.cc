@@ -130,7 +130,7 @@ void AudioSourceFetcherImpl::Start(
   send_error_callback_ = base::BindPostTaskToCurrentDefault(base::BindRepeating(
       &AudioSourceFetcherImpl::SendError, weak_factory_.GetWeakPtr()));
 
-  // TODO(crbug.com/1185978): Check implementation / sandbox policy on Mac and
+  // TODO(crbug.com/40753481): Check implementation / sandbox policy on Mac and
   // Windows.
 #if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
   is_started_ = true;
@@ -214,8 +214,11 @@ void AudioSourceFetcherImpl::SendAudioToSpeechRecognitionService(
 void AudioSourceFetcherImpl::SendAudioToResample(
     std::unique_ptr<media::AudioBus> audio_data) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  converter_->Push(std::move(audio_data));
-  DrainConverterOutput();
+  // `converter_` will be null if Stop() has been called.
+  if (converter_) {
+    converter_->Push(std::move(audio_data));
+    DrainConverterOutput();
+  }
 }
 
 void AudioSourceFetcherImpl::SendError() {

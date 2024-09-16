@@ -55,6 +55,7 @@
 #include "ui/aura/window_observer.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/class_property.h"
+#include "ui/base/mojom/window_show_state.mojom.h"
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/compositor_lock.h"
 #include "ui/compositor/layer.h"
@@ -137,7 +138,8 @@ class ClientControlledStateDelegate
         bounds_in_display,
         window_state->drag_details() && shell_surface_->IsDragging()
             ? window_state->drag_details()->bounds_change
-            : 0);
+            : 0,
+        /*is_adjusted_bounds=*/false);
   }
 
  private:
@@ -174,20 +176,20 @@ class ClientControlledWindowStateDelegate : public ash::WindowStateDelegate {
         break;
       case chromeos::WindowStateType::kFullscreen:
         switch (window->GetProperty(aura::client::kRestoreShowStateKey)) {
-          case ui::SHOW_STATE_DEFAULT:
-          case ui::SHOW_STATE_NORMAL:
+          case ui::mojom::WindowShowState::kDefault:
+          case ui::mojom::WindowShowState::kNormal:
             next_state = chromeos::WindowStateType::kNormal;
             break;
-          case ui::SHOW_STATE_MAXIMIZED:
+          case ui::mojom::WindowShowState::kMaximized:
             next_state = chromeos::WindowStateType::kMaximized;
             break;
-          case ui::SHOW_STATE_MINIMIZED:
+          case ui::mojom::WindowShowState::kMinimized:
             next_state = chromeos::WindowStateType::kMinimized;
             break;
-          case ui::SHOW_STATE_FULLSCREEN:
-          case ui::SHOW_STATE_INACTIVE:
-          case ui::SHOW_STATE_END:
-            DUMP_WILL_BE_NOTREACHED_NORETURN()
+          case ui::mojom::WindowShowState::kFullscreen:
+          case ui::mojom::WindowShowState::kInactive:
+          case ui::mojom::WindowShowState::kEnd:
+            DUMP_WILL_BE_NOTREACHED()
                 << " unknown state :"
                 << window->GetProperty(aura::client::kRestoreShowStateKey);
             return false;
@@ -476,7 +478,7 @@ void ClientControlledShellSurface::SetPinned(chromeos::WindowPinType type) {
                static_cast<int>(type));
 
   if (!widget_)
-    CreateShellSurfaceWidget(ui::SHOW_STATE_NORMAL);
+    CreateShellSurfaceWidget(ui::mojom::WindowShowState::kNormal);
 
   if (type == chromeos::WindowPinType::kNone) {
     // Set other window state mode will automatically cancelled pin mode.
@@ -493,7 +495,7 @@ void ClientControlledShellSurface::SetSystemUiVisibility(bool autohide) {
                "autohide", autohide);
 
   if (!widget_)
-    CreateShellSurfaceWidget(ui::SHOW_STATE_NORMAL);
+    CreateShellSurfaceWidget(ui::mojom::WindowShowState::kNormal);
 
   ash::window_util::SetAutoHideShelf(widget_->GetNativeWindow(), autohide);
 }
@@ -663,7 +665,8 @@ void ClientControlledShellSurface::OnBoundsChangeEvent(
     chromeos::WindowStateType requested_state,
     int64_t display_id,
     const gfx::Rect& window_bounds,
-    int bounds_change) {
+    int bounds_change,
+    bool is_adjusted_bounds) {
   // 1) Do no update the bounds unless we have geometry from client.
   // 2) Do not update the bounds if window is minimized unless it
   // exiting the minimzied state.
@@ -695,7 +698,8 @@ void ClientControlledShellSurface::OnBoundsChangeEvent(
   const gfx::Rect scaled_client_bounds =
       gfx::ScaleToRoundedRect(client_bounds, scale);
   delegate_->OnBoundsChanged(current_state, requested_state, display_id,
-                             scaled_client_bounds, is_resize, bounds_change);
+                             scaled_client_bounds, is_resize, bounds_change,
+                             is_adjusted_bounds);
 
   auto* window_state = GetWindowState();
   if (server_reparent_window_ &&
@@ -938,12 +942,12 @@ bool ClientControlledShellSurface::ShouldSaveWindowPlacement() const {
 
 void ClientControlledShellSurface::SaveWindowPlacement(
     const gfx::Rect& bounds,
-    ui::WindowShowState show_state) {}
+    ui::mojom::WindowShowState show_state) {}
 
 bool ClientControlledShellSurface::GetSavedWindowPlacement(
     const views::Widget* widget,
     gfx::Rect* bounds,
-    ui::WindowShowState* show_state) const {
+    ui::mojom::WindowShowState* show_state) const {
   return false;
 }
 
@@ -1034,15 +1038,15 @@ void ClientControlledShellSurface::SetWidgetBounds(const gfx::Rect& bounds,
     const gfx::Rect& restriction = GetWindowState()->IsFullscreen()
                                        ? target_display.bounds()
                                        : target_display.work_area();
-    ash::ClientControlledState::AdjustBoundsForMinimumWindowVisibility(
-        restriction, &adjusted_bounds);
+    ash::AdjustBoundsToEnsureMinimumWindowVisibility(
+        restriction, /*client_controlled=*/true, &adjusted_bounds);
     // Collision detection to the bounds set by Android should be applied only
     // to initial bounds and any client-requested bounds (I.E. Double-Tap to
     // resize). Do not adjust new bounds for fling/display rotation as it can be
     // obsolete or in transit during animation, which results in incorrect
     // resting postiion. The resting position should be fully controlled by
     // chrome afterwards because Android isn't aware of Chrome OS System UI.
-    bool is_resizing_without_rotation =
+    const bool is_resizing_without_rotation =
         !display_rotating_with_pip_ && !IsDragging() &&
         !ash::Shell::Get()->pip_controller()->is_tucked() &&
         GetWindowState()->GetCurrentBoundsInScreen().size() != bounds.size();
@@ -1100,7 +1104,8 @@ void ClientControlledShellSurface::SetWidgetBounds(const gfx::Rect& bounds,
         -target_display.bounds().OffsetFromOrigin());
 
     OnBoundsChangeEvent(state_type, state_type, target_display.id(),
-                        adjusted_bounds_in_display, 0);
+                        adjusted_bounds_in_display, 0,
+                        /*is_adjusted_bounds=*/true);
   }
 
   UpdateHostWindowOrigin();
@@ -1493,7 +1498,7 @@ bool ClientControlledShellSurface::GetCanResizeFromSizeConstraints() const {
   // | maximized | min: (400, 400), max: (0, 0) |   min = max = (0, 0)    |
   // ----------------------------------------------------------------------
 
-  return minimum_size_ != maximum_size_;
+  return requested_minimum_size_ != requested_maximum_size_;
 }
 
 void ClientControlledShellSurface::

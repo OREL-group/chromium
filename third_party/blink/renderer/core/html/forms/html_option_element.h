@@ -115,8 +115,21 @@ class CORE_EXPORT HTMLOptionElement final : public HTMLElement {
   Node::InsertionNotificationRequest InsertedInto(ContainerNode&) override;
   void RemovedFrom(ContainerNode&) override;
 
-  void OptionInsertedIntoSelectListElementOrSelectDatalist();
-  void OptionRemovedFromSelectListElementOrSelectDatalist();
+  // These methods mutate the shadowroot to switch between rendering all
+  // children or only text content. SetTextOnlyRendering is used for
+  // appearance:base-select, and the *SelectList* ones are used for
+  // <selectlist>. The mechanism by which these methods render all children or
+  // only text content is that the UA shadowroot has a manually updated text
+  // node for text-only mode or a slot element which just slots all nodes into
+  // it for the render everything mode. SetTextOnlyRendering switches the
+  // ShadowRoot state based on the provided argument.
+  // OptionInsertedIntoSelectListElement removes all children from the
+  // ShadowRoot and adds the slot for render everything mode.
+  // OptionRemovedFromSelectListElement removes all children from the ShadowRoot
+  // and adds the text node for text-only mode.
+  void SetTextOnlyRendering(bool);
+  void OptionInsertedIntoSelectListElement();
+  void OptionRemovedFromSelectListElement();
 
   // Callback for OptionTextObserver.
   void DidChangeTextContent();
@@ -124,8 +137,7 @@ class CORE_EXPORT HTMLOptionElement final : public HTMLElement {
   bool IsRichlyEditableForAccessibility() const override { return false; }
 
  private:
-  bool SupportsFocus(UpdateBehavior update_behavior =
-                         UpdateBehavior::kStyleAndLayout) const override;
+  FocusableState SupportsFocus(UpdateBehavior update_behavior) const override;
   bool MatchesDefaultPseudoClass() const override;
   bool MatchesEnabledPseudoClass() const override;
   void ParseAttribute(const AttributeModificationParams&) override;
@@ -157,8 +169,7 @@ class CORE_EXPORT HTMLOptionElement final : public HTMLElement {
 
   // This flag is necessary to detect when an option is a descendant of
   // <selectlist> in order to be able to render arbitrary content.
-  // This is also used for <option>s in <datalist> for StylableSelect.
-  bool is_descendant_of_select_list_or_select_datalist_ = false;
+  bool is_descendant_of_select_list_ = false;
 
   friend class HTMLOptionElementTest;
 };

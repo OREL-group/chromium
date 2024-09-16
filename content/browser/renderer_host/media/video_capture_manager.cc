@@ -21,6 +21,7 @@
 #include "base/task/bind_post_task.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/timer/elapsed_timer.h"
+#include "build/android_buildflags.h"
 #include "build/build_config.h"
 #include "content/browser/media/media_internals.h"
 #include "content/browser/renderer_host/media/video_capture_controller.h"
@@ -44,7 +45,7 @@ void LogVideoCaptureError(media::VideoCaptureError error) {
 }
 
 const base::UnguessableToken& FakeSessionId() {
-  // TODO(https://crbug.com/1406985): Investigate whether there's a better way
+  // TODO(crbug.com/40252973): Investigate whether there's a better way
   // to accomplish this (without using UnguessableToken::Deserialize).
   static const base::UnguessableToken fake_session_id(
       base::UnguessableToken::Deserialize(0xFFFFFFFFFFFFFFFFU,
@@ -130,7 +131,7 @@ void VideoCaptureManager::RegisterListener(
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   DCHECK(listener);
   listeners_.AddObserver(listener);
-#if BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_DESKTOP_ANDROID)
   application_state_has_running_activities_ = true;
   app_status_listener_ =
       base::android::ApplicationStatusListener::New(base::BindRepeating(
@@ -373,12 +374,13 @@ void VideoCaptureManager::OnDeviceLaunched(VideoCaptureController* controller) {
 
   auto it = photo_request_queue_.begin();
   while (it != photo_request_queue_.end()) {
-    auto request = it++;
     VideoCaptureController* maybe_entry =
-        LookupControllerBySessionId(request->first);
+        LookupControllerBySessionId(it->first);
     if (maybe_entry && maybe_entry->IsDeviceAlive()) {
-      std::move(request->second).Run();
-      photo_request_queue_.erase(request);
+      std::move(it->second).Run();
+      it = photo_request_queue_.erase(it);
+    } else {
+      ++it;
     }
   }
 
@@ -415,11 +417,28 @@ void VideoCaptureManager::OnDeviceConnectionLost(
       media::VideoCaptureError::kVideoCaptureManagerDeviceConnectionLost);
 }
 
+void VideoCaptureManager::OpenNativeScreenCapturePicker(
+    DesktopMediaID::Type type,
+    base::OnceCallback<void(DesktopMediaID::Id)> created_callback,
+    base::OnceCallback<void(webrtc::DesktopCapturer::Source)> picker_callback,
+    base::OnceCallback<void()> cancel_callback,
+    base::OnceCallback<void()> error_callback) {
+  video_capture_provider_->OpenNativeScreenCapturePicker(
+      type, std::move(created_callback), std::move(picker_callback),
+      std::move(cancel_callback), std::move(error_callback));
+}
+
+void VideoCaptureManager::CloseNativeScreenCapturePicker(
+    DesktopMediaID device_id) {
+  video_capture_provider_->CloseNativeScreenCapturePicker(device_id);
+}
+
 void VideoCaptureManager::ConnectClient(
     const media::VideoCaptureSessionId& session_id,
     const media::VideoCaptureParams& params,
     VideoCaptureControllerID client_id,
     VideoCaptureControllerEventHandler* client_handler,
+    std::optional<url::Origin> origin,
     DoneCB done_cb,
     BrowserContext* browser_context) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
@@ -441,10 +460,21 @@ void VideoCaptureManager::ConnectClient(
     return;
   }
 
+  bool client_exist =
+      controller->HasActiveClient() || controller->HasPausedClient();
+  base::UmaHistogramBoolean("Media.VideoCapture.StreamShared", client_exist);
+  if (client_exist) {
+    std::optional<url::Origin> first_client_origin =
+        controller->GetFirstClientOrigin();
+    bool same_origin = first_client_origin.has_value() && origin.has_value() &&
+                       *first_client_origin == *origin;
+    base::UmaHistogramBoolean("Media.VideoCapture.StreamSharedSameOrigin",
+                              same_origin);
+  }
+
   // First client starts the device. Device can't be started while the screen is
   // locked.
-  if (!controller->HasActiveClient() && !controller->HasPausedClient() &&
-      lock_time_.is_null()) {
+  if (!client_exist && lock_time_.is_null()) {
     std::ostringstream string_stream;
     string_stream
         << "VideoCaptureManager queueing device start for device_id = "
@@ -468,7 +498,7 @@ void VideoCaptureManager::ConnectClient(
 
   // Run the callback first, as AddClient() may trigger OnFrameInfo().
   std::move(done_cb).Run(controller->GetWeakPtrForIOThread());
-  controller->AddClient(client_id, client_handler, session_id, params);
+  controller->AddClient(client_id, client_handler, session_id, params, origin);
 }
 
 void VideoCaptureManager::DisconnectClient(
@@ -521,7 +551,7 @@ void VideoCaptureManager::PauseCaptureForClient(
   DCHECK(controller);
   DCHECK(client_handler);
   if (!IsControllerPointerValid(controller))
-    NOTREACHED() << "Got Null controller while pausing capture";
+    NOTREACHED_IN_MIGRATION() << "Got Null controller while pausing capture";
 
   const bool had_active_client = controller->HasActiveClient();
   controller->PauseClient(client_id, client_handler);
@@ -543,7 +573,7 @@ void VideoCaptureManager::ResumeCaptureForClient(
   DCHECK(client_handler);
 
   if (!IsControllerPointerValid(controller))
-    NOTREACHED() << "Got Null controller while resuming capture";
+    NOTREACHED_IN_MIGRATION() << "Got Null controller while resuming capture";
 
   const bool had_active_client = controller->HasActiveClient();
   controller->ResumeClient(client_id, client_handler);
@@ -839,6 +869,11 @@ void VideoCaptureManager::DestroyControllerIfNoClients(
                   << ", device_id = " << controller->device_id() << ")";
     EmitLogMessage(string_stream.str(), 1);
 
+    // Close the native OS picker as the associated VideoCaptureDevice is being
+    // closed.
+    CloseNativeScreenCapturePicker(
+        DesktopMediaID::Parse(controller->device_id()));
+
     // The VideoCaptureController is removed from |controllers_| immediately.
     // The controller is deleted immediately, and the device is freed
     // asynchronously. After this point, subsequent requests to open this same
@@ -937,7 +972,7 @@ VideoCaptureController* VideoCaptureManager::GetOrCreateController(
   return new_controller;
 }
 
-#if BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_DESKTOP_ANDROID)
 void VideoCaptureManager::OnApplicationStateChange(
     base::android::ApplicationState state) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
@@ -1016,16 +1051,14 @@ void VideoCaptureManager::OnScreenLocked() {
     DCHECK(lock_time_.is_null());
     lock_time_ = base::TimeTicks::Now();
 
-    if (base::FeatureList::IsEnabled(features::kStopVideoCaptureOnScreenLock)) {
-      idle_close_timer_.Start(FROM_HERE, idle_close_timeout_, this,
-                              &VideoCaptureManager::ReleaseDevices);
-    }
+    idle_close_timer_.Start(FROM_HERE, idle_close_timeout_, this,
+                            &VideoCaptureManager::ReleaseDevices);
   }
 
   for (auto session_id : desktopcapture_session_ids) {
     Close(session_id);
   }
-#endif  // BUILDFLAG(IS_ANDROID)
+#endif  // !BUILDFLAG(IS_ANDROID)
 }
 
 void VideoCaptureManager::OnScreenUnlocked() {
@@ -1036,10 +1069,8 @@ void VideoCaptureManager::OnScreenUnlocked() {
   DCHECK(!locked_sessions_.empty());
   lock_time_ = base::TimeTicks();
 
-  if (base::FeatureList::IsEnabled(features::kStopVideoCaptureOnScreenLock)) {
-    idle_close_timer_.Stop();
-    ResumeDevices();
-  }
+  idle_close_timer_.Stop();
+  ResumeDevices();
 }
 
 void VideoCaptureManager::EmitLogMessage(const std::string& message,

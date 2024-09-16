@@ -68,10 +68,8 @@ UnionTraits<arc::mojom::BitrateDataView, media::Bitrate>::GetTag(
     case media::Bitrate::Mode::kExternal:
       // Ash encoder doesn't need to support external rate control.
       NOTREACHED();
-      return arc::mojom::BitrateDataView::Tag::kConstant;
   }
   NOTREACHED();
-  return arc::mojom::BitrateDataView::Tag::kConstant;
 }
 
 // static
@@ -113,7 +111,6 @@ bool UnionTraits<arc::mojom::BitrateDataView, media::Bitrate>::Read(
     }
     default:
       NOTREACHED();
-      return false;
   }
 }
 

@@ -89,6 +89,7 @@
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/transform_util.h"
 #include "ui/gfx/image/image_skia.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/animation/bounds_animator.h"
 #include "ui/views/animation/ink_drop.h"
 #include "ui/views/controls/button/button.h"
@@ -348,10 +349,10 @@ ShelfView::ShelfView(ShelfModel* model,
     : model_(model),
       shelf_(shelf),
       view_model_(std::make_unique<views::ViewModel>()),
+      delegate_(delegate),
       bounds_animator_(
           std::make_unique<views::BoundsAnimator>(this,
                                                   /*use_transforms=*/true)),
-      delegate_(delegate),
       shelf_button_delegate_(shelf_button_delegate) {
   DCHECK(model_);
   DCHECK(shelf_);
@@ -373,6 +374,10 @@ ShelfView::ShelfView(ShelfModel* model,
 
   announcement_view_ = new views::View();
   AddChildView(announcement_view_.get());
+
+  GetViewAccessibility().SetRole(ax::mojom::Role::kToolbar);
+  GetViewAccessibility().SetName(
+      l10n_util::GetStringUTF8(IDS_ASH_SHELF_ACCESSIBLE_NAME));
 }
 
 ShelfView::~ShelfView() {
@@ -571,7 +576,8 @@ gfx::Rect ShelfView::GetVisibleItemsBoundsInScreen() {
   return gfx::Rect(origin, preferred_size);
 }
 
-gfx::Size ShelfView::CalculatePreferredSize() const {
+gfx::Size ShelfView::CalculatePreferredSize(
+    const views::SizeBounds& available_size) const {
   const int hotseat_size = shelf_->hotseat_widget()->GetHotseatSize();
   if (visible_views_indices_.empty()) {
     // There are no visible shelf items.
@@ -646,10 +652,10 @@ void ShelfView::OnMouseEvent(ui::MouseEvent* event) {
   View::ConvertPointToScreen(this, &location_in_screen);
 
   switch (event->type()) {
-    case ui::ET_MOUSEWHEEL:
+    case ui::EventType::kMousewheel:
       // The mousewheel event is handled by the ScrollableShelfView.
       break;
-    case ui::ET_MOUSE_PRESSED:
+    case ui::EventType::kMousePressed:
       if (!event->IsOnlyLeftMouseButton()) {
         if (event->IsOnlyRightMouseButton()) {
           ShowContextMenuForViewImpl(this, location_in_screen,
@@ -660,8 +666,8 @@ void ShelfView::OnMouseEvent(ui::MouseEvent* event) {
       }
 
       [[fallthrough]];
-    case ui::ET_MOUSE_DRAGGED:
-    case ui::ET_MOUSE_RELEASED:
+    case ui::EventType::kMouseDragged:
+    case ui::EventType::kMouseReleased:
       // Convert the event location from current view to screen, since dragging
       // the shelf by mouse can open the fullscreen app list. Updating the
       // bounds of the app list during dragging is based on screen coordinate
@@ -679,11 +685,6 @@ void ShelfView::OnMouseEvent(ui::MouseEvent* event) {
 views::FocusTraversable* ShelfView::GetPaneFocusTraversable() {
   // ScrollableShelfView should handles the focus traversal.
   return nullptr;
-}
-
-void ShelfView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  node_data->role = ax::mojom::Role::kToolbar;
-  node_data->SetName(l10n_util::GetStringUTF8(IDS_ASH_SHELF_ACCESSIBLE_NAME));
 }
 
 View* ShelfView::GetTooltipHandlerForPoint(const gfx::Point& point) {
@@ -787,7 +788,6 @@ void ShelfView::ButtonPressed(views::Button* sender,
 
     case TYPE_UNDEFINED:
       NOTREACHED() << "ShelfItemType must be set.";
-      break;
   }
 
   // Run AfterItemSelected directly if the item has no delegate (ie. in tests).
@@ -853,20 +853,6 @@ void ShelfView::ShowContextMenuForViewImpl(views::View* source,
   const int64_t display_id = GetDisplayIdForView(this);
   model_->GetShelfItemDelegate(item->id)->GetContextMenu(
       display_id, context_menu_callback_.callback());
-}
-
-void ShelfView::OnDisplayTabletStateChanged(display::TabletState state) {
-  if (state != display::TabletState::kInClamshellMode &&
-      state != display::TabletState::kInTabletMode) {
-    return;
-  }
-
-  // Close all menus when tablet mode starts or ends so that menu options are
-  // kept consistent with device state and not show the clamshell / tablet only
-  // context menu options while they are unavailable.
-  if (shelf_menu_model_adapter_) {
-    shelf_menu_model_adapter_->Cancel();
-  }
 }
 
 void ShelfView::OnShelfConfigUpdated() {
@@ -1058,7 +1044,7 @@ void ShelfView::UpdateButton(ShelfAppButton* button, const ShelfItem& item) {
   button->SetMainAndMaybeHostBadgeImage(item.image, item.has_placeholder_icon,
                                         item.badge_image);
   button->SetNotificationBadgeColor(item.notification_badge_color);
-  button->SetAccessibleName(item.accessible_name);
+  button->GetViewAccessibility().SetName(item.accessible_name);
   button->SchedulePaint();
 }
 
@@ -1185,7 +1171,7 @@ bool ShelfView::StartDrag(const std::string& app_id,
   gfx::Point point_in_root = start_point_in_screen;
   wm::ConvertPointFromScreen(window_util::GetRootWindowAt(location_in_screen),
                              &point_in_root);
-  ui::MouseEvent event(ui::ET_MOUSE_PRESSED, pt, point_in_root,
+  ui::MouseEvent event(ui::EventType::kMousePressed, pt, point_in_root,
                        ui::EventTimeForNow(), 0, 0);
   PointerPressedOnButton(drag_and_drop_view, DRAG_AND_DROP, event);
 
@@ -1208,7 +1194,7 @@ bool ShelfView::Drag(const gfx::Point& location_in_screen,
   gfx::Point point_in_root = location_in_screen;
   wm::ConvertPointFromScreen(window_util::GetRootWindowAt(location_in_screen),
                              &point_in_root);
-  ui::MouseEvent event(ui::ET_MOUSE_DRAGGED, pt, point_in_root,
+  ui::MouseEvent event(ui::EventType::kMouseDragged, pt, point_in_root,
                        ui::EventTimeForNow(), 0, 0);
   PointerDraggedOnButton(drag_and_drop_view, DRAG_AND_DROP, event);
   return true;
@@ -1225,8 +1211,6 @@ void ShelfView::EndDrag(bool cancel,
     return;
   }
 
-  DCHECK(app_list_features::IsDragAndDropRefactorEnabled() ||
-         !drag_icon_proxy_);
   drag_icon_proxy_ = std::move(icon_proxy);
 
   views::View* drag_and_drop_view =
@@ -1251,8 +1235,8 @@ void ShelfView::EndDrag(bool cancel,
       // and it might have moved within the bounds. In that case the item need
       // to animate back to its correct location.
       AnimateToIdealBounds();
-      // TODO(crbug/1442378): Remove the check below once the bounds animator
-      // works better with zero animation duration.
+      // TODO(crbug.com/40266934): Remove the check below once the bounds
+      // animator works better with zero animation duration.
       if (!bounds_animator_->GetAnimationDuration().is_zero()) {
         bounds_animator_->SetAnimationDelegate(drag_and_drop_view,
                                                std::move(animation_delegate));
@@ -1932,7 +1916,6 @@ bool ShelfView::SameDragType(ShelfItemType typea, ShelfItemType typeb) const {
     return true;
   if (typea == TYPE_UNDEFINED || typeb == TYPE_UNDEFINED) {
     NOTREACHED() << "ShelfItemType must be set.";
-    return false;
   }
   // Running app or dialog.
   return typea == typeb;
@@ -2309,7 +2292,7 @@ void ShelfView::ShelfItemAdded(int model_index) {
                             weak_factory_.GetWeakPtr(), package_id));
   } else {
     DCHECK_LE(static_cast<size_t>(model_index), visible_views_indices_.back());
-    // TODO(crbug/1442378): Remove the check below once the bounds animator
+    // TODO(crbug.com/40266934): Remove the check below once the bounds animator
     // works better with zero animation duration.
     if (!bounds_animator_->GetAnimationDuration().is_zero()) {
       bounds_animator_->SetAnimationDelegate(
@@ -2387,7 +2370,7 @@ void ShelfView::ShelfItemRemoved(int model_index, const ShelfItem& old_item) {
     // of the views to their target location.
     bounds_animator_->AnimateViewTo(view.get(), view->bounds());
     auto* const view_ptr = view.get();
-    // TODO(crbug/1442378): Remove the check below once the bounds animator
+    // TODO(crbug.com/40266934): Remove the check below once the bounds animator
     // works better with zero animation duration.
     if (!bounds_animator_->GetAnimationDuration().is_zero()) {
       bounds_animator_->SetAnimationDelegate(
@@ -2692,8 +2675,9 @@ void ShelfView::OnMenuClosed(MayBeDangling<views::View> source) {
   closing_event_time_ = shelf_menu_model_adapter_->GetClosingEventTime();
 
   const ShelfItem* item = ShelfItemForView(source);
-  if (item)
+  if (item) {
     static_cast<ShelfAppButton*>(source)->OnMenuClosed();
+  }
 
   shelf_menu_model_adapter_.reset();
 
@@ -2778,7 +2762,7 @@ bool ShelfView::CanPrepareForDrag(Pointer pointer,
 }
 
 bool ShelfView::ShouldHandleGestures(const ui::GestureEvent& event) const {
-  if (event.type() == ui::ET_GESTURE_SCROLL_BEGIN) {
+  if (event.type() == ui::EventType::kGestureScrollBegin) {
     float x_offset = event.details().scroll_x_hint();
     float y_offset = event.details().scroll_y_hint();
     if (!shelf_->IsHorizontalAlignment())
@@ -2857,10 +2841,7 @@ void ShelfView::ResetActiveMenuModelRequest() {
 
 views::View::DropCallback ShelfView::GetDropCallback(
     const ui::DropTargetEvent& event) {
-  return app_list_features::IsDragAndDropRefactorEnabled()
-             ? base::BindOnce(&ShelfView::EndDragCallback,
-                              base::Unretained(this))
-             : base::DoNothing();
+  return base::BindOnce(&ShelfView::EndDragCallback, base::Unretained(this));
 }
 
 void ShelfView::EndDragCallback(
@@ -2876,17 +2857,11 @@ void ShelfView::EndDragCallback(
 bool ShelfView::GetDropFormats(
     int* formats,
     std::set<ui::ClipboardFormatType>* format_types) {
-  if (app_list_features::IsDragAndDropRefactorEnabled()) {
-    format_types->insert(GetAppItemFormatType());
-  }
+  format_types->insert(GetAppItemFormatType());
   return true;
 }
 
 bool ShelfView::CanDrop(const OSExchangeData& data) {
-  if (!app_list_features::IsDragAndDropRefactorEnabled()) {
-    return true;
-  }
-
   auto app_info = GetAppInfoFromDropDataForAppType(data);
   if (!app_info || app_info->IsValid()) {
     return false;
@@ -2899,19 +2874,10 @@ bool ShelfView::CanDrop(const OSExchangeData& data) {
 }
 
 void ShelfView::OnDragExited() {
-  if (!app_list_features::IsDragAndDropRefactorEnabled()) {
-    views::View::OnDragExited();
-    return;
-  }
   EndDrag(/*cancel=*/true, nullptr);
 }
 
 void ShelfView::OnDragEntered(const ui::DropTargetEvent& event) {
-  if (!app_list_features::IsDragAndDropRefactorEnabled()) {
-    views::View::OnDragEntered(event);
-    return;
-  }
-
   auto app_info = GetAppInfoFromDropDataForAppType(event.data());
   if (!app_info || app_info->IsValid()) {
     return;
@@ -2929,12 +2895,10 @@ void ShelfView::OnDragEntered(const ui::DropTargetEvent& event) {
 }
 
 int ShelfView::OnDragUpdated(const ui::DropTargetEvent& event) {
-  if (app_list_features::IsDragAndDropRefactorEnabled()) {
-    gfx::Point drag_point_in_screen = event.location();
-    views::View::ConvertPointToScreen(this, &drag_point_in_screen);
-    Drag(drag_point_in_screen,
-         drag_view_ ? drag_view_->GetBoundsInScreen() : gfx::Rect());
-  }
+  gfx::Point drag_point_in_screen = event.location();
+  views::View::ConvertPointToScreen(this, &drag_point_in_screen);
+  Drag(drag_point_in_screen,
+       drag_view_ ? drag_view_->GetBoundsInScreen() : gfx::Rect());
   return ui::DragDropTypes::DRAG_MOVE;
 }
 

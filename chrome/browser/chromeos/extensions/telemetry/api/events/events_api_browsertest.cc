@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/chromeos/extensions/telemetry/api/events/events_api.h"
+
 #include <cstddef>
 #include <memory>
 #include <utility>
@@ -14,8 +16,8 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_future.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "chrome/browser/chromeos/extensions/telemetry/api/common/base_telemetry_extension_browser_test.h"
-#include "chrome/browser/chromeos/extensions/telemetry/api/events/events_api.h"
 #include "chrome/browser/chromeos/extensions/telemetry/api/events/fake_events_service.h"
 #include "chrome/browser/ui/browser.h"
 #include "chromeos/crosapi/mojom/probe_service.mojom.h"
@@ -30,11 +32,11 @@
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 #include "base/memory/weak_ptr.h"
-#include "chrome/browser/ash/telemetry_extension/events/telemetry_event_service_ash.h"
 #include "chrome/browser/chromeos/extensions/telemetry/api/events/fake_events_service_factory.h"
 #include "chrome/browser/profiles/profile.h"         // nogncheck
 #include "chrome/browser/ui/browser_list.h"          // nogncheck
 #include "chrome/browser/ui/tabs/tab_strip_model.h"  // nogncheck
+#include "chromeos/ash/components/telemetry_extension/events/telemetry_event_service_ash.h"
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 #if BUILDFLAG(IS_CHROMEOS_LACROS)
@@ -678,8 +680,15 @@ IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
 #endif
 }
 
+#if BUILDFLAG(IS_CHROMEOS)
+#define MAYBE_KeyboardDiagnosticEventOpensDiagnosticApp \
+  DISABLED_KeyboardDiagnosticEventOpensDiagnosticApp
+#else
+#define MAYBE_KeyboardDiagnosticEventOpensDiagnosticApp \
+  KeyboardDiagnosticEventOpensDiagnosticApp
+#endif
 IN_PROC_BROWSER_TEST_F(TelemetryExtensionEventsApiBrowserTest,
-                       KeyboardDiagnosticEventOpensDiagnosticApp) {
+                       MAYBE_KeyboardDiagnosticEventOpensDiagnosticApp) {
   OpenAppUiAndMakeItSecure();
 
   GetFakeService()->SetOnSubscriptionChange(

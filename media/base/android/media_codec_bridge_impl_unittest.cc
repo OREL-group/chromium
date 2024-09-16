@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/base/android/media_codec_bridge_impl.h"
 
 #include <stddef.h>
@@ -21,7 +26,7 @@
 #include "media/base/media_util.h"
 #include "media/base/test_data_util.h"
 #include "media/base/video_frame.h"
-#include "media/video/h264_parser.h"
+#include "media/parsers/h264_parser.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "third_party/libyuv/include/libyuv/convert_from.h"
 
@@ -239,7 +244,7 @@ void EncodeMediaFrame(MediaCodecBridge* media_codec,
   ASSERT_TRUE(result.is_ok());
 
   const gfx::Size uv_plane_size = VideoFrame::PlaneSizeInSamples(
-      PIXEL_FORMAT_NV12, VideoFrame::kUVPlane, encoded_size);
+      PIXEL_FORMAT_NV12, VideoFrame::Plane::kUV, encoded_size);
   const size_t src_size =
       // size of Y-plane plus padding till UV-plane
       stride * yplane_height +
@@ -498,7 +503,7 @@ TEST(MediaCodecBridgeTest, H264VideoEncodeAndValidate) {
                      input_timestamp);
   }
 
-  // Reuest key frame and encode 3 more frames. The second key frame should
+  // Request key frame and encode 3 more frames. The second key frame should
   // also contain SPS/PPS NALUs.
   media_codec->RequestKeyFrameSoon();
   for (int frame = 0; frame < num_frames && frame < 3; frame++) {

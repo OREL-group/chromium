@@ -25,6 +25,7 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/not_fatal_until.h"
 #include "base/notreached.h"
 #include "base/sequence_checker.h"
 #include "base/strings/string_number_conversions.h"
@@ -102,7 +103,7 @@ IndexResult ValidateIndex(proto::CacheStorageIndex index) {
     return IndexResult::kEmptyOriginUrl;
   }
 
-  // TODO(https://crbug.com/1199077): Consider adding a
+  // TODO(crbug.com/40177656): Consider adding a
   // 'index.has_storage_key()' check here once we've ensured that a
   // sufficient number of CacheStorage instances have been migrated (or
   // verified that `ValidateIndex` won't be passed an unmigrated `index`).
@@ -124,8 +125,8 @@ base::FilePath ConstructOriginPath(const base::FilePath& profile_path,
   if (owner != storage::mojom::CacheStorageOwner::kCacheAPI) {
     identifier += "-" + base::NumberToString(static_cast<int>(owner));
   }
-  const std::string origin_hash_hex = base::ToLowerASCII(base::HexEncode(
-      base::SHA1HashSpan(base::as_bytes(base::make_span(identifier)))));
+  const std::string origin_hash_hex = base::ToLowerASCII(
+      base::HexEncode(base::SHA1Hash(base::as_byte_span(identifier))));
   return first_party_default_root_path.AppendASCII(origin_hash_hex);
 }
 
@@ -165,7 +166,7 @@ void ValidateAndAddBucketFromPath(
     }
     storage_key = result.value();
   } else {
-    // TODO(https://crbug.com/1199077): Since index file migrations happen
+    // TODO(crbug.com/40177656): Since index file migrations happen
     // lazily, it's plausible that the index file we are reading doesn't have
     // a storage key yet. For now, fall back to creating the storage key
     // from the origin. Once enough time has passed it should be safe to treat
@@ -190,7 +191,7 @@ void ValidateAndAddBucketFromPath(
     // origin-based path format. Populate our BucketLocator with enough
     // data to construct the appropriate path from it below.
     bucket_locator = storage::BucketLocator::ForDefaultBucket(storage_key);
-    // TODO(https://crbug.com/1218097): Once enough time has passed it should be
+    // TODO(crbug.com/40185498): Once enough time has passed it should be
     // safe to treat this case as an index validation error.
   }
 
@@ -470,7 +471,7 @@ void CacheStorageManager::CacheStorageUnreferenced(
   DCHECK(cache_storage);
   cache_storage->AssertUnreferenced();
   auto it = cache_storage_map_.find({bucket_locator, owner});
-  DCHECK(it != cache_storage_map_.end());
+  CHECK(it != cache_storage_map_.end(), base::NotFatalUntil::M130);
   DCHECK(it->second.get() == cache_storage);
 
   // Currently we don't do anything when a CacheStorage instance becomes
@@ -702,7 +703,7 @@ void CacheStorageManager::DeleteBucketDataDidGetExists(
   CacheStorageHandle handle = OpenCacheStorage(bucket_locator, owner);
 
   auto it = cache_storage_map_.find({bucket_locator, owner});
-  DCHECK(it != cache_storage_map_.end());
+  CHECK(it != cache_storage_map_.end(), base::NotFatalUntil::M130);
 
   CacheStorage* cache_storage = it->second.release();
   cache_storage->ResetManager();
@@ -799,7 +800,7 @@ base::FilePath CacheStorageManager::ConstructBucketPath(
           profile_path, bucket_locator,
           storage::QuotaClientType::kBackgroundFetch);
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 }
 

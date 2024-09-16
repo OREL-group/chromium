@@ -13,17 +13,9 @@
 #include "base/observer_list.h"
 #include "base/time/clock.h"
 #include "base/time/time.h"
-#include "chromeos/ash/components/multidevice/remote_device_ref.h"
 #include "chromeos/ash/components/tether/message_transfer_operation.h"
 #include "chromeos/ash/components/tether/scanned_device_info.h"
-
-namespace ash::device_sync {
-class DeviceSyncClient;
-}
-
-namespace ash::secure_channel {
-class SecureChannelClient;
-}
+#include "chromeos/ash/components/tether/tether_host.h"
 
 namespace ash::tether {
 
@@ -39,25 +31,23 @@ class TetherHostResponseRecorder;
 class TetherAvailabilityOperation : public MessageTransferOperation {
  public:
   using OnTetherAvailabilityOperationFinishedCallback =
-      base::OnceCallback<void(std::optional<ScannedDeviceResult>)>;
+      base::OnceCallback<void(std::optional<ScannedDeviceInfo>)>;
 
   class Initializer {
    public:
     Initializer(
-        raw_ptr<device_sync::DeviceSyncClient> device_sync_client,
-        raw_ptr<secure_channel::SecureChannelClient> secure_channel_client,
+        raw_ptr<HostConnection::Factory> host_connection_factory,
         raw_ptr<TetherHostResponseRecorder> tether_host_response_recorder,
         raw_ptr<ConnectionPreserver> connection_preserver);
 
     virtual std::unique_ptr<TetherAvailabilityOperation> Initialize(
-        const multidevice::RemoteDeviceRef& device_to_connect,
+        const TetherHost& tether_host,
         OnTetherAvailabilityOperationFinishedCallback callback);
 
     virtual ~Initializer();
 
    private:
-    raw_ptr<device_sync::DeviceSyncClient> device_sync_client_;
-    raw_ptr<secure_channel::SecureChannelClient> secure_channel_client_;
+    raw_ptr<HostConnection::Factory> host_connection_factory_;
     raw_ptr<TetherHostResponseRecorder> tether_host_response_recorder_;
     raw_ptr<ConnectionPreserver> connection_preserver_;
   };
@@ -67,10 +57,9 @@ class TetherAvailabilityOperation : public MessageTransferOperation {
       delete;
 
   TetherAvailabilityOperation(
-      const multidevice::RemoteDeviceRef& device_to_connect,
+      const TetherHost& tether_host,
       OnTetherAvailabilityOperationFinishedCallback on_operation_finished,
-      device_sync::DeviceSyncClient* device_sync_client,
-      secure_channel::SecureChannelClient* secure_channel_client,
+      raw_ptr<HostConnection::Factory> host_connection_factory,
       TetherHostResponseRecorder* tether_host_response_recorder,
       ConnectionPreserver* connection_preserver);
 
@@ -85,6 +74,8 @@ class TetherAvailabilityOperation : public MessageTransferOperation {
   MessageType GetMessageTypeForConnection() override;
 
  private:
+  TetherHost tether_host_;
+
   friend class TetherAvailabilityOperationTest;
   FRIEND_TEST_ALL_PREFIXES(TetherAvailabilityOperationTest,
                            DevicesArePrioritizedDuringConstruction);
@@ -102,8 +93,6 @@ class TetherAvailabilityOperation : public MessageTransferOperation {
   FRIEND_TEST_ALL_PREFIXES(TetherAvailabilityOperationTest,
                            TestMultipleDevices);
 
-  using MessageTransferOperation::StopOperation;
-
   void SetTestDoubles(base::Clock* clock_for_test,
                       scoped_refptr<base::TaskRunner> test_task_runner);
   void RecordTetherAvailabilityResponseDuration(const std::string device_id);
@@ -113,7 +102,7 @@ class TetherAvailabilityOperation : public MessageTransferOperation {
   raw_ptr<base::Clock> clock_;
   scoped_refptr<base::TaskRunner> task_runner_;
 
-  std::optional<ScannedDeviceResult> scanned_device_info_result_;
+  std::optional<ScannedDeviceInfo> scanned_device_info_result_;
   OnTetherAvailabilityOperationFinishedCallback on_operation_finished_;
   std::optional<base::Time> tether_availability_request_start_time_;
 

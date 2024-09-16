@@ -71,7 +71,7 @@ v8::MaybeLocal<v8::Value> CreatePrevWinsArray(
     }
     DCHECK(win_values[1]->IsObject());
     v8::Local<v8::Object> prev_ad = win_values[1].As<v8::Object>();
-    // TODO(crbug.com/1448936): Remove this condition logic when we can assume
+    // TODO(crbug.com/40269563): Remove this condition logic when we can assume
     // it is true (30 days after switching to a Chrome version at least this
     // recent).
     // If prev_ad has "renderURL" instead of "render_url" it must be the newer
@@ -79,7 +79,7 @@ v8::MaybeLocal<v8::Value> CreatePrevWinsArray(
     // and needs to be parsed again. If it has metadata, parse it.
     // We also need to provide the render URL in a "render_url" field for
     // backward compatibility.
-    // TODO(crbug.com/1441988): Remove render_url alias when it is no longer
+    // TODO(crbug.com/40266734): Remove render_url alias when it is no longer
     // needed for compatibility.
     if (prev_ad->Has(context, render_url_key).FromMaybe(false)) {
       v8::Local<v8::Value> serialized_metadata;
@@ -134,8 +134,12 @@ void InterestGroupLazyFiller::ReInitialize(
 bool InterestGroupLazyFiller::FillInObject(
     v8::Local<v8::Object> object,
     base::RepeatingCallback<bool(const std::string&)> is_ad_excluded,
-    base::RepeatingCallback<bool(const std::string&)>
-        is_ad_component_excluded) {
+    base::RepeatingCallback<bool(const std::string&)> is_ad_component_excluded,
+    base::RepeatingCallback<bool(const std::string&,
+                                 base::optional_ref<const std::string>,
+                                 base::optional_ref<const std::string>,
+                                 base::optional_ref<const std::string>)>
+        is_reporting_id_set_excluded) {
   if (bidder_worklet_non_shared_params_->user_bidding_signals &&
       !DefineLazyAttribute(object, "userBiddingSignals",
                            &HandleUserBiddingSignals)) {
@@ -183,13 +187,14 @@ bool InterestGroupLazyFiller::FillInObject(
 
   v8::Local<v8::ObjectTemplate> lazy_filler_template;
   if (bidder_worklet_non_shared_params_->ads &&
-      !CreateAdVector(object, "ads", is_ad_excluded,
-                      *bidder_worklet_non_shared_params_->ads,
-                      lazy_filler_template)) {
+      !CreateAdVector(
+          object, "ads", is_ad_excluded, is_reporting_id_set_excluded,
+          *bidder_worklet_non_shared_params_->ads, lazy_filler_template)) {
     return false;
   }
   if (bidder_worklet_non_shared_params_->ad_components &&
       !CreateAdVector(object, "adComponents", is_ad_component_excluded,
+                      is_reporting_id_set_excluded,
                       *bidder_worklet_non_shared_params_->ad_components,
                       lazy_filler_template)) {
     return false;
@@ -209,6 +214,11 @@ bool InterestGroupLazyFiller::CreateAdVector(
     v8::Local<v8::Object>& object,
     std::string_view name,
     base::RepeatingCallback<bool(const std::string&)> is_ad_excluded,
+    base::RepeatingCallback<bool(const std::string&,
+                                 base::optional_ref<const std::string>,
+                                 base::optional_ref<const std::string>,
+                                 base::optional_ref<const std::string>)>
+        is_reporting_id_set_excluded,
     const std::vector<blink::InterestGroup::Ad>& ads,
     v8::Local<v8::ObjectTemplate>& lazy_filler_template) {
   v8::Isolate* isolate = v8_helper()->isolate();
@@ -226,7 +236,7 @@ bool InterestGroupLazyFiller::CreateAdVector(
       return false;
     }
     if (!ad_dict.Set("renderURL", v8_url) ||
-        // TODO(crbug.com/1441988): Remove deprecated `renderUrl` alias.
+        // TODO(crbug.com/40266734): Remove deprecated `renderUrl` alias.
         !DefineLazyAttributeWithMetadata(ad_object, v8_url, "renderUrl",
                                          &HandleDeprecatedAdsRenderUrl,
                                          lazy_filler_template) ||
@@ -234,6 +244,35 @@ bool InterestGroupLazyFiller::CreateAdVector(
          !v8_helper()->InsertJsonValue(isolate->GetCurrentContext(), "metadata",
                                        *ad.metadata, ad_object))) {
       return false;
+    }
+    if (ad.selectable_buyer_and_seller_reporting_ids) {
+      // For the k-anon restricted run, we limit
+      // `selectable_buyer_and_seller_reporting_ids` to only those that would,
+      // in combination with the renderUrl and other reporting ids, be
+      // k-anonymous for reporting, so that, if the bid returns
+      // `selected_buyer_and_seller_reporting_id_required` = true, the bid is,
+      // in fact, k-anonymous for reporting.
+      std::vector<std::string_view>
+          valid_selectable_buyer_and_seller_reporting_ids;
+      for (auto& selectable_buyer_and_seller_reporting_id :
+           *ad.selectable_buyer_and_seller_reporting_ids) {
+        if (!is_reporting_id_set_excluded.Run(
+                ad.render_url(), ad.buyer_reporting_id,
+                ad.buyer_and_seller_reporting_id,
+                selectable_buyer_and_seller_reporting_id)) {
+          valid_selectable_buyer_and_seller_reporting_ids.push_back(
+              selectable_buyer_and_seller_reporting_id);
+        }
+      }
+      if ((ad.buyer_reporting_id &&
+           !ad_dict.Set("buyerReportingId", *ad.buyer_reporting_id)) ||
+          (ad.buyer_and_seller_reporting_id &&
+           !ad_dict.Set("buyerAndSellerReportingId",
+                        *ad.buyer_and_seller_reporting_id)) ||
+          !ad_dict.Set("selectableBuyerAndSellerReportingIds",
+                       valid_selectable_buyer_and_seller_reporting_ids)) {
+        return false;
+      }
     }
     ads_vector.emplace_back(std::move(ad_object));
   }
@@ -512,7 +551,7 @@ void BiddingBrowserSignalsLazyFiller::HandlePrevWinsMs(
   HandlePrevWinsInternal(name, info, PrevWinsType::kMilliseconds);
 }
 
-// TODO(crbug.com/1451034): Clean up support for deprecated seconds-based
+// TODO(crbug.com/40270420): Clean up support for deprecated seconds-based
 // version after API users migrate, and remove this indirection function.
 // static
 void BiddingBrowserSignalsLazyFiller::HandlePrevWinsInternal(

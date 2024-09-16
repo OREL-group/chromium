@@ -25,7 +25,7 @@ RedirectHeuristicTabHelper::RedirectHeuristicTabHelper(
     : content::WebContentsObserver(web_contents),
       content::WebContentsUserData<RedirectHeuristicTabHelper>(*web_contents),
       detector_(RedirectChainDetector::FromWebContents(web_contents)),
-      dips_service_(DIPSService::Get(web_contents->GetBrowserContext())),
+      dips_service_(DIPSServiceImpl::Get(web_contents->GetBrowserContext())),
       cookie_settings_(CookieSettingsFactory::GetForProfile(
           Profile::FromBrowserContext(web_contents->GetBrowserContext()))) {
   obs_.Observe(detector_);
@@ -75,7 +75,7 @@ void RedirectHeuristicTabHelper::MaybeRecordRedirectHeuristic(
   }
   size_t third_party_site_index = third_party_site_info->first;
   ukm::SourceId third_party_source_id =
-      third_party_site_info->second->source_id;
+      third_party_site_info->second->url.source_id;
   bool is_current_interaction =
       detector_->CommittedRedirectContext().SiteHadUserActivation(
           third_party_site);
@@ -96,6 +96,8 @@ void RedirectHeuristicTabHelper::MaybeRecordRedirectHeuristic(
   const size_t sites_passed_count =
       first_party_site_index - third_party_site_index;
 
+  CHECK(dips_service_);
+  CHECK(!dips_service_->storage()->is_null());
   dips_service_->storage()
       ->AsyncCall(&DIPSStorage::LastInteractionTime)
       .WithArgs(details.url)
@@ -174,7 +176,9 @@ void RedirectHeuristicTabHelper::CreateAllRedirectHeuristicGrants(
   std::map<std::string, std::pair<GURL, bool>>
       sites_to_url_and_current_interaction =
           detector_->CommittedRedirectContext().GetRedirectHeuristicURLs(
-              first_party_url, sites_with_aba_flow);
+              first_party_url, sites_with_aba_flow,
+              tpcd::experiment::kTpcdRedirectHeuristicRequireCurrentInteraction
+                  .Get());
 
   for (const auto& kv : sites_to_url_and_current_interaction) {
     auto [url, is_current_interaction] = kv.second;
@@ -199,6 +203,8 @@ void RedirectHeuristicTabHelper::CreateAllRedirectHeuristicGrants(
                   weak_factory_.GetWeakPtr(), url, first_party_url,
                   grant_duration));
 
+      CHECK(dips_service_);
+      CHECK(!dips_service_->storage()->is_null());
       dips_service_->storage()
           ->AsyncCall(&DIPSStorage::LastInteractionTime)
           .WithArgs(url)
@@ -213,10 +219,10 @@ void RedirectHeuristicTabHelper::CreateRedirectHeuristicGrant(
     base::TimeDelta grant_duration,
     bool has_interaction) {
   if (has_interaction) {
-    // TODO(crbug.com/1484324): Make these grants lossy to avoid spamming
+    // TODO(crbug.com/40282235): Make these grants lossy to avoid spamming
     // profile prefs with blocking requests.
-    // TODO(crbug.com/1484324): Add bounds to these grants to avoid overflow.
-    // TODO(crbug.com/1484324): Consider applying these grants only to rSA
+    // TODO(crbug.com/40282235): Add bounds to these grants to avoid overflow.
+    // TODO(crbug.com/40282235): Consider applying these grants only to rSA
     // calls.
     cookie_settings_->SetTemporaryCookieGrantForHeuristic(url, first_party_url,
                                                           grant_duration);

@@ -51,7 +51,7 @@ std::string GetStringFromDeletePageResult(
     case offline_pages::DeletePageResult::DEPRECATED_NOT_FOUND:
       return "Not found";
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return "Unknown";
 }
 
@@ -148,7 +148,7 @@ void OfflineInternalsUIMessageHandler::HandleStoredPagesCallback(
     offline_page.Set("onlineUrl", page.url.spec());
     offline_page.Set("namespace", page.client_id.name_space);
     offline_page.Set("size", static_cast<int>(page.file_size));
-    offline_page.Set("id", std::to_string(page.offline_id));
+    offline_page.Set("id", base::NumberToString(page.offline_id));
     offline_page.Set("filePath", page.file_path.MaybeAsASCII());
     offline_page.Set("creationTime",
                      page.creation_time.InMillisecondsFSinceUnixEpoch());

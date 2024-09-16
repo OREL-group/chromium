@@ -131,7 +131,7 @@ void DeviceCommandRunRoutineJob::RunImpl(CallbackWithResult result_callback) {
 
   switch (routine_enum_) {
     case ash::cros_healthd::mojom::DiagnosticRoutineEnum::kUnknown: {
-      NOTREACHED() << "This default value should not be used.";
+      NOTREACHED_IN_MIGRATION() << "This default value should not be used.";
       break;
     }
     case ash::cros_healthd::mojom::DiagnosticRoutineEnum::kBatteryCapacity: {
@@ -583,7 +583,8 @@ void DeviceCommandRunRoutineJob::RunImpl(CallbackWithResult result_callback) {
               weak_ptr_factory_.GetWeakPtr(), std::move(result_callback)));
       break;
     }
-    case ash::cros_healthd::mojom::DiagnosticRoutineEnum::kLedLitUp: {
+    case ash::cros_healthd::mojom::DiagnosticRoutineEnum::
+        DEPRECATED_kLedLitUp: {
       NOTIMPLEMENTED();
       break;
     }

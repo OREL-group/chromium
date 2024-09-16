@@ -258,6 +258,10 @@ void EventRouter::DispatchEventToSender(
   }
 
   if (!extension) {
+    for (TestObserver& observer : test_observers_) {
+      observer.OnNonExtensionEventDispatched(event_name);
+    }
+
     ObserveProcess(rph);
     DispatchExtensionMessage(rph, worker_thread_id, browser_context, host_id,
                              event_id, event_name, std::move(event_args),
@@ -290,7 +294,7 @@ void EventRouter::DispatchEventToSender(
                  service_worker_version_id, worker_thread_id},
         event_id);
   } else if (BackgroundInfo::HasBackgroundPage(extension)) {
-    // TODO(crbug.com/1441221): When creating dispatch time metrics for the
+    // TODO(crbug.com/40909770): When creating dispatch time metrics for the
     // DispatchEventToSender event flow, ensure this also handles persistent
     // background pages.
     // Although it's unnecessary to decrement in-flight events for non-lazy
@@ -1163,7 +1167,7 @@ void EventRouter::DispatchEventToProcess(
         << " but this shouldn't be possible";
   }
   if (!feature_available_to_context) {
-    // TODO(crbug.com/1412151): Ideally it shouldn't be possible to reach here,
+    // TODO(crbug.com/40255138): Ideally it shouldn't be possible to reach here,
     // because access is checked on registration. However, we don't always
     // refresh the list of events an extension has registered when other factors
     // which affect availability change (e.g. API allowlists changing). Those
@@ -1415,7 +1419,7 @@ void EventRouter::DispatchPendingEvent(
     return;
   DCHECK(event);
 
-  // TODO(https://crbug.com/1442744): We shouldn't dispatch events to processes
+  // TODO(crbug.com/40267088): We shouldn't dispatch events to processes
   // that don't have a listener for that event. Currently, we enforce this for
   // the webRequest API (since a bug there can result in a request hanging
   // indefinitely). We don't do this in all cases yet because extensions may be
@@ -1442,7 +1446,7 @@ void EventRouter::DispatchPendingEvent(
     // event. This can happen if the extension asynchronously registers event
     // listeners. In this case, notify the caller (if they subscribed via a
     // callback) and drop the event.
-    // TODO(https://crbug.com/161155): We should provide feedback to
+    // TODO(crbug.com/40954888): We should provide feedback to
     // developers (e.g. emit a warning) when an event has no listeners.
     event->cannot_dispatch_callback.Run();
   }

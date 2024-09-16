@@ -394,13 +394,14 @@ bool AXSelection::Select(const AXSelectionBehavior selection_behavior) {
   DCHECK(old_selection.AssertValid());
   Document* document = old_selection.Anchor().GetDocument();
   if (!document) {
-    NOTREACHED() << "Valid DOM selections should have an attached document.";
+    // By the time the selection action gets here, content could have
+    // changed from the content the action was initially prepared for.
     return false;
   }
 
   LocalFrame* frame = document->GetFrame();
   if (!frame) {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return false;
   }
 

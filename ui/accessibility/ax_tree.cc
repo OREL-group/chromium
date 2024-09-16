@@ -14,17 +14,18 @@
 #include "base/command_line.h"
 #include "base/containers/adapters.h"
 #include "base/containers/contains.h"
-#include "base/functional/callback_helpers.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/no_destructor.h"
+#include "base/not_fatal_until.h"
 #include "base/notreached.h"
 #include "base/observer_list.h"
 #include "base/strings/stringprintf.h"
 #include "base/timer/elapsed_timer.h"
 #include "components/crash/core/common/crash_key.h"
+#include "third_party/abseil-cpp/absl/cleanup/cleanup.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_event.h"
 #include "ui/accessibility/ax_language_detection.h"
@@ -60,7 +61,7 @@ std::string TreeToStringHelper(const AXNode* node, int indent, bool verbose) {
   return std::accumulate(
       node->children().cbegin(), node->children().cend(),
       std::string(2 * indent, ' ') + node->data().ToString(verbose) + "\n",
-      [indent, verbose](const std::string& str, const ui::AXNode* child) {
+      [indent, verbose](const std::string& str, const AXNode* child) {
         return str + TreeToStringHelper(child, indent + 1, verbose);
       });
 }
@@ -385,7 +386,7 @@ struct AXTreeUpdateState {
     DCHECK_EQ(AXTreePendingStructureStatus::kComputing, pending_update_status)
         << "This method should only be called while computing pending changes, "
            "before updates are made to the tree.";
-    static base::NoDestructor<ui::AXNodeData> empty_data;
+    static base::NoDestructor<AXNodeData> empty_data;
     PendingStructureChanges* data = GetPendingStructureChanges(node_id);
     return (data && data->last_known_data) ? *data->last_known_data
                                            : *empty_data;
@@ -830,8 +831,9 @@ const AXTreeData& AXTree::data() const {
 }
 
 AXNode* AXTree::GetFromId(AXNodeID id) const {
-  if (id == ui::kInvalidAXNodeID)
+  if (id == kInvalidAXNodeID) {
     return nullptr;
+  }
   auto iter = id_map_.find(id);
   return iter != id_map_.end() ? iter->second.get() : nullptr;
 }
@@ -884,7 +886,7 @@ gfx::RectF AXTree::RelativeToTreeBoundsInternal(const AXNode* node,
     // bad state.
     if (bounds.IsEmpty() && !GetTreeUpdateInProgressState() &&
         allow_recursion) {
-      for (ui::AXNode* child : node->children()) {
+      for (AXNode* child : node->children()) {
         gfx::RectF child_bounds = RelativeToTreeBoundsInternal(
             child, gfx::RectF(), /*offscreen=*/nullptr, clip_bounds,
             skip_container_offset,
@@ -995,7 +997,7 @@ gfx::RectF AXTree::RelativeToTreeBoundsInternal(const AXNode* node,
     }
 
     if (ancestor && allow_recursion) {
-      bool ignore_offscreen;
+      bool ignore_offscreen = false;
       ancestor_bounds = RelativeToTreeBoundsInternal(
           ancestor, gfx::RectF(), &ignore_offscreen, clip_bounds,
           skip_container_offset,
@@ -1096,9 +1098,7 @@ bool AXTree::Unserialize(const AXTreeUpdate& update) {
   event_data_->event_from = update.event_from;
   event_data_->event_from_action = update.event_from_action;
   event_data_->event_intents = update.event_intents;
-  base::ScopedClosureRunner clear_event_data(base::BindOnce(
-      [](std::unique_ptr<AXEvent>* event_data) { event_data->reset(); },
-      &event_data_));
+  absl::Cleanup clear_event_data = [this] { event_data_.reset(); };
 
   AXTreeUpdateState update_state(*this, update);
   const AXNodeID old_root_id = root_ ? root_->id() : kInvalidAXNodeID;
@@ -1249,7 +1249,7 @@ bool AXTree::Unserialize(const AXTreeUpdate& update) {
         // If the tree doesn't exists any more because the root has just been
         // replaced, there is nothing more to clear.
         if (root_) {
-          for (ui::AXNode* child : cleared_node->children()) {
+          for (AXNode* child : cleared_node->children()) {
             DestroySubtree(child, &update_state);
           }
           std::vector<raw_ptr<AXNode, VectorExperimental>> children;
@@ -1273,7 +1273,7 @@ bool AXTree::Unserialize(const AXTreeUpdate& update) {
     if (!root_) {
       ACCESSIBILITY_TREE_UNSERIALIZE_ERROR_HISTOGRAM(
           AXTreeUnserializeError::kNoRoot);
-      RecordError(update_state, "Tree has no root.");
+      RecordError(update_state, "Tree has no root.", true);
       return false;
     }
 
@@ -1952,7 +1952,7 @@ void AXTree::RecursivelyNotifyNodeDeletedForTreeTeardown(AXNode* node) {
 
   for (AXTreeObserver& observer : observers_)
     observer.OnNodeDeleted(this, node->id());
-  for (ui::AXNode* child : node->children()) {
+  for (AXNode* child : node->children()) {
     RecursivelyNotifyNodeDeletedForTreeTeardown(child);
   }
 }
@@ -2287,16 +2287,16 @@ void AXTree::DestroyNodeAndSubtree(AXNode* node,
   DCHECK(!update_state || update_state->GetPendingDestroyNodeCount(id) > 0);
 
   // Clear out any reverse relations.
-  static base::NoDestructor<ui::AXNodeData> empty_data;
+  static base::NoDestructor<AXNodeData> empty_data;
   UpdateReverseRelations(node, *empty_data);
 
   auto iter = id_map_.find(id);
-  DCHECK(iter != id_map_.end());
+  CHECK(iter != id_map_.end(), base::NotFatalUntil::M130);
   std::unique_ptr<AXNode> node_to_delete = std::move(iter->second);
   id_map_.erase(iter);
   node = nullptr;
 
-  for (ui::AXNode* child : node_to_delete->children()) {
+  for (AXNode* child : node_to_delete->children()) {
     DestroyNodeAndSubtree(child, update_state);
   }
   if (update_state) {
@@ -2487,10 +2487,12 @@ void AXTree::RecursivelyPopulateOrderedSetItemsMap(
     // However, in the collapsed container case (e.g. a combobox), items can
     // still be chosen/navigated. However, the options in these collapsed
     // containers are historically marked invisible. Therefore, in that case,
-    // count the invisible items. Only check 2 levels up, as combobox containers
+    // count the invisible items. Only check 3 levels up, as combobox containers
     // are never higher.
     if (child->data().IsInvisible() && !IsCollapsed(local_parent) &&
-        !IsCollapsed(local_parent->parent())) {
+        !IsCollapsed(local_parent->parent()) &&
+        (!local_parent->parent() ||
+         !IsCollapsed(local_parent->parent()->parent()))) {
       continue;
     }
 

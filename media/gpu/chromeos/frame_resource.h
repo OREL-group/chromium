@@ -82,32 +82,20 @@ class FrameResource : public base::RefCountedThreadSafe<FrameResource> {
   // such use cases, use dup() to obtain your own copy of the FDs.
   virtual int GetDmabufFd(size_t i) const = 0;
 
-  // Creates a NativePixmap that duplicates the DmaBuf FDs of |this|. Ownership
-  // of the constructed NativePixmap is returned to the caller. The returned
-  // pixmap is only a DmaBuf container and should not be used for compositing or
-  // scanout.
-  virtual scoped_refptr<gfx::NativePixmapDmaBuf> CreateNativePixmapDmaBuf()
+  // Creates or gets a NativePixmap. If the FrameResource is backed by a
+  // NativePixmap, then there is no duplication of file descriptors. The
+  // returned pixmap is only a DmaBuf container and should not be used for
+  // compositing or scanout.
+  virtual scoped_refptr<const gfx::NativePixmapDmaBuf> GetNativePixmapDmaBuf()
       const = 0;
-
-  // Returns true if |this| is backed by a NativePixmap.
-  bool HasNativePixmap() const {
-    return static_cast<bool>(GetNativePixmapDmaBuf());
-  }
-
-  // Gets the NativePixmapDmaBuf backing |this|. Ownership is retained by
-  // |this| unless the returned value is copied. Then a reference is taken by
-  // the caller.
-  virtual const scoped_refptr<const gfx::NativePixmapDmaBuf>&
-  GetNativePixmapDmaBuf() const = 0;
 
   // Create a shared GPU memory handle to |this|'s data.
   virtual gfx::GpuMemoryBufferHandle CreateGpuMemoryBufferHandle() const = 0;
 
-  // Returns true if |this| is backed by a GpuMemoryBuffer.
-  bool HasGpuMemoryBuffer() const { return !!GetGpuMemoryBuffer(); }
-
-  // Gets the GpuMemoryBuffer backing |this|.
-  virtual gfx::GpuMemoryBuffer* GetGpuMemoryBuffer() const = 0;
+  // Gets the ScopedMapping object which clients can use to access the CPU
+  // visible memory and other metadata for the gpu buffer backing |this|.
+  virtual std::unique_ptr<VideoFrame::ScopedMapping> MapGMBOrSharedImage()
+      const = 0;
 
   // Returns an identifier based on the frame data's underlying storage. This
   // returns consistent results even if the frame gets wrapped. Returns an
@@ -182,6 +170,10 @@ class FrameResource : public base::RefCountedThreadSafe<FrameResource> {
 
   // Returns a human-readable string describing |this|.
   virtual std::string AsHumanReadableString() const = 0;
+
+  // Gets the GpuMemoryBufferHandle backing |this|.
+  virtual gfx::GpuMemoryBufferHandle GetGpuMemoryBufferHandleForTesting()
+      const = 0;
 
  protected:
   friend class base::RefCountedThreadSafe<FrameResource>;

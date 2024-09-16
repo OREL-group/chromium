@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/check.h"
 #include "base/check_op.h"
 #include "base/command_line.h"
 #include "base/containers/adapters.h"
@@ -26,7 +27,6 @@
 #include "base/trace_event/memory_usage_estimator.h"
 #include "base/trace_event/typed_macros.h"
 #include "build/build_config.h"
-#include "components/history_clusters/core/config.h"
 #include "components/omnibox/browser/actions/omnibox_action_concepts.h"
 #include "components/omnibox/browser/actions/omnibox_pedal.h"
 #include "components/omnibox/browser/actions/omnibox_pedal_provider.h"
@@ -318,12 +318,10 @@ void AutocompleteResult::Sort(
         GetMatchComparisonFields(default_match_to_preserve.value());
     const auto preserved_default_match =
         base::ranges::find_if(matches_, [&](const AutocompleteMatch& match) {
-          // Find a match that is a duplicate AND has the same fill_into_edit.
-          // Don't preserve suggestions that are not default-able; e.g.,
-          // typing 'xy' shouldn't preserve default 'xz.com/xy'.
+          // Find a duplicate match. Don't preserve suggestions that are not
+          // default-able; e.g., typing 'xy' shouldn't preserve default
+          // 'xz.com/xy'.
           return default_match_fields == GetMatchComparisonFields(match) &&
-                 default_match_to_preserve->fill_into_edit ==
-                     match.fill_into_edit &&
                  match.allowed_to_be_default_match;
         });
     if (preserved_default_match != matches_.end())
@@ -413,11 +411,23 @@ void AutocompleteResult::SortAndCull(
                     suggestion_groups_map_));
             break;
           default:
-            NOTREACHED();
+            NOTREACHED_IN_MIGRATION();
         }
       } else if (omnibox::IsNTPPage(page_classification)) {
-        sections.push_back(
-            std::make_unique<DesktopNTPZpsSection>(suggestion_groups_map_));
+        // IPH is shown for NTP ZPS in the Omnibox only.  If it is shown, reduce
+        // the limit of the normal NTP ZPS Section to make room for the IPH.
+        bool has_iph_match = base::ranges::any_of(
+            matches_, [](auto match) { return match.IsIPHSuggestion(); });
+        bool add_iph_section =
+            page_classification != OmniboxEventProto::NTP_REALBOX &&
+            has_iph_match;
+        sections.push_back(std::make_unique<DesktopNTPZpsSection>(
+            suggestion_groups_map_, add_iph_section ? 7u : 8u));
+        if (add_iph_section) {
+          sections.push_back(std::make_unique<DesktopNTPZpsIPHSection>(
+              suggestion_groups_map_));
+        }
+
         // Allow secondary zero-prefix suggestions in the NTP realbox or the
         // WebUI omnibox popup.
         // TODO(crbug.com/40062053): Disallow secondary zps in the WebUI omnibox
@@ -473,8 +483,10 @@ void AutocompleteResult::SortAndCull(
   } else if (use_grouping_for_non_zps) {
     PSections sections;
     if constexpr (is_android) {
-      sections.push_back(
-          std::make_unique<AndroidNonZPSSection>(suggestion_groups_map_));
+      bool show_only_search_suggestions =
+          omnibox::IsCustomTab(page_classification);
+      sections.push_back(std::make_unique<AndroidNonZPSSection>(
+          show_only_search_suggestions, suggestion_groups_map_));
     } else {
       sections.push_back(
           std::make_unique<DesktopNonZpsSection>(suggestion_groups_map_));
@@ -519,8 +531,7 @@ void AutocompleteResult::SortAndCull(
       matches_.resize(num_matches);
 
       // Group search suggestions above URL suggestions.
-      if (matches_.size() > 2 &&
-          !base::FeatureList::IsEnabled(omnibox::kAdaptiveSuggestionsCount)) {
+      if (matches_.size() > 2 && !(is_android || is_ios)) {
         GroupSuggestionsBySearchVsURL(std::next(matches_.begin()),
                                       matches_.end());
       }
@@ -565,32 +576,38 @@ void AutocompleteResult::SortAndCull(
 
 void AutocompleteResult::TrimOmniboxActions(bool is_zero_suggest) {
   // Platform rules:
-  // Android:
-  // - First two positions allow all types of OmniboxActionId
-  // - Third slot permits only PEDALs and HISTORY_CLUSTERS.
-  // - Slots 4 and beyond permit only HISTORY_CLUSTERS.
-  // - In every case, ACTION_IN_SUGGEST is preferred over HISTORY_CLUSTERS
-  // - In every case, HISTORY_CLUSTERS is preferred over PEDALs.
+  // Mobile:
+  // - First position allow all types of OmniboxActionId (ACTION_IN_SUGGEST and
+  // ANSWER_ACTION are preferred over PEDAL)
+  // - Third slot permits only PEDALs or ANSWER_ACTION.
+  // - Slots 4 and beyond only permit ANSWER_ACTION.
   // - TAB_SWITCH actions are not considered because they're never attached.
-  if constexpr (is_android) {
-    const size_t ACTIONS_IN_SUGGEST_CUTOFF_THRESHOLD =
-        OmniboxFieldTrial::kActionsInSuggestPromoteEntitySuggestion.Get() ? 1
-                                                                          : 2;
+  if constexpr (is_android || is_ios) {
+    static constexpr size_t ACTIONS_IN_SUGGEST_CUTOFF_THRESHOLD = 1;
     static constexpr size_t PEDALS_CUTOFF_THRESHOLD = 3;
     std::vector<OmniboxActionId> include_all{OmniboxActionId::ACTION_IN_SUGGEST,
-                                             OmniboxActionId::HISTORY_CLUSTERS,
+                                             OmniboxActionId::ANSWER_ACTION,
                                              OmniboxActionId::PEDAL};
-    std::vector<OmniboxActionId> include_at_most_pedals{
-        OmniboxActionId::HISTORY_CLUSTERS, OmniboxActionId::PEDAL};
-    std::vector<OmniboxActionId> include_at_most_history_clusters{
-        OmniboxActionId::HISTORY_CLUSTERS};
+    std::vector<OmniboxActionId> include_at_most_pedals_or_answers{
+        OmniboxActionId::ANSWER_ACTION, OmniboxActionId::PEDAL};
+    std::vector<OmniboxActionId> include_only_answer_actions{
+        OmniboxActionId::ANSWER_ACTION};
+
+    bool has_url = base::ranges::any_of(matches_, [](const auto& match) {
+      return !AutocompleteMatch::IsSearchType(match.type);
+    });
+    bool hide_answer_actions_when_url_present =
+        !OmniboxFieldTrial::kAnswerActionsShowIfUrlsPresent.Get();
 
     for (size_t index = 0u; index < matches_.size(); ++index) {
+      if (has_url && hide_answer_actions_when_url_present) {
+        matches_[index].RemoveAnswerActions();
+      }
       matches_[index].FilterOmniboxActions(
           (!is_zero_suggest && index < ACTIONS_IN_SUGGEST_CUTOFF_THRESHOLD)
               ? include_all
-          : index < PEDALS_CUTOFF_THRESHOLD ? include_at_most_pedals
-                                            : include_at_most_history_clusters);
+          : index < PEDALS_CUTOFF_THRESHOLD ? include_at_most_pedals_or_answers
+                                            : include_only_answer_actions);
       if (index < ACTIONS_IN_SUGGEST_CUTOFF_THRESHOLD) {
         matches_[index].FilterAndSortActionsInSuggest();
       }
@@ -788,6 +805,7 @@ void AutocompleteResult::ConvertOpenTabMatches(
       }
 
       auto tab_info = batch_lookup_map.find(match.destination_url);
+      // DCHECK ok as loop is exited if tab_info at .end().
       DCHECK(tab_info != batch_lookup_map.end());
       if (tab_info == batch_lookup_map.end()) {
         continue;
@@ -888,9 +906,9 @@ ACMatches::iterator AutocompleteResult::FindTopMatch(
   // fakebox/realbox, which is intended to work more like a search-only box.
   // Unless the user's input is a URL in which case we still want to ensure they
   // can get a URL as the default match.
-  if ((input.current_page_classification() !=
-           OmniboxEventProto::INSTANT_NTP_WITH_FAKEBOX_AS_STARTING_FOCUS &&
-       input.current_page_classification() != OmniboxEventProto::NTP_REALBOX) ||
+  omnibox::CheckObsoletePageClass(input.current_page_classification());
+
+  if (input.current_page_classification() != OmniboxEventProto::NTP_REALBOX ||
       input.type() == metrics::OmniboxInputType::URL) {
     auto best = matches->end();
     for (auto it = matches->begin(); it != matches->end(); ++it) {
@@ -1135,7 +1153,7 @@ void AutocompleteResult::DeduplicateMatches(
   // Group matches by stripped URL and whether it's a calculator suggestion.
   std::unordered_map<AutocompleteResult::MatchDedupComparator,
                      std::vector<ACMatches::iterator>,
-                     ACMatchKeyHash<std::string, bool>>
+                     ACMatchKeyHash<std::string, bool, bool>>
       url_to_matches;
   for (auto i = matches->begin(); i != matches->end(); ++i) {
     url_to_matches[GetMatchComparisonFields(*i)].push_back(i);
@@ -1147,8 +1165,9 @@ void AutocompleteResult::DeduplicateMatches(
 
     // The vector of matches whose URL are equivalent.
     std::vector<ACMatches::iterator>& duplicate_matches = group.second;
-    if (key.first.empty() || duplicate_matches.size() == 1)
+    if (std::get<0>(key).empty() || duplicate_matches.size() == 1) {
       continue;
+    }
 
     // Sort the matches best to worst, according to the deduplication criteria.
     std::sort(duplicate_matches.begin(), duplicate_matches.end(),
@@ -1194,10 +1213,12 @@ std::u16string AutocompleteResult::GetCommonPrefix() {
   for (const auto& match : matches_) {
     if (match.type == ACMatchType::SEARCH_SUGGEST_TAIL) {
       int common_length;
-      base::StringToInt(
-          match.GetAdditionalInfo(kACMatchPropertyContentsStartIndex),
-          &common_length);
-      common_prefix = base::UTF8ToUTF16(match.GetAdditionalInfo(
+      // TODO (manukh): `GetAdditionalInfoForDebugging()` shouldn't be used for
+      //   non-debugging purposes.
+      base::StringToInt(match.GetAdditionalInfoForDebugging(
+                            kACMatchPropertyContentsStartIndex),
+                        &common_length);
+      common_prefix = base::UTF8ToUTF16(match.GetAdditionalInfoForDebugging(
                                             kACMatchPropertySuggestionText))
                           .substr(0, common_length);
       break;
@@ -1441,8 +1462,11 @@ void AutocompleteResult::MergeMatchesByProvider(ACMatches* old_matches,
 
 AutocompleteResult::MatchDedupComparator
 AutocompleteResult::GetMatchComparisonFields(const AutocompleteMatch& match) {
-  return std::make_pair(match.stripped_destination_url.spec(),
-                        match.type == ACMatchType::CALCULATOR);
+  return std::make_tuple(
+      match.stripped_destination_url.spec(),
+      match.type == ACMatchType::CALCULATOR,
+      match.answer_template.has_value() &&
+          OmniboxFieldTrial::kAnswerActionsShowAboveKeyboard.Get());
 }
 
 void AutocompleteResult::LimitNumberOfURLsShown(

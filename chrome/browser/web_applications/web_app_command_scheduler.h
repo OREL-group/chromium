@@ -28,6 +28,7 @@
 #include "chrome/browser/web_applications/commands/uninstall_all_user_installed_web_apps_command.h"
 #include "chrome/browser/web_applications/external_install_options.h"
 #include "chrome/browser/web_applications/externally_managed_app_manager.h"
+#include "chrome/browser/web_applications/isolated_web_apps/cleanup_orphaned_isolated_web_apps_command.h"
 #include "chrome/browser/web_applications/isolated_web_apps/install_isolated_web_app_command.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_prepare_and_store_update_command.h"
 #include "chrome/browser/web_applications/jobs/uninstall/uninstall_job.h"
@@ -88,6 +89,9 @@ class WebAppCommandScheduler {
   using InstallIsolatedWebAppCallback = base::OnceCallback<void(
       base::expected<InstallIsolatedWebAppCommandSuccess,
                      InstallIsolatedWebAppCommandError>)>;
+  using CleanupOrphanedIsolatedWebAppsCallback = base::OnceCallback<void(
+      base::expected<CleanupOrphanedIsolatedWebAppsCommandSuccess,
+                     CleanupOrphanedIsolatedWebAppsCommandError>)>;
   using WebAppIconDiagnosticResultCallback =
       base::OnceCallback<void(std::optional<WebAppIconDiagnosticResult>)>;
 
@@ -110,6 +114,12 @@ class WebAppCommandScheduler {
       webapps::ManifestId manifest_id,
       GURL install_url,
       webapps::ManifestId parent_manifest_id,
+      base::OnceCallback<void(std::unique_ptr<WebAppInstallInfo>)> callback);
+
+  // Same as the overload above, but without parent_manifest_id.
+  void FetchInstallInfoFromInstallUrl(
+      webapps::ManifestId manifest_id,
+      GURL install_url,
       base::OnceCallback<void(std::unique_ptr<WebAppInstallInfo>)> callback);
 
   // Install with provided `WebAppInstallInfo` instead of fetching data from
@@ -155,11 +165,11 @@ class WebAppCommandScheduler {
       const base::Location& location = FROM_HERE);
 
   // Schedules a command that performs the data writes into the DB for
-  // completion of the manifest update.
+  // completion of the manifest update. `install_info` must be non-null.
   void ScheduleManifestUpdateFinalize(
       const GURL& url,
       const webapps::AppId& app_id,
-      WebAppInstallInfo install_info,
+      std::unique_ptr<WebAppInstallInfo> install_info,
       std::unique_ptr<ScopedKeepAlive> keep_alive,
       std::unique_ptr<ScopedProfileKeepAlive> profile_keep_alive,
       ManifestWriteCallback callback,
@@ -189,6 +199,10 @@ class WebAppCommandScheduler {
       std::unique_ptr<ScopedKeepAlive> optional_keep_alive,
       std::unique_ptr<ScopedProfileKeepAlive> optional_profile_keep_alive,
       InstallIsolatedWebAppCallback callback,
+      const base::Location& call_location = FROM_HERE);
+
+  virtual void CleanupOrphanedIsolatedApps(
+      CleanupOrphanedIsolatedWebAppsCallback callback,
       const base::Location& call_location = FROM_HERE);
 
   // Schedules a command to prepare the update of an Isolated Web App.
@@ -255,7 +269,7 @@ class WebAppCommandScheduler {
   // for that install source which in turn will remove the web app if there are
   // no remaining install sources for the web app.
   // Virtual for testing.
-  // TODO(crbug.com/1434692): There could potentially be multiple app matches
+  // TODO(crbug.com/40264854): There could potentially be multiple app matches
   // for `install_source` and `install_url` when `app_id` is not provided,
   // handle this case better than "first matching".
   virtual void RemoveInstallUrlMaybeUninstall(
@@ -299,6 +313,21 @@ class WebAppCommandScheduler {
   void UninstallAllUserInstalledWebApps(
       webapps::WebappUninstallSource uninstall_source,
       UninstallAllUserInstalledWebAppsCommand::Callback callback,
+      const base::Location& location = FROM_HERE);
+
+  // Completely removes the web_app from the database by removing all management
+  // types. Since this is a very destructive operation, prefer invoking
+  // RemoveInstallUrlMaybeUninstall(), RemoveInstallManagementMaybeUninstall(),
+  // RemoveUserUninstallableManagements() or UninstallAllUserInstalledWebApps()
+  // instead.
+  // Currently, only the WebAppSyncBridge is allowed to invoke this for
+  // uninstalling web apps, since it is safe to assume that apps marked with
+  // `is_uninstalling` set to true can be fully removed from the registry.
+  void RemoveAllManagementTypesAndUninstall(
+      base::PassKey<WebAppSyncBridge>,
+      const webapps::AppId& app_id,
+      webapps::WebappUninstallSource uninstall_source,
+      UninstallJob::Callback callback,
       const base::Location& location = FROM_HERE);
 
   // Schedules a command that updates run on os login to provided `login_mode`
@@ -408,15 +437,17 @@ class WebAppCommandScheduler {
                  LaunchWebAppCallback callback,
                  const base::Location& location = FROM_HERE);
 
-  // Launches the given app to the given url, using keep-alives to guarantee the
+  // Launches the given app to the given url if specified, or the app
+  // `start_url` if not specified. This uses keep-alives to guarantee the
   // browser and profile stay alive. Will CHECK-fail if `url` is not valid.
-  void LaunchUrlInApp(const webapps::AppId& app_id,
-                      const GURL& url,
-                      LaunchWebAppCallback callback,
-                      const base::Location& location = FROM_HERE);
+  void LaunchApp(const webapps::AppId& app_id,
+                 const std::optional<GURL>& url,
+                 LaunchWebAppCallback callback,
+                 const base::Location& location = FROM_HERE);
 
   // Used to launch apps with a custom launch params. This does not respect the
-  // configuration of the app, and will respect whatever the params say.
+  // configuration of the app, and will respect whatever the params say. If you
+  // are launching an app, you likely do NOT want to use this method.
   void LaunchAppWithCustomParams(apps::AppLaunchParams params,
                                  LaunchWebAppCallback callback,
                                  const base::Location& location = FROM_HERE);
@@ -428,11 +459,14 @@ class WebAppCommandScheduler {
                          const base::Location& location = FROM_HERE);
 
   // Used to schedule a synchronization of a web app's OS states with the
-  // current DB states.
+  // current DB states. If `upgrade_to_fully_installed_if_installed` is
+  // specified and the app is installed, then this command will upgrade the
+  // installation status to proto::InstallState::INSTALLED_WITH_OS_INTEGRATION.
   void SynchronizeOsIntegration(
       const webapps::AppId& app_id,
       base::OnceClosure synchronize_callback,
       std::optional<SynchronizeOsOptions> synchronize_options = std::nullopt,
+      bool upgrade_to_fully_installed_if_installed = false,
       const base::Location& location = FROM_HERE);
 
   // Sets the user display mode for an app, and also makes sure os integration
@@ -499,7 +533,7 @@ class WebAppCommandScheduler {
 
   // Track how many times ScheduleDedupeInstallUrls() is invoked for metrics to
   // check that it's not happening excessively.
-  // TODO(crbug.com/1434692): Remove once validating that the numbers look okay
+  // TODO(crbug.com/40264854): Remove once validating that the numbers look okay
   // out in the wild.
   size_t dedupe_install_urls_run_count_ = 0;
 

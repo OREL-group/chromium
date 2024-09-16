@@ -2,8 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ui/webui/data_sharing_internals/data_sharing_internals_ui.h"
 
+#include "chrome/browser/data_sharing/data_sharing_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/data_sharing_internals/data_sharing_internals_page_handler_impl.h"
 #include "chrome/browser/ui/webui/webui_util.h"
@@ -13,17 +19,11 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui_data_source.h"
 
-DataSharingUIConfig::DataSharingUIConfig()
-    : WebUIConfig(content::kChromeUIScheme,
-                  chrome::kChromeUIDataSharingInternalsHost) {}
+DataSharingInternalsUIConfig::DataSharingInternalsUIConfig()
+    : DefaultWebUIConfig(content::kChromeUIScheme,
+                         chrome::kChromeUIDataSharingInternalsHost) {}
 
-DataSharingUIConfig::~DataSharingUIConfig() = default;
-
-std::unique_ptr<content::WebUIController>
-DataSharingUIConfig::CreateWebUIController(content::WebUI* web_ui,
-                                                  const GURL& url) {
-  return std::make_unique<DataSharingInternalsUI>(web_ui);
-}
+DataSharingInternalsUIConfig::~DataSharingInternalsUIConfig() = default;
 
 DataSharingInternalsUI::DataSharingInternalsUI(content::WebUI* web_ui)
     : ui::MojoWebUIController(web_ui, /*enable_chrome_send=*/true) {
@@ -52,7 +52,9 @@ void DataSharingInternalsUI::CreatePageHandler(
         receiver) {
   data_sharing_internals_page_handler_ =
       std::make_unique<DataSharingInternalsPageHandlerImpl>(
-          std::move(receiver), std::move(page), Profile::FromWebUI(web_ui()));
+          std::move(receiver), std::move(page),
+          data_sharing::DataSharingServiceFactory::GetForProfile(
+              Profile::FromWebUI(web_ui())));
 }
 
 WEB_UI_CONTROLLER_TYPE_IMPL(DataSharingInternalsUI)

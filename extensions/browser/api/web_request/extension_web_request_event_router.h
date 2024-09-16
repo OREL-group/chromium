@@ -20,13 +20,9 @@
 #include "base/time/time.h"
 #include "base/values.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "extensions/browser/api/declarative_net_request/action_tracker.h"
 #include "extensions/browser/api/declarative_webrequest/request_stage.h"
-#include "extensions/browser/api/declarative_webrequest/webrequest_rules_registry.h"
 #include "extensions/browser/api/web_request/web_request_api_helpers.h"
-#include "extensions/browser/api/web_request/web_request_permissions.h"
 #include "extensions/browser/extension_event_histogram_value.h"
-#include "extensions/browser/guest_view/guest_view_events.h"
 #include "extensions/common/extension_id.h"
 #include "extensions/common/url_pattern_set.h"
 
@@ -48,7 +44,6 @@ class WebRequestRulesRegistry;
 class WebRequestEventDetails;
 struct WebRequestInfo;
 
-// This class defines common types for the two types of event routers.
 class WebRequestEventRouter : public KeyedService {
  public:
   explicit WebRequestEventRouter(content::BrowserContext* browser_context);
@@ -208,7 +203,7 @@ class WebRequestEventRouter : public KeyedService {
   // into |override_response_headers|.
   int OnHeadersReceived(
       content::BrowserContext* browser_context,
-      const WebRequestInfo* request,
+      WebRequestInfo* request,
       net::CompletionOnceCallback callback,
       const net::HttpResponseHeaders* original_response_headers,
       scoped_refptr<net::HttpResponseHeaders>* override_response_headers,
@@ -608,7 +603,7 @@ class WebRequestEventRouter : public KeyedService {
 
   // Called when the RulesRegistry is ready to unblock a request that was
   // waiting for said event.
-  void OnRulesRegistryReady(content::BrowserContext* browser_context,
+  void OnRulesRegistryReady(void* browser_context_id,
                             const std::string& event_name,
                             uint64_t request_id,
                             RequestStage request_stage);

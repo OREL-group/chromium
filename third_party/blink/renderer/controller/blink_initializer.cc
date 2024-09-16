@@ -33,12 +33,12 @@
 #include <memory>
 #include <utility>
 
-#include "base/allocator/partition_allocator/src/partition_alloc/page_allocator.h"
 #include "base/command_line.h"
 #include "base/ranges/algorithm.h"
 #include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "mojo/public/cpp/bindings/binder_map.h"
+#include "partition_alloc/page_allocator.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/switches.h"
 #include "third_party/blink/public/platform/interface_registry.h"
@@ -278,8 +278,6 @@ void BlinkInitializer::RegisterInterfaces(mojo::BinderMap& binders) {
           CrossThreadBindRepeating(&V8DetailedMemoryReporterImpl::Bind)),
       main_thread_task_runner);
 
-  if (RuntimeEnabledFeatures::
-          DocumentPolicyIncludeJSCallStacksInCrashReportsEnabled()) {
     DCHECK(Platform::Current());
     // We need to use the IO task runner here because the call stack generator
     // should work even when the main thread is blocked.
@@ -287,7 +285,6 @@ void BlinkInitializer::RegisterInterfaces(mojo::BinderMap& binders) {
         ConvertToBaseRepeatingCallback(
             CrossThreadBindRepeating(&JavaScriptCallStackGenerator::Bind)),
         Platform::Current()->GetIOTaskRunner());
-  }
 }
 
 void BlinkInitializer::RegisterMemoryWatchers(Platform* platform) {

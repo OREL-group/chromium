@@ -14,15 +14,15 @@
 namespace ash {
 
 enum class ASH_EXPORT PickerSectionType {
-  kCategories,
-  kSuggestions,
-  kExpressions,
-  kLinks,
-  kFiles,
-  kDriveFiles,
-  kGifs,
-  kRecentlyUsed,
+  kNone,
+  kClipboard,
   kExamples,
+  kLinks,
+  kLocalFiles,
+  kDriveFiles,
+  kEditorWrite,
+  kEditorRewrite,
+  kMaxValue = kEditorRewrite,
 };
 
 // Search results are divided into different sections.

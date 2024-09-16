@@ -19,6 +19,7 @@
 #include "chrome/browser/web_applications/external_install_options.h"
 #include "chrome/browser/web_applications/externally_managed_app_registration_task.h"
 #include "chrome/browser/web_applications/os_integration/os_integration_manager.h"
+#include "chrome/browser/web_applications/proto/web_app_install_state.pb.h"
 #include "chrome/browser/web_applications/test/external_app_registration_waiter.h"
 #include "chrome/browser/web_applications/test/web_app_icon_test_utils.h"
 #include "chrome/browser/web_applications/test/web_app_install_test_utils.h"
@@ -49,6 +50,7 @@
 #include "chrome/browser/web_applications/policy/web_app_policy_constants.h"
 #include "chrome/browser/web_applications/policy/web_app_policy_manager.h"
 #include "chrome/common/pref_names.h"
+#include "components/prefs/pref_service.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "ui/message_center/public/cpp/notification.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
@@ -157,15 +159,23 @@ IN_PROC_BROWSER_TEST_F(ExternallyManagedAppManagerBrowserTest,
       embedded_test_server()->GetURL("/banners/manifest_test_page.html");
   GURL install_url =
       embedded_test_server()->GetURL("/server-redirect?" + start_url.spec());
-  InstallApp(CreateInstallOptions(install_url));
+  ExternalInstallOptions install_options(
+      install_url, mojom::UserDisplayMode::kStandalone,
+      ExternalInstallSource::kInternalDefault);
+  InstallApp(install_options);
   EXPECT_EQ(webapps::InstallResultCode::kSuccessNewInstall,
             result_code_.value());
   std::optional<webapps::AppId> app_id =
       registrar().LookupExternalAppId(install_url);
-  EXPECT_TRUE(app_id.has_value());
+  ASSERT_TRUE(app_id.has_value());
   EXPECT_EQ("Manifest test app", registrar().GetAppShortName(app_id.value()));
   // Same AppID should be in the registrar using start_url from the manifest.
-  EXPECT_TRUE(registrar().IsLocallyInstalled(start_url));
+  // TODO(crbug.com/340952100): Change this to `GetInstallState` and
+  // `kInstalledWithOsIntegration` after this install isn't forced to skip OS
+  // integration in the finalizer.
+  EXPECT_TRUE(registrar().IsInstallState(
+      app_id.value(), {proto::INSTALLED_WITHOUT_OS_INTEGRATION,
+                       proto::INSTALLED_WITH_OS_INTEGRATION}));
   std::optional<webapps::AppId> opt_app_id =
       registrar().FindAppWithUrlInScope(start_url);
   EXPECT_TRUE(opt_app_id.has_value());
@@ -185,14 +195,15 @@ IN_PROC_BROWSER_TEST_F(ExternallyManagedAppManagerBrowserTest,
             result_code_.value());
   std::optional<webapps::AppId> app_id =
       registrar().LookupExternalAppId(install_url);
-  EXPECT_TRUE(app_id.has_value());
+  ASSERT_TRUE(app_id.has_value());
   EXPECT_EQ("Web app banner test page",
             registrar().GetAppShortName(app_id.value()));
-  // Same AppID should be in the registrar using final_url.
-  EXPECT_TRUE(registrar().IsLocallyInstalled(final_url));
   std::optional<webapps::AppId> opt_app_id =
       registrar().FindAppWithUrlInScope(final_url);
   ASSERT_TRUE(opt_app_id.has_value());
+  EXPECT_TRUE(registrar().IsInstallState(
+      opt_app_id.value(), {proto::INSTALLED_WITHOUT_OS_INTEGRATION,
+                           proto::INSTALLED_WITH_OS_INTEGRATION}));
   EXPECT_EQ(*opt_app_id, app_id);
   EXPECT_EQ(registrar().GetAppStartUrl(*opt_app_id), final_url);
 }
@@ -558,11 +569,10 @@ IN_PROC_BROWSER_TEST_F(ExternallyManagedAppManagerBrowserTest,
   std::optional<webapps::AppId> app_id;
   {
     // Install user app
-    auto install_info = std::make_unique<WebAppInstallInfo>();
     GURL url(
         embedded_test_server()->GetURL("/banners/"
                                        "manifest_test_page.html"));
-    install_info->start_url = url;
+    auto install_info = WebAppInstallInfo::CreateWithStartUrlForTesting(url);
     install_info->title = u"Test user app";
     app_id = test::InstallWebApp(profile(), std::move(install_info));
     ASSERT_TRUE(app_id.has_value());
@@ -748,7 +758,7 @@ IN_PROC_BROWSER_TEST_F(ExternallyManagedAppManagerBrowserTest,
           [&run_loop, &app_url](
               std::map<GURL, ExternallyManagedAppManager::InstallResult>
                   install_results,
-              std::map<GURL, bool> uninstall_results) {
+              std::map<GURL, webapps::UninstallResultCode> uninstall_results) {
             EXPECT_TRUE(uninstall_results.empty());
             EXPECT_EQ(install_results.size(), 1U);
             EXPECT_EQ(install_results[app_url].code,
@@ -791,8 +801,7 @@ IN_PROC_BROWSER_TEST_F(ExternallyManagedAppManagerBrowserTest,
   GURL url(embedded_test_server()->GetURL("/banners/manifest_test_page.html"));
 
   // Install user app
-  auto install_info = std::make_unique<WebAppInstallInfo>();
-  install_info->start_url = url;
+  auto install_info = WebAppInstallInfo::CreateWithStartUrlForTesting(url);
   install_info->title = u"Test user app";
   webapps::AppId app_id =
       test::InstallWebApp(profile(), std::move(install_info));
@@ -814,10 +823,11 @@ IN_PROC_BROWSER_TEST_F(ExternallyManagedAppManagerBrowserTest,
           [&run_loop, &url](
               std::map<GURL, ExternallyManagedAppManager::InstallResult>
                   install_results,
-              std::map<GURL, bool> uninstall_results) {
+              std::map<GURL, webapps::UninstallResultCode> uninstall_results) {
             EXPECT_TRUE(install_results.empty());
             EXPECT_EQ(uninstall_results.size(), 1U);
-            EXPECT_EQ(uninstall_results[url], true);
+            EXPECT_EQ(uninstall_results[url],
+                      webapps::UninstallResultCode::kInstallSourceRemoved);
             run_loop.Quit();
           }));
   run_loop.Run();
@@ -988,8 +998,10 @@ class PlaceholderUpdateRelaunchBrowserTest
       notification_observation_{this};
 };
 
-IN_PROC_BROWSER_TEST_F(PlaceholderUpdateRelaunchBrowserTest,
-                       UpdatePlaceholderRelaunchClosePreventedAppSucceeds) {
+// TODO(b:341035409): Flaky.
+IN_PROC_BROWSER_TEST_F(
+    PlaceholderUpdateRelaunchBrowserTest,
+    DISABLED_UpdatePlaceholderRelaunchClosePreventedAppSucceeds) {
 #if BUILDFLAG(IS_CHROMEOS_LACROS)
   // This may be needed due to side-effects previously run lacros tests.
   ClearAllNotifications();

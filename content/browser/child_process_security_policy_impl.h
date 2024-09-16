@@ -27,6 +27,7 @@
 #include "content/browser/origin_agent_cluster_isolation_state.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/child_process_security_policy.h"
+#include "content/public/common/bindings_policy.h"
 #include "storage/common/file_system/file_system_types.h"
 #include "url/origin.h"
 
@@ -418,15 +419,36 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
   // Revokes all permissions granted to the given file.
   void RevokeAllPermissionsForFile(int child_id, const base::FilePath& file);
 
-  // Grant the child process the ability to use Web UI Bindings where |bindings|
-  // is either BINDINGS_POLICY_WEB_UI or BINDINGS_POLICY_MOJO_WEB_UI or both.
-  void GrantWebUIBindings(int child_id, int bindings);
+  // Grant the child process the ability to use Web UI Bindings.
+  void GrantWebUIBindings(int child_id, BindingsPolicySet bindings);
 
   // Grant the child process the ability to read raw cookies.
   void GrantReadRawCookies(int child_id);
 
   // Revoke read raw cookies permission.
   void RevokeReadRawCookies(int child_id);
+
+  // Some APIs for Android WebView and <webview> tags allow bypassing some
+  // security checks, such as which URLs are allowed to commit. This method
+  // grants that ability to any document with an origin used with these APIs,
+  // because the exemption is needed for about:blank frames that inherit the
+  // same origin.
+  //
+  // For safety, this is limited to opaque origins used with LoadDataWithBaseURL
+  // in unlocked processes, as well as file origins used with
+  // allow_universal_access_from_file_urls.
+  //
+  // Note that LoadDataWithBaseURL can be used with non-opaque origins as well,
+  // but in that case the bypass is only allowed for the document and not the
+  // entire origin, to prevent other code in the origin from bypassing checks.
+  void GrantOriginCheckExemptionForWebView(int child_id,
+                                           const url::Origin& origin);
+
+  // Returns whether the given opaque or file origin was granted an exemption
+  // due to Android WebView and <webview> APIs, allowing its documents to bypass
+  // certain URL and origin checks.
+  bool HasOriginCheckExemptionForWebView(int child_id,
+                                         const url::Origin& origin);
 
   // Explicit permissions checks for FileSystemURL specified files.
   bool CanReadFileSystemFile(int child_id,
@@ -610,10 +632,12 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
                            IsolatedOriginsRemovedWhenBrowserContextDestroyed);
   FRIEND_TEST_ALL_PREFIXES(ChildProcessSecurityPolicyTest,
                            IsolateAllSuborigins);
-  FRIEND_TEST_ALL_PREFIXES(ChildProcessSecurityPolicyTest,
-                           WildcardAndNonWildcardOrigins);
-  FRIEND_TEST_ALL_PREFIXES(ChildProcessSecurityPolicyTest,
-                           WildcardAndNonWildcardEmbedded);
+  FRIEND_TEST_ALL_PREFIXES(
+      ChildProcessSecurityPolicyTest_NoOriginKeyedProcessesByDefault,
+      WildcardAndNonWildcardOrigins);
+  FRIEND_TEST_ALL_PREFIXES(
+      ChildProcessSecurityPolicyTest_NoOriginKeyedProcessesByDefault,
+      WildcardAndNonWildcardEmbedded);
   FRIEND_TEST_ALL_PREFIXES(ChildProcessSecurityPolicyTest,
                            ParseIsolatedOrigins);
   FRIEND_TEST_ALL_PREFIXES(ChildProcessSecurityPolicyTest, WildcardDefaultPort);
@@ -849,6 +873,10 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
                                           bool url_is_for_opaque_origin,
                                           AccessType access_type);
 
+  // Helper used by CanAccessOrigin to impose additional restrictions on a
+  // process that only hosts PDF documents.
+  bool IsAccessAllowedForPdfProcess(AccessType access_type);
+
   // Utility function to simplify lookups for OriginAgentClusterOptInEntry
   // values by origin.
   OriginAgentClusterIsolationState* LookupOriginIsolationState(
@@ -857,20 +885,22 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
       EXCLUSIVE_LOCKS_REQUIRED(origins_isolation_opt_in_lock_);
 
   // You must acquire this lock before reading or writing any members of this
-  // class, except for isolated_origins_ which uses its own lock.  You must not
-  // block while holding this lock.
+  // class, except for isolated_origins_, schemes_okay_to_*, and
+  // pseudo_schemes_, which use their own locks.  You must not block while
+  // holding this lock.
   base::Lock lock_;
 
-  // These schemes are white-listed for all child processes in various contexts.
-  // These sets are protected by |lock_|.
-  SchemeSet schemes_okay_to_commit_in_any_process_ GUARDED_BY(lock_);
-  SchemeSet schemes_okay_to_request_in_any_process_ GUARDED_BY(lock_);
-  SchemeSet schemes_okay_to_appear_as_origin_headers_ GUARDED_BY(lock_);
+  // These schemes are allow-listed for all child processes in various contexts.
+  // These sets are protected by |schemes_lock_| rather than |lock_|.
+  base::Lock schemes_lock_;
+  SchemeSet schemes_okay_to_commit_in_any_process_ GUARDED_BY(schemes_lock_);
+  SchemeSet schemes_okay_to_request_in_any_process_ GUARDED_BY(schemes_lock_);
+  SchemeSet schemes_okay_to_appear_as_origin_headers_ GUARDED_BY(schemes_lock_);
 
   // These schemes do not actually represent retrievable URLs.  For example,
   // the the URLs in the "about" scheme are aliases to other URLs.  This set is
-  // protected by |lock_|.
-  SchemeSet pseudo_schemes_ GUARDED_BY(lock_);
+  // protected by |schemes_lock_|.
+  SchemeSet pseudo_schemes_ GUARDED_BY(schemes_lock_);
 
   // This map holds a SecurityState for each child process.  The key for the
   // map is the ID of the ChildProcessHost.  The SecurityState objects are

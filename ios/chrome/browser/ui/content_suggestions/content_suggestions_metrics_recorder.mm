@@ -14,6 +14,7 @@
 #import "components/ntp_tiles/ntp_tile_impression.h"
 #import "components/ntp_tiles/tile_visual_type.h"
 #import "components/prefs/pref_service.h"
+#import "ios/chrome/browser/favicon/ui_bundled/favicon_attributes_with_payload.h"
 #import "ios/chrome/browser/ntp/model/set_up_list_item_type.h"
 #import "ios/chrome/browser/ntp/model/set_up_list_metrics.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
@@ -24,7 +25,6 @@
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_metrics_constants.h"
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_metrics_recorder.h"
 #import "ios/chrome/browser/ui/content_suggestions/set_up_list/utils.h"
-#import "ios/chrome/browser/ui/favicon/favicon_attributes_with_payload.h"
 
 namespace {
 
@@ -37,7 +37,7 @@ const float kMaxModuleEngagementIndex = 50;
 }
 
 - (instancetype)initWithLocalState:(PrefService*)localState {
-  if (self = [super init]) {
+  if ((self = [super init])) {
     _localState = localState;
   }
   return self;
@@ -79,6 +79,11 @@ const float kMaxModuleEngagementIndex = 50;
           kMagicStackModuleEngagementParcelTrackingIndexHistogram, index,
           kMaxModuleEngagementIndex);
       break;
+    case ContentSuggestionsModuleType::kPriceTrackingPromo:
+      UMA_HISTOGRAM_EXACT_LINEAR(
+          kMagicStackModuleEngagementPriceTrackingPromoIndexHistogram, index,
+          kMaxModuleEngagementIndex);
+      break;
     case ContentSuggestionsModuleType::kSetUpListSync:
     case ContentSuggestionsModuleType::kSetUpListDefaultBrowser:
     case ContentSuggestionsModuleType::kSetUpListAutofill:
@@ -90,6 +95,7 @@ const float kMaxModuleEngagementIndex = 50;
           kMaxModuleEngagementIndex);
       break;
     case ContentSuggestionsModuleType::kPlaceholder:
+    case ContentSuggestionsModuleType::kInvalid:
       break;
   }
 }
@@ -116,14 +122,9 @@ const float kMaxModuleEngagementIndex = 50;
       base::RecordAction(base::UserMetricsAction(kShowWhatsNewAction));
       break;
     case NTPCollectionShortcutTypeCount:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
   }
-}
-
-- (void)recordTrendingQueryTappedAtIndex:(int)index {
-  UMA_HISTOGRAM_ENUMERATION(kTrendingQueriesHistogram, index,
-                            kMaxTrendingQueries);
 }
 
 - (void)recordTabResumptionTabOpened {

@@ -31,6 +31,7 @@ build_webui("build") {
     "keyboard_shortcuts.ts",
     "load_error.ts",
     "manager.ts",
+    "mv2_deprecation_panel.ts",
     "options_dialog.ts",
     "pack_dialog.ts",
     "pack_dialog_alert.ts",
@@ -50,27 +51,20 @@ build_webui("build") {
     "toolbar.ts",
   ]
 
-  if (is_chromeos_ash) {
-    web_component_files += [ "kiosk_dialog.ts" ]
-  }
-
   non_web_component_files = [
     "drag_and_drop_handler.ts",
     "extensions.ts",
     "item_mixin.ts",
     "item_util.ts",
+    "mv2_deprecation_delegate.ts",
+    "mv2_deprecation_util.ts",
     "keyboard_shortcut_delegate.ts",
     "navigation_helper.ts",
     "service.ts",
     "shortcut_util.ts",
     "site_permissions/site_settings_mixin.ts",
-    "extension_hats_browser_proxy.ts",
     "url_util.ts",
   ]
-
-  if (is_chromeos_ash) {
-    non_web_component_files += [ "kiosk_browser_proxy.ts" ]
-  }
 
   icons_html_files = [ "icons.html" ]
 

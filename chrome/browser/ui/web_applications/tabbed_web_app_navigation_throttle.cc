@@ -114,7 +114,7 @@ TabbedWebAppNavigationThrottle::WillStartRequest() {
 
 content::NavigationThrottle::ThrottleCheckResult
 TabbedWebAppNavigationThrottle::WillRedirectRequest() {
-  // TODO(crbug.com/897314): Figure out how redirects should be handled.
+  // TODO(crbug.com/40598974): Figure out how redirects should be handled.
   return content::NavigationThrottle::PROCEED;
 }
 
@@ -137,7 +137,7 @@ TabbedWebAppNavigationThrottle::FocusHomeTab() {
   content::OpenURLParams params =
       content::OpenURLParams::FromNavigationHandle(navigation_handle());
   params.disposition = WindowOpenDisposition::CURRENT_TAB;
-  params.frame_tree_node_id = content::RenderFrameHost::kNoFrameTreeNodeId;
+  params.frame_tree_node_id = content::FrameTreeNodeId();
 
   if (params.url != tab_strip->GetWebContentsAt(0)->GetLastCommittedURL()) {
     // Only do the navigation if the URL has changed.

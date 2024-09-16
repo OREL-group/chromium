@@ -30,15 +30,13 @@ struct ProfileValueDifference {
 };
 
 // The values corresponding to those types are visible in the settings.
-// TODO(crbug.com/1441904): Landmark, between-street and admin-level2 are in
-// progress to be included in the settings.
-// TODO(b/40275657): This should depend on the country.
+// TODO(crbug.com/40275657): This should depend on the country.
 FieldTypeSet GetUserVisibleTypes();
 
 // A utility class to assist in the comparison of AutofillProfile data.
 class AutofillProfileComparator {
  public:
-  explicit AutofillProfileComparator(const std::string_view& app_locale);
+  explicit AutofillProfileComparator(std::string_view app_locale);
 
   AutofillProfileComparator(const AutofillProfileComparator&) = delete;
   AutofillProfileComparator& operator=(const AutofillProfileComparator&) =
@@ -238,6 +236,7 @@ class AutofillProfileComparator {
   // Returns the value of |t| from |p1| or |p2| depending on which is non-empty.
   // This method expects that the value is either the same in |p1| and |p2| or
   // empty in one of them.
+  // TODO(crbug.com/40264633): Pass a `FieldType` instead of `AutofillType`.
   std::u16string GetNonEmptyOf(const AutofillProfile& p1,
                                const AutofillProfile& p2,
                                AutofillType t) const;

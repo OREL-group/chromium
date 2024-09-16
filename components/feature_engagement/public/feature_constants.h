@@ -21,6 +21,9 @@ BASE_DECLARE_FEATURE(kIPHDummyFeature);
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_LINUX) || \
     BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_FUCHSIA)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+BASE_DECLARE_FEATURE(kEsbDownloadRowPromoFeature);
+#endif
 BASE_DECLARE_FEATURE(kIPHBatterySaverModeFeature);
 BASE_DECLARE_FEATURE(kIPHCompanionSidePanelFeature);
 BASE_DECLARE_FEATURE(kIPHCompanionSidePanelRegionSearchFeature);
@@ -30,8 +33,12 @@ BASE_DECLARE_FEATURE(kIPHDesktopSharedHighlightingFeature);
 BASE_DECLARE_FEATURE(kIPHDesktopCustomizeChromeFeature);
 BASE_DECLARE_FEATURE(kIPHDesktopCustomizeChromeRefreshFeature);
 BASE_DECLARE_FEATURE(kIPHDesktopNewTabPageModulesCustomizeFeature);
+BASE_DECLARE_FEATURE(kIPHDesktopReEngagementFeature);
+BASE_DECLARE_FEATURE(kIPHDiscardRingFeature);
 BASE_DECLARE_FEATURE(kIPHDownloadEsbPromoFeature);
 BASE_DECLARE_FEATURE(kIPHExperimentalAIPromoFeature);
+BASE_DECLARE_FEATURE(kIPHExplicitBrowserSigninPreferenceRememberedFeature);
+BASE_DECLARE_FEATURE(kIPHHistorySearchFeature);
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 BASE_DECLARE_FEATURE(kIPHExtensionsMenuFeature);
 BASE_DECLARE_FEATURE(kIPHExtensionsRequestAccessButtonFeature);
@@ -42,12 +49,12 @@ BASE_DECLARE_FEATURE(kIPHGMCLocalMediaCastingFeature);
 BASE_DECLARE_FEATURE(kIPHMemorySaverModeFeature);
 BASE_DECLARE_FEATURE(kIPHLiveCaptionFeature);
 BASE_DECLARE_FEATURE(kIPHTabAudioMutingFeature);
-BASE_DECLARE_FEATURE(kIPHPasswordsAccountStorageFeature);
 BASE_DECLARE_FEATURE(kIPHPasswordsManagementBubbleAfterSaveFeature);
 BASE_DECLARE_FEATURE(kIPHPasswordsManagementBubbleDuringSigninFeature);
 BASE_DECLARE_FEATURE(kIPHPasswordsWebAppProfileSwitchFeature);
 BASE_DECLARE_FEATURE(kIPHPasswordManagerShortcutFeature);
 BASE_DECLARE_FEATURE(kIPHPasswordSharingFeature);
+BASE_DECLARE_FEATURE(kIPHPerformanceInterventionDialogFeature);
 BASE_DECLARE_FEATURE(kIPHPowerBookmarksSidePanelFeature);
 BASE_DECLARE_FEATURE(kIPHPriceInsightsPageActionIconLabelFeature);
 BASE_DECLARE_FEATURE(kIPHPriceTrackingEmailConsentFeature);
@@ -57,18 +64,21 @@ BASE_DECLARE_FEATURE(kIPHReadingListEntryPointFeature);
 BASE_DECLARE_FEATURE(kIPHReadingListInSidePanelFeature);
 BASE_DECLARE_FEATURE(kIPHReadingModeSidePanelFeature);
 BASE_DECLARE_FEATURE(kIPHShoppingCollectionFeature);
-BASE_DECLARE_FEATURE(kIPHSidePanelGenericMenuFeature);
 BASE_DECLARE_FEATURE(kIPHSidePanelGenericPinnableFeature);
+BASE_DECLARE_FEATURE(kIPHSidePanelLensOverlayPinnableFeature);
+BASE_DECLARE_FEATURE(kIPHSidePanelLensOverlayPinnableFollowupFeature);
 BASE_DECLARE_FEATURE(kIPHSideSearchAutoTriggeringFeature);
 BASE_DECLARE_FEATURE(kIPHSideSearchPageActionLabelFeature);
+BASE_DECLARE_FEATURE(kIPHSignoutWebInterceptFeature);
+BASE_DECLARE_FEATURE(kIPHTabGroupsSaveV2IntroFeature);
+BASE_DECLARE_FEATURE(kIPHTabGroupsSaveV2CloseGroupFeature);
 BASE_DECLARE_FEATURE(kIPHTabOrganizationSuccessFeature);
 BASE_DECLARE_FEATURE(kIPHTabSearchFeature);
-BASE_DECLARE_FEATURE(kIPHTrackingProtectionOffboardingFeature);
-BASE_DECLARE_FEATURE(kIPHTrackingProtectionOnboardingFeature);
 BASE_DECLARE_FEATURE(kIPHWebUITabStripFeature);
 BASE_DECLARE_FEATURE(kIPHDesktopSnoozeFeature);
 BASE_DECLARE_FEATURE(kIPHDesktopPwaInstallFeature);
 BASE_DECLARE_FEATURE(kIPHProfileSwitchFeature);
+BASE_DECLARE_FEATURE(kIPHSupervisedUserProfileSigninFeature);
 BASE_DECLARE_FEATURE(kIPHWebUiHelpBubbleTestFeature);
 BASE_DECLARE_FEATURE(kIPHPriceTrackingInSidePanelFeature);
 BASE_DECLARE_FEATURE(kIPHBackNavigationMenuFeature);
@@ -79,6 +89,7 @@ BASE_DECLARE_FEATURE(kIPHBackNavigationMenuFeature);
 // should also be declared in:
 // org.chromium.components.feature_engagement.FeatureConstants.
 #if BUILDFLAG(IS_ANDROID)
+BASE_DECLARE_FEATURE(kIPHAndroidTabDeclutter);
 BASE_DECLARE_FEATURE(kIPHAdaptiveButtonInTopToolbarCustomizationNewTabFeature);
 BASE_DECLARE_FEATURE(kIPHAdaptiveButtonInTopToolbarCustomizationShareFeature);
 BASE_DECLARE_FEATURE(
@@ -89,7 +100,7 @@ BASE_DECLARE_FEATURE(
     kIPHAdaptiveButtonInTopToolbarCustomizationAddToBookmarksFeature);
 BASE_DECLARE_FEATURE(
     kIPHAdaptiveButtonInTopToolbarCustomizationReadAloudFeature);
-BASE_DECLARE_FEATURE(kIPHAddToHomescreenMessageFeature);
+BASE_DECLARE_FEATURE(kIPHAppSpecificHistory);
 BASE_DECLARE_FEATURE(kIPHAutoDarkOptOutFeature);
 BASE_DECLARE_FEATURE(kIPHAutoDarkUserEducationMessageFeature);
 BASE_DECLARE_FEATURE(kIPHAutoDarkUserEducationMessageOptInFeature);
@@ -100,6 +111,9 @@ BASE_DECLARE_FEATURE(kIPHContextualPageActionsActionChipFeature);
 BASE_DECLARE_FEATURE(kIPHDataSaverDetailFeature);
 BASE_DECLARE_FEATURE(kIPHDataSaverMilestonePromoFeature);
 BASE_DECLARE_FEATURE(kIPHDataSaverPreviewFeature);
+BASE_DECLARE_FEATURE(kIPHDefaultBrowserPromoMagicStackFeature);
+BASE_DECLARE_FEATURE(kIPHDefaultBrowserPromoMessagesFeature);
+BASE_DECLARE_FEATURE(kIPHDefaultBrowserPromoSettingCardFeature);
 BASE_DECLARE_FEATURE(kIPHDownloadHomeFeature);
 BASE_DECLARE_FEATURE(kIPHDownloadIndicatorFeature);
 BASE_DECLARE_FEATURE(kIPHDownloadPageFeature);
@@ -130,11 +144,11 @@ BASE_DECLARE_FEATURE(kIPHPreviewsOmniboxUIFeature);
 BASE_DECLARE_FEATURE(kIPHPriceDropNTPFeature);
 BASE_DECLARE_FEATURE(kIPHQuietNotificationPromptsFeature);
 BASE_DECLARE_FEATURE(kIPHReadAloudAppMenuFeature);
+BASE_DECLARE_FEATURE(kIPHReadAloudExpandedPlayerFeature);
 BASE_DECLARE_FEATURE(kIPHReadLaterContextMenuFeature);
 BASE_DECLARE_FEATURE(kIPHReadLaterAppMenuBookmarkThisPageFeature);
 BASE_DECLARE_FEATURE(kIPHReadLaterAppMenuBookmarksFeature);
 BASE_DECLARE_FEATURE(kIPHReadLaterBottomSheetFeature);
-BASE_DECLARE_FEATURE(kIPHRequestDesktopSiteAppMenuFeature);
 BASE_DECLARE_FEATURE(kIPHRequestDesktopSiteDefaultOnFeature);
 BASE_DECLARE_FEATURE(kIPHRequestDesktopSiteExceptionsGenericFeature);
 BASE_DECLARE_FEATURE(kIPHRequestDesktopSiteWindowSettingFeature);
@@ -142,9 +156,15 @@ BASE_DECLARE_FEATURE(kIPHShoppingListMenuItemFeature);
 BASE_DECLARE_FEATURE(kIPHShoppingListSaveFlowFeature);
 BASE_DECLARE_FEATURE(kIPHTabGroupsQuicklyComparePagesFeature);
 BASE_DECLARE_FEATURE(kIPHTabGroupsTapToSeeAnotherTabFeature);
-BASE_DECLARE_FEATURE(kIPHTabGroupsYourTabsAreTogetherFeature);
+BASE_DECLARE_FEATURE(kIPHTabGroupCreationDialogSyncTextFeature);
+BASE_DECLARE_FEATURE(kIPHTabGroupSyncOnStripFeature);
 BASE_DECLARE_FEATURE(kIPHTabGroupsDragAndDropFeature);
+BASE_DECLARE_FEATURE(kIPHTabGroupsRemoteGroupFeature);
+BASE_DECLARE_FEATURE(kIPHTabGroupsSurfaceFeature);
+BASE_DECLARE_FEATURE(kIPHTabGroupsSurfaceOnHideFeature);
 BASE_DECLARE_FEATURE(kIPHTabSwitcherButtonFeature);
+BASE_DECLARE_FEATURE(kIPHTabSwitcherButtonSwitchIncognitoFeature);
+BASE_DECLARE_FEATURE(kIPHTabSwitcherFloatingActionButtonFeature);
 BASE_DECLARE_FEATURE(kIPHTranslateMenuButtonFeature);
 BASE_DECLARE_FEATURE(kIPHVideoTutorialNTPChromeIntroFeature);
 BASE_DECLARE_FEATURE(kIPHVideoTutorialNTPDownloadFeature);
@@ -168,12 +188,12 @@ BASE_DECLARE_FEATURE(kIPHSharedHighlightingBuilder);
 BASE_DECLARE_FEATURE(kIPHSharedHighlightingReceiverFeature);
 BASE_DECLARE_FEATURE(kIPHSharingHubWebnotesStylizeFeature);
 BASE_DECLARE_FEATURE(kIPHRestoreTabsOnFREFeature);
+BASE_DECLARE_FEATURE(kIPHRtlGestureNavigationFeature);
 #endif  // BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(IS_IOS)
 BASE_DECLARE_FEATURE(kIPHBottomToolbarTipFeature);
 BASE_DECLARE_FEATURE(kIPHLongPressToolbarTipFeature);
-BASE_DECLARE_FEATURE(kIPHNewIncognitoTabTipFeature);
 BASE_DECLARE_FEATURE(kIPHBadgedReadingListFeature);
 BASE_DECLARE_FEATURE(kIPHWhatsNewFeature);
 BASE_DECLARE_FEATURE(kIPHWhatsNewUpdatedFeature);
@@ -185,14 +205,12 @@ BASE_DECLARE_FEATURE(kIPHFollowWhileBrowsingFeature);
 BASE_DECLARE_FEATURE(kIPHPriceNotificationsWhileBrowsingFeature);
 BASE_DECLARE_FEATURE(kIPHiOSDefaultBrowserBadgeEligibilityFeature);
 BASE_DECLARE_FEATURE(kIPHiOSDefaultBrowserOverflowMenuBadgeFeature);
-BASE_DECLARE_FEATURE(kIPHiOSDefaultBrowserSettingsBadgeFeature);
 BASE_DECLARE_FEATURE(kIPHiOSLensKeyboardFeature);
 BASE_DECLARE_FEATURE(kIPHiOSPromoAppStoreFeature);
 BASE_DECLARE_FEATURE(kIPHiOSPromoWhatsNewFeature);
 BASE_DECLARE_FEATURE(kIPHiOSPromoPostRestoreFeature);
 BASE_DECLARE_FEATURE(kIPHiOSPromoCredentialProviderExtensionFeature);
 BASE_DECLARE_FEATURE(kIPHiOSPromoDefaultBrowserReminderFeature);
-BASE_DECLARE_FEATURE(kIPHiOSPromoOmniboxPositionFeature);
 BASE_DECLARE_FEATURE(kIPHiOSNewTabToolbarItemFeature);
 BASE_DECLARE_FEATURE(kIPHiOSTabGridToolbarItemFeature);
 BASE_DECLARE_FEATURE(kIPHiOSHistoryOnOverflowMenuFeature);
@@ -215,6 +233,11 @@ BASE_DECLARE_FEATURE(kIPHiOSPromoGenericDefaultBrowserFeature);
 BASE_DECLARE_FEATURE(kIPHiOSOverflowMenuCustomizationFeature);
 BASE_DECLARE_FEATURE(kIPHiOSPageInfoRevampFeature);
 BASE_DECLARE_FEATURE(kIPHiOSInlineEnhancedSafeBrowsingPromoFeature);
+BASE_DECLARE_FEATURE(kIPHiOSSavedTabGroupClosed);
+BASE_DECLARE_FEATURE(kIPHiOSContextualPanelSampleModelFeature);
+BASE_DECLARE_FEATURE(kIPHiOSContextualPanelPriceInsightsFeature);
+BASE_DECLARE_FEATURE(kIPHHomeCustomizationMenuFeature);
+BASE_DECLARE_FEATURE(kIPHiOSLensOverlayEntrypointTipFeature);
 
 // A feature flag to enable and parametrize the sliding window of time for a
 // user's eligibility to be shown a default browser promo. This is not an FET
@@ -227,14 +250,6 @@ BASE_DECLARE_FEATURE(kDefaultBrowserEligibilitySlidingWindow);
 extern const base::FeatureParam<int>
     kDefaultBrowserEligibilitySlidingWindowParam;
 
-// The param name for the lifetime maximum occurrence for gesture in-product
-// help features.
-extern const char kGestureInProductHelpMaxOccurrence[];
-
-// The param name for the minimum number of days between two impressions for
-// each type of in-product help feature.
-extern const char kGestureInProductHelpDaysBetweenOccurrences[];
-
 // Non-FET feature flag that enables the generic default browser promo to be
 // displayed without matching all the criteria and in depth metrics collection
 // for the displayed promo.
@@ -245,12 +260,13 @@ BASE_DECLARE_FEATURE(kDefaultBrowserTriggerCriteriaExperiment);
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_LINUX) || \
     BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA)
 BASE_DECLARE_FEATURE(kIPHAutofillCreditCardBenefitFeature);
+BASE_DECLARE_FEATURE(kIPHAutofillDisabledVirtualCardSuggestionFeature);
 BASE_DECLARE_FEATURE(kIPHAutofillExternalAccountProfileSuggestionFeature);
 BASE_DECLARE_FEATURE(kIPHAutofillManualFallbackFeature);
 BASE_DECLARE_FEATURE(kIPHAutofillVirtualCardCVCSuggestionFeature);
 BASE_DECLARE_FEATURE(kIPHAutofillVirtualCardSuggestionFeature);
 BASE_DECLARE_FEATURE(kIPHCookieControlsFeature);
-BASE_DECLARE_FEATURE(kIPH3pcdUserBypassFeature);
+BASE_DECLARE_FEATURE(kIPHPlusAddressCreateSuggestionFeature);
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_LINUX) ||
         // BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID) ||
         // BUILDFLAG(IS_FUCHSIA)
@@ -295,10 +311,13 @@ BASE_DECLARE_FEATURE(kIPHScalableIphGamingFeature);
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 BASE_DECLARE_FEATURE(kIPHDesktopPWAsLinkCapturingLaunch);
+BASE_DECLARE_FEATURE(kIPHToolbarManagementButtonFeature);
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 
 #if !BUILDFLAG(IS_ANDROID) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
 BASE_DECLARE_FEATURE(kIPHiOSPasswordPromoDesktopFeature);
+BASE_DECLARE_FEATURE(kIPHiOSAddressPromoDesktopFeature);
+BASE_DECLARE_FEATURE(kIPHiOSPaymentPromoDesktopFeature);
 #endif  // !BUILDFLAG(IS_ANDROID) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
 
 }  // namespace feature_engagement

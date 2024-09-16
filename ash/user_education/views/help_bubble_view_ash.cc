@@ -37,6 +37,7 @@
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/models/image_model.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/chromeos/styles/cros_tokens_color_mappings.h"
 #include "ui/color/color_provider.h"
@@ -152,7 +153,7 @@ class ClosePromoButton : public views::ImageButton {
     views::HighlightPathGenerator::Install(
         this,
         std::make_unique<views::CircleHighlightPathGenerator>(gfx::Insets()));
-    SetAccessibleName(accessible_name);
+    GetViewAccessibility().SetName(accessible_name);
     SetTooltipText(accessible_name);
 
     constexpr int kIconSize = 16;
@@ -189,7 +190,8 @@ class DotView : public views::View {
   ~DotView() override = default;
 
   // views::View:
-  gfx::Size CalculatePreferredSize() const override {
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override {
     gfx::Size size = size_;
     const gfx::Insets* const insets = GetProperty(views::kInternalPaddingKey);
     size.Enlarge(insets->width(), insets->height());
@@ -280,11 +282,8 @@ HelpBubbleViewAsh::HelpBubbleViewAsh(
     : BubbleDialogDelegateView(anchor.view,
                                TranslateArrow(params.arrow),
                                views::BubbleBorder::STANDARD_SHADOW),
-      id_(id),
-      style_(user_education_util::GetHelpBubbleStyle(params.extended_properties)
-                 .value_or(HelpBubbleStyle::kDialog)) {
-  // NOTE: Nudge style help bubbles cannot activate.
-  SetCanActivate(style_ != HelpBubbleStyle::kNudge);
+      id_(id) {
+  SetCanActivate(true);
 
   // When hosted within a `views::ScrollView`, the anchor view may be
   // (partially) outside the viewport. Ensure that the anchor view is visible.
@@ -364,9 +363,9 @@ HelpBubbleViewAsh::HelpBubbleViewAsh(
   // Add progress indicator (optional) and its container.
   if (params.progress) {
     DCHECK(params.progress->second);
-    // TODO(crbug.com/1197208): surface progress information in a11y tree
+    // TODO(crbug.com/40176811): surface progress information in a11y tree
     for (int i = 0; i < params.progress->second; ++i) {
-      // TODO(crbug.com/1197208): formalize dot size
+      // TODO(crbug.com/40176811): formalize dot size
       progress_container->AddChildView(std::make_unique<DotView>(
           gfx::Size(8, 8), i < params.progress->first));
     }
@@ -426,30 +425,24 @@ HelpBubbleViewAsh::HelpBubbleViewAsh(
   }
 
   // Add close button.
-  // NOTE: Nudge style help bubbles do not have buttons.
-  if (style_ != HelpBubbleStyle::kNudge) {
-    std::u16string alt_text = params.close_button_alt_text;
+  std::u16string alt_text = params.close_button_alt_text;
 
-    // This can be empty if a test doesn't set it. Set a reasonable default to
-    // avoid an assertion (generated when a button with no text has no
-    // accessible name).
-    if (alt_text.empty()) {
-      alt_text = l10n_util::GetStringUTF16(IDS_CLOSE);
-    }
-
-    // Since we set the cancel callback, we will use CancelDialog() to dismiss.
-    close_button_ =
-        (params.progress ? progress_container : top_text_container)
-            ->AddChildView(std::make_unique<ClosePromoButton>(
-                alt_text, base::BindRepeating(&DialogDelegate::CancelDialog,
-                                              base::Unretained(this))));
+  // This can be empty if a test doesn't set it. Set a reasonable default to
+  // avoid an assertion (generated when a button with no text has no
+  // accessible name).
+  if (alt_text.empty()) {
+    alt_text = l10n_util::GetStringUTF16(IDS_CLOSE);
   }
 
-  // Add other buttons.
-  // NOTE: Nudge style help bubbles do not have buttons.
-  if (!params.buttons.empty()) {
-    CHECK_NE(style_, HelpBubbleStyle::kNudge);
+  // Since we set the cancel callback, we will use CancelDialog() to dismiss.
+  close_button_ =
+      (params.progress ? progress_container : top_text_container)
+          ->AddChildView(std::make_unique<ClosePromoButton>(
+              alt_text, base::BindRepeating(&DialogDelegate::CancelDialog,
+                                            base::Unretained(this))));
 
+  // Add other buttons.
+  if (!params.buttons.empty()) {
     auto run_callback_and_close = [](HelpBubbleViewAsh* bubble_view,
                                      base::OnceClosure callback) {
       // We want to call the button callback before deleting the bubble in case
@@ -643,7 +636,7 @@ HelpBubbleViewAsh::HelpBubbleViewAsh(
   SetProperty(views::kElementIdentifierKey, kHelpBubbleElementIdForTesting);
   set_margins(gfx::Insets());
   set_title_margins(gfx::Insets());
-  SetButtons(ui::DIALOG_BUTTON_NONE);
+  SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
   set_close_on_deactivate(false);
   set_focus_traversable_from_anchor_view(false);
   set_parent_window(
@@ -764,9 +757,8 @@ void HelpBubbleViewAsh::OnThemeChanged() {
   views::BubbleDialogDelegateView::OnThemeChanged();
 
   const auto* color_provider = GetColorProvider();
-  const SkColor background_color = color_provider->GetColor(
-      style_ == HelpBubbleStyle::kDialog ? cros_tokens::kCrosSysDialogContainer
-                                         : cros_tokens::kCrosSysBaseElevated);
+  const SkColor background_color =
+      color_provider->GetColor(cros_tokens::kCrosSysDialogContainer);
   set_color(background_color);
 
   const SkColor foreground_color =
@@ -782,13 +774,16 @@ void HelpBubbleViewAsh::OnThemeChanged() {
   }
 }
 
-gfx::Size HelpBubbleViewAsh::CalculatePreferredSize() const {
+gfx::Size HelpBubbleViewAsh::CalculatePreferredSize(
+    const views::SizeBounds& available_size) const {
   const gfx::Size layout_manager_preferred_size =
-      View::CalculatePreferredSize();
+      View::CalculatePreferredSize(available_size);
 
   // Wrap if the width is larger than |kBubbleMaxWidthDip|.
   if (layout_manager_preferred_size.width() > kBubbleMaxWidthDip) {
-    return gfx::Size(kBubbleMaxWidthDip, GetHeightForWidth(kBubbleMaxWidthDip));
+    return gfx::Size(kBubbleMaxWidthDip,
+                     GetLayoutManager()->GetPreferredHeightForWidth(
+                         this, kBubbleMaxWidthDip));
   }
 
   if (layout_manager_preferred_size.width() < kBubbleMinWidthDip) {

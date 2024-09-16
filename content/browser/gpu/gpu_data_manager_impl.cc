@@ -78,7 +78,12 @@ bool GpuDataManagerImpl::Initialized() {
 
 void GpuDataManagerImpl::BlocklistWebGLForTesting() {
   base::AutoLock auto_lock(lock_);
-  private_->BlocklistWebGLForTesting();
+  private_->BlocklistWebGLForTesting();  // IN-TEST
+}
+
+void GpuDataManagerImpl::SetSkiaGraphiteEnabledForTesting(bool enabled) {
+  base::AutoLock auto_lock(lock_);
+  private_->SetSkiaGraphiteEnabledForTesting(enabled);  // IN-TEST
 }
 
 gpu::GPUInfo GpuDataManagerImpl::GetGPUInfo() {
@@ -351,7 +356,7 @@ void GpuDataManagerImpl::UnblockDomainFrom3DAPIs(const GURL& url) {
 
 void GpuDataManagerImpl::DisableDomainBlockingFor3DAPIsForTesting() {
   base::AutoLock auto_lock(lock_);
-  private_->DisableDomainBlockingFor3DAPIsForTesting();
+  private_->DisableDomainBlockingFor3DAPIsForTesting();  // IN-TEST
 }
 
 gpu::GpuMode GpuDataManagerImpl::GetGpuMode() const {
@@ -384,9 +389,10 @@ void GpuDataManagerImpl::OnDisplayAdded(const display::Display& new_display) {
   private_->OnDisplayAdded(new_display);
 }
 
-void GpuDataManagerImpl::OnDisplayRemoved(const display::Display& old_display) {
+void GpuDataManagerImpl::OnDisplaysRemoved(
+    const display::Displays& removed_displays) {
   base::AutoLock auto_lock(lock_);
-  private_->OnDisplayRemoved(old_display);
+  private_->OnDisplaysRemoved(removed_displays);
 }
 
 void GpuDataManagerImpl::OnDisplayMetricsChanged(

@@ -7,6 +7,7 @@
 #include <memory>
 #include <set>
 #include <utility>
+#include <vector>
 
 #include "base/containers/enum_set.h"
 #include "base/dcheck_is_on.h"
@@ -41,6 +42,7 @@
 #include "components/performance_manager/test_support/resource_attribution/gtest_util.h"
 #include "components/performance_manager/test_support/resource_attribution/measurement_delegates.h"
 #include "components/performance_manager/test_support/run_in_graph.h"
+#include "content/public/browser/browsing_instance_id.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -51,10 +53,13 @@ namespace resource_attribution::internal {
 namespace {
 
 using performance_manager::features::kResourceAttributionIncludeOrigins;
+using performance_manager::features::kRunOnMainThreadSync;
 using ::testing::_;
+using ::testing::Bool;
 using ::testing::ElementsAre;
 using ::testing::IsEmpty;
 using ::testing::UnorderedElementsAre;
+using ::testing::WithParamInterface;
 
 std::unique_ptr<QueryParams> CreateQueryParams(
     ResourceTypeSet resource_types = {},
@@ -85,13 +90,18 @@ void ExpectQueryResult(
 }  // namespace
 
 class ResourceAttrQuerySchedulerTest
-    : public performance_manager::GraphTestHarness {
+    : public performance_manager::GraphTestHarness,
+      public WithParamInterface<bool> {
  protected:
   using Super = performance_manager::GraphTestHarness;
 
   ResourceAttrQuerySchedulerTest() {
-    scoped_feature_list_.InitAndEnableFeature(
-        kResourceAttributionIncludeOrigins);
+    std::vector<base::test::FeatureRef> enabled_features{
+        kResourceAttributionIncludeOrigins};
+    if (GetParam()) {
+      enabled_features.push_back(kRunOnMainThreadSync);
+    }
+    scoped_feature_list_.InitWithFeatures(enabled_features, {});
   }
 
   void SetUp() override {
@@ -111,10 +121,22 @@ class ResourceAttrQuerySchedulerTest
   FakeMemoryMeasurementDelegateFactory memory_delegate_factory_;
 };
 
-using ResourceAttrQuerySchedulerPMTest =
-    performance_manager::PerformanceManagerTestHarness;
+INSTANTIATE_TEST_SUITE_P(All, ResourceAttrQuerySchedulerTest, Bool());
 
-TEST_F(ResourceAttrQuerySchedulerTest, AddRemoveQueries) {
+class ResourceAttrQuerySchedulerPMTest
+    : public performance_manager::PerformanceManagerTestHarness,
+      public WithParamInterface<bool> {
+ protected:
+  ResourceAttrQuerySchedulerPMTest() {
+    scoped_feature_list_.InitWithFeatureState(kRunOnMainThreadSync, GetParam());
+  }
+
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+INSTANTIATE_TEST_SUITE_P(All, ResourceAttrQuerySchedulerPMTest, Bool());
+
+TEST_P(ResourceAttrQuerySchedulerTest, AddRemoveQueries) {
   performance_manager::MockMultiplePagesWithMultipleProcessesGraph mock_graph(
       graph());
 
@@ -213,7 +235,7 @@ TEST_F(ResourceAttrQuerySchedulerTest, AddRemoveQueries) {
   EXPECT_FALSE(scheduler->GetCPUMonitorForTesting().IsMonitoring());
 }
 
-TEST_F(ResourceAttrQuerySchedulerTest, AddRemoveNodes) {
+TEST_P(ResourceAttrQuerySchedulerTest, AddRemoveNodes) {
   auto* scheduler = QueryScheduler::GetFromGraph(graph());
   ASSERT_TRUE(scheduler);
 
@@ -229,23 +251,34 @@ TEST_F(ResourceAttrQuerySchedulerTest, AddRemoveNodes) {
   const auto process_context2 = process2->GetResourceContext();
   const auto process_context3 = process3->GetResourceContext();
 
-  // Create a page with several origins, to validate that OriginInPageContext
-  // results are cleared along with the PageContext.
+  // Create a page with several origins, to validate that
+  // OriginInBrowsingInstanceContext results are cleared along with the
+  // PageContext.
+  constexpr content::BrowsingInstanceId kBrowsingInstance =
+      content::BrowsingInstanceId::FromUnsafeValue(1);
   auto page1 = CreateNode<PageNodeImpl>();
   const GURL kUrl1("https://a.com");
-  auto frame1 = CreateFrameNodeAutoId(process3.get(), page1.get());
-  frame1->OnNavigationCommitted(kUrl1, /*same_document=*/false);
+  const url::Origin kOrigin1 = url::Origin::Create(kUrl1);
+  auto frame1 =
+      CreateFrameNodeAutoId(process3.get(), page1.get(),
+                            /*parent_frame_node=*/nullptr, kBrowsingInstance);
+  frame1->OnNavigationCommitted(kUrl1, kOrigin1, /*same_document=*/false,
+                                /*is_served_from_back_forward_cache=*/false);
   const GURL kUrl2("https://b.com");
-  auto frame2 = CreateFrameNodeAutoId(process3.get(), page1.get());
-  frame2->OnNavigationCommitted(kUrl2, /*same_document=*/false);
+  const url::Origin kOrigin2 = url::Origin::Create(kUrl2);
+  auto frame2 =
+      CreateFrameNodeAutoId(process3.get(), page1.get(),
+                            /*parent_frame_node=*/nullptr, kBrowsingInstance);
+  frame2->OnNavigationCommitted(kUrl2, kOrigin2, /*same_document=*/false,
+                                /*is_served_from_back_forward_cache=*/false);
 
   const auto page_context1 = page1->GetResourceContext();
   const auto frame_context1 = frame1->GetResourceContext();
   const auto frame_context2 = frame2->GetResourceContext();
-  const auto origin_in_page_context1 = OriginInPageContext(
-      url::Origin::Create(kUrl1), page1->GetResourceContext());
-  const auto origin_in_page_context2 = OriginInPageContext(
-      url::Origin::Create(kUrl2), page1->GetResourceContext());
+  const auto origin_in_page_context1 =
+      OriginInBrowsingInstanceContext(kOrigin1, kBrowsingInstance);
+  const auto origin_in_page_context2 =
+      OriginInBrowsingInstanceContext(kOrigin2, kBrowsingInstance);
 
   // Also test that WorkerContexts are tracked correctly.
   auto worker1 = CreateNode<WorkerNodeImpl>(WorkerNode::WorkerType::kDedicated,
@@ -376,7 +409,7 @@ TEST_F(ResourceAttrQuerySchedulerTest, AddRemoveNodes) {
           ResourceContextTypeId::ForType<PageContext>(),
           ResourceContextTypeId::ForType<ProcessContext>(),
           ResourceContextTypeId::ForType<WorkerContext>(),
-          ResourceContextTypeId::ForType<OriginInPageContext>(),
+          ResourceContextTypeId::ForType<OriginInBrowsingInstanceContext>(),
       });
   scheduler->AddScopedQuery(all_context_query.get());
   scheduler->StartRepeatingQuery(all_context_query.get());
@@ -458,9 +491,8 @@ TEST_F(ResourceAttrQuerySchedulerTest, AddRemoveNodes) {
 
   task_env().FastForwardBy(base::Minutes(1));
   // All queries have now seen the results for all dead contexts. Only
-  // `process3` is live.
-  EXPECT_EQ(
-      scheduler->GetCPUMonitorForTesting().GetDeadContextCountForTesting(), 0u);
+  // `process3` is live. Note: Results for dead
+  // `OriginInBrowsingInstanceContext`s are retained in case they are revived.
   i = 0;
   for (QueryParams* query :
        {non_repeating_query.get(), repeating_all_process_query.get(),
@@ -472,6 +504,10 @@ TEST_F(ResourceAttrQuerySchedulerTest, AddRemoveNodes) {
         UnorderedElementsAre(
             ResultForContextMatches<CPUTimeResult>(process_context3, _)));
   }
+  // Now that each query got a measurement without the dead
+  // `OriginInBrowsingInstanceContext`s, no results should be retained.
+  EXPECT_EQ(
+      scheduler->GetCPUMonitorForTesting().GetDeadContextCountForTesting(), 0u);
 
   process3.reset();
   EXPECT_EQ(
@@ -496,7 +532,7 @@ TEST_F(ResourceAttrQuerySchedulerTest, AddRemoveNodes) {
   EXPECT_FALSE(scheduler->GetCPUMonitorForTesting().IsMonitoring());
 }
 
-TEST_F(ResourceAttrQuerySchedulerPMTest, CallWithScheduler) {
+TEST_P(ResourceAttrQuerySchedulerPMTest, CallWithScheduler) {
   // Tests that CallWithScheduler works from PerformanceManagerTestHarness,
   // where the scheduler runs on the PM sequence as in production.
   EXPECT_TRUE(PerformanceManager::IsAvailable());
@@ -521,7 +557,7 @@ TEST_F(ResourceAttrQuerySchedulerPMTest, CallWithScheduler) {
   run_loop.Run();
 }
 
-TEST_F(ResourceAttrQuerySchedulerTest, CallWithScheduler) {
+TEST_P(ResourceAttrQuerySchedulerTest, CallWithScheduler) {
   // Tests that CallWithScheduler works from GraphTestHarness which doesn't set
   // up the PerformanceManager sequence. It's convenient to use GraphTestHarness
   // with mock graphs to test resource attribution queries.

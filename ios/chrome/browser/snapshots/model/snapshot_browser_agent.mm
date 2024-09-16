@@ -9,7 +9,7 @@
 #import "base/ios/ios_util.h"
 #import "base/path_service.h"
 #import "base/strings/sys_string_conversions.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/snapshots/model/snapshot_storage_wrapper.h"
 #import "ios/chrome/browser/snapshots/model/snapshot_tab_helper.h"
@@ -110,7 +110,7 @@ void SnapshotBrowserAgent::SetSessionID(const std::string& identifier) {
       browser_->GetBrowserState()->GetStatePath();
 
   // The snapshots are stored in a sub-directory of the session storage.
-  // TODO(crbug.com/1501850): change this before launching the optimised
+  // TODO(crbug.com/40942167): change this before launching the optimised
   // session storage as the session directory will be renamed.
   const base::FilePath legacy_path =
       browser_state_path.Append(FILE_PATH_LITERAL("Sessions"))

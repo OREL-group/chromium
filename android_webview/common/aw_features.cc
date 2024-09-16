@@ -7,10 +7,15 @@
 #include "base/metrics/field_trial_params.h"
 #include "services/network/public/cpp/features.h"
 
-namespace android_webview {
-namespace features {
+namespace android_webview::features {
 
 // Alphabetical:
+
+// Enable auto granting storage access API requests. This will be done
+// if a relationship is detected between the app and the website.
+BASE_FEATURE(kWebViewAutoSAA,
+             "WebViewAutoSAA",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Enable back/forward cache support in WebView. Note that this will only take
 // effect iff both this feature flag and the content/public kBackForwardCache
@@ -19,23 +24,19 @@ BASE_FEATURE(kWebViewBackForwardCache,
              "WebViewBackForwardCache",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-// Enable brotli compression support in WebView.
-BASE_FEATURE(kWebViewBrotliSupport,
-             "WebViewBrotliSupport",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
-// Whether to destroy the WebView rendering functor when after a WebView window
-// becomes invisible.
-//
-// From a stable experiment in October 2023, this saves tens of MiB of graphics
-// memory at high quantiles, at no performance cost.
-BASE_FEATURE(kWebViewClearFunctorInBackground,
-             "WebViewClearFunctorInBackground",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 // Kill switch for adding CHECKs to loading pak files.
 BASE_FEATURE(kWebViewCheckPakFileDescriptors,
              "WebViewCheckPakFileDescriptors",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+// Enable loading include statements when checking digital asset links
+BASE_FEATURE(kWebViewDigitalAssetLinksLoadIncludes,
+             "WebViewDigitalAssetLinksLoadIncludes",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Allows JS DataTransfer Files from content URIs in drag-drop.
+BASE_FEATURE(kWebViewDragDropFiles,
+             "WebViewDragDropFiles",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Cache origins which have camera/mic permissions approved to allow subsequent
@@ -73,23 +74,11 @@ BASE_FEATURE(kWebViewDisplayCutout,
              "WebViewDisplayCutout",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-// Fake empty component to measure component updater performance impact on
-// WebView clients.
-BASE_FEATURE(kWebViewEmptyComponentLoaderPolicy,
-             "WebViewEmptyComponentLoaderPolicy",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
-// Enable the WebView Media Integrity API.
-// This feature requires `kWebViewInjectPlatformJsApis` to be enabled as well.
-BASE_FEATURE(kWebViewMediaIntegrityApi,
-             "WebViewMediaIntegrityApi",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
 // Enable the WebView Media Integrity API as a Blink extension.
 // This feature requires `kWebViewMediaIntegrityApi` to be disabled.
 BASE_FEATURE(kWebViewMediaIntegrityApiBlinkExtension,
              "WebViewMediaIntegrityApiBlinkExtension",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // When enabled, passive mixed content (Audio/Video/Image subresources loaded
 // over HTTP on HTTPS sites) will be autoupgraded to HTTPS, and the load will be
@@ -110,11 +99,6 @@ BASE_FEATURE(kWebViewMuteAudio,
 // origin; strip them from the request if a cross-origin redirect occurs.
 BASE_FEATURE(kWebViewExtraHeadersSameOriginOnly,
              "WebViewExtraHeadersSameOriginOnly",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
-// Enable the new Java/JS Bridge code path with mojo implementation.
-BASE_FEATURE(kWebViewJavaJsBridgeMojo,
-             "WebViewJavaJsBridgeMojo",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Whether to record size of the embedding app's data directory to the UMA
@@ -164,11 +148,6 @@ BASE_FEATURE(kWebViewUseMetricsUploadServiceOnlySdkRuntime,
              "WebViewUseMetricsUploadServiceOnlySdkRuntime",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-// Enables prerender2 on WebView (https://crbug.com/1517472).
-BASE_FEATURE(kWebViewPrerender2,
-             "WebViewPrerender2",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
 // Propagate Android's network change notification signals to the networking
 // stack. This only propagates the following notifications:
 // * OnNetworkConnected
@@ -193,7 +172,7 @@ BASE_FEATURE(kWebViewWideColorGamutSupport,
              base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Control the default behaviour for the XRequestedWith header.
-// TODO(crbug.com/1493963): enable by default after M120 branch point.
+// TODO(crbug.com/40286009): enable by default after M120 branch point.
 BASE_FEATURE(kWebViewXRequestedWithHeaderControl,
              "WebViewXRequestedWithHeaderControl",
              base::FEATURE_DISABLED_BY_DEFAULT);
@@ -205,33 +184,28 @@ BASE_FEATURE(kWebViewXRequestedWithHeaderControl,
 const base::FeatureParam<int> kWebViewXRequestedWithHeaderMode{
     &kWebViewXRequestedWithHeaderControl, "WebViewXRequestedWithHeaderMode", 0};
 
-// Control whether WebView will attempt to read the XRW header allow-list from
-// the manifest.
-BASE_FEATURE(kWebViewXRequestedWithHeaderManifestAllowList,
-             "WebViewXRequestedWithHeaderManifestAllowList",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 // This enables image drage out for Webview.
 BASE_FEATURE(kWebViewImageDrag,
              "WebViewImageDrag",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-// Enables injection of platform-specific JavaScript APIs.
-BASE_FEATURE(kWebViewInjectPlatformJsApis,
-             "WebViewInjectPlatformJsApis",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+// If enabled zoom picker is invoked on every kGestureScrollUpdate consumed ack,
+// otherwise the zoom picker is persistently shown from scroll start to scroll
+// end plus the usual delay in hiding.
+BASE_FEATURE(kWebViewInvokeZoomPickerOnGSU,
+             "WebViewInvokeZoomPickerOnGSU",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
-// This enables uploading UMA data with a higher frequency.
-// This Feature is checked and used in downstream internal code.
-BASE_FEATURE(kWebViewUmaUploadQualityOfServiceSetToDefault,
-             "WebViewUmaUploadQualityOfServiceSetToDefault",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+// Whether to use WebView's own Context for resource related lookups.
+BASE_FEATURE(kWebViewSeparateResourceContext,
+             "WebViewSeparateResourceContext",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Whether to use initial network state during initialization to speed up
 // startup.
 BASE_FEATURE(kWebViewUseInitialNetworkStateAtStartup,
              "WebViewUseInitialNetworkStateAtStartup",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // This enables zoom keyboard shortcuts for zoom-in, zoom-out and zoom reset.
 BASE_FEATURE(kWebViewZoomKeyboardShortcuts,
@@ -246,12 +220,48 @@ BASE_FEATURE(kWebViewReduceUAAndroidVersionDeviceModel,
 // This enables WebView crashes.
 BASE_FEATURE(kWebViewEnableCrash,
              "WebViewEnableCrash",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Enables the built-in DNS resolver (Async DNS) on WebView.
 BASE_FEATURE(kWebViewAsyncDns,
              "WebViewAsyncDns",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-}  // namespace features
-}  // namespace android_webview
+// Preloads expensive classes during WebView startup.
+BASE_FEATURE(kWebViewPreloadClasses,
+             "WebViewPreloadClasses",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// If enabled TYPE_SCROLLED accessibility events are sent every 100ms when user
+// is scrolling irrespective of GestureScrollUpdate being consumed or not.
+// If disabled events are sent on GSU consumed ack.
+// Planning to keep it as kill switch in case we need to revert back to old
+// default behavior.
+// TODO(b/328601354): Cleanup after the change has been in stable for some time.
+BASE_FEATURE(kWebViewDoNotSendAccessibilityEventsOnGSU,
+             "WebViewDoNotSendAccessibilityEventsOnGSU",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+// This enables WebView's hyperlink context menu.
+BASE_FEATURE(kWebViewHyperlinkContextMenu,
+             "WebViewHyperlinkContextMenu",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Creates a spare renderer on browser context creation.
+BASE_FEATURE(kCreateSpareRendererOnBrowserContextCreation,
+             "CreateSpareRendererOnBrowserContextCreation",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Kill switch for WebAuthn usage in WebViews.
+BASE_FEATURE(kWebViewWebauthn,
+             "WebViewWebauthn",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+// This enables RenderDocument in WebView. Note that this will only take effect
+// iff both this feature flag and the content/public kRenderDocument flag is
+// enabled.
+BASE_FEATURE(kWebViewRenderDocument,
+             "WebViewRenderDocument",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+}  // namespace android_webview::features

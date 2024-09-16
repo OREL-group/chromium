@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "base/functional/bind.h"
+#include "base/hash/hash.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/metrics/statistics_recorder.h"
 #include "base/strings/string_util.h"
@@ -19,6 +20,7 @@
 #include "build/buildflag.h"
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/sync/account_bookmark_sync_service_factory.h"
 #include "chrome/browser/sync/device_info_sync_service_factory.h"
 #include "chrome/browser/sync/local_or_syncable_bookmark_sync_service_factory.h"
 #include "chrome/browser/sync/sync_invalidations_service_factory.h"
@@ -37,8 +39,8 @@
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/sync/base/client_tag_hash.h"
 #include "components/sync/base/command_line_switches.h"
+#include "components/sync/base/data_type.h"
 #include "components/sync/base/features.h"
-#include "components/sync/base/model_type.h"
 #include "components/sync/engine/bookmark_update_preprocessing.h"
 #include "components/sync/engine/cycle/entity_change_metric_recording.h"
 #include "components/sync/engine/loopback_server/loopback_server_entity.h"
@@ -54,10 +56,12 @@
 #include "components/sync/test/fake_server.h"
 #include "components/sync/test/fake_server_http_post_provider.h"
 #include "components/sync/test/fake_server_verifier.h"
+#include "components/sync/test/test_matchers.h"
 #include "components/sync_bookmarks/bookmark_sync_service.h"
 #include "components/sync_bookmarks/switches.h"
 #include "components/sync_device_info/fake_device_info_sync_service.h"
 #include "components/undo/bookmark_undo_service.h"
+#include "components/version_info/version_info.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/test_launcher.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -92,12 +96,14 @@ using bookmarks_helper::IsFolderWithTitleAndChildrenAre;
 using bookmarks_helper::IsUrlBookmarkWithTitleAndUrl;
 using bookmarks_helper::Move;
 using bookmarks_helper::Remove;
-using bookmarks_helper::RemoveAll;
 using bookmarks_helper::SetFavicon;
 using bookmarks_helper::SetTitle;
 using BookmarkGeneration =
     fake_server::BookmarkEntityBuilder::BookmarkGeneration;
+using syncer::MatchesDeletionOrigin;
+using testing::AllOf;
 using testing::Contains;
+using testing::Each;
 using testing::ElementsAre;
 using testing::Eq;
 using testing::IsEmpty;
@@ -145,7 +151,7 @@ class FakeDeviceInfoSyncServiceWithInvalidations
   // InterestedDataTypesHandler implementation.
   void OnInterestedDataTypesChanged() override {}
   void SetCommittedAdditionalInterestedDataTypesCallback(
-      base::RepeatingCallback<void(const syncer::ModelTypeSet&)> callback)
+      base::RepeatingCallback<void(const syncer::DataTypeSet&)> callback)
       override {}
 
  private:
@@ -219,10 +225,7 @@ class SingleClientBookmarksSyncTestWithEnabledReuploadPreexistingBookmarks
 
 class SingleClientBookmarksThrottlingSyncTest : public SyncTest {
  public:
-  SingleClientBookmarksThrottlingSyncTest() : SyncTest(SINGLE_CLIENT) {
-    features_override_.InitAndDisableFeature(
-        syncer::kSyncPollImmediatelyOnEveryStartup);
-  }
+  SingleClientBookmarksThrottlingSyncTest() : SyncTest(SINGLE_CLIENT) {}
 
   void SetUpInProcessBrowserTestFixture() override {
     SyncTest::SetUpInProcessBrowserTestFixture();
@@ -260,7 +263,6 @@ class SingleClientBookmarksThrottlingSyncTest : public SyncTest {
   }
 
  private:
-  base::test::ScopedFeatureList features_override_;
   base::CallbackListSubscription create_services_subscription_;
 };
 
@@ -634,7 +636,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientBookmarksSyncTest,
 
   // Verify the UUID that was committed to the server.
   std::vector<sync_pb::SyncEntity> server_bookmarks =
-      GetFakeServer()->GetSyncEntitiesByModelType(syncer::BOOKMARKS);
+      GetFakeServer()->GetSyncEntitiesByDataType(syncer::BOOKMARKS);
   ASSERT_EQ(1u, server_bookmarks.size());
   ASSERT_EQ(
       title2,
@@ -752,6 +754,49 @@ IN_PROC_BROWSER_TEST_F(SingleClientBookmarksSyncTest, DeleteFaviconFromSync) {
       GetBookmarkModel(kSingleProfileIndex)->GetFavicon(bookmark).IsEmpty());
 }
 
+IN_PROC_BROWSER_TEST_F(SingleClientBookmarksSyncTest, OneFolderRemovedEvent) {
+  ASSERT_TRUE(SetupClients());
+  // Starting state:
+  // other_node
+  //    -> folder0
+  //      -> http://yahoo.com
+  //    -> http://www.cnn.com
+  // bookmark_bar
+
+  const BookmarkNode* folder0 = AddFolder(
+      kSingleProfileIndex, GetOtherNode(kSingleProfileIndex), 0, "folder0");
+  ASSERT_TRUE(AddURL(kSingleProfileIndex, folder0, 0, "Yahoo",
+                     GURL("http://www.yahoo.com")));
+  ASSERT_TRUE(AddURL(kSingleProfileIndex, GetOtherNode(kSingleProfileIndex), 1,
+                     "CNN", GURL("http://www.cnn.com")));
+
+  // Set up sync, wait for its completion and verify that changes propagated.
+  ASSERT_TRUE(SetupSync());
+  ASSERT_EQ(2u, GetOtherNode(kSingleProfileIndex)->children().size());
+  ASSERT_EQ(0u, GetBookmarkBarNode(kSingleProfileIndex)->children().size());
+
+  // Remove one folder and wait for sync completion.
+  const base::Location kDeletionLocation = FROM_HERE;
+  GetBookmarkModel(kSingleProfileIndex)
+      ->Remove(folder0, bookmarks::metrics::BookmarkEditSource::kOther,
+               kDeletionLocation);
+  ASSERT_TRUE(BookmarkModelMatchesFakeServerChecker(
+                  kSingleProfileIndex, GetSyncService(kSingleProfileIndex),
+                  GetFakeServer())
+                  .Wait());
+
+  EXPECT_EQ(1u, GetOtherNode(kSingleProfileIndex)->children().size());
+  EXPECT_EQ(0u, GetBookmarkBarNode(kSingleProfileIndex)->children().size());
+
+  // The folder contained one bookmark inside, so two deletions should have been
+  // recorded.
+  EXPECT_THAT(
+      GetFakeServer()->GetCommittedDeletionOrigins(syncer::DataType::BOOKMARKS),
+      AllOf(SizeIs(2),
+            Each(MatchesDeletionOrigin(version_info::GetVersionNumber(),
+                                       kDeletionLocation))));
+}
+
 IN_PROC_BROWSER_TEST_F(SingleClientBookmarksSyncTest,
                        BookmarkAllNodesRemovedEvent) {
   ASSERT_TRUE(SetupClients()) << "SetupClients() failed.";
@@ -802,11 +847,19 @@ IN_PROC_BROWSER_TEST_F(SingleClientBookmarksSyncTest,
   ASSERT_EQ(3u, GetBookmarkBarNode(kSingleProfileIndex)->children().size());
 
   // Remove all bookmarks and wait for sync completion.
-  RemoveAll(kSingleProfileIndex);
+  const base::Location kDeletionLocation = FROM_HERE;
+  GetBookmarkModel(kSingleProfileIndex)
+      ->RemoveAllUserBookmarks(kDeletionLocation);
   ASSERT_TRUE(BookmarkModelMatchesFakeServerChecker(
                   kSingleProfileIndex, GetSyncService(kSingleProfileIndex),
                   GetFakeServer())
                   .Wait());
+
+  EXPECT_THAT(
+      GetFakeServer()->GetCommittedDeletionOrigins(syncer::DataType::BOOKMARKS),
+      AllOf(SizeIs(11),
+            Each(MatchesDeletionOrigin(version_info::GetVersionNumber(),
+                                       kDeletionLocation))));
 
   // Verify other node has no children now.
   EXPECT_TRUE(GetOtherNode(kSingleProfileIndex)->children().empty());
@@ -826,7 +879,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientBookmarksSyncTest, DownloadDeletedBookmark) {
   ASSERT_EQ(1u, CountBookmarksWithTitlesMatching(kSingleProfileIndex, title));
 
   std::vector<sync_pb::SyncEntity> server_bookmarks =
-      GetFakeServer()->GetSyncEntitiesByModelType(syncer::BOOKMARKS);
+      GetFakeServer()->GetSyncEntitiesByDataType(syncer::BOOKMARKS);
   ASSERT_EQ(1ul, server_bookmarks.size());
   std::string entity_id = server_bookmarks[0].id_string();
   std::unique_ptr<syncer::LoopbackServerEntity> tombstone(
@@ -859,7 +912,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientBookmarksSyncTest,
             CountBookmarksWithUrlsMatching(kSingleProfileIndex, updated_url));
 
   std::vector<sync_pb::SyncEntity> server_bookmarks =
-      GetFakeServer()->GetSyncEntitiesByModelType(syncer::BOOKMARKS);
+      GetFakeServer()->GetSyncEntitiesByDataType(syncer::BOOKMARKS);
   ASSERT_EQ(1ul, server_bookmarks.size());
   std::string entity_id = server_bookmarks[0].id_string();
 
@@ -931,7 +984,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientBookmarksSyncTest,
 
   // Collect the titles committed on the server.
   std::vector<sync_pb::SyncEntity> entities =
-      fake_server_->GetSyncEntitiesByModelType(syncer::BOOKMARKS);
+      fake_server_->GetSyncEntitiesByDataType(syncer::BOOKMARKS);
   std::vector<std::string> committed_titles;
   for (const sync_pb::SyncEntity& entity : entities) {
     committed_titles.push_back(
@@ -1120,11 +1173,11 @@ IN_PROC_BROWSER_TEST_F(
 
   // There should have been one creation and no deletions.
   EXPECT_EQ(1, histogram_tester.GetBucketCount(
-                   "Sync.ModelTypeEntityChange3.BOOKMARK",
-                   syncer::ModelTypeEntityChange::kLocalCreation));
+                   "Sync.DataTypeEntityChange.BOOKMARK",
+                   syncer::DataTypeEntityChange::kLocalCreation));
   EXPECT_EQ(0, histogram_tester.GetBucketCount(
-                   "Sync.ModelTypeEntityChange3.BOOKMARK",
-                   syncer::ModelTypeEntityChange::kLocalDeletion));
+                   "Sync.DataTypeEntityChange.BOOKMARK",
+                   syncer::DataTypeEntityChange::kLocalDeletion));
 }
 
 // Android doesn't currently support PRE_ tests, see crbug.com/1117345.
@@ -1144,8 +1197,8 @@ IN_PROC_BROWSER_TEST_F(SingleClientBookmarksSyncTest,
   ASSERT_EQ(1u, GetBookmarkBarNode(kSingleProfileIndex)->children().size());
 
   EXPECT_NE(0, histogram_tester.GetBucketCount(
-                   "Sync.ModelTypeEntityChange3.BOOKMARK",
-                   syncer::ModelTypeEntityChange::kRemoteInitialUpdate));
+                   "Sync.DataTypeEntityChange.BOOKMARK",
+                   syncer::DataTypeEntityChange::kRemoteInitialUpdate));
 }
 
 IN_PROC_BROWSER_TEST_F(SingleClientBookmarksSyncTest,
@@ -1172,8 +1225,8 @@ IN_PROC_BROWSER_TEST_F(SingleClientBookmarksSyncTest,
   ASSERT_EQ(1u, GetBookmarkBarNode(kSingleProfileIndex)->children().size());
 
   EXPECT_EQ(0, histogram_tester.GetBucketCount(
-                   "Sync.ModelTypeEntityChange3.BOOKMARK",
-                   syncer::ModelTypeEntityChange::kRemoteInitialUpdate));
+                   "Sync.DataTypeEntityChange.BOOKMARK",
+                   syncer::DataTypeEntityChange::kRemoteInitialUpdate));
 }
 #endif  // !BUILDFLAG(IS_ANDROID)
 
@@ -1343,7 +1396,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientBookmarksSyncTest,
                   GetFakeServer())
                   .Wait());
   const std::vector<sync_pb::SyncEntity> server_bookmarks_before =
-      fake_server_->GetSyncEntitiesByModelType(syncer::BOOKMARKS);
+      fake_server_->GetSyncEntitiesByDataType(syncer::BOOKMARKS);
   ASSERT_EQ(1u, server_bookmarks_before.size());
 
   // Remove the node and undo the action.
@@ -1361,7 +1414,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientBookmarksSyncTest,
 
   // Check that the bookmark was committed again.
   const std::vector<sync_pb::SyncEntity> server_bookmarks_after =
-      fake_server_->GetSyncEntitiesByModelType(syncer::BOOKMARKS);
+      fake_server_->GetSyncEntitiesByDataType(syncer::BOOKMARKS);
   ASSERT_EQ(1u, server_bookmarks_after.size());
   EXPECT_GT(server_bookmarks_after.front().version(),
             server_bookmarks_before.front().version());
@@ -1766,7 +1819,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientBookmarksSyncTest,
 
   // Ensure that the server bookmark has the old title.
   const std::vector<sync_pb::SyncEntity> server_bookmarks_before =
-      GetFakeServer()->GetSyncEntitiesByModelType(syncer::BOOKMARKS);
+      GetFakeServer()->GetSyncEntitiesByDataType(syncer::BOOKMARKS);
   ASSERT_EQ(1u, server_bookmarks_before.size());
   ASSERT_EQ(title, server_bookmarks_before.front()
                        .specifics()
@@ -1798,7 +1851,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientBookmarksSyncTest,
   ASSERT_TRUE(
       UpdatedProgressMarkerChecker(GetSyncService(kSingleProfileIndex)).Wait());
   const std::vector<sync_pb::SyncEntity> server_bookmarks =
-      GetFakeServer()->GetSyncEntitiesByModelType(syncer::BOOKMARKS);
+      GetFakeServer()->GetSyncEntitiesByDataType(syncer::BOOKMARKS);
   ASSERT_EQ(1u, server_bookmarks.size());
 
   // Once loaded, the favicon must be uploaded to the server.
@@ -1831,8 +1884,8 @@ IN_PROC_BROWSER_TEST_F(
   // legacy bookmark without the most recent fields (e.g. GUID), because loading
   // favicons should not lead to commits unless the favicon itself changed.
   EXPECT_EQ(0, histogram_tester.GetBucketCount(
-                   "Sync.ModelTypeEntityChange3.BOOKMARK",
-                   syncer::ModelTypeEntityChange::kLocalUpdate));
+                   "Sync.DataTypeEntityChange.BOOKMARK",
+                   syncer::DataTypeEntityChange::kLocalUpdate));
 }
 #endif  // !BUILDFLAG(IS_ANDROID)
 
@@ -1890,10 +1943,9 @@ IN_PROC_BROWSER_TEST_F(
   // This test checks that the legacy bookmark which was stored locally will
   // imply reupload to the server when reupload feature is enabled.
   ASSERT_EQ(
-      1u,
-      GetFakeServer()->GetSyncEntitiesByModelType(syncer::BOOKMARKS).size());
+      1u, GetFakeServer()->GetSyncEntitiesByDataType(syncer::BOOKMARKS).size());
   ASSERT_FALSE(GetFakeServer()
-                   ->GetSyncEntitiesByModelType(syncer::BOOKMARKS)
+                   ->GetSyncEntitiesByDataType(syncer::BOOKMARKS)
                    .front()
                    .specifics()
                    .bookmark()
@@ -1902,7 +1954,7 @@ IN_PROC_BROWSER_TEST_F(
   // introduced with |unique_position| and both fields should be reuploaded
   // simultaneously.
   ASSERT_FALSE(GetFakeServer()
-                   ->GetSyncEntitiesByModelType(syncer::BOOKMARKS)
+                   ->GetSyncEntitiesByDataType(syncer::BOOKMARKS)
                    .front()
                    .specifics()
                    .bookmark()
@@ -1926,13 +1978,13 @@ IN_PROC_BROWSER_TEST_F(
                   GetFakeServer())
                   .Wait());
   EXPECT_TRUE(GetFakeServer()
-                  ->GetSyncEntitiesByModelType(syncer::BOOKMARKS)
+                  ->GetSyncEntitiesByDataType(syncer::BOOKMARKS)
                   .front()
                   .specifics()
                   .bookmark()
                   .has_unique_position());
   EXPECT_TRUE(GetFakeServer()
-                  ->GetSyncEntitiesByModelType(syncer::BOOKMARKS)
+                  ->GetSyncEntitiesByDataType(syncer::BOOKMARKS)
                   .front()
                   .specifics()
                   .bookmark()
@@ -1979,12 +2031,12 @@ IN_PROC_BROWSER_TEST_F(
                   GetFakeServer())
                   .Wait());
   const std::vector<sync_pb::SyncEntity> server_bookmarks =
-      GetFakeServer()->GetSyncEntitiesByModelType(syncer::BOOKMARKS);
+      GetFakeServer()->GetSyncEntitiesByDataType(syncer::BOOKMARKS);
   ASSERT_THAT(server_bookmarks, SizeIs(1));
   EXPECT_TRUE(server_bookmarks.front().specifics().bookmark().has_guid());
 
   EXPECT_EQ(
-      1, histogram_tester.GetBucketCount("Sync.ModelTypeEntityChange3.BOOKMARK",
+      1, histogram_tester.GetBucketCount("Sync.DataTypeEntityChange.BOOKMARK",
                                          /*LOCAL_UPDATE*/ 2));
   EXPECT_EQ(1, histogram_tester.GetBucketCount(
                    "Sync.BookmarkEntityReuploadNeeded.OnInitialMerge", true));
@@ -2023,7 +2075,7 @@ IN_PROC_BROWSER_TEST_F(
           .Wait());
 
   // Check that unique_position was not uploaded to the server yet.
-  EXPECT_THAT(GetFakeServer()->GetSyncEntitiesByModelType(syncer::BOOKMARKS),
+  EXPECT_THAT(GetFakeServer()->GetSyncEntitiesByDataType(syncer::BOOKMARKS),
               Contains(Not(HasUniquePosition())).Times(2));
 
   // Add another folder to initiate commit to the server.
@@ -2034,7 +2086,7 @@ IN_PROC_BROWSER_TEST_F(
                   .Wait());
 
   // All elements must have unique_position now.
-  EXPECT_THAT(GetFakeServer()->GetSyncEntitiesByModelType(syncer::BOOKMARKS),
+  EXPECT_THAT(GetFakeServer()->GetSyncEntitiesByDataType(syncer::BOOKMARKS),
               Contains(HasUniquePosition()).Times(3));
 }
 
@@ -2054,7 +2106,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientBookmarksSyncTest,
 
   // Verify the client tag hash was committed to the server.
   std::vector<sync_pb::SyncEntity> server_bookmarks =
-      GetFakeServer()->GetSyncEntitiesByModelType(syncer::BOOKMARKS);
+      GetFakeServer()->GetSyncEntitiesByDataType(syncer::BOOKMARKS);
   ASSERT_EQ(1u, server_bookmarks.size());
   EXPECT_EQ(server_bookmarks[0].client_tag_hash(),
             syncer::ClientTagHash::FromUnhashed(
@@ -2090,8 +2142,8 @@ IN_PROC_BROWSER_TEST_F(SingleClientBookmarksThrottlingSyncTest, DepleteQuota) {
                   GetFakeServer())
                   .Wait());
   EXPECT_EQ(1, histogram_tester.GetBucketCount(
-                   "Sync.ModelTypeCommitMessageHasDepletedQuota",
-                   ModelTypeHistogramValue(syncer::BOOKMARKS)));
+                   "Sync.DataTypeCommitMessageHasDepletedQuota",
+                   DataTypeHistogramValue(syncer::BOOKMARKS)));
   // Recovering from depleted quota is tested by another test.
 }
 
@@ -2126,8 +2178,8 @@ IN_PROC_BROWSER_TEST_F(SingleClientBookmarksThrottlingSyncTest,
                   GetFakeServer())
                   .Wait());
   EXPECT_EQ(4 + 1, histogram_tester.GetBucketCount(
-                       "Sync.ModelTypeCommitMessageHasDepletedQuota",
-                       ModelTypeHistogramValue(syncer::BOOKMARKS)));
+                       "Sync.DataTypeCommitMessageHasDepletedQuota",
+                       DataTypeHistogramValue(syncer::BOOKMARKS)));
 }
 
 IN_PROC_BROWSER_TEST_F(SingleClientBookmarksThrottlingSyncTest,
@@ -2169,8 +2221,8 @@ IN_PROC_BROWSER_TEST_F(SingleClientBookmarksThrottlingSyncTest,
 
   // There is no record in the depleted quota histogram.
   histogram_tester.ExpectTotalCount(
-      "Sync.ModelTypeCommitMessageHasDepletedQuota", 0);
-  histogram_tester.ExpectTotalCount("Sync.ModelTypeCommitWithDepletedQuota", 0);
+      "Sync.DataTypeCommitMessageHasDepletedQuota", 0);
+  histogram_tester.ExpectTotalCount("Sync.DataTypeCommitWithDepletedQuota", 0);
 }
 
 IN_PROC_BROWSER_TEST_F(SingleClientBookmarksThrottlingSyncTest,
@@ -2204,8 +2256,8 @@ IN_PROC_BROWSER_TEST_F(SingleClientBookmarksThrottlingSyncTest,
                     .Wait());
     // The quota should *just* be depleted now.
     EXPECT_EQ(1, histogram_tester.GetBucketCount(
-                     "Sync.ModelTypeCommitMessageHasDepletedQuota",
-                     ModelTypeHistogramValue(syncer::BOOKMARKS)));
+                     "Sync.DataTypeCommitMessageHasDepletedQuota",
+                     DataTypeHistogramValue(syncer::BOOKMARKS)));
   }
 
   // Need to send another bookmark in the next cycle. As the current cycle
@@ -2236,11 +2288,11 @@ IN_PROC_BROWSER_TEST_F(SingleClientBookmarksThrottlingSyncTest,
     EXPECT_GT(base::TimeTicks::Now() - time, base::Seconds(1));
 
     EXPECT_EQ(1, histogram_tester.GetBucketCount(
-                     "Sync.ModelTypeCommitMessageHasDepletedQuota",
-                     ModelTypeHistogramValue(syncer::BOOKMARKS)));
+                     "Sync.DataTypeCommitMessageHasDepletedQuota",
+                     DataTypeHistogramValue(syncer::BOOKMARKS)));
     EXPECT_GT(histogram_tester.GetBucketCount(
-                  "Sync.ModelTypeCommitWithDepletedQuota",
-                  ModelTypeHistogramValue(syncer::BOOKMARKS)),
+                  "Sync.DataTypeCommitWithDepletedQuota",
+                  DataTypeHistogramValue(syncer::BOOKMARKS)),
               0);
   }
 }
@@ -2262,7 +2314,7 @@ class SingleClientBookmarksWithAccountStorageSyncTest
 
  private:
   base::test::ScopedFeatureList features_override_{
-      syncer::kEnableBookmarkFoldersForAccountStorage};
+      syncer::kSyncEnableBookmarksInTransportMode};
 };
 
 IN_PROC_BROWSER_TEST_F(SingleClientBookmarksWithAccountStorageSyncTest,
@@ -2329,6 +2381,10 @@ IN_PROC_BROWSER_TEST_F(SingleClientBookmarksWithAccountStorageSyncTest,
   const std::string kInitiallyLocalTitle = "Initially Local";
   const std::string kInitiallyAccountTitle = "Initially Account";
 
+  const std::string kInitiallyLocalNestedBookmarkTitle =
+      "Initially Local Nested";
+  const GURL kInitiallyLocalNestedBookmarkUrl("https://test.com");
+
   fake_server::EntityBuilderFactory entity_builder_factory;
   fake_server::BookmarkEntityBuilder bookmark_builder =
       entity_builder_factory.NewBookmarkEntityBuilder(kInitiallyAccountTitle);
@@ -2338,8 +2394,14 @@ IN_PROC_BROWSER_TEST_F(SingleClientBookmarksWithAccountStorageSyncTest,
 
   BookmarkModel* model = GetBookmarkModel(kSingleProfileIndex);
 
-  model->AddFolder(/*parent=*/model->bookmark_bar_node(), /*index=*/0,
-                   base::UTF8ToUTF16(kInitiallyLocalTitle));
+  {
+    const BookmarkNode* folder =
+        model->AddFolder(/*parent=*/model->bookmark_bar_node(), /*index=*/0,
+                         base::UTF8ToUTF16(kInitiallyLocalTitle));
+    model->AddURL(/*parent=*/folder, /*index=*/0,
+                  base::UTF8ToUTF16(kInitiallyLocalNestedBookmarkTitle),
+                  kInitiallyLocalNestedBookmarkUrl);
+  }
 
   // Setup a primary account, but don't actually enable Sync-the-feature (so
   // that Sync will start in transport mode).
@@ -2378,12 +2440,14 @@ IN_PROC_BROWSER_TEST_F(SingleClientBookmarksWithAccountStorageSyncTest,
               ElementsAre(IsFolderWithTitle(kInitiallyLocalTitle),
                           IsFolderWithTitle(kInitiallyAccountTitle)));
 
-  // Move one local bookmark to the account.
+  // Move one local folder with a child bookmark to the account.
   model->Move(model->bookmark_bar_node()->children().front().get(),
               model->account_bookmark_bar_node(),
               /*index=*/0);
   EXPECT_TRUE(bookmarks_helper::ServerBookmarksEqualityChecker(
-                  {{kInitiallyLocalTitle, GURL()}},
+                  {{kInitiallyLocalTitle, GURL()},
+                   {kInitiallyLocalNestedBookmarkTitle,
+                    kInitiallyLocalNestedBookmarkUrl}},
                   /*cryptographer=*/nullptr)
                   .Wait());
   EXPECT_THAT(model->account_bookmark_bar_node()->children(),
@@ -2552,6 +2616,133 @@ IN_PROC_BROWSER_TEST_F(SingleClientBookmarksWithAccountStorageSyncTest,
   EXPECT_THAT(model->account_bookmark_bar_node()->children(),
               ElementsAre(IsFolderWithTitle(kInitiallyAccountTitle)));
 }
+
+IN_PROC_BROWSER_TEST_F(SingleClientBookmarksWithAccountStorageSyncTest,
+                       PRE_ShouldPersistIfInitialUpdatesCrossMaxCountLimit) {
+  // Create two bookmarks on the server under BookmarkBar with a truncated
+  // title.
+  fake_server::EntityBuilderFactory entity_builder_factory;
+  const std::string kTitle1 = "title1";
+  const std::string kUrl1 = "http://www.url1.com";
+  fake_server_->InjectEntity(
+      entity_builder_factory.NewBookmarkEntityBuilder(kTitle1).BuildBookmark(
+          GURL(kUrl1)));
+
+  const std::string kTitle2 = "title2";
+  const std::string kUrl2 = "http://www.url2.com";
+  fake_server_->InjectEntity(
+      entity_builder_factory.NewBookmarkEntityBuilder(kTitle2).BuildBookmark(
+          GURL(kUrl2)));
+
+  ASSERT_TRUE(SetupClients());
+  // Set a limit of 4 bookmarks. This should result in an error when we get an
+  // update of size 5.
+  AccountBookmarkSyncServiceFactory::GetForProfile(
+      GetProfile(kSingleProfileIndex))
+      ->SetBookmarksLimitForTesting(4);
+  // Setup a primary account, but don't actually enable Sync-the-feature (so
+  // that Sync will start in transport mode).
+  ASSERT_TRUE(GetClient(kSingleProfileIndex)->SignInPrimaryAccount());
+  // Note: Depending on the state of feature flags (specifically
+  // kReplaceSyncPromosWithSignInPromos), Bookmarks may or may not be considered
+  // selected by default.
+  GetSyncService(kSingleProfileIndex)
+      ->GetUserSettings()
+      ->SetSelectedType(syncer::UserSelectableType::kBookmarks, true);
+
+  // Update of size 5 exceeds the limit.
+  EXPECT_TRUE(
+      BookmarksDataTypeErrorChecker(GetClient(kSingleProfileIndex)->service())
+          .Wait());
+
+  BookmarkModel* model = GetBookmarkModel(kSingleProfileIndex);
+  EXPECT_THAT(model->account_bookmark_bar_node(), IsNull());
+  EXPECT_THAT(model->account_other_node(), IsNull());
+  EXPECT_THAT(model->account_mobile_node(), IsNull());
+
+  // Bookmarks should be in an error state. Thus excluding it from the
+  // CheckForDataTypeFailures() check.
+  ExcludeDataTypesFromCheckForDataTypeFailures({syncer::BOOKMARKS});
+}
+
+IN_PROC_BROWSER_TEST_F(SingleClientBookmarksWithAccountStorageSyncTest,
+                       ShouldPersistIfInitialUpdatesCrossMaxCountLimit) {
+  ASSERT_TRUE(SetupClients());
+  ASSERT_TRUE(GetClient(kSingleProfileIndex)->AwaitEngineInitialization());
+
+  // The fact that too many bookmarks were downloaded should have been persisted
+  // and hence remembered now. Note that this test doesn't override
+  // SetBookmarksLimitForTesting(), so the error must have been detected in
+  // the PRE_ test.
+  EXPECT_TRUE(
+      BookmarksDataTypeErrorChecker(GetClient(kSingleProfileIndex)->service())
+          .Wait());
+
+  // Account permanent nodes should remain absent.
+  BookmarkModel* model = GetBookmarkModel(kSingleProfileIndex);
+  EXPECT_THAT(model->account_bookmark_bar_node(), IsNull());
+  EXPECT_THAT(model->account_other_node(), IsNull());
+  EXPECT_THAT(model->account_mobile_node(), IsNull());
+
+  // Bookmarks should be in an error state. Thus excluding it from the
+  // CheckForDataTypeFailures() check.
+  ExcludeDataTypesFromCheckForDataTypeFailures({syncer::BOOKMARKS});
+}
+
+IN_PROC_BROWSER_TEST_F(
+    SingleClientBookmarksSyncTest,
+    PRE_ShouldAllowRecoverIflLocalBookmarksDeletedBelowMaxCountLimit) {
+  ASSERT_TRUE(SetupClients());
+
+  LocalOrSyncableBookmarkSyncServiceFactory::GetForProfile(
+      GetProfile(kSingleProfileIndex))
+      ->SetBookmarksLimitForTesting(4);
+
+  ASSERT_TRUE(SetupSync());
+  ASSERT_FALSE(GetClient(kSingleProfileIndex)
+                   ->service()
+                   ->HasAnyDatatypeErrorForTest({syncer::BOOKMARKS}));
+
+  // Add 2 new bookmarks to exceed the limit.
+  const BookmarkNode* bookmark_bar_node =
+      GetBookmarkBarNode(kSingleProfileIndex);
+
+  ASSERT_TRUE(AddURL(kSingleProfileIndex,
+                     /*parent=*/bookmark_bar_node, /*index=*/0, "title0",
+                     GURL("http://www.url0.com")));
+  ASSERT_TRUE(AddURL(kSingleProfileIndex,
+                     /*parent=*/bookmark_bar_node, /*index=*/1, "title1",
+                     GURL("http://www.url1.com")));
+  EXPECT_TRUE(
+      BookmarksDataTypeErrorChecker(GetClient(kSingleProfileIndex)->service())
+          .Wait());
+
+  // Delete one bookmark to bring the count below the limit.
+  Remove(kSingleProfileIndex, bookmark_bar_node, /*index=*/0);
+
+  // Bookmarks should be in an error state. Thus excluding it from the
+  // CheckForDataTypeFailures() check.
+  ExcludeDataTypesFromCheckForDataTypeFailures({syncer::BOOKMARKS});
+}
+
+IN_PROC_BROWSER_TEST_F(
+    SingleClientBookmarksSyncTest,
+    ShouldAllowRecoverIflLocalBookmarksDeletedBelowMaxCountLimit) {
+  ASSERT_TRUE(SetupClients());
+
+  LocalOrSyncableBookmarkSyncServiceFactory::GetForProfile(
+      GetProfile(kSingleProfileIndex))
+      ->SetBookmarksLimitForTesting(4);
+
+  ASSERT_TRUE(SetupSync());
+  EXPECT_TRUE(GetSyncService(kSingleProfileIndex)
+                  ->GetActiveDataTypes()
+                  .Has(syncer::BOOKMARKS));
+  EXPECT_FALSE(GetClient(kSingleProfileIndex)
+                   ->service()
+                   ->HasAnyDatatypeErrorForTest({syncer::BOOKMARKS}));
+}
+
 #endif  // !BUILDFLAG(IS_ANDROID)
 
 // Android doesn't currently support PRE_ tests, see crbug.com/40200835 or

@@ -435,6 +435,9 @@ class PasswordsPrivateSwitchBiometricAuthBeforeFillingStateFunction
 
   // ExtensionFunction overrides.
   ResponseAction Run() override;
+
+ private:
+  void OnAuthenticationComplete(bool result);
 };
 
 class PasswordsPrivateShowAddShortcutDialogFunction : public ExtensionFunction {
@@ -473,6 +476,9 @@ class PasswordsPrivateChangePasswordManagerPinFunction
 
   // ExtensionFunction overrides.
   ResponseAction Run() override;
+
+ private:
+  void OnPinChangeCompleted(bool success);
 };
 
 class PasswordsPrivateIsPasswordManagerPinAvailableFunction
@@ -486,6 +492,54 @@ class PasswordsPrivateIsPasswordManagerPinAvailableFunction
 
   // ExtensionFunction overrides.
   ResponseAction Run() override;
+
+ private:
+  void OnPasswordManagerPinAvailabilityReceived(bool is_available);
+};
+
+class PasswordsPrivateDisconnectCloudAuthenticatorFunction
+    : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("passwordsPrivate.disconnectCloudAuthenticator",
+                             PASSWORDSPRIVATE_DISCONNECTCLOUDAUTHENTICATOR)
+
+ protected:
+  ~PasswordsPrivateDisconnectCloudAuthenticatorFunction() override = default;
+
+  // ExtensionFunction overrides.
+  ResponseAction Run() override;
+
+ private:
+  void OnDisconnectCloudAuthenticatorCompleted(bool success);
+};
+
+class PasswordsPrivateIsConnectedToCloudAuthenticatorFunction
+    : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("passwordsPrivate.isConnectedToCloudAuthenticator",
+                             PASSWORDSPRIVATE_ISCONNECTEDTOCLOUDAUTHENTICATOR)
+
+ protected:
+  ~PasswordsPrivateIsConnectedToCloudAuthenticatorFunction() override = default;
+
+  // ExtensionFunction overrides.
+  ResponseAction Run() override;
+};
+
+class PasswordsPrivateDeleteAllPasswordManagerDataFunction
+    : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("passwordsPrivate.deleteAllPasswordManagerData",
+                             PASSWORDSPRIVATE_DELETEALLPASSWORDMANAGERDATA)
+
+ protected:
+  ~PasswordsPrivateDeleteAllPasswordManagerDataFunction() override = default;
+
+  // ExtensionFunction overrides.
+  ResponseAction Run() override;
+
+ private:
+  void OnDeletionCompleted(bool success);
 };
 
 }  // namespace extensions

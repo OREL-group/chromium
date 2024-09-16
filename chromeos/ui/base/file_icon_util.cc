@@ -13,6 +13,7 @@
 #include "base/files/file_path.h"
 #include "base/memory/raw_ref.h"
 #include "base/no_destructor.h"
+#include "base/not_fatal_until.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chromeos/constants/chromeos_features.h"
@@ -191,7 +192,7 @@ const std::map<IconType, IconParams>& GetIconTypeToIconParamsMap() {
 const IconParams& GetIconParamsFromIconType(IconType icon) {
   const auto& icon_type_to_icon_params = GetIconTypeToIconParamsMap();
   const auto& it = icon_type_to_icon_params.find(icon);
-  DCHECK(it != icon_type_to_icon_params.end());
+  CHECK(it != icon_type_to_icon_params.end(), base::NotFatalUntil::M130);
 
   return it->second;
 }
@@ -401,8 +402,10 @@ gfx::ImageSkia GetIconFromType(const std::string& icon_type,
                                    dark_background, std::nullopt);
 }
 
-gfx::ImageSkia GetIconFromType(IconType icon_type, bool dark_background) {
-  return GetVectorIconFromIconType(icon_type, dark_background, std::nullopt);
+gfx::ImageSkia GetIconFromType(IconType icon_type,
+                               bool dark_background,
+                               std::optional<int> dip_size) {
+  return GetVectorIconFromIconType(icon_type, dark_background, dip_size);
 }
 
 SkColor GetIconColorForPath(const base::FilePath& filepath,
@@ -410,7 +413,7 @@ SkColor GetIconColorForPath(const base::FilePath& filepath,
   const auto& icon_type = internal::GetIconTypeForPath(filepath);
   const auto& icon_type_to_icon_params = GetIconTypeToIconParamsMap();
   const auto& it = icon_type_to_icon_params.find(icon_type);
-  DCHECK(it != icon_type_to_icon_params.end());
+  CHECK(it != icon_type_to_icon_params.end(), base::NotFatalUntil::M130);
 
   return ResolveColor(it->second.color_id, dark_background);
 }

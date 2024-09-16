@@ -26,7 +26,6 @@
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_response.h"
 #include "third_party/blink/renderer/platform/network/content_security_policy_parsers.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/weborigin/scheme_registry.h"
@@ -595,7 +594,6 @@ TEST_F(ContentSecurityPolicyTest, DirectiveType) {
       {CSPDirectiveName::ImgSrc, "img-src"},
       {CSPDirectiveName::ManifestSrc, "manifest-src"},
       {CSPDirectiveName::MediaSrc, "media-src"},
-      {CSPDirectiveName::NavigateTo, "navigate-to"},
       {CSPDirectiveName::ObjectSrc, "object-src"},
       {CSPDirectiveName::ReportURI, "report-uri"},
       {CSPDirectiveName::Sandbox, "sandbox"},

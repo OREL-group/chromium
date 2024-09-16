@@ -81,7 +81,8 @@ constexpr char kCheckApiAvailability[] =
            await chrome.userScripts.unregister();
          } catch(e) {
            const expectedError =
-               `Error: The 'userScripts' API is only available for users ` +
+               `Error: Failed to read the 'userScripts' property from ` +
+               `'Object': The 'userScripts' API is only available for users ` +
                'in developer mode.';
            message = e.toString() == expectedError
                ? 'success'
@@ -122,10 +123,8 @@ class NativeBindingsRestrictedToDeveloperModeApiTest
     : public NativeBindingsApiTest {
  public:
   NativeBindingsRestrictedToDeveloperModeApiTest() {
-    scoped_feature_list_.InitWithFeatures(
-        {extensions_features::kRestrictDeveloperModeAPIs,
-         extensions_features::kApiUserScripts},
-        /*disabled_features=*/{});
+    scoped_feature_list_.InitAndEnableFeature(
+        extensions_features::kRestrictDeveloperModeAPIs);
   }
 
   NativeBindingsRestrictedToDeveloperModeApiTest(
@@ -137,7 +136,7 @@ class NativeBindingsRestrictedToDeveloperModeApiTest
 
  private:
   // The userScripts API is currently behind a feature restriction.
-  // TODO(crbug.com/1472902): Remove once the feature is stable for awhile.
+  // TODO(crbug.com/40926805): Remove once the feature is stable for awhile.
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 

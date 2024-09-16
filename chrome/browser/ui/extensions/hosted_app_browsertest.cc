@@ -45,6 +45,7 @@
 #include "chrome/browser/web_applications/external_install_options.h"
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom.h"
 #include "chrome/browser/web_applications/os_integration/os_integration_manager.h"
+#include "chrome/browser/web_applications/test/os_integration_test_override_impl.h"
 #include "chrome/browser/web_applications/test/web_app_install_test_utils.h"
 #include "chrome/browser/web_applications/web_app_constants.h"
 #include "chrome/browser/web_applications/web_app_helpers.h"
@@ -60,7 +61,6 @@
 #include "components/webapps/common/web_app_id.h"
 #include "content/public/browser/child_process_security_policy.h"
 #include "content/public/browser/context_menu_params.h"
-#include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
@@ -88,12 +88,18 @@
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
 #include "net/test/embedded_test_server/request_handler_util.h"
+#include "pdf/buildflags.h"
 #include "testing/gtest/include/gtest/gtest-param-test.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/renderer_preferences/renderer_preferences.h"
 #include "third_party/blink/public/common/switches.h"
 #include "third_party/blink/public/mojom/manifest/display_mode.mojom.h"
+
+#if BUILDFLAG(ENABLE_PDF)
+#include "chrome/browser/pdf/test_pdf_viewer_stream_manager.h"
+#include "pdf/pdf_features.h"
+#endif
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 #include "ash/constants/ash_features.h"
@@ -177,6 +183,37 @@ bool TryToLoadImage(const content::ToRenderFrameHost& adapter,
   return content::EvalJs(adapter, script).ExtractBool();
 }
 
+// On Lacros, due to the wayland async UI flow, when a test switches between
+// multiple active browsers, BrowserList::GetLastActive() may not return
+// the right browser due to the race. See details in b/325634285.
+// However, ui_test_utils::WaitUntilBrowserBecomeActive works reliably by using
+// WidgetActivationWaiter to wait for the browser widget to become active.
+// Therefore, we use different approach to wait and verify the expected browser
+// to become the active or last active browser in test.
+
+// TODO(b/342491793): On Mac, the expected browser window (to be activated) is
+// occasionally deactivated after being activated. So the test will fail
+// (correctly) and become flaky if we use WidgetActivationWaiter to wait for the
+// browser to be activated. BrowserList::GetLastActive() may have hid the
+// potential UI issue on mac. We should fix the issue on mac and remove its
+// dependency on BrowserList::GetLastActive().
+
+void WaitUntilBrowserBecomeActiveOrLastActive(Browser* browser) {
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+  ui_test_utils::WaitUntilBrowserBecomeActive(browser);
+#else
+  ui_test_utils::WaitForBrowserSetLastActive(browser);
+#endif
+}
+
+void ExpectBrowserBecomesActiveOrLastActive(Browser* browser) {
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+  EXPECT_TRUE(ui_test_utils::IsBrowserActive(browser));
+#else
+  EXPECT_EQ(browser, chrome::FindLastActive());
+#endif
+}
+
 }  // namespace
 
 // Parameters are {app_type, desktop_pwa_flag}. |app_type| controls whether it
@@ -188,7 +225,7 @@ class HostedOrWebAppTest : public extensions::ExtensionBrowserTest,
       : app_browser_(nullptr),
         https_server_(net::EmbeddedTestServer::TYPE_HTTPS) {
     std::vector<base::test::FeatureRef> disabled{
-        // TODO(crbug.com/1394910): Remove this and use HTTPS URLs in the
+        // TODO(crbug.com/40248833): Remove this and use HTTPS URLs in the
         // tests.
         features::kHttpsUpgrades,
     };
@@ -219,8 +256,8 @@ class HostedOrWebAppTest : public extensions::ExtensionBrowserTest,
           base::StringPrintf(kAppDotComManifest, start_url.spec().c_str()));
       SetupApp(test_app_dir.UnpackedPath());
     } else {
-      auto web_app_info = std::make_unique<web_app::WebAppInstallInfo>();
-      web_app_info->start_url = start_url;
+      auto web_app_info =
+          web_app::WebAppInstallInfo::CreateWithStartUrlForTesting(start_url);
       web_app_info->scope = start_url.GetWithoutFilename();
       web_app_info->user_display_mode =
           web_app::mojom::UserDisplayMode::kStandalone;
@@ -302,7 +339,8 @@ class HostedOrWebAppTest : public extensions::ExtensionBrowserTest,
   // that navigated to |target_url| in the main browser window.
   void TestAppActionOpensForegroundTab(base::OnceClosure action,
                                        const GURL& target_url) {
-    ASSERT_EQ(app_browser_, chrome::FindLastActive());
+    WaitUntilBrowserBecomeActiveOrLastActive(app_browser_);
+    ExpectBrowserBecomesActiveOrLastActive(app_browser_);
 
     size_t num_browsers = chrome::GetBrowserCount(profile());
     int num_tabs = browser()->tab_strip_model()->count();
@@ -311,11 +349,11 @@ class HostedOrWebAppTest : public extensions::ExtensionBrowserTest,
 
     ASSERT_NO_FATAL_FAILURE(std::move(action).Run());
 
-    // Wait until the main browser set to be the last active one.
-    ui_test_utils::WaitForBrowserSetLastActive(browser());
+    // Wait until the main browser becomes active.
+    WaitUntilBrowserBecomeActiveOrLastActive(browser());
 
     EXPECT_EQ(num_browsers, chrome::GetBrowserCount(profile()));
-    EXPECT_EQ(browser(), chrome::FindLastActive());
+    ExpectBrowserBecomesActiveOrLastActive(browser());
     EXPECT_EQ(++num_tabs, browser()->tab_strip_model()->count());
 
     content::WebContents* new_tab =
@@ -353,7 +391,7 @@ class HostedOrWebAppTest : public extensions::ExtensionBrowserTest,
   // used by the NetworkService.
   content::ContentMockCertVerifier cert_verifier_;
 
-  web_app::OsIntegrationManager::ScopedSuppressForTesting os_hooks_suppress_;
+  web_app::OsIntegrationTestOverrideBlockingRegistration faked_os_integration_;
 };
 
 // Tests that "Open link in new tab" opens a link in a foreground tab.
@@ -365,8 +403,7 @@ IN_PROC_BROWSER_TEST_P(HostedOrWebAppTest, DISABLED_OpenLinkInNewTab) {
   TestAppActionOpensForegroundTab(
       base::BindOnce(
           [](content::WebContents* app_contents, const GURL& target_url) {
-            ui_test_utils::UrlLoadObserver url_observer(
-                target_url, content::NotificationService::AllSources());
+            ui_test_utils::UrlLoadObserver url_observer(target_url);
             content::ContextMenuParams params;
             params.page_url = app_contents->GetLastCommittedURL();
             params.link_url = target_url;
@@ -383,43 +420,36 @@ IN_PROC_BROWSER_TEST_P(HostedOrWebAppTest, DISABLED_OpenLinkInNewTab) {
 }
 
 // Tests that Ctrl + Clicking a link opens a foreground tab.
-// TODO(crbug.com/40755999): Flaky on Linux and LACROS..
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
+// TODO(crbug.com/40755999): Flaky on Linux.
+#if BUILDFLAG(IS_LINUX)
 #define MAYBE_CtrlClickLink DISABLED_CtrlClickLink
 #else
 #define MAYBE_CtrlClickLink CtrlClickLink
 #endif
 IN_PROC_BROWSER_TEST_P(HostedOrWebAppTest, MAYBE_CtrlClickLink) {
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING) && BUILDFLAG(IS_CHROMEOS_LACROS)
-  // TODO(b/326134178): Disable the flaky test variant on branded Lacros builder
-  // (ci/linux-lacros-chrome) until the root cause of b/325634285 is fixed.
-  if (GetParam() == AppType::HOSTED_APP) {
-    GTEST_SKIP()
-        << "Disable the flaky test for hosted app on Lacros branded build.";
-  }
-#endif
+  WaitUntilBrowserBecomeActiveOrLastActive(browser());
+  ExpectBrowserBecomesActiveOrLastActive(browser());
 
   ASSERT_TRUE(embedded_test_server()->Start());
 
   // Set up an app which covers app.com URLs.
   GURL app_url =
       embedded_test_server()->GetURL("app.com", "/click_modifier/href.html");
-  ui_test_utils::UrlLoadObserver url_observer(
-      app_url, content::NotificationService::AllSources());
+  ui_test_utils::UrlLoadObserver url_observer(app_url);
   SetupAppWithURL(app_url);
   // Wait for the URL to load so that we can click on the page.
   url_observer.Wait();
 
-  // Wait until app_browser_ becomes the last active one.
-  ui_test_utils::WaitForBrowserSetLastActive(app_browser_);
+  // Wait until app_browser_ becomes active.
+  WaitUntilBrowserBecomeActiveOrLastActive(app_browser_);
+  ExpectBrowserBecomesActiveOrLastActive(app_browser_);
 
   const GURL url = embedded_test_server()->GetURL(
       "app.com", "/click_modifier/new_window.html");
   TestAppActionOpensForegroundTab(
       base::BindOnce(
           [](content::WebContents* app_contents, const GURL& target_url) {
-            ui_test_utils::UrlLoadObserver url_observer(
-                target_url, content::NotificationService::AllSources());
+            ui_test_utils::UrlLoadObserver url_observer(target_url);
             int ctrl_key;
 #if BUILDFLAG(IS_MAC)
             ctrl_key = blink::WebInputEvent::Modifiers::kMetaKey;
@@ -585,6 +615,7 @@ IN_PROC_BROWSER_TEST_P(HostedAppTestWithPrerendering, EffectiveUrlOnTrigger) {
           prerender_utils::kDirectUrlInputMetricSuffix,
           ui::PageTransitionFromInt(ui::PAGE_TRANSITION_TYPED |
                                     ui::PAGE_TRANSITION_FROM_ADDRESS_BAR),
+          /*should_warm_up_compositor=*/false,
           content::PreloadingHoldbackStatus::kUnspecified,
           /*preloading_attempt=*/nullptr, /*url_match_predicate=*/{},
           /*prerender_navigation_handle_callback=*/{});
@@ -610,6 +641,7 @@ IN_PROC_BROWSER_TEST_P(HostedAppTestWithPrerendering,
           prerender_utils::kDirectUrlInputMetricSuffix,
           ui::PageTransitionFromInt(ui::PAGE_TRANSITION_TYPED |
                                     ui::PAGE_TRANSITION_FROM_ADDRESS_BAR),
+          /*should_warm_up_compositor=*/false,
           content::PreloadingHoldbackStatus::kUnspecified,
           /*preloading_attempt=*/nullptr, /*url_match_predicate=*/{},
           /*prerender_navigation_handle_callback=*/{});
@@ -637,11 +669,13 @@ IN_PROC_BROWSER_TEST_P(HostedAppTestWithPrerendering,
           prerender_utils::kDirectUrlInputMetricSuffix,
           ui::PageTransitionFromInt(ui::PAGE_TRANSITION_TYPED |
                                     ui::PAGE_TRANSITION_FROM_ADDRESS_BAR),
+          /*should_warm_up_compositor=*/false,
           content::PreloadingHoldbackStatus::kUnspecified,
           /*preloading_attempt=*/nullptr, /*url_match_predicate=*/{},
           /*prerender_navigation_handle_callback=*/{});
   EXPECT_TRUE(prerender_handle);
-  int host_id = prerender_helper().GetHostForUrl(prerendering_url);
+  content::FrameTreeNodeId host_id =
+      prerender_helper().GetHostForUrl(prerendering_url);
   content::test::PrerenderHostObserver host_observer(*GetNonAppWebContents(),
                                                      host_id);
   host_observer.WaitForDestroyed();
@@ -662,6 +696,7 @@ IN_PROC_BROWSER_TEST_P(HostedAppTestWithPrerendering,
           prerender_utils::kDirectUrlInputMetricSuffix,
           ui::PageTransitionFromInt(ui::PAGE_TRANSITION_TYPED |
                                     ui::PAGE_TRANSITION_FROM_ADDRESS_BAR),
+          /*should_warm_up_compositor=*/false,
           content::PreloadingHoldbackStatus::kUnspecified,
           /*preloading_attempt=*/nullptr, /*url_match_predicate=*/{},
           /*prerender_navigation_handle_callback=*/{});
@@ -888,8 +923,7 @@ IN_PROC_BROWSER_TEST_P(HostedAppTestWithAutoupgradesDisabled,
 
   const GURL app_url = GetMixedContentAppURL();
 
-  ui_test_utils::UrlLoadObserver url_observer(
-      app_url, content::NotificationService::AllSources());
+  ui_test_utils::UrlLoadObserver url_observer(app_url);
   SetupAppWithURL(app_url);
   url_observer.Wait();
 
@@ -969,7 +1003,7 @@ class HostedAppProcessModelTest : public HostedOrWebAppTest {
             return std::make_unique<net::test_server::RawHttpResponse>(
                 "HTTP/1.1 200 OK", "Hello there!");
           }
-          return nullptr;
+          return {};
         }));
 
     embedded_test_server()->StartAcceptingConnections();
@@ -1356,7 +1390,13 @@ IN_PROC_BROWSER_TEST_P(HostedAppProcessModelTest, PopupsInsideHostedApp) {
 // This test was flaky on Win7 because it was bumping up against a 45 second
 // timeout. If it starts flaking on Windows 10+, it should be broken up into
 // smaller tests. See https://crbug.com/807471.
-IN_PROC_BROWSER_TEST_P(HostedAppProcessModelTest, FromOutsideHostedApp) {
+// TODO(crbug.com/335469702): Flaky on Linux ChromiumOS MSAN.
+#if BUILDFLAG(IS_CHROMEOS) && defined(MEMORY_SANITIZER)
+#define MAYBE_FromOutsideHostedApp DISABLED_FromOutsideHostedApp
+#else
+#define MAYBE_FromOutsideHostedApp FromOutsideHostedApp
+#endif
+IN_PROC_BROWSER_TEST_P(HostedAppProcessModelTest, MAYBE_FromOutsideHostedApp) {
   // Set up and launch the hosted app.
   GURL app_url =
       embedded_test_server()->GetURL("app.site.test", "/frame_tree/simple.htm");
@@ -1514,16 +1554,14 @@ class HostedAppProcessModelFencedFrameTest : public HostedAppProcessModelTest {
     test_server().RegisterRequestHandler(base::BindRepeating(
         [](const net::test_server::HttpRequest& request)
             -> std::unique_ptr<net::test_server::HttpResponse> {
-          const char kFencedFramePage[] = "page.html";
-          if (request.GetURL().ExtractFileName() == kFencedFramePage) {
-            auto response =
-                std::make_unique<net::test_server::BasicHttpResponse>();
-            response->set_content_type("text/html");
-            response->AddCustomHeader("Supports-Loading-Mode", "fenced-frame");
-            return static_cast<std::unique_ptr<net::test_server::HttpResponse>>(
-                std::move(response));
+          if (request.GetURL().ExtractFileName() != "page.html") {
+            return {};
           }
-          return nullptr;
+          auto response =
+              std::make_unique<net::test_server::BasicHttpResponse>();
+          response->set_content_type("text/html");
+          response->AddCustomHeader("Supports-Loading-Mode", "fenced-frame");
+          return response;
         }));
     test_server().StartAcceptingConnections();
   }
@@ -1867,6 +1905,101 @@ IN_PROC_BROWSER_TEST_P(HostedAppSitePerProcessTest,
   EXPECT_TRUE(process_map->Contains(foo_process->GetID()));
   EXPECT_TRUE(process_map->Contains(bar_process->GetID()));
 }
+
+#if BUILDFLAG(ENABLE_PDF)
+class HostedAppSitePerProcessPDFTest : public HostedAppSitePerProcessTest {
+ public:
+  HostedAppSitePerProcessPDFTest() {
+    feature_list_.InitAndEnableFeature(chrome_pdf::features::kPdfOopif);
+  }
+
+  HostedAppSitePerProcessPDFTest(const HostedAppSitePerProcessPDFTest&) =
+      delete;
+  HostedAppSitePerProcessPDFTest& operator=(
+      const HostedAppSitePerProcessPDFTest&) = delete;
+
+  ~HostedAppSitePerProcessPDFTest() override = default;
+
+  // Return value is always non-nullptr. This should only be called after a PDF
+  // navigation occurs in a `content::WebContents`.
+  pdf::TestPdfViewerStreamManager* GetTestPdfViewerStreamManager(
+      content::WebContents* web_contents) {
+    return factory_.GetTestPdfViewerStreamManager(web_contents);
+  }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+  pdf::TestPdfViewerStreamManagerFactory factory_;
+};
+
+// Check that a same-site PDF embedded in a hosted app does not crash and does
+// not stay in the app process. Instead, it should use its own PDF SiteInstance
+// and process. See https://crbug.com/359345045.
+IN_PROC_BROWSER_TEST_P(HostedAppSitePerProcessPDFTest,
+                       SameSitePDFEmbeddedInApp) {
+  // Set up a hosted app covering http://foo.com, and launch the app with a
+  // foo.com URL in a new window.
+  GURL foo_app_url(embedded_test_server()->GetURL("foo.com", "/title1.html"));
+  constexpr char kHostedAppManifest[] =
+      R"( { "name": "Hosted App With SitePerProcess Test",
+            "version": "1",
+            "manifest_version": 2,
+            "app": {
+              "launch": {
+                "web_url": "%s"
+              },
+              "urls": ["http://%s/"]
+            }
+          } )";
+  {
+    extensions::TestExtensionDir test_app_dir;
+    test_app_dir.WriteManifest(base::StringPrintf(
+        kHostedAppManifest, foo_app_url.spec().c_str(), "foo.com"));
+    SetupApp(test_app_dir.UnpackedPath());
+  }
+  content::WebContents* foo_contents =
+      app_browser_->tab_strip_model()->GetActiveWebContents();
+  EXPECT_TRUE(content::WaitForLoadStop(foo_contents));
+  EXPECT_EQ(foo_app_url, foo_contents->GetLastCommittedURL());
+
+  // Ensure the app URL loaded in a hosted app process.
+  auto* process_map = extensions::ProcessMap::Get(browser()->profile());
+  content::RenderFrameHost* app_frame = foo_contents->GetPrimaryMainFrame();
+  EXPECT_TRUE(process_map->Contains(app_frame->GetProcess()->GetID()));
+
+  // Add a same-site PDF subframe and wait for it to load.
+  GURL pdf_url = embedded_test_server()->GetURL("foo.com", "/pdf/test.pdf");
+  EXPECT_TRUE(ExecJs(foo_contents,
+                     "var frame = document.createElement('iframe');\n"
+                     "frame.src = '" +
+                         pdf_url.spec() +
+                         "';\n"
+                         "document.body.appendChild(frame);"));
+  EXPECT_TRUE(content::WaitForLoadStop(foo_contents));
+  content::RenderFrameHost* subframe = ChildFrameAt(app_frame, 0);
+  ASSERT_TRUE(subframe);
+  ASSERT_TRUE(GetTestPdfViewerStreamManager(foo_contents)
+                  ->WaitUntilPdfLoaded(subframe));
+
+  // Look up the PDF document frame, which should be embedded in the PDF
+  // extension frame, which is in turn embedded in the PDF container subframe
+  // that was just added. The PDF document should *not* stay in the main frame's
+  // SiteInstance and process, but rather it should go into its own PDF process.
+  content::RenderFrameHost* pdf_extension_frame = ChildFrameAt(subframe, 0);
+  ASSERT_TRUE(pdf_extension_frame);
+  content::RenderFrameHost* pdf_document_frame =
+      ChildFrameAt(pdf_extension_frame, 0);
+  ASSERT_TRUE(pdf_document_frame);
+  EXPECT_NE(pdf_document_frame->GetSiteInstance(),
+            app_frame->GetSiteInstance());
+  EXPECT_NE(pdf_document_frame->GetProcess(), app_frame->GetProcess());
+
+  // The current behavior is that the PDF process is also considered to be an
+  // app process, since its URL matched the app's extent. This is probably not
+  // necessary and is something to consider changing in future.
+  EXPECT_TRUE(process_map->Contains(pdf_document_frame->GetProcess()->GetID()));
+}
+#endif  // BUILDFLAG(ENABLE_PDF)
 
 template <bool jit_disabled_by_default>
 class HostedAppJitTestBase : public HostedAppProcessModelTest {
@@ -2420,6 +2553,12 @@ INSTANTIATE_TEST_SUITE_P(
     All,
     HostedAppSitePerProcessTest,
     ::testing::Values(AppType::HOSTED_APP));
+
+#if BUILDFLAG(ENABLE_PDF)
+INSTANTIATE_TEST_SUITE_P(All,
+                         HostedAppSitePerProcessPDFTest,
+                         ::testing::Values(AppType::HOSTED_APP));
+#endif
 
 INSTANTIATE_TEST_SUITE_P(All,
                          HostedAppJitTestBaseDefaultEnabled,

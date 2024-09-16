@@ -125,7 +125,8 @@ class MockPipeline : public Pipeline {
   MOCK_METHOD1(SetVolume, void(float));
   MOCK_METHOD1(SetLatencyHint, void(std::optional<base::TimeDelta>));
   MOCK_METHOD1(SetPreservesPitch, void(bool));
-  MOCK_METHOD1(SetWasPlayedWithUserActivation, void(bool));
+  MOCK_METHOD1(SetWasPlayedWithUserActivationAndHighMediaEngagement,
+               void(bool));
 
   // TODO(sandersd): These should probably have setters too.
   MOCK_CONST_METHOD0(GetMediaTime, base::TimeDelta());
@@ -500,11 +501,11 @@ class MockAudioRenderer : public AudioRenderer {
   MOCK_METHOD1(SetLatencyHint,
                void(std::optional<base::TimeDelta> latency_hint));
   MOCK_METHOD1(SetPreservesPitch, void(bool));
-  MOCK_METHOD1(SetWasPlayedWithUserActivation, void(bool));
+  MOCK_METHOD1(SetWasPlayedWithUserActivationAndHighMediaEngagement,
+               void(bool));
 };
 
-class MockRenderer : public Renderer,
-                     public base::SupportsWeakPtr<MockRenderer> {
+class MockRenderer : public Renderer {
  public:
   MockRenderer();
 
@@ -525,7 +526,8 @@ class MockRenderer : public Renderer,
                     PipelineStatusCallback& init_cb));
   MOCK_METHOD1(SetLatencyHint, void(std::optional<base::TimeDelta>));
   MOCK_METHOD1(SetPreservesPitch, void(bool));
-  MOCK_METHOD1(SetWasPlayedWithUserActivation, void(bool));
+  MOCK_METHOD1(SetWasPlayedWithUserActivationAndHighMediaEngagement,
+               void(bool));
   void Flush(base::OnceClosure flush_cb) override { OnFlush(flush_cb); }
   MOCK_METHOD1(OnFlush, void(base::OnceClosure& flush_cb));
   MOCK_METHOD1(StartPlayingFrom, void(base::TimeDelta timestamp));
@@ -544,6 +546,13 @@ class MockRenderer : public Renderer,
   MOCK_METHOD2(OnSelectedAudioTracksChanged,
                void(std::vector<DemuxerStream*>, base::OnceClosure));
   RendererType GetRendererType() override { return RendererType::kTest; }
+
+  base::WeakPtr<MockRenderer> AsWeakPtr() {
+    return weak_ptr_factory_.GetWeakPtr();
+  }
+
+ private:
+  base::WeakPtrFactory<MockRenderer> weak_ptr_factory_{this};
 };
 
 class MockRendererFactory : public RendererFactory {
@@ -853,7 +862,7 @@ class MockStreamParser : public StreamParser {
                     MediaLog* media_log));
   MOCK_METHOD0(Flush, void());
   MOCK_CONST_METHOD0(GetGenerateTimestampsFlag, bool());
-  MOCK_METHOD2(AppendToParseBuffer, bool(const uint8_t*, size_t));
+  MOCK_METHOD1(AppendToParseBuffer, bool(base::span<const uint8_t>));
   MOCK_METHOD1(Parse, ParseStatus(int));
 };
 

@@ -303,7 +303,7 @@ const base::TimeDelta kPopUIDelay = base::Seconds(0.3);
 
 - (void)gridViewController:(BaseGridViewController*)gridViewController
             didSelectGroup:(const TabGroup*)group {
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 - (void)gridViewController:(BaseGridViewController*)gridViewController
@@ -331,24 +331,22 @@ const base::TimeDelta kPopUIDelay = base::Seconds(0.3);
 
 - (void)gridViewControllerDidMoveItem:
     (BaseGridViewController*)gridViewController {
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 - (void)gridViewController:(BaseGridViewController*)gridViewController
-        didChangeItemCount:(NSUInteger)count {
-  if (!self.presentingSettings) {
-    [self popIfNeeded];
-  }
-}
-
-- (void)gridViewController:(BaseGridViewController*)gridViewController
-       didRemoveItemWIthID:(web::WebStateID)itemID {
+       didRemoveItemWithID:(web::WebStateID)itemID {
   // No op.
 }
 
-- (void)gridViewControllerDragSessionWillBegin:
+- (void)gridViewControllerDragSessionWillBeginForTab:
     (BaseGridViewController*)gridViewController {
   // No op.
+}
+
+- (void)gridViewControllerDragSessionWillBeginForTabGroup:
+    (BaseGridViewController*)gridViewController {
+  // No-op.
 }
 
 - (void)gridViewControllerDragSessionDidEnd:
@@ -363,22 +361,37 @@ const base::TimeDelta kPopUIDelay = base::Seconds(0.3);
 
 - (void)gridViewControllerDropAnimationWillBegin:
     (BaseGridViewController*)gridViewController {
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 - (void)gridViewControllerDropAnimationDidEnd:
     (BaseGridViewController*)gridViewController {
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 - (void)didTapInactiveTabsButtonInGridViewController:
     (BaseGridViewController*)gridViewController {
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 - (void)didTapInactiveTabsSettingsLinkInGridViewController:
     (BaseGridViewController*)gridViewController {
   [self presentSettings];
+}
+
+- (void)gridViewControllerDidRequestContextMenu:
+    (BaseGridViewController*)gridViewController {
+  // No-op.
+}
+
+- (void)gridViewControllerDropSessionDidEnter:
+    (BaseGridViewController*)gridViewController {
+  // No-op.
+}
+
+- (void)gridViewControllerDropSessionDidExit:
+    (BaseGridViewController*)gridViewController {
+  // No-op.
 }
 
 #pragma mark - InactiveTabsUserEducationCoordinatorDelegate
@@ -471,19 +484,18 @@ const base::TimeDelta kPopUIDelay = base::Seconds(0.3);
   [self onSettingsDismissed];
 }
 
-- (id<ApplicationCommands, BrowserCommands, BrowsingDataCommands>)
-    handlerForSettings {
-  NOTREACHED();
+- (id<ApplicationCommands, BrowserCommands>)handlerForSettings {
+  NOTREACHED_IN_MIGRATION();
   return nil;
 }
 
 - (id<ApplicationCommands>)handlerForApplicationCommands {
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return nil;
 }
 
 - (id<SnackbarCommands>)handlerForSnackbarCommands {
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return nil;
 }
 

@@ -22,7 +22,8 @@
 namespace ash {
 
 // This class implements engine for Cryptohome-based PIN factor.
-class CryptohomePinEngine : public CryptohomeBasedEngine {
+class COMPONENT_EXPORT(CHROMEOS_ASH_COMPONENTS_OSAUTH) CryptohomePinEngine
+    : public CryptohomeBasedEngine {
  public:
   explicit CryptohomePinEngine(CryptohomeCore& core, PrefService* local_state);
   ~CryptohomePinEngine() override;
@@ -42,6 +43,8 @@ class CryptohomePinEngine : public CryptohomeBasedEngine {
  private:
   void OnAuthAttempt(std::unique_ptr<UserContext>,
                      std::optional<AuthenticationError>);
+  void PerformAuthenticationAttempt(const std::string& raw_pin,
+                                    std::unique_ptr<UserContext> context);
 
   std::string GetUserSalt(const AccountId& account_id,
                           PrefService* local_state) const;

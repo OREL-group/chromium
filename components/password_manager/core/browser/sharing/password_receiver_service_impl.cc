@@ -18,7 +18,7 @@
 #include "components/password_manager/core/browser/password_store/password_store_interface.h"
 #include "components/password_manager/core/browser/sharing/incoming_password_sharing_invitation_sync_bridge.h"
 #include "components/prefs/pref_service.h"
-#include "components/sync/model/model_type_controller_delegate.h"
+#include "components/sync/model/data_type_controller_delegate.h"
 #include "components/sync/service/sync_service.h"
 
 namespace password_manager {
@@ -177,8 +177,8 @@ void ProcessIncomingSharingInvitationTask::OnGetPasswordStoreResults(
   std::erase_if(results, [](const auto& form) {
     return form->match_type == PasswordForm::MatchType::kGrouped;
   });
-  // TODO(crbug.com/1448235): process PSL and affilated credentials if needed.
-  // TODO(crbug.com/1448235): process conflicting passwords differently if
+  // TODO(crbug.com/40269204): process PSL and affilated credentials if needed.
+  // TODO(crbug.com/40269204): process conflicting passwords differently if
   // necessary.
   auto credential_with_same_username_it = base::ranges::find_if(
       results, [this](const std::unique_ptr<PasswordForm>& result) {
@@ -224,7 +224,6 @@ PasswordReceiverServiceImpl::PasswordReceiverServiceImpl(
       profile_password_store_(profile_password_store),
       account_password_store_(account_password_store) {
   CHECK(pref_service_);
-  CHECK(profile_password_store_);
 
   // |sync_bridge_| can be empty in tests.
   if (sync_bridge_) {
@@ -284,7 +283,7 @@ void PasswordReceiverServiceImpl::RemoveTaskFromTasksList(
                   cached_task) { return cached_task.get() == task; });
 }
 
-base::WeakPtr<syncer::ModelTypeControllerDelegate>
+base::WeakPtr<syncer::DataTypeControllerDelegate>
 PasswordReceiverServiceImpl::GetControllerDelegate() {
   CHECK(sync_bridge_);
   return sync_bridge_->change_processor()->GetControllerDelegate();

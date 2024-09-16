@@ -163,7 +163,8 @@ class BookmarkBarView : public views::AccessiblePaneView,
       const std::u16string& title);
 
   // views::View:
-  gfx::Size CalculatePreferredSize() const override;
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override;
   gfx::Size GetMinimumSize() const override;
   void Layout(PassKey) override;
   void ViewHierarchyChanged(
@@ -181,9 +182,7 @@ class BookmarkBarView : public views::AccessiblePaneView,
   void OnThemeChanged() override;
   void VisibilityChanged(views::View* starting_from, bool is_visible) override;
   void ChildPreferredSizeChanged(views::View* child) override;
-
-  // AccessiblePaneView:
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
+  void AddedToWidget() override;
 
   // views::AnimationDelegateViews:
   void AnimationProgressed(const gfx::Animation* animation) override;
@@ -229,6 +228,14 @@ class BookmarkBarView : public views::AccessiblePaneView,
   void ShowContextMenuForViewImpl(views::View* source,
                                   const gfx::Point& point,
                                   ui::MenuSourceType source_type) override;
+
+  // Calculate the available width for the saved tab group bar.
+  // This is used in Tab Group v2 UI to allocate space for both saved tab groups
+  // and bookmark buttons.
+  static int GetAvailableWidthForSavedTabGroupsBar(
+      int saved_tab_group_bar_width,
+      int bookmark_buttons_width,
+      int available_width);
 
  private:
   struct DropInfo;
@@ -346,6 +353,9 @@ class BookmarkBarView : public views::AccessiblePaneView,
 
   void OnShowManagedBookmarksPrefChanged();
 
+  // Updates the look and feel of the bookmarks bar based on the pref value.
+  void OnCompactModeChanged();
+
   void LayoutAndPaint() {
     InvalidateLayout();
     SchedulePaint();
@@ -376,8 +386,14 @@ class BookmarkBarView : public views::AccessiblePaneView,
   int GetDropLocationModelIndexForTesting() const;
   const views::View* GetSavedTabGroupsSeparatorViewForTesting() const;
 
+  void MaybeShowSavedTabGroupsIntroPromo() const;
+
   // Needed to react to bookmark bar pref changes.
   PrefChangeRegistrar profile_pref_registrar_;
+
+  // When true denotes if the bookmarks bar view should use the compact mode
+  // layout. Otherwise, layout normally.
+  bool is_compact_mode_ = false;
 
   // Used for opening urls.
   raw_ptr<content::PageNavigator, AcrossTasksDanglingUntriaged>

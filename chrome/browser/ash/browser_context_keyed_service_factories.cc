@@ -17,22 +17,25 @@
 #include "chrome/browser/ash/app_list/app_sync_ui_state_factory.h"
 #include "chrome/browser/ash/app_list/arc/arc_vpn_provider_manager_factory.h"
 #include "chrome/browser/ash/app_list/search/local_image_search/local_image_search_service_factory.h"
-#include "chrome/browser/ash/app_mode/arc/arc_kiosk_app_service_factory.h"
 #include "chrome/browser/ash/app_mode/kiosk_app_update_service.h"
 #include "chrome/browser/ash/app_restore/app_restore_arc_task_handler_factory.h"
 #include "chrome/browser/ash/app_restore/full_restore_service_factory.h"
 #include "chrome/browser/ash/apps/apk_web_app_service_factory.h"
 #include "chrome/browser/ash/arc/session/arc_service_launcher.h"
 #include "chrome/browser/ash/bluetooth/debug_logs_manager_factory.h"
+#include "chrome/browser/ash/boca/boca_manager_factory.h"
+#include "chrome/browser/ash/boca/on_task/locked_session_window_tracker_factory.h"
 #include "chrome/browser/ash/borealis/borealis_service_factory.h"
 #include "chrome/browser/ash/bruschetta/bruschetta_service_factory.h"
+#include "chrome/browser/ash/calendar/calendar_keyed_service_factory.h"
 #include "chrome/browser/ash/cert_provisioning/cert_provisioning_scheduler_user_service.h"
 #include "chrome/browser/ash/child_accounts/child_status_reporting_service_factory.h"
 #include "chrome/browser/ash/child_accounts/child_user_service_factory.h"
 #include "chrome/browser/ash/child_accounts/event_based_status_reporting_service_factory.h"
 #include "chrome/browser/ash/child_accounts/family_user_metrics_service_factory.h"
+#include "chrome/browser/ash/child_accounts/on_device_controls/app_controls_service_factory.h"
 #include "chrome/browser/ash/child_accounts/screen_time_controller_factory.h"
-#include "chrome/browser/ash/concierge_helper_service.h"
+#include "chrome/browser/ash/concierge_helper/concierge_helper_service.h"
 #include "chrome/browser/ash/crosapi/keystore_service_factory_ash.h"
 #include "chrome/browser/ash/crosapi/persistent_forced_extension_keep_alive.h"
 #include "chrome/browser/ash/crostini/ansible/ansible_management_service_factory.h"
@@ -67,6 +70,7 @@
 #include "chrome/browser/ash/login/extensions/login_screen_extensions_content_script_manager_factory.h"
 #include "chrome/browser/ash/login/extensions/login_screen_extensions_lifetime_manager_factory.h"
 #include "chrome/browser/ash/login/lock/online_reauth/lock_screen_reauth_manager_factory.h"
+#include "chrome/browser/ash/login/oobe_apps_service/oobe_apps_discovery_service_factory.h"
 #include "chrome/browser/ash/login/osauth/profile_prefs_auth_policy_connector_factory.h"
 #include "chrome/browser/ash/login/quick_unlock/quick_unlock_factory.h"
 #include "chrome/browser/ash/login/saml/password_sync_token_verifier_factory.h"
@@ -105,6 +109,7 @@
 #include "chrome/browser/ash/scanning/scan_service_factory.h"
 #include "chrome/browser/ash/secure_channel/nearby_connector_factory.h"
 #include "chrome/browser/ash/smb_client/smb_service_factory.h"
+#include "chrome/browser/ash/sparky/sparky_manager_service_factory.h"
 #include "chrome/browser/ash/sync/sync_appsync_service_factory.h"
 #include "chrome/browser/ash/sync/sync_error_notifier_factory.h"
 #include "chrome/browser/ash/sync/sync_mojo_service_factory_ash.h"
@@ -118,7 +123,6 @@
 #include "chrome/browser/speech/cros_speech_recognition_service_factory.h"
 #include "chrome/browser/speech/extension_api/tts_engine_extension_observer_chromeos.h"
 #include "chrome/browser/ui/ash/birch/birch_keyed_service_factory.h"
-#include "chrome/browser/ui/ash/calendar/calendar_keyed_service_factory.h"
 #include "chrome/browser/ui/ash/desks/admin_template_service_factory.h"
 #include "chrome/browser/ui/ash/glanceables/glanceables_keyed_service_factory.h"
 #include "chrome/browser/ui/ash/global_media_controls/cast_media_notification_producer_keyed_service_factory.h"
@@ -138,6 +142,7 @@ void EnsureBrowserContextKeyedServiceFactoriesBuilt() {
   AccountManagerPolicyControllerFactory::GetInstance();
   AdminTemplateServiceFactory::GetInstance();
   ash::AlwaysOnVpnPreConnectUrlAllowlistServiceFactory::GetInstance();
+  ash::SparkyManagerServiceFactory::GetInstance();
   android_sms::AndroidSmsServiceFactory::GetInstance();
   ApkWebAppServiceFactory::GetInstance();
   app_list::ArcVpnProviderManagerFactory::GetInstance();
@@ -147,11 +152,11 @@ void EnsureBrowserContextKeyedServiceFactoriesBuilt() {
   apps::ArcAppsFactory::GetInstance();
   AppSyncUIStateFactory::GetInstance();
   arc::ArcServiceLauncher::EnsureFactoriesBuilt();
-  ArcKioskAppServiceFactory::GetInstance();
   AuthErrorObserverFactory::GetInstance();
   ax::AccessibilityServiceRouterFactory::EnsureFactoryBuilt();
   BirchKeyedServiceFactory::GetInstance();
   bluetooth::DebugLogsManagerFactory::GetInstance();
+  BocaManagerFactory::GetInstance();
   borealis::BorealisServiceFactory::GetInstance();
   BrowserProcessPlatformPart::EnsureFactoryBuilt();
   bruschetta::BruschettaServiceFactory::GetInstance();
@@ -199,12 +204,13 @@ void EnsureBrowserContextKeyedServiceFactoriesBuilt() {
   guest_os::GuestOsSharePathFactory::GetInstance();
   help_app::HelpAppManagerFactory::GetInstance();
   HoldingSpaceKeyedServiceFactory::GetInstance();
-  kcer::KcerFactoryAsh::EnsureFactoryBuilt();
+  kcer::KcerFactoryAsh::GetInstance();
   kcer::Pkcs12MigratorFactory::GetInstance();
   KerberosCredentialsManagerFactory::GetInstance();
   KioskAppUpdateServiceFactory::GetInstance();
   LockScreenAppsFactory::GetInstance();
   LockScreenReauthManagerFactory::GetInstance();
+  LockedSessionWindowTrackerFactory::GetInstance();
   login::SecurityTokenSessionControllerFactory::GetInstance();
   login::SigninPartitionManager::Factory::GetInstance();
   LoginScreenExtensionsContentScriptManagerFactory::GetInstance();
@@ -217,7 +223,9 @@ void EnsureBrowserContextKeyedServiceFactoriesBuilt() {
   nearby::NearbyProcessManagerFactory::GetInstance();
   nearby::presence::NearbyPresenceServiceFactory::GetInstance();
   OAuth2LoginManagerFactory::GetInstance();
+  on_device_controls::AppControlsServiceFactory::GetInstance();
   OfflineSigninLimiterFactory::GetInstance();
+  OobeAppsDiscoveryServiceFactory::GetInstance();
   OwnerSettingsServiceAshFactory::GetInstance();
   PasswordSyncTokenVerifierFactory::GetInstance();
   personalization_app::PersonalizationAppManagerFactory::GetInstance();

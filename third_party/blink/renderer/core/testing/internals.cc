@@ -24,6 +24,11 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/core/testing/internals.h"
 
 #include <atomic>
@@ -184,7 +189,6 @@
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/v8_throw_exception.h"
-#include "third_party/blink/renderer/platform/geometry/layout_rect.h"
 #include "third_party/blink/renderer/platform/graphics/compositing/paint_artifact_compositor.h"
 #include "third_party/blink/renderer/platform/graphics/paint/raster_invalidation_tracking.h"
 #include "third_party/blink/renderer/platform/heap/cross_thread_handle.h"
@@ -196,7 +200,6 @@
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_load_priority.h"
 #include "third_party/blink/renderer/platform/network/network_state_notifier.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
 #include "third_party/blink/renderer/platform/testing/url_test_helpers.h"
 #include "third_party/blink/renderer/platform/text/layout_locale.h"
@@ -719,10 +722,6 @@ Internals::Internals(ExecutionContext* context)
   document_->Fetcher()->EnableIsPreloadedForTest();
 }
 
-Internals::~Internals() {
-  ResetMockOverlayScrollbars();
-}
-
 LocalFrame* Internals::GetFrame() const {
   if (!document_)
     return nullptr;
@@ -1205,7 +1204,7 @@ String Internals::ShadowRootMode(const Node* root,
     case ShadowRootMode::kClosed:
       return String("ClosedShadowRoot");
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return String("Unknown");
   }
 }
@@ -2544,7 +2543,8 @@ unsigned Internals::numberOfScrollableAreas(Document* document) {
   unsigned count = 0;
   LocalFrame* frame = document->GetFrame();
   if (frame->View()->UserScrollableAreas()) {
-    for (const auto& scrollable_area : *frame->View()->UserScrollableAreas()) {
+    for (const auto& scrollable_area :
+         frame->View()->UserScrollableAreas()->Values()) {
       if (scrollable_area->ScrollsOverflow())
         count++;
     }
@@ -2556,7 +2556,7 @@ unsigned Internals::numberOfScrollableAreas(Document* document) {
     if (child_local_frame && child_local_frame->View() &&
         child_local_frame->View()->UserScrollableAreas()) {
       for (const auto& scrollable_area :
-           *child_local_frame->View()->UserScrollableAreas()) {
+           child_local_frame->View()->UserScrollableAreas()->Values()) {
         if (scrollable_area->ScrollsOverflow())
           count++;
       }
@@ -2586,10 +2586,6 @@ String Internals::layerTreeAsText(Document* document,
   return document->GetFrame()->GetLayerTreeAsTextForTesting(flags);
 }
 
-String Internals::scrollingStateTreeAsText(Document*) const {
-  return String();
-}
-
 String Internals::mainThreadScrollingReasons(
     Document* document,
     ExceptionState& exception_state) const {
@@ -2603,47 +2599,6 @@ String Internals::mainThreadScrollingReasons(
   document->GetFrame()->View()->UpdateAllLifecyclePhasesForTest();
 
   return document->GetFrame()->View()->MainThreadScrollingReasonsAsText();
-}
-
-DOMRectList* Internals::nonFastScrollableRects(
-    Document* document,
-    ExceptionState& exception_state) const {
-  DCHECK(document);
-  const LocalFrame* frame = document->GetFrame();
-  if (!frame) {
-    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidAccessError,
-                                      "The document provided is invalid.");
-    return nullptr;
-  }
-
-  frame->View()->UpdateAllLifecyclePhasesForTest();
-
-  auto* pac = document->View()->GetPaintArtifactCompositor();
-  auto* layer_tree_host = pac->RootLayer()->layer_tree_host();
-  // Ensure |cc::TransformTree| has updated the correct ToScreen transforms.
-  layer_tree_host->UpdateLayers();
-
-  Vector<gfx::Rect> layer_non_fast_scrollable_rects;
-  for (auto* layer : *layer_tree_host) {
-    const cc::Region& non_fast_region = layer->non_fast_scrollable_region();
-    for (gfx::Rect non_fast_rect : non_fast_region) {
-      gfx::RectF layer_rect(non_fast_rect);
-
-      // Map |layer_rect| into screen space.
-      layer_rect.Offset(layer->offset_to_transform_parent());
-      auto& transform_tree =
-          layer->layer_tree_host()->property_trees()->transform_tree_mutable();
-      transform_tree.UpdateTransforms(layer->transform_tree_index());
-      const gfx::Transform& to_screen =
-          transform_tree.ToScreen(layer->transform_tree_index());
-      gfx::Rect screen_rect =
-          gfx::ToEnclosingRect(to_screen.MapRect(layer_rect));
-
-      layer_non_fast_scrollable_rects.push_back(screen_rect);
-    }
-  }
-
-  return MakeGarbageCollected<DOMRectList>(layer_non_fast_scrollable_rects);
 }
 
 void Internals::evictAllResources() const {
@@ -2755,15 +2710,16 @@ void Internals::setPageScaleFactorLimits(float min_scale_factor,
   page->SetDefaultPageScaleLimits(min_scale_factor, max_scale_factor);
 }
 
-float Internals::pageZoomFactor(ExceptionState& exception_state) {
+float Internals::layoutZoomFactor(ExceptionState& exception_state) {
   if (!document_->GetPage()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidAccessError,
         "The document's page cannot be retrieved.");
     return 0;
   }
-  // Page zoom without Device Scale Factor.
-  return document_->GetPage()->GetChromeClient().UserZoomFactor();
+  // Layout zoom without Device Scale Factor.
+  return document_->GetPage()->GetChromeClient().UserZoomFactor(
+      document_->GetFrame());
 }
 
 void Internals::setIsCursorVisible(Document* document,
@@ -3147,7 +3103,7 @@ static const char* CursorTypeToString(
       return "NorthWestSouthEastNoResize";
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return "UNKNOWN";
 }
 
@@ -3255,40 +3211,36 @@ StaticSelection* Internals::getSelectionInFlatTree(
 Node* Internals::visibleSelectionAnchorNode() {
   if (!GetFrame())
     return nullptr;
-  Position position = GetFrame()
-                          ->Selection()
-                          .ComputeVisibleSelectionInDOMTreeDeprecated()
-                          .Anchor();
+  GetFrame()->GetDocument()->UpdateStyleAndLayout(DocumentUpdateReason::kTest);
+  Position position =
+      GetFrame()->Selection().ComputeVisibleSelectionInDOMTree().Anchor();
   return position.IsNull() ? nullptr : position.ComputeContainerNode();
 }
 
 unsigned Internals::visibleSelectionAnchorOffset() {
   if (!GetFrame())
     return 0;
-  Position position = GetFrame()
-                          ->Selection()
-                          .ComputeVisibleSelectionInDOMTreeDeprecated()
-                          .Anchor();
+  GetFrame()->GetDocument()->UpdateStyleAndLayout(DocumentUpdateReason::kTest);
+  Position position =
+      GetFrame()->Selection().ComputeVisibleSelectionInDOMTree().Anchor();
   return position.IsNull() ? 0 : position.ComputeOffsetInContainerNode();
 }
 
 Node* Internals::visibleSelectionFocusNode() {
   if (!GetFrame())
     return nullptr;
-  Position position = GetFrame()
-                          ->Selection()
-                          .ComputeVisibleSelectionInDOMTreeDeprecated()
-                          .Focus();
+  GetFrame()->GetDocument()->UpdateStyleAndLayout(DocumentUpdateReason::kTest);
+  Position position =
+      GetFrame()->Selection().ComputeVisibleSelectionInDOMTree().Focus();
   return position.IsNull() ? nullptr : position.ComputeContainerNode();
 }
 
 unsigned Internals::visibleSelectionFocusOffset() {
   if (!GetFrame())
     return 0;
-  Position position = GetFrame()
-                          ->Selection()
-                          .ComputeVisibleSelectionInDOMTreeDeprecated()
-                          .Focus();
+  GetFrame()->GetDocument()->UpdateStyleAndLayout(DocumentUpdateReason::kTest);
+  Position position =
+      GetFrame()->Selection().ComputeVisibleSelectionInDOMTree().Focus();
   return position.IsNull() ? 0 : position.ComputeOffsetInContainerNode();
 }
 
@@ -3402,7 +3354,7 @@ void Internals::setForcedColorsAndDarkPreferredColorScheme(Document* document) {
   color_scheme_helper_.emplace(*document);
   color_scheme_helper_->SetPreferredColorScheme(
       mojom::blink::PreferredColorScheme::kDark);
-  color_scheme_helper_->SetInForcedColors(/*in_forced_colors=*/true);
+  color_scheme_helper_->SetInForcedColors(*document, /*in_forced_colors=*/true);
   color_scheme_helper_->SetEmulatedForcedColors(*document,
                                                 /*is_dark_theme=*/false);
 }
@@ -3411,6 +3363,13 @@ void Internals::setDarkPreferredColorScheme(Document* document) {
   DCHECK(document);
   Settings* settings = document->GetSettings();
   settings->SetPreferredColorScheme(mojom::blink::PreferredColorScheme::kDark);
+}
+
+void Internals::setDarkPreferredRootScrollbarColorScheme(Document* document) {
+  DCHECK(document);
+  color_scheme_helper_.emplace(*document);
+  color_scheme_helper_->SetPreferredRootScrollbarColorScheme(
+      mojom::blink::PreferredColorScheme::kDark);
 }
 
 void Internals::setShouldRevealPassword(Element* element,
@@ -3475,7 +3434,7 @@ ScriptPromise<IDLAny> Internals::promiseCheck(ScriptState* script_state,
   }
   exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                     "Thrown from the native implementation.");
-  return ScriptPromise<IDLAny>();
+  return EmptyPromise();
 }
 
 ScriptPromise<IDLAny> Internals::promiseCheckWithoutExceptionState(
@@ -3604,15 +3563,23 @@ String Internals::selectedTextForClipboard() {
 void Internals::setVisualViewportOffset(int css_x, int css_y) {
   if (!GetFrame())
     return;
-  float zoom = GetFrame()->PageZoomFactor();
+  float zoom = GetFrame()->LayoutZoomFactor();
   gfx::PointF offset(css_x * zoom, css_y * zoom);
   GetFrame()->GetPage()->GetVisualViewport().SetLocation(offset);
 }
 
 bool Internals::isUseCounted(Document* document, uint32_t feature) {
-  if (feature >= static_cast<int32_t>(WebFeature::kNumberOfFeatures))
+  if (feature > static_cast<int32_t>(WebFeature::kMaxValue)) {
     return false;
+  }
   return document->IsUseCounted(static_cast<WebFeature>(feature));
+}
+
+bool Internals::isWebDXFeatureUseCounted(Document* document, uint32_t feature) {
+  if (feature > static_cast<int32_t>(WebDXFeature::kMaxValue)) {
+    return false;
+  }
+  return document->IsWebDXFeatureCounted(static_cast<WebDXFeature>(feature));
 }
 
 bool Internals::isCSSPropertyUseCounted(Document* document,
@@ -3628,8 +3595,9 @@ bool Internals::isAnimatedCSSPropertyUseCounted(Document* document,
 }
 
 void Internals::clearUseCounter(Document* document, uint32_t feature) {
-  if (feature >= static_cast<int32_t>(WebFeature::kNumberOfFeatures))
+  if (feature > static_cast<int32_t>(WebFeature::kMaxValue)) {
     return;
+  }
   document->ClearUseCounterForTesting(static_cast<WebFeature>(feature));
 }
 
@@ -3676,7 +3644,7 @@ ScriptPromise<IDLUndefined> Internals::observeUseCounter(
   auto* resolver =
       MakeGarbageCollected<ScriptPromiseResolver<IDLUndefined>>(script_state);
   auto promise = resolver->Promise();
-  if (feature >= static_cast<int32_t>(WebFeature::kNumberOfFeatures)) {
+  if (feature > static_cast<int32_t>(WebFeature::kMaxValue)) {
     resolver->Reject();
     return promise;
   }
@@ -3832,7 +3800,7 @@ String Internals::getParsedImportMap(Document* document,
   if (!import_map)
     return "{}";
 
-  return import_map->ToString();
+  return import_map->ToStringForTesting();
 }
 
 void Internals::setDeviceEmulationScale(float scale,
@@ -4009,6 +3977,18 @@ void Internals::setBackForwardCacheRestorationBufferSize(unsigned int maxSize) {
   perf.setBackForwardCacheRestorationBufferSizeForTest(maxSize);
 }
 
+void Internals::setEventTimingBufferSize(unsigned int maxSize) {
+  WindowPerformance& perf =
+      *DOMWindowPerformance::performance(*document_->domWindow());
+  perf.setEventTimingBufferSizeForTest(maxSize);
+}
+
+void Internals::stopResponsivenessMetricsUkmSampling() {
+  WindowPerformance& perf =
+      *DOMWindowPerformance::performance(*document_->domWindow());
+  perf.GetResponsivenessMetrics().StopUkmSamplingForTesting();
+}
+
 Vector<String> Internals::getCreatorScripts(HTMLImageElement* img) {
   DCHECK(img);
   return Vector<String>(img->creator_scripts());
@@ -4036,18 +4016,18 @@ ScriptPromise<IDLUndefined> Internals::exemptUrlFromNetworkRevocation(
     ScriptState* script_state,
     const String& url) {
   if (!blink::features::IsFencedFramesEnabled()) {
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
   if (!base::FeatureList::IsEnabled(
           blink::features::kFencedFramesLocalUnpartitionedDataAccess)) {
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
   if (!base::FeatureList::IsEnabled(
           blink::features::kExemptUrlFromNetworkRevocationForTesting)) {
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
   if (!GetFrame()) {
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
   LocalFrame* frame = GetFrame();
   DCHECK(frame->GetDocument());

@@ -4,18 +4,17 @@
 
 #include "sql/vfs_wrapper.h"
 
-#include <algorithm>
-#include <string>
+#include <cstring>
+#include <functional>
+#include <memory>
 #include <string_view>
-#include <vector>
 
+#include "base/check.h"
 #include "base/check_op.h"
 #include "base/debug/leak_annotations.h"
-#include "base/files/file_path.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/notreached.h"
 #include "build/build_config.h"
+#include "third_party/sqlite/sqlite3.h"
 
 #if BUILDFLAG(IS_APPLE)
 #include "base/apple/backup_util.h"
@@ -368,7 +367,7 @@ void EnsureVfsWrapper() {
   // use this code with any other VFS, you're not in a good place.
   std::string_view vfs_name(wrapped_vfs->zName);
   CHECK(vfs_name == "unix" || vfs_name == "win32" || vfs_name == "unix-none" ||
-        vfs_name == "storage-service")
+        vfs_name == "storage_service")
       << "Wrapping unexpected VFS " << vfs_name;
 
   std::unique_ptr<sqlite3_vfs, std::function<void(sqlite3_vfs*)>> wrapper_vfs(

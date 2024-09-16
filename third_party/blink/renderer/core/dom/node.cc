@@ -58,6 +58,7 @@
 #include "third_party/blink/renderer/core/dom/events/event_dispatcher.h"
 #include "third_party/blink/renderer/core/dom/events/event_listener.h"
 #include "third_party/blink/renderer/core/dom/events/event_path.h"
+#include "third_party/blink/renderer/core/dom/events/mutation_event_suppression_scope.h"
 #include "third_party/blink/renderer/core/dom/flat_tree_node_data.h"
 #include "third_party/blink/renderer/core/dom/flat_tree_traversal.h"
 #include "third_party/blink/renderer/core/dom/focus_params.h"
@@ -105,13 +106,20 @@
 #include "third_party/blink/renderer/core/fullscreen/fullscreen.h"
 #include "third_party/blink/renderer/core/html/custom/custom_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_form_control_element.h"
+#include "third_party/blink/renderer/core/html/forms/html_form_element.h"
+#include "third_party/blink/renderer/core/html/html_body_element.h"
 #include "third_party/blink/renderer/core/html/html_dialog_element.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
+#include "third_party/blink/renderer/core/html/html_embed_element.h"
 #include "third_party/blink/renderer/core/html/html_frame_owner_element.h"
+#include "third_party/blink/renderer/core/html/html_image_element.h"
+#include "third_party/blink/renderer/core/html/html_object_element.h"
+#include "third_party/blink/renderer/core/html/html_script_element.h"
 #include "third_party/blink/renderer/core/html/html_slot_element.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/input/event_handler.h"
 #include "third_party/blink/renderer/core/input/input_device_capabilities.h"
+#include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/inspector/inspector_trace_events.h"
 #include "third_party/blink/renderer/core/layout/layout_box.h"
 #include "third_party/blink/renderer/core/layout/layout_embedded_content.h"
@@ -124,6 +132,7 @@
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
+#include "third_party/blink/renderer/core/style/computed_style_constants.h"
 #include "third_party/blink/renderer/core/svg/graphics/svg_image.h"
 #include "third_party/blink/renderer/core/svg/svg_element.h"
 #include "third_party/blink/renderer/core/trustedtypes/trusted_script.h"
@@ -154,13 +163,29 @@ namespace blink {
 
 using ReattachHookScope = LayoutShiftTracker::ReattachHookScope;
 
+// We want to keep Node small.  This struct + assert calls our attention to a
+// change that might be undesirable, so that we make sure to consider whether
+// it's worthwhile.
 struct SameSizeAsNode : EventTarget {
+  uint32_t node_flags_;
+  subtle::UncompressedMember<int> uncompressed[2];
+  Member<void*> members[4];
+};
+
+ASSERT_SIZE(Node, SameSizeAsNode);
+
+// Right now we have the member variables of Node ordered so as to
+// reduce padding.  If the object layout of its base class changes, this
+// ordering might stop being optimal.  This struct + assert are intended
+// to catch if that happens, so that we can reorder the members again.
+struct NotSmallerThanNode : EventTarget {
   subtle::UncompressedMember<int> uncompressed[2];
   Member<void*> members[4];
   uint32_t node_flags_;
 };
 
-ASSERT_SIZE(Node, SameSizeAsNode);
+static_assert(sizeof(Node) <= sizeof(NotSmallerThanNode),
+              "members of node should be reordered for better packing");
 
 #if DUMP_NODE_STATISTICS
 using WeakNodeSet = HeapHashSet<WeakMember<Node>>;
@@ -300,13 +325,13 @@ void Node::DumpStatistics() {
 #endif
 
 Node::Node(TreeScope* tree_scope, ConstructionType type)
-    : parent_or_shadow_host_node_(nullptr),
+    : node_flags_(type),
+      parent_or_shadow_host_node_(nullptr),
       tree_scope_(tree_scope),
       previous_(nullptr),
       next_(nullptr),
       layout_object_(nullptr),
-      data_(nullptr),
-      node_flags_(type) {
+      data_(nullptr) {
   DCHECK(tree_scope_ || type == kCreateDocument || type == kCreateShadowRoot);
 #if DUMP_NODE_STATISTICS
   LiveNodeSet().insert(this);
@@ -366,13 +391,26 @@ Node* Node::PseudoAwarePreviousSibling() const {
 
   // Note the [[fallthrough]] attributes, the order of the cases matters and
   // corresponds to the ordering of pseudo elements in a traversal:
-  // ::marker, ::before, non-pseudo Elements, ::after, ::view-transition.
-  // The fallthroughs ensure this ordering by checking for each kind of node
-  // in-turn.
+  // ::scroll-marker-group(before), ::marker, ::scroll-marker, ::before,
+  // non-pseudo Elements,
+  // ::after, ::scroll-marker-group(after), ::view-transition. The fallthroughs
+  // ensure this ordering by checking for each kind of node in-turn.
   switch (GetPseudoId()) {
     case kPseudoIdViewTransition:
-      if (Node* previous = parent->GetPseudoElement(kPseudoIdAfter)) {
+      if (Node* previous =
+              parent->GetPseudoElement(kPseudoIdScrollMarkerGroupAfter)) {
         return previous;
+      }
+      [[fallthrough]];
+    case kPseudoIdScrollNextButton:
+      if (Node* next =
+              parent->GetPseudoElement(kPseudoIdScrollMarkerGroupAfter)) {
+        return next;
+      }
+      [[fallthrough]];
+    case kPseudoIdScrollMarkerGroupAfter:
+      if (Node* next = parent->GetPseudoElement(kPseudoIdAfter)) {
+        return next;
       }
       [[fallthrough]];
     case kPseudoIdAfter:
@@ -384,11 +422,27 @@ Node* Node::PseudoAwarePreviousSibling() const {
         return previous;
       [[fallthrough]];
     case kPseudoIdBefore:
+      if (Node* previous = parent->GetPseudoElement(kPseudoIdScrollMarker)) {
+        return previous;
+      }
+      [[fallthrough]];
+    case kPseudoIdScrollMarker:
       if (Node* previous = parent->GetPseudoElement(kPseudoIdMarker)) {
         return previous;
       }
       [[fallthrough]];
     case kPseudoIdMarker:
+      if (Node* next =
+              parent->GetPseudoElement(kPseudoIdScrollMarkerGroupBefore)) {
+        return next;
+      }
+      [[fallthrough]];
+    case kPseudoIdScrollMarkerGroupBefore:
+      if (Node* next = parent->GetPseudoElement(kPseudoIdScrollPrevButton)) {
+        return next;
+      }
+      [[fallthrough]];
+    case kPseudoIdScrollPrevButton:
       return nullptr;
     // The pseudos of the view transition subtree have a known structure and
     // cannot create other pseudos so these are handled separately of the above
@@ -417,7 +471,7 @@ Node* Node::PseudoAwarePreviousSibling() const {
     case kPseudoIdViewTransitionOld:
       return nullptr;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return nullptr;
   }
 }
@@ -430,7 +484,23 @@ Node* Node::PseudoAwareNextSibling() const {
 
   // See comments in PseudoAwarePreviousSibling.
   switch (GetPseudoId()) {
+    case kPseudoIdScrollPrevButton:
+      if (Node* next =
+              parent->GetPseudoElement(kPseudoIdScrollMarkerGroupBefore)) {
+        return next;
+      }
+      [[fallthrough]];
+    case kPseudoIdScrollMarkerGroupBefore:
+      if (Node* next = parent->GetPseudoElement(kPseudoIdMarker)) {
+        return next;
+      }
+      [[fallthrough]];
     case kPseudoIdMarker:
+      if (Node* next = parent->GetPseudoElement(kPseudoIdScrollMarker)) {
+        return next;
+      }
+      [[fallthrough]];
+    case kPseudoIdScrollMarker:
       if (Node* next = parent->GetPseudoElement(kPseudoIdBefore))
         return next;
       [[fallthrough]];
@@ -443,6 +513,17 @@ Node* Node::PseudoAwareNextSibling() const {
         return next;
       [[fallthrough]];
     case kPseudoIdAfter:
+      if (Node* next =
+              parent->GetPseudoElement(kPseudoIdScrollMarkerGroupAfter)) {
+        return next;
+      }
+      [[fallthrough]];
+    case kPseudoIdScrollMarkerGroupAfter:
+      if (Node* next = parent->GetPseudoElement(kPseudoIdScrollNextButton)) {
+        return next;
+      }
+      [[fallthrough]];
+    case kPseudoIdScrollNextButton:
       if (Node* next = parent->GetPseudoElement(kPseudoIdViewTransition)) {
         return next;
       }
@@ -472,7 +553,7 @@ Node* Node::PseudoAwareNextSibling() const {
     case kPseudoIdViewTransitionNew:
       return nullptr;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return nullptr;
   }
 }
@@ -506,13 +587,33 @@ Node* Node::PseudoAwareFirstChild() const {
       return current_element->GetPseudoElement(kPseudoIdViewTransitionNew,
                                                name);
     }
+    if (Node* first =
+            current_element->GetPseudoElement(kPseudoIdScrollPrevButton)) {
+      return first;
+    }
+    if (Node* first = current_element->GetPseudoElement(
+            kPseudoIdScrollMarkerGroupBefore)) {
+      return first;
+    }
     if (Node* first = current_element->GetPseudoElement(kPseudoIdMarker))
       return first;
+    if (Node* first =
+            current_element->GetPseudoElement(kPseudoIdScrollMarker)) {
+      return first;
+    }
     if (Node* first = current_element->GetPseudoElement(kPseudoIdBefore))
       return first;
     if (Node* first = current_element->firstChild())
       return first;
     if (Node* first = current_element->GetPseudoElement(kPseudoIdAfter)) {
+      return first;
+    }
+    if (Node* first = current_element->GetPseudoElement(
+            kPseudoIdScrollMarkerGroupAfter)) {
+      return first;
+    }
+    if (Node* first =
+            current_element->GetPseudoElement(kPseudoIdScrollNextButton)) {
       return first;
     }
     return current_element->GetPseudoElement(kPseudoIdViewTransition);
@@ -554,21 +655,40 @@ Node* Node::PseudoAwareLastChild() const {
             current_element->GetPseudoElement(kPseudoIdViewTransition)) {
       return last;
     }
+    if (Node* last =
+            current_element->GetPseudoElement(kPseudoIdScrollNextButton)) {
+      return last;
+    }
+    if (Node* last = current_element->GetPseudoElement(
+            kPseudoIdScrollMarkerGroupAfter)) {
+      return last;
+    }
     if (Node* last = current_element->GetPseudoElement(kPseudoIdAfter))
       return last;
     if (Node* last = current_element->lastChild())
       return last;
     if (Node* last = current_element->GetPseudoElement(kPseudoIdBefore))
       return last;
-    return current_element->GetPseudoElement(kPseudoIdMarker);
+    if (Node* last = current_element->GetPseudoElement(kPseudoIdScrollMarker)) {
+      return last;
+    }
+    if (Node* last = current_element->GetPseudoElement(kPseudoIdMarker)) {
+      return last;
+    }
+    if (Node* last = current_element->GetPseudoElement(
+            kPseudoIdScrollMarkerGroupBefore)) {
+      return last;
+    }
+    return current_element->GetPseudoElement(kPseudoIdScrollPrevButton);
   }
 
   return lastChild();
 }
 
 Node& Node::TreeRoot() const {
-  if (IsInTreeScope())
-    return ContainingTreeScope().RootNode();
+  if (IsInTreeScope()) {
+    return GetTreeScope().RootNode();
+  }
   const Node* node = this;
   while (node->parentNode())
     node = node->parentNode();
@@ -603,16 +723,16 @@ Node* Node::moveBefore(Node* new_child,
                        ExceptionState& exception_state) {
   DCHECK(new_child);
 
-  // TODO(https://crbug.com/40150299): We likely want more conditions to
-  // disqualify a state-preserving move, like moves that would be across a
-  // shadow boundary. Add more conditions and tests.
-  //
   // Only perform a state-preserving atomic move if the child is ALREADY
-  // connected. If the child is NOT connected, then script can run during the
-  // node's initial post-insertion steps (i.e.,
+  // connected to this document, and doesn't cross shadow boundaries.
+  // If the child is NOT connected to this document, then script can run during
+  // the node's initial post-insertion steps (i.e.,
   // `Node::DidNotifySubtreeInsertionsToDocument()`), and no script is permitted
   // to run during atomic moves.
-  const bool perform_state_preserving_atomic_move = new_child->isConnected();
+  const bool perform_state_preserving_atomic_move =
+      isConnected() && new_child->isConnected() && GetDocument().IsActive() &&
+      (GetTreeScope() == new_child->GetTreeScope()) &&
+      new_child->IsElementNode();
 
   if (perform_state_preserving_atomic_move) {
     // When `moveBefore()` is called, AND we're actually performing a
@@ -621,7 +741,16 @@ Node* Node::moveBefore(Node* new_child,
     // occur. Assert that no atomic move is already in progress.
     DCHECK(!GetDocument().StatePreservingAtomicMoveInProgress());
     GetDocument().SetStatePreservingAtomicMoveInProgress(true);
+  } else if (GetTreeScope() != new_child->GetTreeScope() &&
+             GetDocument() == new_child->GetDocument()) {
+    // Currently we disable atomic move for same-document cross-shadow use
+    // cases, but this UseCounter can help use discern if this is an interesting
+    // use case in the future.
+    UseCounter::Count(&GetDocument(), WebFeature::kCrossShadowAtomicMove);
   }
+
+  // Mutation events are disabled during the `moveBefore()` API.
+  MutationEventSuppressionScope scope(GetDocument());
 
   Node* return_node = insertBefore(new_child, ref_child, exception_state);
 
@@ -731,7 +860,7 @@ static Node* NodeOrStringToNode(
         return Text::Create(document,
                             node_or_string->GetAsTrustedScript()->toString());
     }
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return nullptr;
   }
 
@@ -954,12 +1083,6 @@ Node* Node::cloneNode(bool deep, ExceptionState& exception_state) const {
   NodeCloningData data;
   if (deep) {
     data.Put(CloneOption::kIncludeDescendants);
-    if (!RuntimeEnabledFeatures::ShadowRootClonableEnabled()) {
-      auto* fragment = DynamicTo<DocumentFragment>(this);
-      if (fragment && fragment->IsTemplateContent()) {
-        data.Put(CloneOption::kIncludeAllShadowRoots);
-      }
-    }
   }
   return Clone(GetDocument(), data, /*append_to*/ nullptr);
 }
@@ -1506,7 +1629,8 @@ void Node::ReattachLayoutTree(AttachContext& context) {
 }
 
 void Node::AttachLayoutTree(AttachContext& context) {
-  DCHECK(GetDocument().InStyleRecalc() || IsDocumentNode());
+  DCHECK(GetDocument().InStyleRecalc() || IsDocumentNode() ||
+         GetDocument().GetStyleEngine().InScrollMarkersAttachment());
   DCHECK(!GetDocument().Lifecycle().InDetach());
   DCHECK(!context.performing_reattach ||
          GetDocument().GetStyleEngine().InRebuildLayoutTree());
@@ -1527,15 +1651,22 @@ void Node::AttachLayoutTree(AttachContext& context) {
 }
 
 void Node::DetachLayoutTree(bool performing_reattach) {
+  // Re-attachment is not generally allowed from PositionTryStyleRecalc, but
+  // computing style for display:none pseudo elements will insert a pseudo
+  // element, compute the style, and remove it again, which includes a
+  // DetachLayoutTree().
   DCHECK(GetDocument().Lifecycle().StateAllowsDetach() ||
-         GetDocument().GetStyleEngine().InContainerQueryStyleRecalc());
+         GetDocument().GetStyleEngine().InContainerQueryStyleRecalc() ||
+         GetDocument().GetStyleEngine().InScrollMarkersAttachment() ||
+         (GetDocument().GetStyleEngine().InPositionTryStyleRecalc() &&
+          IsPseudoElement() && !GetLayoutObject()));
   DCHECK(!performing_reattach ||
-         GetDocument().GetStyleEngine().InRebuildLayoutTree());
+         GetDocument().GetStyleEngine().InRebuildLayoutTree() ||
+         GetDocument().GetStyleEngine().InScrollMarkersAttachment());
   DocumentLifecycle::DetachScope will_detach(GetDocument().Lifecycle());
 
-  // Review: under what conditions should we call this?
   if (auto* cache = GetDocument().ExistingAXObjectCache()) {
-    cache->RemoveAXObjectsInLayoutSubtree(this);
+    cache->RemoveSubtree(this);
   }
 
   if (performing_reattach) {
@@ -1988,7 +2119,7 @@ void Node::setTextContentForBinding(const V8UnionStringOrTrustedScript* value,
       return setTextContent(value->GetAsTrustedScript()->toString());
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 void Node::setTextContent(const String& text) {
@@ -2029,7 +2160,7 @@ void Node::setTextContent(const String& text) {
       // Do nothing.
       return;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 uint16_t Node::compareDocumentPosition(const Node* other_node,
@@ -2081,7 +2212,7 @@ uint16_t Node::compareDocumentPosition(const Node* other_node,
                kDocumentPositionPreceding;
     }
 
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return kDocumentPositionDisconnected;
   }
 
@@ -2197,6 +2328,7 @@ Node::InsertionNotificationRequest Node::InsertedInto(
   if (auto* cache = GetDocument().ExistingAXObjectCache()) {
     cache->NodeIsConnected(this);
   }
+
   return kInsertionDone;
 }
 
@@ -2212,8 +2344,9 @@ void Node::RemovedFrom(ContainerNode& insertion_point) {
     insertion_point.GetDocument().DecrementNodeCount();
 #endif
   }
-  if (IsInShadowTree() && !ContainingTreeScope().RootNode().IsShadowRoot())
+  if (IsInShadowTree() && !GetTreeScope().RootNode().IsShadowRoot()) {
     ClearFlag(kIsInShadowTreeFlag);
+  }
   if (auto* cache = GetDocument().ExistingAXObjectCache()) {
     cache->Remove(this);
   }
@@ -2400,7 +2533,16 @@ static void AppendMarkedTree(const String& base_indent,
     String indent_string = indent.ReleaseString();
 
     if (const auto* element = DynamicTo<Element>(node)) {
+      if (Element* pseudo =
+              element->GetPseudoElement(kPseudoIdScrollMarkerGroupBefore)) {
+        AppendMarkedTree(indent_string, pseudo, marked_node1, marked_label1,
+                         marked_node2, marked_label2, builder);
+      }
       if (Element* pseudo = element->GetPseudoElement(kPseudoIdMarker)) {
+        AppendMarkedTree(indent_string, pseudo, marked_node1, marked_label1,
+                         marked_node2, marked_label2, builder);
+      }
+      if (Element* pseudo = element->GetPseudoElement(kPseudoIdScrollMarker)) {
         AppendMarkedTree(indent_string, pseudo, marked_node1, marked_label1,
                          marked_node2, marked_label2, builder);
       }
@@ -2410,6 +2552,11 @@ static void AppendMarkedTree(const String& base_indent,
       if (Element* pseudo = element->GetPseudoElement(kPseudoIdAfter))
         AppendMarkedTree(indent_string, pseudo, marked_node1, marked_label1,
                          marked_node2, marked_label2, builder);
+      if (Element* pseudo =
+              element->GetPseudoElement(kPseudoIdScrollMarkerGroupAfter)) {
+        AppendMarkedTree(indent_string, pseudo, marked_node1, marked_label1,
+                         marked_node2, marked_label2, builder);
+      }
       if (Element* pseudo = element->GetPseudoElement(kPseudoIdFirstLetter))
         AppendMarkedTree(indent_string, pseudo, marked_node1, marked_label1,
                          marked_node2, marked_label2, builder);
@@ -2593,6 +2740,7 @@ void Node::AddedEventListener(const AtomicString& event_type,
                               RegisteredEventListener& registered_listener) {
   EventTarget::AddedEventListener(event_type, registered_listener);
   GetDocument().AddListenerTypeIfNeeded(event_type, *this);
+  GetDocument().DidAddEventListeners(/*count*/ 1);
   if (auto* frame = GetDocument().GetFrame()) {
     frame->GetEventHandlerRegistry().DidAddEventHandler(
         *this, event_type, registered_listener.Options());
@@ -2610,6 +2758,7 @@ void Node::RemovedEventListener(
     const AtomicString& event_type,
     const RegisteredEventListener& registered_listener) {
   EventTarget::RemovedEventListener(event_type, registered_listener);
+  GetDocument().DidRemoveEventListeners(/*count*/ 1);
   // FIXME: Notify Document that the listener has vanished. We need to keep
   // track of a number of listeners for each type, not just a bool - see
   // https://bugs.webkit.org/show_bug.cgi?id=33861
@@ -2623,15 +2772,23 @@ void Node::RemovedEventListener(
 
 void Node::RemoveAllEventListeners() {
   Vector<AtomicString> event_types = EventTypes();
-  if (HasEventListeners() && GetDocument().GetPage())
-    GetDocument()
-        .GetFrame()
-        ->GetEventHandlerRegistry()
-        .DidRemoveAllEventHandlers(*this);
+  Document& document = GetDocument();
+  if (HasEventListeners()) {
+    GetEventTargetData()->event_listener_map.ForAllEventListenerTypes(
+        [&document](const AtomicString& event_type, uint32_t count) {
+          document.DidRemoveEventListeners(count);
+        });
+
+    if (document.GetPage()) {
+      document.GetFrame()->GetEventHandlerRegistry().DidRemoveAllEventHandlers(
+          *this);
+    }
+  }
   EventTarget::RemoveAllEventListeners();
-  if (AXObjectCache* cache = GetDocument().ExistingAXObjectCache()) {
-    for (const AtomicString& event_type : event_types)
+  if (AXObjectCache* cache = document.ExistingAXObjectCache()) {
+    for (const AtomicString& event_type : event_types) {
       cache->HandleEventListenerRemoved(*this, event_type);
+    }
   }
 }
 
@@ -2651,9 +2808,13 @@ void Node::MoveEventListenersToNewDocument(Document& old_document,
     const EventListenerMap& listener_map =
         event_target_data->event_listener_map;
     if (!listener_map.IsEmpty()) {
-      for (const auto& type : listener_map.EventTypes()) {
-        new_document.AddListenerTypeIfNeeded(type, *this);
-      }
+      listener_map.ForAllEventListenerTypes(
+          [this, &old_document, &new_document](const AtomicString& event_type,
+                                               uint32_t count) {
+            old_document.DidRemoveEventListeners(count);
+            new_document.AddListenerTypeIfNeeded(event_type, *this);
+            new_document.DidAddEventListeners(count);
+          });
     }
   }
 
@@ -3112,7 +3273,7 @@ void Node::SetCustomElementState(CustomElementState new_state) {
 
   switch (new_state) {
     case CustomElementState::kUncustomized:
-      NOTREACHED();  // Everything starts in this state
+      NOTREACHED_IN_MIGRATION();  // Everything starts in this state
       return;
 
     case CustomElementState::kUndefined:
@@ -3228,11 +3389,17 @@ bool Node::HasMediaControlAncestor() const {
   return false;
 }
 
-void Node::FlatTreeParentChanged() {
+void Node::ParentSlotChanged() {
   if (!isConnected()) {
     return;
   }
   DCHECK(IsSlotable());
+  DCHECK(IsShadowHost(parentNode()) || IsA<HTMLSlotElement>(parentNode()));
+  FlatTreeParentChanged();
+}
+
+void Node::FlatTreeParentChanged() {
+  DCHECK(isConnected());
   const ComputedStyle* style =
       IsElementNode() ? To<Element>(this)->GetComputedStyle() : nullptr;
   bool detach = false;
@@ -3289,11 +3456,6 @@ void Node::RemovedFromFlatTree() {
     DetachLayoutTree();
   }
   GetDocument().GetStyleEngine().FlatTreePositionChanged(*this);
-
-  // Ensure removal from accessibility cache even if it doesn't have layout.
-  if (auto* cache = GetDocument().ExistingAXObjectCache()) {
-    cache->RemoveSubtreeWhenSafe(this);
-  }
 }
 
 void Node::RegisterScrollTimeline(ScrollTimeline* timeline) {
@@ -3330,6 +3492,15 @@ void Node::SetCachedDirectionality(TextDirection direction) {
       ClearFlag(kCachedDirectionalityIsRtl);
       break;
   }
+}
+
+void Node::AddConsoleMessage(mojom::blink::ConsoleMessageSource source,
+                             mojom::blink::ConsoleMessageLevel level,
+                             const String& message) {
+  auto* console_message =
+      MakeGarbageCollected<ConsoleMessage>(source, level, message);
+  console_message->SetNodes(GetDocument().GetFrame(), {GetDomNodeId()});
+  GetDocument().AddConsoleMessage(console_message);
 }
 
 void Node::Trace(Visitor* visitor) const {

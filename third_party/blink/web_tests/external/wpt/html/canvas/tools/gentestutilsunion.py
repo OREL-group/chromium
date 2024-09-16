@@ -34,6 +34,7 @@ from typing import Optional, Set, Tuple
 
 import re
 import collections
+import copy
 import dataclasses
 import enum
 import importlib
@@ -261,13 +262,18 @@ class _TemplateType(str, enum.Enum):
 
 @dataclasses.dataclass
 class _OutputPaths:
-    element: str
-    offscreen: str
+    element: pathlib.Path
+    offscreen: pathlib.Path
 
     def sub_path(self, sub_dir: str):
         """Create a new _OutputPaths that is a subpath of this _OutputPath."""
-        return _OutputPaths(element=os.path.join(self.element, sub_dir),
-                            offscreen=os.path.join(self.offscreen, sub_dir))
+        return _OutputPaths(element=self.element / sub_dir,
+                            offscreen=self.offscreen / sub_dir)
+
+    def mkdir(self) -> None:
+        """Creates element and offscreen directories, if they don't exist."""
+        self.element.mkdir(parents=True, exist_ok=True)
+        self.offscreen.mkdir(parents=True, exist_ok=True)
 
 
 def _validate_test(test: _TestParams):
@@ -332,8 +338,8 @@ class _Variant():
         self._params = params
 
     @property
-    def params(self) -> _TestParams:
-        """Read-only getter for this variant's param dict."""
+    def params(self) -> _MutableTestParams:
+        """Returns this variant's param dict."""
         return self._params
 
     @staticmethod
@@ -344,43 +350,57 @@ class _Variant():
         params = {
             'desc': '',
             'size': [100, 50],
-            'variant_names': [],
+            # Test name, which ultimately is used as filename. File variant
+            # dimension names are appended to this to produce unique filenames.
+            'name': '',
+            # List of this variant grid dimension names. This uniquely
+            # identifies a single variant in a variant grid file.
             'grid_variant_names': [],
+            # List of this variant dimension names, including both file and grid
+            # dimensions.
+            'variant_names': [],
+            # Same as `variant_names`, but concatenated into a single string.
+            # This is a useful shorthand for tests having a single variant
+            # dimension.
+            'variant_name': '',
             'images': [],
             'svgimages': [],
+            'fonts': [],
         }
         params.update(test)
         return _Variant(params)
 
     def merge_params(self, params: _TestParams) -> '_Variant':
         """Returns a new `_Variant` that merges `self.params` and `params`."""
-        new_params = {}
-        new_params.update(self.params)
+        new_params = copy.deepcopy(self._params)
         new_params.update(params)
         return _Variant(new_params)
 
+    def _add_variant_name(self, name: str) -> None:
+        self._params['variant_name'] += (
+            ('.' if self.params['variant_name'] else '') + name)
+        self._params['variant_names'] += [name]
+
     def with_grid_variant_name(self, name: str) -> '_Variant':
         """Addend a variant name to include in the grid element label."""
-        self._params.update({
-            'variant_names': (self.params['variant_names'] + [name]),
-            'grid_variant_names': (self.params['grid_variant_names'] + [name]),
-        })
+        self._add_variant_name(name)
+        self._params['grid_variant_names'] += [name]
         return self
 
     def with_file_variant_name(self, name: str) -> '_Variant':
         """Addend a variant name to include in the generated file name."""
-        self._params.update({
-            'variant_names': (self.params['variant_names'] + [name]),
-        })
+        self._add_variant_name(name)
         if self.params.get('append_variants_to_name', True):
-            self._params['name'] = self.params['name'] + '.' + name
+            self._params['name'] += '.' + name
         return self
 
     def _render_param(self, jinja_env: jinja2.Environment,
-                      param_name: str) -> str:
-        """Get the specified variant parameter and render it with Jinja."""
-        value = self.params[param_name]
-        return jinja_env.from_string(value).render(self.params)
+                      param_name: str) -> None:
+        """Render the specified parameter in-place in the `params` dict."""
+        value = self.params.get(param_name)
+        if value and isinstance(value, str):
+            self._params[param_name] = (
+                jinja_env.from_string(value).render(self.params))
 
 
     def _get_file_name(self) -> str:
@@ -419,8 +439,8 @@ class _Variant():
                         variant_id: int) -> None:
         """Finalize this variant by adding computed param fields."""
         self._params['id'] = variant_id
-        self._params['name'] = self._render_param(jinja_env, 'name')
-        self._params['desc'] = self._render_param(jinja_env, 'desc')
+        for param_name in ('name', 'desc', 'attributes'):
+            self._render_param(jinja_env, param_name)
         self._params['file_name'] = self._get_file_name()
         self._params['canvas_types'] = self._get_canvas_types()
         self._params['template_type'] = self._get_template_type()
@@ -497,10 +517,10 @@ class _VariantGrid:
         self._variants = variants
         self._grid_width = grid_width
 
+        self._params = {}  # type: _MutableTestParams
         self._file_name = None
         self._canvas_types = None
         self._template_type = None
-        self._params = None
 
     @property
     def variants(self) -> List[_Variant]:
@@ -530,18 +550,18 @@ class _VariantGrid:
 
     @property
     def params(self) -> _TestParams:
-        """Returns this grid's param dict, used to render Jinja templates."""
-        if self._params is None:
-            if len(self.variants) == 1:
-                self._params = dict(self.variants[0].params)
-            else:
-                self._params = self._get_grid_params()
+        """This grid's read-only param dict, used to render Jinja templates."""
         return self._params
 
     def finalize(self, jinja_env: jinja2.Environment):
         """Finalize this grid's variants, adding computed params fields."""
         for variant_id, variant in enumerate(self.variants):
             variant.finalize_params(jinja_env, variant_id)
+
+        if len(self.variants) == 1:
+            self._params = self.variants[0].params
+        else:
+            self._params = self._get_grid_params()
 
     def add_dimension(self, variants: Mapping[str,
                                               _TestParams]) -> '_VariantGrid':
@@ -610,7 +630,7 @@ class _VariantGrid:
         return frozenset(sum([list(v.params[name]) for v in self.variants],
                              []))
 
-    def _get_grid_params(self) -> _TestParams:
+    def _get_grid_params(self) -> _MutableTestParams:
         """Returns the params dict needed to render this grid with Jinja."""
         filter_variant = self._variants_for_canvas_type
         grid_params = {
@@ -625,6 +645,7 @@ class _VariantGrid:
             'notes': self._unique_param('notes'),
             'images': self._param_set('images'),
             'svgimages': self._param_set('svgimages'),
+            'fonts': self._param_set('fonts'),
         }
         if self.template_type in (_TemplateType.REFERENCE,
                                   _TemplateType.HTML_REFERENCE):
@@ -694,9 +715,16 @@ class _VariantGrid:
             _render(jinja_env, f'testharness_worker{grid}.js', self.params,
                     f'{output_files.offscreen}.worker.js')
 
+    def _generate_cairo_images(self, output_dirs: _OutputPaths) -> None:
+        """Generates the pycairo images found in the YAML test definition."""
+        for variant in self.variants:
+            variant.generate_expected_image(output_dirs)
+
     def generate_test(self, jinja_env: jinja2.Environment,
                       output_dirs: _OutputPaths) -> None:
         """Generate the test files to the specified output dirs."""
+        self._generate_cairo_images(output_dirs)
+
         output_files = output_dirs.sub_path(self.file_name)
 
         if self.template_type in (_TemplateType.REFERENCE,
@@ -752,7 +780,8 @@ def _get_variant_dimensions(params: _TestParams) -> List[_VariantDimension]:
     ]
 
 
-def _get_variant_grids(test: Mapping[str, Any]) -> List[_VariantGrid]:
+def _get_variant_grids(test: Mapping[str, Any],
+                       jinja_env: jinja2.Environment) -> List[_VariantGrid]:
     base_variant = _Variant.create_with_defaults(test)
     grid_width = base_variant.params.get('grid_width', 1)
     grids = [_VariantGrid([base_variant], grid_width=grid_width)]
@@ -765,6 +794,10 @@ def _get_variant_grids(test: Mapping[str, Any]) -> List[_VariantGrid]:
             ]
         else:
             grids = [grid.add_dimension(variants) for grid in grids]
+
+    for grid in grids:
+        grid.finalize(jinja_env)
+
     return grids
 
 
@@ -779,7 +812,8 @@ def _check_uniqueness(tested: DefaultDict[str, Set[_CanvasType]], name: str,
 
 def generate_test_files(name_to_dir_file: str) -> None:
     """Generate Canvas tests from YAML file definition."""
-    output_dirs = _OutputPaths(element='../element', offscreen='../offscreen')
+    output_dirs = _OutputPaths(element=pathlib.Path('..') / 'element',
+                               offscreen=pathlib.Path('..') / 'offscreen')
 
     jinja_env = jinja2.Environment(
         loader=jinja2.PackageLoader('gentestutilsunion'),
@@ -816,29 +850,16 @@ def generate_test_files(name_to_dir_file: str) -> None:
         else:
             tests.append(t)
 
-    # Ensure the test output directories exist.
-    test_dirs = [output_dirs.element, output_dirs.offscreen]
     for sub_dir in set(name_to_sub_dir.values()):
-        test_dirs.append(f'{output_dirs.element}/{sub_dir}')
-        test_dirs.append(f'{output_dirs.offscreen}/{sub_dir}')
-    for d in test_dirs:
-        try:
-            os.mkdir(d)
-        except FileExistsError:
-            pass  # Ignore if it already exists,
+        output_dirs.sub_path(sub_dir).mkdir()
 
     used_filenames = collections.defaultdict(set)
     used_variants = collections.defaultdict(set)
     for test in tests:
         print(test['name'])
-        for grid in _get_variant_grids(test):
-
-            grid.finalize(jinja_env)
+        for grid in _get_variant_grids(test, jinja_env):
             if test['name'] != grid.file_name:
                 print(f'  {grid.file_name}')
-
-            sub_dir = _get_test_sub_dir(grid.file_name, name_to_sub_dir)
-            output_sub_dirs = output_dirs.sub_path(sub_dir)
 
             _check_uniqueness(used_filenames, grid.file_name,
                               grid.canvas_types)
@@ -849,8 +870,7 @@ def generate_test_files(name_to_dir_file: str) -> None:
                              variant.params['grid_variant_names']),
                     grid.canvas_types)
 
-            for variant in grid.variants:
-                variant.generate_expected_image(output_sub_dirs)
-            grid.generate_test(jinja_env, output_sub_dirs)
+            sub_dir = _get_test_sub_dir(grid.file_name, name_to_sub_dir)
+            grid.generate_test(jinja_env, output_dirs.sub_path(sub_dir))
 
     print()

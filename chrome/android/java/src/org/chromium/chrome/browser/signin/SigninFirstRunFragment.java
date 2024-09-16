@@ -34,6 +34,7 @@ import org.chromium.chrome.browser.firstrun.FirstRunUtils;
 import org.chromium.chrome.browser.firstrun.MobileFreProgress;
 import org.chromium.chrome.browser.firstrun.SkipTosDialogPolicyListener;
 import org.chromium.chrome.browser.privacy.settings.PrivacyPreferencesManagerImpl;
+import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.profiles.ProfileProvider;
 import org.chromium.chrome.browser.ui.device_lock.DeviceLockCoordinator;
 import org.chromium.chrome.browser.ui.signin.SigninUtils;
@@ -41,6 +42,7 @@ import org.chromium.chrome.browser.ui.signin.fullscreen_signin.FullscreenSigninC
 import org.chromium.chrome.browser.ui.signin.fullscreen_signin.FullscreenSigninView;
 import org.chromium.components.browser_ui.device_lock.DeviceLockActivityLauncher;
 import org.chromium.components.signin.AccountManagerFacadeProvider;
+import org.chromium.components.signin.metrics.SigninAccessPoint;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 import org.chromium.ui.modaldialog.ModalDialogManagerHolder;
 
@@ -72,7 +74,8 @@ public class SigninFirstRunFragment extends Fragment
                         requireContext(),
                         mModalDialogManager,
                         this,
-                        PrivacyPreferencesManagerImpl.getInstance());
+                        PrivacyPreferencesManagerImpl.getInstance(),
+                        SigninAccessPoint.START_PAGE);
 
         if (getPageDelegate().isLaunchedFromCct()) {
             mSkipTosDialogPolicyListener =
@@ -111,7 +114,7 @@ public class SigninFirstRunFragment extends Fragment
                 inflateFragmentView(
                         (LayoutInflater)
                                 getActivity().getSystemService(Context.LAYOUT_INFLATER_SERVICE),
-                        newConfig);
+                        getActivity());
         mFragmentView.addView(mMainView);
     }
 
@@ -119,7 +122,7 @@ public class SigninFirstRunFragment extends Fragment
     public View onCreateView(
             LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
         mFragmentView = new FrameLayout(getActivity());
-        mMainView = inflateFragmentView(inflater, getResources().getConfiguration());
+        mMainView = inflateFragmentView(inflater, getActivity());
         mFragmentView.addView(mMainView);
 
         return mFragmentView;
@@ -230,6 +233,18 @@ public class SigninFirstRunFragment extends Fragment
         return getPageDelegate().getNativeInitializationPromise();
     }
 
+    /** Implements {@link FullscreenSigninCoordinator.Delegate}. */
+    @Override
+    public boolean shouldDisplayManagementNoticeOnManagedDevices() {
+        return true;
+    }
+
+    /** Implements {@link FullscreenSigninCoordinator.Delegate}. */
+    @Override
+    public boolean shouldDisplayFooterText() {
+        return true;
+    }
+
     @MainThread
     private void exitFirstRun() {
         // Make sure this function is called at most once.
@@ -252,13 +267,8 @@ public class SigninFirstRunFragment extends Fragment
         }
     }
 
-    private View inflateFragmentView(LayoutInflater inflater, Configuration configuration) {
-        // Since the landscape view has two panes the minimum screenWidth to show it is set to
-        // 600dp for phones.
-        boolean useLandscapeLayout =
-                getPageDelegate().canUseLandscapeLayout()
-                        && configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-                        && configuration.screenWidthDp >= 600;
+    private View inflateFragmentView(LayoutInflater inflater, Activity activity) {
+        boolean useLandscapeLayout = SigninUtils.shouldShowDualPanesHorizontalLayout(activity);
 
         final FullscreenSigninView view =
                 (FullscreenSigninView)
@@ -275,9 +285,14 @@ public class SigninFirstRunFragment extends Fragment
     /** Implements {@link FullscreenSigninCoordinator.Delegate}. */
     @Override
     public void displayDeviceLockPage(Account selectedAccount) {
+        Profile profile = ProfileProvider.getOrCreateProfile(getProfileSupplier().get(), false);
         mDeviceLockCoordinator =
                 new DeviceLockCoordinator(
-                        this, getPageDelegate().getWindowAndroid(), getActivity(), selectedAccount);
+                        this,
+                        getPageDelegate().getWindowAndroid(),
+                        profile,
+                        getActivity(),
+                        selectedAccount);
     }
 
     /** Implements {@link DeviceLockCoordinator.Delegate}. */

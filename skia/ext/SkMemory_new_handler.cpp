@@ -65,14 +65,14 @@ void* sk_realloc_throw(void* addr, size_t size) {
         return nullptr;
     }
 
-    // TODO(crbug.com/1279371): there is no base::UncheckedRealloc, so we need
+    // TODO(crbug.com/340895215): there is no base::UncheckedRealloc, so we need
     // to rely on the built-in allocator. Mixing allocators also trips up UBSAN.
 #if defined(UNDEFINED_SANITIZER)
     // It's slower to use alloc + free instead of realloc, but avoids mixing up
     // our allocators, which should placate UBSAN.
     size_t old_size = sk_malloc_size(addr, 0);
     void* result = sk_malloc_throw(size);
-    memcpy(result, addr, std::min(size, old_size));
+    sk_careful_memcpy(result, addr, std::min(size, old_size));
     sk_free(addr);
     return result;
 #else

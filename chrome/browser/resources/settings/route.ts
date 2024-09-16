@@ -54,7 +54,9 @@ function addPrivacyChildRoutes(r: Partial<SettingsRoutes>) {
         r.PRIVACY_SANDBOX.createChild('/adPrivacy/measurement');
   }
 
+  // <if expr="use_nss_certs">
   r.CERTIFICATES = r.SECURITY.createChild('/certificates');
+  // </if>
 
   if (loadTimeData.getBoolean('enableSecurityKeysSubpage')) {
     r.SECURITY_KEYS = r.SECURITY.createChild('/securityKeys');
@@ -86,13 +88,24 @@ function addPrivacyChildRoutes(r: Partial<SettingsRoutes>) {
     r.SITE_SETTINGS_CAPTURED_SURFACE_CONTROL =
         r.SITE_SETTINGS.createChild('capturedSurfaceControl');
   }
+  if (loadTimeData.getBoolean('enableSmartCardReadersContentSetting')) {
+    r.SITE_SETTINGS_SMART_CARD_READERS =
+        r.SITE_SETTINGS.createChild('smartCardReaders');
+  }
   if (loadTimeData.getBoolean('privateStateTokensEnabled')) {
     r.SITE_SETTINGS_AUTO_VERIFY = r.SITE_SETTINGS.createChild('autoVerify');
+  }
+  if (loadTimeData.getBoolean('enableComposeProactiveNudge')) {
+    r.SITE_SETTINGS_OFFER_WRITING_HELP =
+        r.SITE_SETTINGS.createChild('offerWritingHelp');
   }
   r.SITE_SETTINGS_BACKGROUND_SYNC =
       r.SITE_SETTINGS.createChild('backgroundSync');
   r.SITE_SETTINGS_CAMERA = r.SITE_SETTINGS.createChild('camera');
   r.SITE_SETTINGS_CLIPBOARD = r.SITE_SETTINGS.createChild('clipboard');
+  if (loadTimeData.getBoolean('enableHandTrackingContentSetting')) {
+    r.SITE_SETTINGS_HAND_TRACKING = r.SITE_SETTINGS.createChild('handTracking');
+  }
   r.SITE_SETTINGS_IDLE_DETECTION = r.SITE_SETTINGS.createChild('idleDetection');
   r.SITE_SETTINGS_IMAGES = r.SITE_SETTINGS.createChild('images');
   r.SITE_SETTINGS_MIXEDSCRIPT = r.SITE_SETTINGS.createChild('insecureContent');
@@ -150,12 +163,16 @@ function addPrivacyChildRoutes(r: Partial<SettingsRoutes>) {
     r.SITE_SETTINGS_AUTOMATIC_FULLSCREEN =
         r.SITE_SETTINGS.createChild('automaticFullScreen');
   }
+  if (loadTimeData.getBoolean('enableWebAppInstallation')) {
+    r.SITE_SETTINGS_WEB_APP_INSTALLATION =
+        r.SITE_SETTINGS.createChild('webApplications');
+  }
 }
 
 /**
  * Adds Route objects for each path.
  */
-function createBrowserSettingsRoutes(): SettingsRoutes {
+function createRoutes(): SettingsRoutes {
   const r: Partial<SettingsRoutes> = {};
 
   // Root pages.
@@ -180,6 +197,9 @@ function createBrowserSettingsRoutes(): SettingsRoutes {
     if (loadTimeData.getBoolean('enablePageContentSetting')) {
       r.PAGE_CONTENT = r.SYNC.createChild('/syncSetup/pageContent');
     }
+    if (loadTimeData.getBoolean('showHistorySearchControl')) {
+      r.HISTORY_SEARCH = r.SYNC.createChild('/historySearch');
+    }
   }
 
   const visibility = pageVisibility || {};
@@ -188,6 +208,10 @@ function createBrowserSettingsRoutes(): SettingsRoutes {
       loadTimeData.getBoolean('showAdvancedFeaturesMainControl')) {
     r.AI = r.BASIC.createSection(
         '/ai', 'ai', loadTimeData.getString('aiPageTitle'));
+    if (loadTimeData.getBoolean('enableAiSettingsPageRefresh') &&
+        loadTimeData.getBoolean('showTabOrganizationControl')) {
+      r.AI_TAB_ORGANIZATION = r.AI.createChild('/ai/tabOrganizer');
+    }
   }
 
   // <if expr="not chromeos_ash">
@@ -209,6 +233,11 @@ function createBrowserSettingsRoutes(): SettingsRoutes {
         '/autofill', 'autofill', loadTimeData.getString('autofillPageTitle'));
     r.PAYMENTS = r.AUTOFILL.createChild('/payments');
     r.ADDRESSES = r.AUTOFILL.createChild('/addresses');
+
+    if (loadTimeData.getBoolean('autofillPredictionImprovementsEnabled')) {
+      r.AUTOFILL_PREDICTION_IMPROVEMENTS =
+          r.AUTOFILL.createChild('/autofillPredictionImprovements');
+    }
 
     // <if expr="is_win or is_macosx">
     r.PASSKEYS = r.AUTOFILL.createChild('/passkeys');
@@ -261,12 +290,6 @@ function createBrowserSettingsRoutes(): SettingsRoutes {
     r.CAPTIONS = r.ACCESSIBILITY.createChild('/captions');
     // </if>
 
-    // <if expr="is_win">
-    if (!loadTimeData.getBoolean('isWindows10OrNewer')) {
-      r.CAPTIONS = r.ACCESSIBILITY.createChild('/captions');
-    }
-    // </if>
-
     // <if expr="not chromeos_ash">
     r.SYSTEM = r.ADVANCED.createSection(
         '/system', 'system', loadTimeData.getString('systemPageTitle'));
@@ -294,15 +317,6 @@ function createBrowserSettingsRoutes(): SettingsRoutes {
           '/performance', 'performance',
           loadTimeData.getString('performancePageTitle'));
     }
-
-    // <if expr="_google_chrome">
-    if (visibility.getMostChrome !== false &&
-        loadTimeData.getBoolean('showGetTheMostOutOfChromeSection')) {
-      r.GET_MOST_CHROME = r.ADVANCED.createSection(
-          '/getMostChrome', 'getMostChrome',
-          loadTimeData.getString('getTheMostOutOfChrome'));
-    }
-    // </if>
   }
   return r as unknown as SettingsRoutes;
 }
@@ -311,18 +325,25 @@ function createBrowserSettingsRoutes(): SettingsRoutes {
  * @return A router with the browser settings routes.
  */
 export function buildRouter(): Router {
-  return new Router(createBrowserSettingsRoutes());
+  return new Router(createRoutes());
+}
+
+export function resetRouterForTesting(router: Router = buildRouter()) {
+  Router.resetInstanceForTesting(router);
+
+  // Update the exported `routes` variable, otherwise it will be holding stale
+  // routes from the previous singleton instance.
+  routes = Router.getInstance().getRoutes();
 }
 
 Router.setInstance(buildRouter());
-
 window.addEventListener('popstate', function() {
   // On pop state, do not push the state onto the window.history again.
   const routerInstance = Router.getInstance();
   routerInstance.setCurrentRoute(
       routerInstance.getRouteForPath(window.location.pathname) ||
-          (routerInstance.getRoutes() as SettingsRoutes).BASIC,
+          routerInstance.getRoutes().BASIC,
       new URLSearchParams(window.location.search), true);
 });
 
-export const routes = Router.getInstance().getRoutes() as SettingsRoutes;
+export let routes: SettingsRoutes = Router.getInstance().getRoutes();

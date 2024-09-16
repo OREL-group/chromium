@@ -17,7 +17,6 @@ import org.jni_zero.CalledByNative;
 import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
-import org.chromium.base.Callback;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.ObserverList;
 import org.chromium.base.ThreadUtils;
@@ -95,19 +94,6 @@ class BookmarkBridge {
     /** Returns whether the bridge has been destroyed. */
     private boolean isDestroyed() {
         return mIsDestroyed;
-    }
-
-    /**
-     * Gets the url for an image representing the given url.
-     *
-     * @param url The bookmark url to get the image url for.
-     * @param isAccountBookmark Whether the bookmark is associated with an account.
-     * @param callback The callback which will receive the image url.
-     */
-    public void getImageUrlForBookmark(
-            GURL url, boolean isAccountBookmark, Callback<GURL> callback) {
-        BookmarkBridgeJni.get()
-                .getImageUrlForBookmark(mNativeBookmarkBridge, url, isAccountBookmark, callback);
     }
 
     /** Returns the most recently added BookmarkId */
@@ -204,21 +190,6 @@ class BookmarkBridge {
         if (mNativeBookmarkBridge == 0) return null;
         assert mIsNativeBookmarkModelLoaded;
         if (id == null) return null;
-
-        if (BookmarkId.SHOPPING_FOLDER.equals(id)) {
-            return new BookmarkItem(
-                    id,
-                    /* title= */ null,
-                    /* url= */ null,
-                    /* isFolder= */ true,
-                    /* parentId= */ getRootFolderId(),
-                    /* isEditable= */ false,
-                    /* isManaged= */ false,
-                    /* dateAdded= */ 0L,
-                    /* read= */ false,
-                    /* dateLastOpened= */ 0L,
-                    /* isAccountBookmark= */ false);
-        }
 
         return BookmarkBridgeJni.get()
                 .getBookmarkById(mNativeBookmarkBridge, id.getId(), id.getType());
@@ -466,9 +437,7 @@ class BookmarkBridge {
         ThreadUtils.assertOnUiThread();
         if (mNativeBookmarkBridge == 0) return new ArrayList<>();
         assert mIsNativeBookmarkModelLoaded;
-        if (BookmarkId.SHOPPING_FOLDER.equals(id)) {
-            return searchBookmarks("", null, PowerBookmarkType.SHOPPING, -1);
-        }
+
         List<BookmarkId> result = new ArrayList<>();
         BookmarkBridgeJni.get()
                 .getChildIds(mNativeBookmarkBridge, id.getId(), id.getType(), result);
@@ -1078,12 +1047,6 @@ class BookmarkBridge {
 
         boolean areAccountBookmarkFoldersActive(long nativeBookmarkBridge);
 
-        void getImageUrlForBookmark(
-                long nativeBookmarkBridge,
-                @JniType("GURL") GURL url,
-                boolean isAccountBookmark,
-                Callback<GURL> callback);
-
         BookmarkId getMostRecentlyAddedUserBookmarkIdForUrl(
                 long nativeBookmarkBridge, @JniType("GURL") GURL url);
 
@@ -1102,7 +1065,7 @@ class BookmarkBridge {
 
         BookmarkId getDefaultBookmarkFolder(long nativeBookmarkBridge);
 
-        // TODO(crbug.com/1515332): Remove this method.
+        // TODO(crbug.com/41487884): Remove this method.
         void getAllFoldersWithDepths(
                 long nativeBookmarkBridge, List<BookmarkId> folderList, List<Integer> depthList);
 
@@ -1152,7 +1115,7 @@ class BookmarkBridge {
 
         boolean doesBookmarkExist(long nativeBookmarkBridge, long id, int type);
 
-        // TODO(crbug.com/1515332): Remove this method.
+        // TODO(crbug.com/41487884): Remove this method.
         void getBookmarksForFolder(
                 long nativeBookmarkBridge, BookmarkId folderId, List<BookmarkItem> bookmarksList);
 

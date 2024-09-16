@@ -45,6 +45,7 @@
 #include "chrome/browser/web_applications/web_app_helpers.h"
 #include "chrome/browser/web_applications/web_app_install_info.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
+#include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -223,7 +224,8 @@ class PreinstalledWebAppManagerBrowserTestBase
         .LoadAndSynchronizeForTesting(base::BindLambdaForTesting(
             [&](std::map<GURL, ExternallyManagedAppManager::InstallResult>
                     install_results,
-                std::map<GURL, bool> uninstall_results) {
+                std::map<GURL, webapps::UninstallResultCode>
+                    uninstall_results) {
               EXPECT_EQ(install_results.size(), 0u);
               EXPECT_EQ(uninstall_results.size(), 0u);
               run_loop.Quit();
@@ -268,7 +270,8 @@ class PreinstalledWebAppManagerBrowserTestBase
         .LoadAndSynchronizeForTesting(base::BindLambdaForTesting(
             [&](std::map<GURL, ExternallyManagedAppManager::InstallResult>
                     install_results,
-                std::map<GURL, bool> uninstall_results) {
+                std::map<GURL, webapps::UninstallResultCode>
+                    uninstall_results) {
               auto it = install_results.find(install_url);
               if (it != install_results.end())
                 code = it->second.code;
@@ -298,7 +301,13 @@ class PreinstalledWebAppManagerBrowserTest
     : public PreinstalledWebAppManagerBrowserTestBase {
  public:
   PreinstalledWebAppManagerBrowserTest() {
+#if BUILDFLAG(IS_CHROMEOS)
+    feature_list_.InitWithFeatures(
+        {features::kRecordWebAppDebugInfo},
+        {chromeos::features::kPreinstalledWebAppsCoreOnly});
+#else
     feature_list_.InitWithFeatures({features::kRecordWebAppDebugInfo}, {});
+#endif
   }
 
  private:
@@ -785,7 +794,7 @@ IN_PROC_BROWSER_TEST_F(PreinstalledWebAppManagerBrowserTest,
     base::test::TestFuture<webapps::UninstallResultCode> future;
     provider().scheduler().RemoveUserUninstallableManagements(
         app_id, webapps::WebappUninstallSource::kAppMenu, future.GetCallback());
-    ASSERT_EQ(future.Get(), webapps::UninstallResultCode::kSuccess);
+    ASSERT_EQ(future.Get(), webapps::UninstallResultCode::kAppRemoved);
     ASSERT_FALSE(registrar().IsInstalled(app_id));
   }
 
@@ -1339,8 +1348,8 @@ IN_PROC_BROWSER_TEST_F(PreinstalledWebAppManagerBrowserTest,
       GenerateAppId(/*manifest_id=*/std::nullopt, preinstalled_app_start_url);
 
   // Install user app.
-  auto install_info = std::make_unique<WebAppInstallInfo>();
-  install_info->start_url = user_app_start_url;
+  auto install_info =
+      WebAppInstallInfo::CreateWithStartUrlForTesting(user_app_start_url);
   install_info->title = u"Test user app";
   webapps::AppId user_app_id =
       web_app::test::InstallWebApp(profile(), std::move(install_info));

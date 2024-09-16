@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/filters/hls_manifest_demuxer_engine.h"
 
 #include <optional>
@@ -21,6 +26,7 @@
 #include "media/base/supported_types.h"
 #include "media/base/video_codec_string_parsers.h"
 #include "media/base/video_codecs.h"
+#include "media/filters/hls_network_access_impl.h"
 #include "media/filters/manifest_demuxer.h"
 #include "media/formats/hls/audio_rendition.h"
 #include "media/formats/hls/media_playlist.h"
@@ -156,12 +162,14 @@ HlsManifestDemuxerEngine::~HlsManifestDemuxerEngine() = default;
 HlsManifestDemuxerEngine::HlsManifestDemuxerEngine(
     base::SequenceBound<HlsDataSourceProvider> dsp,
     scoped_refptr<base::SequencedTaskRunner> media_task_runner,
+    bool was_already_tainted,
     GURL root_playlist_uri,
     MediaLog* media_log)
-    : data_source_provider_(std::move(dsp)),
-      media_task_runner_(std::move(media_task_runner)),
+    : media_task_runner_(std::move(media_task_runner)),
       root_playlist_uri_(std::move(root_playlist_uri)),
-      media_log_(media_log->Clone()) {
+      media_log_(media_log->Clone()),
+      network_access_(std::make_unique<HlsNetworkAccessImpl>(std::move(dsp))),
+      origin_tainted_(was_already_tainted) {
   // This is always created on the main sequence, but used on the media sequence
   DETACH_FROM_SEQUENCE(media_sequence_checker_);
 }
@@ -202,6 +210,18 @@ HlsManifestDemuxerEngine::PlaylistParseInfo::~PlaylistParseInfo() {}
 HlsManifestDemuxerEngine::PlaylistParseInfo::PlaylistParseInfo(
     const PlaylistParseInfo& copy) = default;
 
+int64_t HlsManifestDemuxerEngine::GetMemoryUsage() {
+  return total_stream_memory_;
+}
+
+bool HlsManifestDemuxerEngine::WouldTaintOrigin() {
+  return origin_tainted_;
+}
+
+bool HlsManifestDemuxerEngine::IsStreaming() {
+  return !is_seekable_;
+}
+
 std::string HlsManifestDemuxerEngine::GetName() const {
   return "HlsManifestDemuxer";
 }
@@ -213,7 +233,7 @@ void HlsManifestDemuxerEngine::StartWaitingForSeek() {
   }
 }
 
-void HlsManifestDemuxerEngine::AbortPendingReads() {
+void HlsManifestDemuxerEngine::AbortPendingReads(base::OnceClosure cb) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
 }
 
@@ -225,7 +245,7 @@ bool HlsManifestDemuxerEngine::IsSeekable() const {
 }
 
 int64_t HlsManifestDemuxerEngine::GetMemoryUsage() const {
-  // TODO(crbug/1266991): Sum the memory of the renditions and data source
+  // TODO(crbug.com/40057824): Sum the memory of the renditions and data source
   // providers.
   return 0;
 }
@@ -238,7 +258,7 @@ void HlsManifestDemuxerEngine::Stop() {
     rendition->Stop();
   }
 
-  data_source_provider_.Reset();
+  network_access_.reset();
   weak_factory_.InvalidateWeakPtrs();
 
   multivariant_root_.reset();
@@ -250,9 +270,9 @@ void HlsManifestDemuxerEngine::Stop() {
 void HlsManifestDemuxerEngine::Seek(base::TimeDelta time,
                                     ManifestDemuxer::SeekCallback cb) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
-  if (!data_source_provider_) {
+  if (!network_access_) {
     // The pipeline can call Seek just after an error was surfaced. The error
-    // handler resets |data_source_provider_|, so we should just reply with
+    // handler resets |network_access_|, so we should just reply with
     // another error here.
     std::move(cb).Run(PIPELINE_ERROR_ABORT);
     return;
@@ -266,10 +286,9 @@ void HlsManifestDemuxerEngine::Seek(base::TimeDelta time,
 void HlsManifestDemuxerEngine::SeekAction(base::TimeDelta time,
                                           ManifestDemuxer::SeekCallback cb) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
-  data_source_provider_.AsyncCall(&HlsDataSourceProvider::AbortPendingReads)
-      .WithArgs(base::BindPostTaskToCurrentDefault(
-          base::BindOnce(&HlsManifestDemuxerEngine::ContinueSeekInternal,
-                         weak_factory_.GetWeakPtr(), time, std::move(cb))));
+  network_access_->AbortPendingReads(base::BindPostTaskToCurrentDefault(
+      base::BindOnce(&HlsManifestDemuxerEngine::ContinueSeekInternal,
+                     weak_factory_.GetWeakPtr(), time, std::move(cb))));
 }
 
 void HlsManifestDemuxerEngine::ContinueSeekInternal(
@@ -401,18 +420,6 @@ void HlsManifestDemuxerEngine::UpdateRenditionManifestUri(
     GURL uri,
     base::OnceCallback<void(bool)> cb) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
-  ProcessAsyncAction<bool>(
-      std::move(cb),
-      base::BindOnce(
-          &HlsManifestDemuxerEngine::UpdateRenditionManifestUriAction,
-          weak_factory_.GetWeakPtr(), std::move(role), std::move(uri)));
-}
-
-void HlsManifestDemuxerEngine::UpdateRenditionManifestUriAction(
-    std::string role,
-    GURL uri,
-    base::OnceCallback<void(bool)> cb) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
   TRACE_EVENT_NESTABLE_ASYNC_BEGIN1("media", "HLS::UpdateRenditionManifest",
                                     this, "uri", uri);
   GURL uri_copy = uri;
@@ -465,10 +472,11 @@ void HlsManifestDemuxerEngine::UpdateMediaPlaylistForRole(
 }
 
 void HlsManifestDemuxerEngine::OnRenditionsReselected(
+    hls::AdaptationReason reason,
     const hls::VariantStream* variant,
     const hls::AudioRendition* audio_override_rendition) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
-
+  stats_reporter_.OnAdaptation(reason);
   ProcessAsyncAction<PipelineStatus>(
       base::BindOnce(&HlsManifestDemuxerEngine::OnStatus,
                      weak_factory_.GetWeakPtr()),
@@ -513,47 +521,40 @@ void HlsManifestDemuxerEngine::OnStatus(PipelineStatus status) {
   }
 }
 
-void HlsManifestDemuxerEngine::ReadUntilExhausted(
+void HlsManifestDemuxerEngine::UpdateHlsDataSourceStats(
     HlsDataSourceProvider::ReadCb cb,
     HlsDataSourceProvider::ReadStatus::Or<std::unique_ptr<HlsDataSourceStream>>
         result) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
   if (!result.has_value()) {
-    std::move(cb).Run(std::move(result).error());
+    std::move(cb).Run(std::move(result).error().AddHere());
     return;
   }
   auto stream = std::move(result).value();
-  if (!stream->CanReadMore()) {
-    TRACE_EVENT_NESTABLE_ASYNC_END1("media", "HLS::ReadUrlToExhaustion", this,
-                                    "total read size", stream->buffer_size());
-    std::move(cb).Run(std::move(stream));
-    return;
-  }
+  origin_tainted_ |= stream->would_taint_origin();
+  stats_reporter_.SetWouldTaintOrigin(origin_tainted_);
+  total_stream_memory_ = stream->memory_usage();
+  std::move(cb).Run(std::move(stream));
+}
 
-  ReadStream(std::move(stream),
-             base::BindOnce(&HlsManifestDemuxerEngine::ReadUntilExhausted,
-                            weak_factory_.GetWeakPtr(), std::move(cb)));
+void HlsManifestDemuxerEngine::ReadKey(
+    const hls::MediaSegment::EncryptionData& data,
+    HlsDataSourceProvider::ReadCb cb) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  network_access_->ReadKey(std::move(data), BindStatsUpdate(std::move(cb)));
+}
+
+HlsDataSourceProvider::ReadCb HlsManifestDemuxerEngine::BindStatsUpdate(
+    HlsDataSourceProvider::ReadCb cb) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
+  return base::BindOnce(&HlsManifestDemuxerEngine::UpdateHlsDataSourceStats,
+                        weak_factory_.GetWeakPtr(), std::move(cb));
 }
 
 void HlsManifestDemuxerEngine::ReadManifest(const GURL& uri,
                                             HlsDataSourceProvider::ReadCb cb) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
-  if (!data_source_provider_) {
-    std::move(cb).Run(HlsDataSourceProvider::ReadStatus::Codes::kStopped);
-    return;
-  }
-
-  HlsDataSourceProvider::SegmentQueue queue;
-  queue.emplace(uri, std::nullopt);
-
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN1("media", "HLS::ReadUrlToExhaustion", this,
-                                    "uri", uri);
-  data_source_provider_
-      .AsyncCall(&HlsDataSourceProvider::ReadFromCombinedUrlQueue)
-      .WithArgs(std::move(queue),
-                base::BindPostTaskToCurrentDefault(base::BindOnce(
-                    &HlsManifestDemuxerEngine::ReadUntilExhausted,
-                    weak_factory_.GetWeakPtr(), std::move(cb))));
+  network_access_->ReadManifest(std::move(uri), BindStatsUpdate(std::move(cb)));
 }
 
 void HlsManifestDemuxerEngine::ReadMediaSegment(
@@ -562,46 +563,16 @@ void HlsManifestDemuxerEngine::ReadMediaSegment(
     bool include_init,
     HlsDataSourceProvider::ReadCb cb) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
-  if (!data_source_provider_) {
-    std::move(cb).Run(HlsDataSourceProvider::ReadStatus::Codes::kStopped);
-    return;
-  }
-
-  if (!read_chunked) {
-    TRACE_EVENT_NESTABLE_ASYNC_BEGIN2("media", "HLS::ReadUrlToExhaustion", this,
-                                      "uri", segment.GetUri(), "include_init",
-                                      include_init);
-    cb = base::BindOnce(&HlsManifestDemuxerEngine::ReadUntilExhausted,
-                        weak_factory_.GetWeakPtr(), std::move(cb));
-  }
-
-  HlsDataSourceProvider::SegmentQueue queue;
-  if (include_init) {
-    if (auto init = segment.GetInitializationSegment()) {
-      queue.emplace(init->GetUri(), init->GetByteRange());
-    }
-  }
-  queue.emplace(segment.GetUri(), segment.GetByteRange());
-
-  data_source_provider_
-      .AsyncCall(&HlsDataSourceProvider::ReadFromCombinedUrlQueue)
-      .WithArgs(std::move(queue),
-                base::BindPostTaskToCurrentDefault(std::move(cb)));
+  network_access_->ReadMediaSegment(segment, read_chunked, include_init,
+                                    BindStatsUpdate(std::move(cb)));
 }
 
 void HlsManifestDemuxerEngine::ReadStream(
     std::unique_ptr<HlsDataSourceStream> stream,
     HlsDataSourceProvider::ReadCb cb) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
-  CHECK(stream);
-  if (!data_source_provider_) {
-    std::move(cb).Run(HlsDataSourceProvider::ReadStatus::Codes::kStopped);
-    return;
-  }
-  data_source_provider_
-      .AsyncCall(&HlsDataSourceProvider::ReadFromExistingStream)
-      .WithArgs(std::move(stream),
-                base::BindPostTaskToCurrentDefault(std::move(cb)));
+  network_access_->ReadStream(std::move(stream),
+                              BindStatsUpdate(std::move(cb)));
 }
 
 void HlsManifestDemuxerEngine::UpdateNetworkSpeed(uint64_t bps) {
@@ -637,6 +608,7 @@ void HlsManifestDemuxerEngine::ParsePlaylist(
       if (!parse_info.allow_multivariant_playlist) {
         return Abort(HlsDemuxerStatus::Codes::kRecursiveMultivariantPlaylists);
       }
+      stats_reporter_.SetIsMultivariantPlaylist(true);
       auto playlist = hls::MultivariantPlaylist::Parse(
           stream->AsString(), parse_info.uri, (*m_info).version);
       if (!playlist.has_value()) {
@@ -646,6 +618,12 @@ void HlsManifestDemuxerEngine::ParsePlaylist(
                                     std::move(playlist).value());
     }
     case hls::Playlist::Kind::kMediaPlaylist: {
+      if (parse_info.allow_multivariant_playlist) {
+        // Only a root playlist is allowed to be multivariant, so if the root
+        // is only a media playlist, then this entire playback is not
+        // multivariant.
+        stats_reporter_.SetIsMultivariantPlaylist(false);
+      }
       auto playlist = ParseMediaPlaylistFromStringSource(
           stream->AsString(), parse_info.uri, (*m_info).version);
       if (!playlist.has_value()) {
@@ -784,9 +762,9 @@ void HlsManifestDemuxerEngine::OnMediaPlaylist(
     scoped_refptr<hls::MediaPlaylist> playlist) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
 
-  // TODO(crbug/1266991) On stream adaptation, if the codecs are not the same,
-  // we'll have to re-create the chunk demuxer role. For now, just assume the
-  // codecs are the same.
+  // TODO(crbug.com/40057824) On stream adaptation, if the codecs are not the
+  // same, we'll have to re-create the chunk demuxer role. For now, just assume
+  // the codecs are the same.
   auto maybe_exists = renditions_.find(parse_info.role);
   if (maybe_exists != renditions_.end()) {
     maybe_exists->second->UpdatePlaylist(std::move(playlist), parse_info.uri);
@@ -841,6 +819,7 @@ void HlsManifestDemuxerEngine::OnStreamContainerDetermined(
     return;
   }
   is_seekable_ = seekable;
+  stats_reporter_.SetIsLiveContent(!seekable);
   renditions_[parse_info.role] = std::move(rendition);
   TRACE_EVENT_NESTABLE_ASYNC_END0(
       "media", "HLS::DetermineStreamContainerAndCodecs", this);
@@ -882,14 +861,29 @@ void HlsManifestDemuxerEngine::DetermineStreamContainer(
   } else {
     TRACE_EVENT_NESTABLE_ASYNC_BEGIN1("media", "HLS::PeekSegmentChunk", this,
                                       "uri", segments[0]->GetUri());
+    bool read_chunked = true;
+    if (auto enc_data = segments[0]->GetEncryptionData()) {
+      switch (enc_data->GetMethod()) {
+        case hls::XKeyTagMethod::kAES128:
+        case hls::XKeyTagMethod::kAES256: {
+          read_chunked = false;
+          break;
+        }
+        default:
+          break;
+      }
+    }
+
     ReadMediaSegment(
-        *segments[0], /*read_chunked=*/true, /*include_init=*/true,
+        *segments[0], read_chunked, /*include_init=*/true,
         base::BindOnce(&HlsManifestDemuxerEngine::DetermineBitstreamContainer,
-                       weak_factory_.GetWeakPtr(), std::move(container_cb)));
+                       weak_factory_.GetWeakPtr(), segments[0],
+                       std::move(container_cb)));
   }
 }
 
 void HlsManifestDemuxerEngine::DetermineBitstreamContainer(
+    scoped_refptr<hls::MediaSegment> segment,
     HlsDemuxerStatusCb<RelaxedParserSupportedType> cb,
     HlsDataSourceProvider::ReadResult maybe_stream) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(media_sequence_checker_);
@@ -904,6 +898,45 @@ void HlsManifestDemuxerEngine::DetermineBitstreamContainer(
   if (!stream->buffer_size()) {
     std::move(cb).Run(HlsDemuxerStatus::Codes::kInvalidBitstream);
     return;
+  }
+
+  if (auto enc_data = segment->GetEncryptionData()) {
+    switch (enc_data->GetMethod()) {
+      case hls::XKeyTagMethod::kNone: {
+        // Fall back to plaintext.
+        break;
+      }
+      case hls::XKeyTagMethod::kAES128:
+      case hls::XKeyTagMethod::kAES256: {
+        auto decryptor = std::make_unique<crypto::Encryptor>();
+        auto maybe_iv = enc_data->GetIVStr(segment->GetMediaSequenceNumber());
+        auto mode = crypto::Encryptor::Mode::CBC;
+        base::span<const uint8_t> stream_data =
+            base::span(stream->raw_data(), stream->buffer_size());
+        if (!maybe_iv.has_value()) {
+          std::move(cb).Run(HlsDemuxerStatus::Codes::kInvalidBitstream);
+          return;
+        }
+        auto iv = std::move(maybe_iv).value();
+        if (!decryptor->Init(enc_data->GetKey(), mode, iv)) {
+          std::move(cb).Run(HlsDemuxerStatus::Codes::kInvalidBitstream);
+          return;
+        }
+        std::vector<uint8_t> plaintext;
+        if (!decryptor->Decrypt(stream_data, &plaintext)) {
+          std::move(cb).Run(HlsDemuxerStatus::Codes::kInvalidBitstream);
+          return;
+        }
+        decryptor = nullptr;
+        std::move(cb).Run(CheckBitstreamForContainerMagic(plaintext.data(),
+                                                          plaintext.size()));
+        return;
+      }
+      default: {
+        std::move(cb).Run(HlsDemuxerStatus::Codes::kInvalidBitstream);
+        return;
+      }
+    }
   }
 
   std::move(cb).Run(CheckBitstreamForContainerMagic(stream->raw_data(),

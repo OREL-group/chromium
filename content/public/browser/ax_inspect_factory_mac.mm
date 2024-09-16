@@ -5,7 +5,8 @@
 #include "content/public/browser/ax_inspect_factory.h"
 
 #include "content/browser/accessibility/accessibility_tree_formatter_blink.h"
-#include "content/browser/accessibility/browser_accessibility_manager.h"
+#include "ui/accessibility/ax_tree_manager.h"
+#include "ui/accessibility/platform/ax_platform_tree_manager.h"
 #include "ui/accessibility/platform/inspect/ax_event_recorder_mac.h"
 #include "ui/accessibility/platform/inspect/ax_tree_formatter_mac.h"
 
@@ -27,7 +28,7 @@ std::unique_ptr<ui::AXTreeFormatter> AXInspectFactory::CreateFormatter(
   // Developer mode: crash immediately on any accessibility fatal error.
   // This only runs during integration tests, or if a developer is
   // using an inspection tool, e.g. chrome://accessibility.
-  BrowserAccessibilityManager::AlwaysFailFast();
+  ui::AXTreeManager::AlwaysFailFast();
 
   switch (type) {
     case ui::AXApiType::kBlink:
@@ -35,7 +36,7 @@ std::unique_ptr<ui::AXTreeFormatter> AXInspectFactory::CreateFormatter(
     case ui::AXApiType::kMac:
       return std::make_unique<ui::AXTreeFormatterMac>();
     default:
-      NOTREACHED() << "Unsupported API type " << type;
+      NOTREACHED_IN_MIGRATION() << "Unsupported API type " << type;
   }
   return nullptr;
 }
@@ -43,19 +44,20 @@ std::unique_ptr<ui::AXTreeFormatter> AXInspectFactory::CreateFormatter(
 // static
 std::unique_ptr<ui::AXEventRecorder> AXInspectFactory::CreateRecorder(
     ui::AXApiType::Type type,
-    BrowserAccessibilityManager*,
+    ui::AXPlatformTreeManager* manager,
     base::ProcessId pid,
     const ui::AXTreeSelector& selector) {
   // Developer mode: crash immediately on any accessibility fatal error.
   // This only runs during integration tests, or if a developer is
   // using an inspection tool, e.g. chrome://accessibility.
-  BrowserAccessibilityManager::AlwaysFailFast();
+  ui::AXTreeManager::AlwaysFailFast();
 
   switch (type) {
     case ui::AXApiType::kMac:
-      return std::make_unique<ui::AXEventRecorderMac>(pid, selector);
+      return std::make_unique<ui::AXEventRecorderMac>(manager->GetWeakPtr(),
+                                                      pid, selector);
     default:
-      NOTREACHED() << "Unsupported API type " << type;
+      NOTREACHED_IN_MIGRATION() << "Unsupported API type " << type;
   }
   return nullptr;
 }

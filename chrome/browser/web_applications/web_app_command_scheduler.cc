@@ -47,6 +47,7 @@
 #include "chrome/browser/web_applications/commands/web_app_icon_diagnostic_command.h"
 #include "chrome/browser/web_applications/commands/web_app_uninstall_command.h"
 #include "chrome/browser/web_applications/isolated_web_apps/check_isolated_web_app_bundle_installability_command.h"
+#include "chrome/browser/web_applications/isolated_web_apps/cleanup_orphaned_isolated_web_apps_command.h"
 #include "chrome/browser/web_applications/isolated_web_apps/get_controlled_frame_partition_command.h"
 #include "chrome/browser/web_applications/isolated_web_apps/get_isolated_web_app_browsing_data_command.h"
 #include "chrome/browser/web_applications/isolated_web_apps/install_isolated_web_app_command.h"
@@ -62,8 +63,10 @@
 #include "chrome/browser/web_applications/locks/shared_web_contents_lock.h"
 #include "chrome/browser/web_applications/locks/shared_web_contents_with_app_lock.h"
 #include "chrome/browser/web_applications/os_integration/os_integration_sub_manager.h"
+#include "chrome/browser/web_applications/proto/web_app_install_state.pb.h"
 #include "chrome/browser/web_applications/web_app_command_manager.h"
 #include "chrome/browser/web_applications/web_app_constants.h"
+#include "chrome/browser/web_applications/web_app_install_params.h"
 #include "chrome/browser/web_applications/web_app_proto_utils.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/browser/web_applications/web_app_sync_bridge.h"
@@ -124,6 +127,16 @@ void WebAppCommandScheduler::FetchInstallInfoFromInstallUrl(
           std::move(parent_manifest_id), std::move(callback)));
 }
 
+void WebAppCommandScheduler::FetchInstallInfoFromInstallUrl(
+    webapps::ManifestId manifest_id,
+    GURL install_url,
+    base::OnceCallback<void(std::unique_ptr<WebAppInstallInfo>)> callback) {
+  provider_->command_manager().ScheduleCommand(
+      std::make_unique<FetchInstallInfoFromInstallUrlCommand>(
+          std::move(manifest_id), std::move(install_url), std::nullopt,
+          std::move(callback)));
+}
+
 void WebAppCommandScheduler::InstallFromInfoNoIntegrationForTesting(
     std::unique_ptr<WebAppInstallInfo> install_info,
     bool overwrite_existing_manifest_fields,
@@ -131,11 +144,16 @@ void WebAppCommandScheduler::InstallFromInfoNoIntegrationForTesting(
     OnceInstallCallback install_callback,
     const base::Location& location) {
   CHECK_IS_TEST();
+  WebAppInstallParams params;
+  params.install_state = proto::InstallState::INSTALLED_WITHOUT_OS_INTEGRATION;
+  params.add_to_applications_menu = false;
+  params.add_to_desktop = false;
+  params.add_to_quick_launch_bar = false;
   provider_->command_manager().ScheduleCommand(
       std::make_unique<InstallFromInfoCommand>(
           &profile_.get(), std::move(install_info),
           overwrite_existing_manifest_fields, install_surface,
-          std::move(install_callback), /*install_params=*/std::nullopt),
+          std::move(install_callback), params),
       location);
 }
 
@@ -196,11 +214,12 @@ void WebAppCommandScheduler::ScheduleManifestUpdateCheck(
 void WebAppCommandScheduler::ScheduleManifestUpdateFinalize(
     const GURL& url,
     const webapps::AppId& app_id,
-    WebAppInstallInfo install_info,
+    std::unique_ptr<WebAppInstallInfo> install_info,
     std::unique_ptr<ScopedKeepAlive> optional_keep_alive,
     std::unique_ptr<ScopedProfileKeepAlive> optional_profile_keep_alive,
     ManifestWriteCallback callback,
     const base::Location& location) {
+  CHECK(install_info);
   provider_->command_manager().ScheduleCommand(
       std::make_unique<ManifestUpdateFinalizeCommand>(
           url, app_id, std::move(install_info), std::move(callback),
@@ -259,6 +278,15 @@ void WebAppCommandScheduler::InstallIsolatedWebApp(
               url_info, provider_->web_contents_manager().CreateDataRetriever(),
               IsolatedWebAppInstallCommandHelper::
                   CreateDefaultResponseReaderFactory(*profile_))),
+      call_location);
+}
+
+void WebAppCommandScheduler::CleanupOrphanedIsolatedApps(
+    CleanupOrphanedIsolatedWebAppsCallback callback,
+    const base::Location& call_location) {
+  provider_->command_manager().ScheduleCommand(
+      std::make_unique<CleanupOrphanedIsolatedWebAppsCommand>(
+          *profile_, std::move(callback)),
       call_location);
 }
 
@@ -402,6 +430,19 @@ void WebAppCommandScheduler::RemoveUserUninstallableManagements(
       location);
 }
 
+void WebAppCommandScheduler::RemoveAllManagementTypesAndUninstall(
+    base::PassKey<WebAppSyncBridge>,
+    const webapps::AppId& app_id,
+    webapps::WebappUninstallSource uninstall_source,
+    UninstallJob::Callback callback,
+    const base::Location& location) {
+  provider_->command_manager().ScheduleCommand(
+      WebAppUninstallCommand::CreateForRemoveInstallManagements(
+          uninstall_source, *profile_, app_id, WebAppManagementTypes::All(),
+          std::move(callback)),
+      location);
+}
+
 void WebAppCommandScheduler::UninstallAllUserInstalledWebApps(
     webapps::WebappUninstallSource uninstall_source,
     UninstallAllUserInstalledWebAppsCommand::Callback callback,
@@ -495,11 +536,11 @@ void WebAppCommandScheduler::LaunchApp(
             std::move(callback), location);
 }
 
-void WebAppCommandScheduler::LaunchUrlInApp(const webapps::AppId& app_id,
-                                            const GURL& url,
-                                            LaunchWebAppCallback callback,
-                                            const base::Location& location) {
-  CHECK(url.is_valid());
+void WebAppCommandScheduler::LaunchApp(const webapps::AppId& app_id,
+                                       const std::optional<GURL>& url,
+                                       LaunchWebAppCallback callback,
+                                       const base::Location& location) {
+  CHECK(!url || url->is_valid());
   apps::AppLaunchParams params =
       WebAppUiManager::CreateAppLaunchParamsWithoutWindowConfig(
           app_id, *base::CommandLine::ForCurrentProcess(),
@@ -507,7 +548,7 @@ void WebAppCommandScheduler::LaunchUrlInApp(const webapps::AppId& app_id,
           /*url_handler_launch_url=*/std::nullopt,
           /*protocol_handler_launch_url=*/std::nullopt,
           /*file_launch_url=*/std::nullopt, /*launch_files=*/{});
-  params.override_url = url;
+  params.override_url = url.value_or(GURL());
 
   LaunchApp(std::move(params),
             LaunchWebAppWindowSetting::kOverrideWithWebAppConfig,
@@ -534,10 +575,12 @@ void WebAppCommandScheduler::SynchronizeOsIntegration(
     const webapps::AppId& app_id,
     base::OnceClosure synchronize_callback,
     std::optional<SynchronizeOsOptions> synchronize_options,
+    bool upgrade_to_fully_installed_if_installed,
     const base::Location& location) {
   provider_->command_manager().ScheduleCommand(
       std::make_unique<OsIntegrationSynchronizeCommand>(
-          app_id, synchronize_options, std::move(synchronize_callback)),
+          app_id, synchronize_options, upgrade_to_fully_installed_if_installed,
+          std::move(synchronize_callback)),
       location);
 }
 
@@ -555,8 +598,6 @@ void WebAppCommandScheduler::SetUserDisplayMode(
 void WebAppCommandScheduler::ScheduleDedupeInstallUrls(
     base::OnceClosure callback,
     const base::Location& location) {
-  CHECK(base::FeatureList::IsEnabled(features::kWebAppDedupeInstallUrls));
-
   base::UmaHistogramCounts100("WebApp.DedupeInstallUrls.SessionRunCount",
                               ++dedupe_install_urls_run_count_);
 
@@ -572,7 +613,8 @@ void WebAppCommandScheduler::SetAppCapturesSupportedLinksDisableOverlapping(
     base::OnceClosure done,
     const base::Location& location) {
 #if BUILDFLAG(IS_CHROMEOS)
-  NOTREACHED() << "Preferred apps in ChromeOS are implemented in AppService";
+  NOTREACHED_IN_MIGRATION()
+      << "Preferred apps in ChromeOS are implemented in AppService";
 #else
   ScheduleCallback(
       "SetAppCapturesSupporedLinks", AllAppsLockDescription(),

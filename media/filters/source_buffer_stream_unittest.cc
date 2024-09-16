@@ -267,7 +267,7 @@ class SourceBufferStreamTest : public testing::Test {
                             int ending_position,
                             const uint8_t* data) {
     CheckExpectedBuffers(starting_position, ending_position, false,
-                         UNSAFE_BUFFERS(base::span(data, kDataSize)));
+                         UNSAFE_TODO(base::span(data, kDataSize)));
   }
 
   void CheckExpectedBuffers(int starting_position,
@@ -275,7 +275,7 @@ class SourceBufferStreamTest : public testing::Test {
                             const uint8_t* data,
                             bool expect_keyframe) {
     CheckExpectedBuffers(starting_position, ending_position, expect_keyframe,
-                         UNSAFE_BUFFERS(base::span(data, kDataSize)));
+                         UNSAFE_TODO(base::span(data, kDataSize)));
   }
 
   void CheckExpectedBuffers(
@@ -435,7 +435,7 @@ class SourceBufferStreamTest : public testing::Test {
       case SourceBufferStreamType::kVideo:
         return DemuxerStream::VIDEO;
     }
-    NOTREACHED_NORETURN();
+    NOTREACHED();
   }
 
   base::TimeDelta ConvertToFrameDuration(int frames_per_second) {
@@ -1125,7 +1125,7 @@ TEST_F(SourceBufferStreamTest, Start_Overlap_Selected_EdgeCase) {
   // Now replace the last 5 buffers with new data.
   NewCodedFrameGroupAppend(10, 5, &kDataB);
 
-  // The next 4 buffers should be the origial data, held in the track buffer.
+  // The next 4 buffers should be the original data, held in the track buffer.
   CheckExpectedBuffers(11, 14, &kDataA);
 
   // The next buffer is at position 15, so we should fail to fulfill the
@@ -2369,7 +2369,7 @@ TEST_F(SourceBufferStreamTest, GetNextBuffer_ExhaustThenStartOverlap) {
   // Next buffer is at position 10, so should not be able to fulfill request.
   CheckNoNextBuffer();
 
-  // Append 6 buffers at positons 5 through 10. This is to test that doing a
+  // Append 6 buffers at positions 5 through 10. This is to test that doing a
   // start-overlap successfully fulfills the read at position 10, even though
   // position 10 was unbuffered.
   NewCodedFrameGroupAppend(5, 6, &kDataB);

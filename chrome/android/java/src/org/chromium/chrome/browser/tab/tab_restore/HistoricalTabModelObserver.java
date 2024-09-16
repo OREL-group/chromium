@@ -4,22 +4,25 @@
 
 package org.chromium.chrome.browser.tab.tab_restore;
 
+import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.Token;
+import org.chromium.base.supplier.LazyOneshotSupplier;
+import org.chromium.base.supplier.Supplier;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabList;
+import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelFilter;
 import org.chromium.chrome.browser.tabmodel.TabModelObserver;
-import org.chromium.chrome.browser.tasks.tab_groups.TabGroupColorUtils;
 import org.chromium.chrome.browser.tasks.tab_groups.TabGroupModelFilter;
-import org.chromium.chrome.browser.tasks.tab_groups.TabGroupTitleUtils;
 import org.chromium.components.tab_groups.TabGroupColorId;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Set;
 
 /** A tab model observer for managing bulk closures. */
 public class HistoricalTabModelObserver implements TabModelObserver {
@@ -39,17 +42,34 @@ public class HistoricalTabModelObserver implements TabModelObserver {
         mTabGroupModelFilter = (TabGroupModelFilter) tabModelFilter;
         mHistoricalTabSaver = historicalTabSaver;
 
-        tabModelFilter.getTabModel().addObserver(this);
+        tabModelFilter.addObserver(this);
     }
 
     /** Removes observers. */
     public void destroy() {
-        mTabGroupModelFilter.getTabModel().removeObserver(this);
+        mTabGroupModelFilter.removeObserver(this);
+        mHistoricalTabSaver.destroy();
+    }
+
+    /**
+     * Adds a secondary {@link TabModel} supplier to check if a deleted tab should be added to
+     * recent tabs.
+     */
+    public void addSecodaryTabModelSupplier(Supplier<TabModel> tabModelSupplier) {
+        mHistoricalTabSaver.addSecodaryTabModelSupplier(tabModelSupplier);
+    }
+
+    /**
+     * Removes a secondary {@link TabModel} supplier to check if a deleted tab should be added to
+     * recent tabs.
+     */
+    public void removeSecodaryTabModelSupplier(Supplier<TabModel> tabModelSupplier) {
+        mHistoricalTabSaver.removeSecodaryTabModelSupplier(tabModelSupplier);
     }
 
     @Override
-    public void onFinishingMultipleTabClosure(List<Tab> tabs) {
-        if (tabs.isEmpty()) return;
+    public void onFinishingMultipleTabClosure(List<Tab> tabs, boolean canRestore) {
+        if (tabs.isEmpty() || !canRestore) return;
 
         if (tabs.size() == 1) {
             Tab tab = tabs.get(0);
@@ -66,7 +86,20 @@ public class HistoricalTabModelObserver implements TabModelObserver {
         HashMap<Integer, HistoricalEntry> idToGroup = new HashMap<>();
         List<HistoricalEntry> entries = new ArrayList<>();
 
+        LazyOneshotSupplier<Set<Token>> tabGroupIdsInComprehensiveModel =
+                mTabGroupModelFilter.getLazyAllTabGroupIdsInComprehensiveModel(tabs);
         for (Tab tab : tabs) {
+            // Ignore complete tab groups that are being hidden. They will be accessible from the
+            // tab group pane instead. Still process closures for events that don't finish hiding
+            // the group.
+            @Nullable Token tabGroupId = tab.getTabGroupId();
+            if (tabGroupId != null) {
+                if (mTabGroupModelFilter.isTabGroupHiding(tabGroupId)
+                        && !tabGroupIdsInComprehensiveModel.get().contains(tabGroupId)) {
+                    continue;
+                }
+            }
+
             // {@link TabGroupModelFilter} removes tabs from its data model as soon as they are
             // pending closure so it cannot be directly relied upon for group structure. Instead
             // rely on the underlying root ID in the tab's persisted data which is used to restore
@@ -78,16 +111,16 @@ public class HistoricalTabModelObserver implements TabModelObserver {
                 continue;
             }
             // null title for default title is handled in HistoricalTabSaver.
-            String title = TabGroupTitleUtils.getTabGroupTitle(rootId);
+            String title = mTabGroupModelFilter.getTabGroupTitle(rootId);
             // Give a tab group the first color in the color list as a placeholder.
             @TabGroupColorId int color = TabGroupColorId.GREY;
-            if (ChromeFeatureList.isEnabled(ChromeFeatureList.TAB_GROUP_PARITY_ANDROID)) {
-                color = TabGroupColorUtils.getOrCreateTabGroupColor(rootId, mTabGroupModelFilter);
+            if (ChromeFeatureList.sTabGroupParityAndroid.isEnabled()) {
+                color = mTabGroupModelFilter.getTabGroupColorWithFallback(rootId);
             }
-            List<Tab> groupTabs = new ArrayList<Tab>();
+            List<Tab> groupTabs = new ArrayList<>();
             groupTabs.add(tab);
             HistoricalEntry historicalGroup =
-                    new HistoricalEntry(rootId, tab.getTabGroupId(), title, color, groupTabs);
+                    new HistoricalEntry(rootId, tabGroupId, title, color, groupTabs);
             entries.add(historicalGroup);
             idToGroup.put(rootId, historicalGroup);
         }

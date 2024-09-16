@@ -43,7 +43,6 @@
 #include "third_party/blink/renderer/platform/mediastream/media_stream_audio_source.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_component.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_web_audio_source.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
@@ -316,23 +315,6 @@ void TransferredMediaStreamTrack::UnregisterMediaStream(MediaStream* stream) {
   // TODO(https://crbug.com/1288839): Save and forward to track_ once it's
   // initialized.
 }
-
-#if !BUILDFLAG(IS_ANDROID)
-void TransferredMediaStreamTrack::SendWheel(
-    double relative_x,
-    double relative_y,
-    int wheel_delta_x,
-    int wheel_delta_y,
-    base::OnceCallback<void(DOMException*)> callback) {
-  NOTREACHED_NORETURN();
-}
-
-void TransferredMediaStreamTrack::SetZoomLevel(
-    int zoom_level,
-    base::OnceCallback<void(DOMException*)> callback) {
-  NOTREACHED_NORETURN();
-}
-#endif
 
 // EventTarget
 const AtomicString& TransferredMediaStreamTrack::InterfaceName() const {

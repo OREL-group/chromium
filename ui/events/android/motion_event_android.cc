@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/events/android/motion_event_android.h"
 
 #include <android/input.h>
@@ -16,6 +21,8 @@
 #include "ui/events/base_event_utils.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/event_utils.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
 #include "ui/events/motionevent_jni_headers/MotionEvent_jni.h"
 
 using base::android::AttachCurrentThread;
@@ -54,7 +61,8 @@ MotionEventAndroid::Action FromAndroidAction(int android_action) {
     ACTION_CASE(BUTTON_PRESS);
     ACTION_CASE(BUTTON_RELEASE);
     default:
-      NOTREACHED() << "Invalid Android MotionEvent action: " << android_action;
+      NOTREACHED_IN_MIGRATION()
+          << "Invalid Android MotionEvent action: " << android_action;
   }
   return MotionEventAndroid::Action::CANCEL;
 }
@@ -73,7 +81,7 @@ int ToAndroidAction(MotionEventAndroid::Action action) {
     ACTION_REVERSE_CASE(BUTTON_PRESS);
     ACTION_REVERSE_CASE(BUTTON_RELEASE);
     default:
-      NOTREACHED() << "Invalid MotionEvent action: " << action;
+      NOTREACHED_IN_MIGRATION() << "Invalid MotionEvent action: " << action;
   }
   return JNI_MotionEvent::ACTION_CANCEL;
 }
@@ -86,8 +94,8 @@ MotionEventAndroid::ToolType FromAndroidToolType(int android_tool_type) {
     TOOL_TYPE_CASE(MOUSE);
     TOOL_TYPE_CASE(ERASER);
     default:
-      NOTREACHED() << "Invalid Android MotionEvent tool type: "
-                   << android_tool_type;
+      NOTREACHED_IN_MIGRATION()
+          << "Invalid Android MotionEvent tool type: " << android_tool_type;
   }
   return MotionEventAndroid::ToolType::UNKNOWN;
 }
@@ -100,7 +108,8 @@ int ToAndroidToolType(MotionEventAndroid::ToolType tool_type) {
     TOOL_TYPE_REVERSE_CASE(MOUSE);
     TOOL_TYPE_REVERSE_CASE(ERASER);
     default:
-      NOTREACHED() << "Invalid MotionEvent tool type: " << tool_type;
+      NOTREACHED_IN_MIGRATION()
+          << "Invalid MotionEvent tool type: " << tool_type;
   }
   return JNI_MotionEvent::TOOL_TYPE_UNKNOWN;
 }

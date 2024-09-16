@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "remoting/protocol/auth_util.h"
 
 #include "base/base64.h"
@@ -51,12 +56,12 @@ std::string GetAuthBytes(net::SSLSocket* socket,
   // Generate auth digest based on the keying material and shared secret.
   crypto::HMAC response(crypto::HMAC::SHA256);
   if (!response.Init(key_material, kAuthDigestLength)) {
-    NOTREACHED() << "HMAC::Init failed";
+    NOTREACHED_IN_MIGRATION() << "HMAC::Init failed";
     return std::string();
   }
   unsigned char out_bytes[kAuthDigestLength];
   if (!response.Sign(shared_secret, out_bytes, kAuthDigestLength)) {
-    NOTREACHED() << "HMAC::Sign failed";
+    NOTREACHED_IN_MIGRATION() << "HMAC::Sign failed";
     return std::string();
   }
 

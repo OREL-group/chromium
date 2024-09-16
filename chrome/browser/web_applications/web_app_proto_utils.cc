@@ -93,7 +93,7 @@ proto::UrlPatternPart::PartType UrlPatternPartTypeToProto(
     liburlpattern::PartType part_type) {
   switch (part_type) {
     case liburlpattern::PartType::kRegex:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       [[fallthrough]];
     case liburlpattern::PartType::kFullWildcard:
       return proto::UrlPatternPart_PartType_FULL_WILDCARD;
@@ -397,6 +397,16 @@ std::optional<TabStrip> ProtoToTabStrip(proto::TabStrip tab_strip_proto) {
   tab_strip.new_tab_button = new_tab_button_params;
 
   return tab_strip;
+}
+
+std::string RelativeManifestIdPath(webapps::ManifestId manifest_id) {
+  CHECK(manifest_id.is_valid(), base::NotFatalUntil::M127);
+  // The relative id does not include the initial '/' character.
+  std::string relative_manifest_id_path = manifest_id.PathForRequest();
+  if (relative_manifest_id_path.starts_with("/")) {
+    relative_manifest_id_path = relative_manifest_id_path.substr(1);
+  }
+  return relative_manifest_id_path;
 }
 
 }  // namespace web_app

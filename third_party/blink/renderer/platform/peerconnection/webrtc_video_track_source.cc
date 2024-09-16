@@ -9,7 +9,9 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/logging.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/strings/stringprintf.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "base/types/optional_util.h"
@@ -101,7 +103,8 @@ WebRtcVideoTrackSource::WebRtcVideoTrackSource(
     media::GpuVideoAcceleratorFactories* gpu_factories)
     : AdaptedVideoTrackSource(/*required_alignment=*/1),
       adapter_resources_(
-          new WebRtcVideoFrameAdapter::SharedResources(gpu_factories)),
+          base::MakeRefCounted<WebRtcVideoFrameAdapter::SharedResources>(
+              gpu_factories)),
       is_screencast_(is_screencast),
       needs_denoising_(needs_denoising),
       feedback_callback_(std::move(feedback_callback)),
@@ -158,13 +161,15 @@ void WebRtcVideoTrackSource::SendFeedback() {
 void WebRtcVideoTrackSource::OnFrameCaptured(
     scoped_refptr<media::VideoFrame> frame) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-  TRACE_EVENT0("media", "WebRtcVideoSource::OnFrameCaptured");
+  TRACE_EVENT(
+      "media", "WebRtcVideoSource::OnFrameCaptured", "ts", frame->timestamp(),
+      "rt", frame->metadata().reference_time.value_or(base::TimeTicks()), "cbt",
+      frame->metadata().capture_begin_time.value_or(base::TimeTicks()));
   if (!CanConvertToWebRtcVideoFrameBuffer(frame.get())) {
     // Since connecting sources and sinks do not check the format, we need to
     // just ignore formats that we can not handle.
     LOG(ERROR) << "We cannot send frame with storage type: "
                << frame->AsHumanReadableString();
-    NOTREACHED();
     return;
   }
 
@@ -243,9 +248,15 @@ void WebRtcVideoTrackSource::OnFrameCaptured(
   }
 
   std::optional<webrtc::Timestamp> capture_time_identifier;
-  // Set |capture_time_identifier| only when frame->timestamp() is a valid
-  // value (infinite values are invalid).
-  if (!frame->timestamp().is_inf()) {
+  // Set |capture_time_identifier| to capture_begin_time if available, else use
+  // frame->timestamp().
+  if (base::FeatureList::IsEnabled(features::kWebRtcUseCaptureBeginTimestamp) &&
+      frame->metadata().capture_begin_time) {
+    capture_time_identifier = webrtc::Timestamp::Micros(
+        frame->metadata().capture_begin_time->ToInternalValue());
+  } else if (!frame->timestamp().is_inf()) {
+    // Use only when frame->timestamp() is a valid value (infinite values are
+    // invalid).
     capture_time_identifier =
         webrtc::Timestamp::Micros(frame->timestamp().InMicroseconds());
   }

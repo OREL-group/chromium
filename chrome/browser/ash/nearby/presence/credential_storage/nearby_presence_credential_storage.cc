@@ -26,9 +26,9 @@ const base::FilePath::CharType kRemotePublicCredentialDatabaseName[] =
 const base::FilePath::CharType kPrivateCredentialDatabaseName[] =
     FILE_PATH_LITERAL("NearbyPresencePrivateCredentialDatabase");
 
-// Return an empty set, so that no entries are removed.
-std::unique_ptr<std::vector<std::string>> GenerateKeysForEntriesToRemove() {
-  return std::make_unique<std::vector<std::string>>();
+bool ShouldDeleteEntry(base::flat_set<std::string> keys_to_not_delete,
+                       const std::string& key) {
+  return !keys_to_not_delete.contains(key);
 }
 
 }  // namespace
@@ -115,13 +115,16 @@ void NearbyPresenceCredentialStorage::SaveCredentials(
 
   auto credential_pairs_to_save = std::make_unique<std::vector<
       std::pair<std::string, ::nearby::internal::SharedCredential>>>();
+  base::flat_set<std::string> keys_to_not_delete;
   for (const auto& shared_credential : shared_credentials) {
     auto shared_credential_proto =
         proto::SharedCredentialFromMojom(shared_credential.get());
 
+    std::string id = base::NumberToString(shared_credential_proto.id());
     credential_pairs_to_save->emplace_back(
-        std::make_pair(base::NumberToString(shared_credential_proto.id()),
-                       shared_credential_proto));
+        std::make_pair(id, shared_credential_proto));
+
+    keys_to_not_delete.insert(id);
   }
 
   switch (public_credential_type) {
@@ -130,21 +133,23 @@ void NearbyPresenceCredentialStorage::SaveCredentials(
       // If successful, then attempt to save private credentials in a
       // follow-up callback. Iff both operations are successful,
       // 'on_credentials_fully_saved_callback' will return kOk.
-      local_public_db_->UpdateEntries(
+      local_public_db_->UpdateEntriesWithRemoveFilter(
           /*entries_to_save=*/std::move(credential_pairs_to_save),
-          /*entries_to_remove=*/GenerateKeysForEntriesToRemove(),
+          /*delete_key_filter=*/
+          base::BindRepeating(&ShouldDeleteEntry, keys_to_not_delete),
           base::BindOnce(
               &NearbyPresenceCredentialStorage::OnLocalPublicCredentialsSaved,
               weak_ptr_factory_.GetWeakPtr(), std::move(local_credentials),
               std::move(on_credentials_fully_saved_callback)));
       break;
     case (mojom::PublicCredentialType::kRemotePublicCredential):
-      // When remote public credentials are updated, the private credentials
-      // provided are empty. To preserve the existing private credentials, do
-      // not update the private credential database.
-      remote_public_db_->UpdateEntries(
+      // The only remote credentials we can receive are public credentials
+      // (we can't see other devices' private credentials). Thus, in the
+      // remote case, only public credentials need to be saved.
+      remote_public_db_->UpdateEntriesWithRemoveFilter(
           /*entries_to_save=*/std::move(credential_pairs_to_save),
-          /*entries_to_remove=*/GenerateKeysForEntriesToRemove(),
+          /*delete_key_filter=*/
+          base::BindRepeating(&ShouldDeleteEntry, keys_to_not_delete),
           base::BindOnce(
               &NearbyPresenceCredentialStorage::OnRemotePublicCredentialsSaved,
               weak_ptr_factory_.GetWeakPtr(),
@@ -196,15 +201,16 @@ void NearbyPresenceCredentialStorage::UpdateLocalCredential(
   // create a vector with a single pair in-line using an initializer list.
   auto credential_pair_to_update = std::make_unique<std::vector<
       std::pair<std::string, ::nearby::internal::LocalCredential>>>();
-  credential_pair_to_update->emplace_back(std::make_pair(
-      local_credential_proto.secret_id(), local_credential_proto));
+  std::string id = base::NumberToString(local_credential_proto.id());
+  credential_pair_to_update->emplace_back(
+      std::make_pair(id, local_credential_proto));
 
   // Only match the credential being updated.
   leveldb_proto::KeyFilter update_filter = base::BindRepeating(
       [](const std::string& key, const std::string& target_key) {
         return key == target_key;
       },
-      local_credential_proto.secret_id());
+      id);
 
   // TODO(b/333701895): Verify that this works as expected during a broadcast.
   private_db_->UpdateEntriesWithRemoveFilter(
@@ -235,18 +241,18 @@ void NearbyPresenceCredentialStorage::OnPrivateCredentialsRetrieved(
     std::unique_ptr<std::vector<::nearby::internal::LocalCredential>> entries) {
   CHECK(callback);
 
-  if (!success) {
-    // TODO(b/287334363): Emit a failure metric.
+  metrics::RecordCredentialStorageRetrievePrivateCredentialsResult(success);
+  if (success) {
+    base::TimeDelta retrieval_duration =
+        base::TimeTicks::Now() - retrieval_start_time;
+    metrics::RecordCredentialStorageRetrievePrivateCredentialsDuration(
+        retrieval_duration);
+  } else {
     LOG(ERROR) << __func__ << ": failed to retrieve private credentials";
     std::move(callback).Run(mojo_base::mojom::AbslStatusCode::kAborted,
                             std::nullopt);
     return;
   }
-
-  base::TimeDelta retrieval_duration =
-      base::TimeTicks::Now() - retrieval_start_time;
-  metrics::RecordCredentialStorageRetrievePrivateCredentialsDuration(
-      retrieval_duration);
 
   CHECK(entries);
 
@@ -270,25 +276,34 @@ void NearbyPresenceCredentialStorage::OnPublicCredentialsRetrieved(
         entries) {
   CHECK(callback);
 
-  if (!success) {
-    // TODO(b/287334363): Emit a failure metric.
+  switch (public_credential_type) {
+    case (mojom::PublicCredentialType::kLocalPublicCredential):
+      metrics::RecordCredentialStorageRetrieveLocalPublicCredentialsResult(
+          success);
+      break;
+    case (mojom::PublicCredentialType::kRemotePublicCredential):
+      metrics::RecordCredentialStorageRetrieveRemotePublicCredentialsResult(
+          success);
+      break;
+  }
+  if (success) {
+    base::TimeDelta retrieval_duration =
+        base::TimeTicks::Now() - retrieval_start_time;
+    switch (public_credential_type) {
+      case (mojom::PublicCredentialType::kLocalPublicCredential):
+        metrics::RecordCredentialStorageRetrieveLocalPublicCredentialsDuration(
+            retrieval_duration);
+        break;
+      case (mojom::PublicCredentialType::kRemotePublicCredential):
+        metrics::RecordCredentialStorageRetrieveRemotePublicCredentialsDuration(
+            retrieval_duration);
+        break;
+    }
+  } else {
     LOG(ERROR) << __func__ << ": failed to retrieve public credentials";
     std::move(callback).Run(mojo_base::mojom::AbslStatusCode::kAborted,
                             std::nullopt);
     return;
-  }
-
-  base::TimeDelta retrieval_duration =
-      base::TimeTicks::Now() - retrieval_start_time;
-  switch (public_credential_type) {
-    case (mojom::PublicCredentialType::kLocalPublicCredential):
-      metrics::RecordCredentialStorageRetrieveLocalPublicCredentialsDuration(
-          retrieval_duration);
-      break;
-    case (mojom::PublicCredentialType::kRemotePublicCredential):
-      metrics::RecordCredentialStorageRetrieveRemotePublicCredentialsDuration(
-          retrieval_duration);
-      break;
   }
 
   CHECK(entries);
@@ -331,14 +346,18 @@ void NearbyPresenceCredentialStorage::OnLocalPublicCredentialsSaved(
 
   auto credential_pairs_to_save = std::make_unique<std::vector<
       std::pair<std::string, ::nearby::internal::LocalCredential>>>();
+  base::flat_set<std::string> keys_to_not_delete;
   for (const auto& local_credential : proto_local_credentials) {
+    std::string id = base::NumberToString(local_credential.id());
     credential_pairs_to_save->emplace_back(
-        std::make_pair(local_credential.secret_id(), local_credential));
+        std::make_pair(id, local_credential));
+    keys_to_not_delete.insert(id);
   }
 
-  private_db_->UpdateEntries(
+  private_db_->UpdateEntriesWithRemoveFilter(
       /*entries_to_save=*/std::move(credential_pairs_to_save),
-      /*entries_to_remove=*/GenerateKeysForEntriesToRemove(),
+      /*delete_key_filter=*/
+      base::BindRepeating(&ShouldDeleteEntry, keys_to_not_delete),
       base::BindOnce(
           &NearbyPresenceCredentialStorage::OnPrivateCredentialsSaved,
           weak_ptr_factory_.GetWeakPtr(),
@@ -477,6 +496,60 @@ void NearbyPresenceCredentialStorage::OnRemotePublicDatabaseInitialized(
   receiver_.Bind(std::move(pending_receiver_));
 
   std::move(on_fully_initialized).Run(/*success=*/true);
+
+  RecordCredentialsCountAndSize();
+}
+
+void NearbyPresenceCredentialStorage::RecordCredentialsCountAndSize() {
+  local_public_db_->LoadEntries(
+      base::BindOnce(&NearbyPresenceCredentialStorage::
+                         RecordLocalSharedCredentialsCountAndSize,
+                     weak_ptr_factory_.GetWeakPtr()));
+}
+
+void NearbyPresenceCredentialStorage::RecordLocalSharedCredentialsCountAndSize(
+    bool success,
+    std::unique_ptr<std::vector<::nearby::internal::SharedCredential>>
+        entries) {
+  if (!success) {
+    LOG(ERROR)
+        << __func__
+        << ": failed to load entries for local shared credential database.";
+    return;
+  }
+
+  metrics::RecordNumberOfLocalSharedCredentials(entries->size());
+
+  size_t size_of_credentials_in_bytes = 0;
+  for (const auto& entry : *entries) {
+    size_of_credentials_in_bytes += entry.ByteSizeLong();
+  }
+  metrics::RecordSizeOfLocalSharedCredentials(size_of_credentials_in_bytes);
+
+  remote_public_db_->LoadEntries(
+      base::BindOnce(&NearbyPresenceCredentialStorage::
+                         RecordRemoteSharedCredentialsCountAndSize,
+                     weak_ptr_factory_.GetWeakPtr()));
+}
+
+void NearbyPresenceCredentialStorage::RecordRemoteSharedCredentialsCountAndSize(
+    bool success,
+    std::unique_ptr<std::vector<::nearby::internal::SharedCredential>>
+        entries) {
+  if (!success) {
+    LOG(ERROR)
+        << __func__
+        << ": failed to load entries for remote shared credential database.";
+    return;
+  }
+
+  metrics::RecordNumberOfRemoteSharedCredentials(entries->size());
+
+  size_t size_of_credentials_in_bytes = 0;
+  for (const auto& entry : *entries) {
+    size_of_credentials_in_bytes += entry.ByteSizeLong();
+  }
+  metrics::RecordSizeOfRemoteSharedCredentials(size_of_credentials_in_bytes);
 }
 
 }  // namespace ash::nearby::presence

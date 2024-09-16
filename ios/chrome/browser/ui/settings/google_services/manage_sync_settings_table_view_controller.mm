@@ -6,6 +6,7 @@
 
 #import "base/apple/foundation_util.h"
 #import "ios/chrome/browser/net/model/crurl.h"
+#import "ios/chrome/browser/policy/model/management_state.h"
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_info_button_cell.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_switch_cell.h"
@@ -25,7 +26,6 @@
 namespace {
 
 // Table view customized header heights.
-CGFloat kSyncDataTypeSectionHeaderHeightPointSize = 48.;
 CGFloat kAdvancedSettingsSectionHeaderHeightPointSize = 26.;
 CGFloat kSignOutSectionHeaderHeightPointSize = 26.;
 CGFloat kDefaultSectionHeaderHeightPointSize = 10.;
@@ -113,7 +113,7 @@ CGFloat kDefaultSectionFooterHeightPointSize = 10.;
   NSInteger sectionIdentifier =
       [self.tableViewModel sectionIdentifierForSectionIndex:section];
 
-  if (sectionIdentifier == SignOutSectionIdentifier) {
+  if (sectionIdentifier == ManageAndSignOutSectionIdentifier) {
     TableViewLinkHeaderFooterView* linkView =
         base::apple::ObjCCastStrict<TableViewLinkHeaderFooterView>(view);
     linkView.delegate = self;
@@ -182,8 +182,8 @@ CGFloat kDefaultSectionFooterHeightPointSize = 10.;
   if (!indexPath) {
     // No need to reload if the item is not in the model. This would also cause
     // a crash below since NSArrays cannot contain nil.
-    // TODO(crbug.com/1485554): Better understand the crash root cause and CHECK
-    // instead of no-op.
+    // TODO(crbug.com/40073025): Better understand the crash root cause and
+    // CHECK instead of no-op.
     return;
   }
   // To avoid animation glitches related to crbug.com/1469539.
@@ -206,12 +206,15 @@ CGFloat kDefaultSectionFooterHeightPointSize = 10.;
 
 - (void)updatePrimaryAccountWithAvatarImage:(UIImage*)avatarImage
                                        name:(NSString*)name
-                                      email:(NSString*)email {
+                                      email:(NSString*)email
+                            managementState:(ManagementState)managementState {
   CentralAccountView* identityAccountItem = [[CentralAccountView alloc]
-      initWithFrame:CGRectMake(0, 0, self.tableView.frame.size.width, 0)
-        avatarImage:avatarImage
-               name:name
-              email:email];
+        initWithFrame:CGRectMake(0, 0, self.tableView.frame.size.width, 0)
+          avatarImage:avatarImage
+                 name:name
+                email:email
+      managementState:std::move(managementState)
+      useLargeMargins:YES];
   self.tableView.tableHeaderView = identityAccountItem;
   [self.tableView reloadData];
 }
@@ -234,10 +237,10 @@ CGFloat kDefaultSectionFooterHeightPointSize = 10.;
         [self.tableViewModel sectionIdentifierForSectionIndex:section];
     switch (sectionIdentifier) {
       case SyncDataTypeSectionIdentifier:
-        return kSyncDataTypeSectionHeaderHeightPointSize;
+        return UITableViewAutomaticDimension;
       case AdvancedSettingsSectionIdentifier:
         return kAdvancedSettingsSectionHeaderHeightPointSize;
-      case SignOutSectionIdentifier:
+      case ManageAndSignOutSectionIdentifier:
         if (![self.tableViewModel hasSectionForSectionIdentifier:
                                       AdvancedSettingsSectionIdentifier]) {
           return kSignOutSectionHeaderHeightPointSize;
@@ -258,7 +261,7 @@ CGFloat kDefaultSectionFooterHeightPointSize = 10.;
         [self.tableViewModel sectionIdentifierForSectionIndex:section];
     switch (sectionIdentifier) {
       case SyncDataTypeSectionIdentifier:
-      case SignOutSectionIdentifier:
+      case ManageAndSignOutSectionIdentifier:
         return UITableViewAutomaticDimension;
       case AdvancedSettingsSectionIdentifier:
       case SyncErrorsSectionIdentifier:

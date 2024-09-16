@@ -52,10 +52,12 @@ MicCoordinator::MicCoordinator(
 
   audio_stream_coordinator_.emplace(
       mic_view_controller_->GetLiveFeedContainer());
+
+  mic_mediator_.InitializeDeviceList();
 }
 
 MicCoordinator::~MicCoordinator() {
-  if (allow_device_selection_) {
+  if (allow_device_selection_ && mic_mediator_.IsDeviceListInitialized()) {
     RecordDeviceSelectionTotalDevices(metrics_context_,
                                       eligible_device_infos_.size());
   }
@@ -76,10 +78,23 @@ void MicCoordinator::OnAudioSourceInfosReceived(
     eligible_mic_ids.insert(*real_default_device_id);
   }
 
+  auto real_communications_device_id =
+      media_effects::GetRealCommunicationsDeviceId(device_infos);
+  if (real_communications_device_id &&
+      eligible_mic_ids.contains(
+          media::AudioDeviceDescription::kCommunicationsDeviceId)) {
+    eligible_mic_ids.insert(*real_communications_device_id);
+  }
+
   eligible_device_infos_.clear();
   for (const auto& device_info : device_infos) {
     if (real_default_device_id &&
         media::AudioDeviceDescription::IsDefaultDevice(device_info.unique_id)) {
+      continue;
+    }
+    if (real_communications_device_id &&
+        media::AudioDeviceDescription::IsCommunicationsDevice(
+            device_info.unique_id)) {
       continue;
     }
     if (!eligible_mic_ids.empty() &&
@@ -110,8 +125,10 @@ void MicCoordinator::OnAudioSourceChanged(
   active_device_id_ = device_info.unique_id;
   mic_mediator_.GetAudioInputDeviceFormats(
       active_device_id_,
+      // WeakPtr is needed because the callback is passed later to
+      // MediaDeviceInfo which outlives `this`.
       base::BindOnce(&MicCoordinator::ConnectAudioStream,
-                     base::Unretained(this), active_device_id_));
+                     weak_factory_.GetWeakPtr(), active_device_id_));
 }
 
 void MicCoordinator::ConnectAudioStream(

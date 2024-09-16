@@ -5,10 +5,10 @@
 #import "ios/chrome/browser/search_engine_choice/model/search_engine_choice_util.h"
 
 #import "base/check_deref.h"
-#import "base/feature_list.h"
+#import "base/command_line.h"
 #import "base/memory/raw_ptr.h"
 #import "base/test/metrics/histogram_tester.h"
-#import "base/test/scoped_feature_list.h"
+#import "components/metrics/metrics_pref_names.h"
 #import "components/policy/core/common/mock_policy_service.h"
 #import "components/search_engines/search_engine_choice/search_engine_choice_service.h"
 #import "components/search_engines/search_engines_pref_names.h"
@@ -17,10 +17,9 @@
 #import "components/search_engines/template_url_prepopulate_data.h"
 #import "components/search_engines/template_url_service.h"
 #import "components/signin/public/base/signin_switches.h"
-#import "components/sync_preferences/testing_pref_service_syncable.h"
 #import "ios/chrome/browser/policy/model/browser_state_policy_connector_mock.h"
 #import "ios/chrome/browser/search_engines/model/template_url_service_factory.h"
-#import "ios/chrome/browser/shared/model/browser_state/test_chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/chrome/browser/signin/model/authentication_service_factory.h"
 #import "ios/web/public/test/web_task_environment.h"
 #import "testing/gtest/include/gtest/gtest.h"
@@ -29,18 +28,6 @@
 class SearchEngineChoiceUtilTest : public PlatformTest {
  public:
   SearchEngineChoiceUtilTest() {
-    feature_list_.InitAndEnableFeatureWithParameters(
-        switches::kSearchEngineChoiceTrigger,
-        {{switches::kSearchEngineChoiceTriggerForTaggedProfilesOnly.name,
-          "false"}});
-    TemplateURLService::RegisterProfilePrefs(pref_service_.registry());
-    DefaultSearchManager::RegisterProfilePrefs(pref_service_.registry());
-    TemplateURLPrepopulateData::RegisterProfilePrefs(pref_service_.registry());
-
-    search_engine_choice_service_ =
-        std::make_unique<search_engines::SearchEngineChoiceService>(
-            pref_service_);
-
     // Override the country checks to simulate being in Belgium.
     base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
         switches::kSearchEngineChoiceCountry, "BE");
@@ -53,7 +40,7 @@ class SearchEngineChoiceUtilTest : public PlatformTest {
     builder.AddTestingFactory(
         ios::TemplateURLServiceFactory::GetInstance(),
         ios::TemplateURLServiceFactory::GetDefaultFactory());
-    browser_state_ = builder.Build();
+    browser_state_ = std::move(builder).Build();
     template_url_service_ = ios::TemplateURLServiceFactory::GetForBrowserState(
         browser_state_.get());
     base::CommandLine::ForCurrentProcess()->AppendSwitch(
@@ -66,12 +53,6 @@ class SearchEngineChoiceUtilTest : public PlatformTest {
 
   TemplateURLService& template_url_service() { return *template_url_service_; }
 
-  base::test::ScopedFeatureList& feature_list() { return feature_list_; }
-
-  search_engines::SearchEngineChoiceService& search_engine_choice_service() {
-    return CHECK_DEREF(search_engine_choice_service_.get());
-  }
-
  private:
   void InitMockPolicyService() {
     policy_service_ = std::make_unique<policy::MockPolicyService>();
@@ -83,10 +64,6 @@ class SearchEngineChoiceUtilTest : public PlatformTest {
 
   web::WebTaskEnvironment task_environment_;
   policy::SchemaRegistry schema_registry_;
-  std::unique_ptr<search_engines::SearchEngineChoiceService>
-      search_engine_choice_service_;
-  sync_preferences::TestingPrefServiceSyncable pref_service_;
-  base::test::ScopedFeatureList feature_list_;
   std::unique_ptr<TestChromeBrowserState> browser_state_;
   // Owned by browser_state_.
   raw_ptr<TemplateURLService> template_url_service_;
@@ -96,7 +73,7 @@ class SearchEngineChoiceUtilTest : public PlatformTest {
 
 TEST_F(SearchEngineChoiceUtilTest, ShowChoiceScreenIfPoliciesAreNotSet) {
   EXPECT_TRUE(ShouldDisplaySearchEngineChoiceScreen(
-      browser_state(), search_engines::ChoicePromo::kDialog,
+      browser_state(), /*is_first_run_entrypoint=*/false,
       /*app_started_via_external_intent=*/false));
   histogram_tester_.ExpectUniqueSample(
       search_engines::kSearchEngineChoiceScreenProfileInitConditionsHistogram,
@@ -106,7 +83,7 @@ TEST_F(SearchEngineChoiceUtilTest, ShowChoiceScreenIfPoliciesAreNotSet) {
 TEST_F(SearchEngineChoiceUtilTest,
        ShowChoiceScreenIfPoliciesAreNotSetStartedByExternalIntent) {
   EXPECT_FALSE(ShouldDisplaySearchEngineChoiceScreen(
-      browser_state(), search_engines::ChoicePromo::kDialog,
+      browser_state(), /*is_first_run_entrypoint=*/false,
       /*app_started_via_external_intent=*/true));
   histogram_tester_.ExpectUniqueSample(
       search_engines::kSearchEngineChoiceScreenProfileInitConditionsHistogram,
@@ -125,7 +102,7 @@ TEST_F(
       switches::kSearchEngineChoiceMaximumSkipCount.Get() - 1);
 
   EXPECT_FALSE(ShouldDisplaySearchEngineChoiceScreen(
-      browser_state(), search_engines::ChoicePromo::kDialog,
+      browser_state(), /*is_first_run_entrypoint=*/false,
       /*app_started_via_external_intent=*/true));
   histogram_tester_.ExpectUniqueSample(
       search_engines::kSearchEngineChoiceScreenProfileInitConditionsHistogram,
@@ -143,7 +120,7 @@ TEST_F(
       switches::kSearchEngineChoiceMaximumSkipCount.Get());
 
   EXPECT_TRUE(ShouldDisplaySearchEngineChoiceScreen(
-      browser_state(), search_engines::ChoicePromo::kDialog,
+      browser_state(), /*is_first_run_entrypoint=*/false,
       /*app_started_via_external_intent=*/true));
   histogram_tester_.ExpectUniqueSample(
       search_engines::kSearchEngineChoiceScreenProfileInitConditionsHistogram,
@@ -151,42 +128,7 @@ TEST_F(
 }
 
 TEST_F(SearchEngineChoiceUtilTest,
-       DoNotShowChoiceScreenIfUserHasCustomSearchEngineSetAsDefault) {
-  feature_list().Reset();
-  feature_list().InitAndEnableFeatureWithParameters(
-      switches::kSearchEngineChoiceTrigger,
-      {{switches::kSearchEngineChoiceTriggerForTaggedProfilesOnly.name,
-        "false"},
-       {switches::kSearchEngineChoiceTriggerSkipFor3p.name, "false"}});
-
-  // A custom search engine will have a `prepopulate_id` of 0.
-  const int kCustomSearchEnginePrepopulateId = 0;
-  TemplateURLData template_url_data;
-  template_url_data.prepopulate_id = kCustomSearchEnginePrepopulateId;
-  template_url_data.SetURL("https://www.example.com/?q={searchTerms}");
-  template_url_service().SetUserSelectedDefaultSearchProvider(
-      template_url_service().Add(
-          std::make_unique<TemplateURL>(template_url_data)));
-
-  EXPECT_FALSE(ShouldDisplaySearchEngineChoiceScreen(
-      browser_state(), search_engines::ChoicePromo::kDialog,
-      /*app_started_via_external_intent=*/false));
-  histogram_tester_.ExpectUniqueSample(
-      search_engines::kSearchEngineChoiceScreenProfileInitConditionsHistogram,
-      search_engines::SearchEngineChoiceScreenConditions::
-          kHasCustomSearchEngine,
-      1);
-}
-
-TEST_F(SearchEngineChoiceUtilTest,
        DoNotShowChoiceScreenIfUserHasNonGoogleSearchEngineSetAsDefault) {
-  feature_list().Reset();
-  feature_list().InitAndEnableFeatureWithParameters(
-      switches::kSearchEngineChoiceTrigger,
-      {{switches::kSearchEngineChoiceTriggerForTaggedProfilesOnly.name,
-        "false"},
-       {switches::kSearchEngineChoiceTriggerSkipFor3p.name, "true"}});
-
   // A custom search engine will have a `prepopulate_id` of 0.
   const int kCustomSearchEnginePrepopulateId = 0;
   TemplateURLData template_url_data;
@@ -197,7 +139,7 @@ TEST_F(SearchEngineChoiceUtilTest,
           std::make_unique<TemplateURL>(template_url_data)));
 
   EXPECT_FALSE(ShouldDisplaySearchEngineChoiceScreen(
-      browser_state(), search_engines::ChoicePromo::kDialog,
+      browser_state(), /*is_first_run_entrypoint=*/false,
       /*app_started_via_external_intent=*/false));
   histogram_tester_.ExpectUniqueSample(
       search_engines::kSearchEngineChoiceScreenProfileInitConditionsHistogram,

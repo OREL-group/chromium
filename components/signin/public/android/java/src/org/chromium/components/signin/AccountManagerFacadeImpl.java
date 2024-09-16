@@ -6,7 +6,6 @@ package org.chromium.components.signin;
 
 import android.accounts.Account;
 import android.accounts.AccountManager;
-import android.accounts.AuthenticatorDescription;
 import android.app.Activity;
 import android.content.Intent;
 import android.os.Bundle;
@@ -131,19 +130,10 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
         return mCoreAccountInfosPromise;
     }
 
-    /** @return Whether or not there is an account authenticator for Google accounts. */
-    @Override
-    public boolean hasGoogleAccountAuthenticator() {
-        AuthenticatorDescription[] descs = mDelegate.getAuthenticatorTypes();
-        for (AuthenticatorDescription desc : descs) {
-            if (AccountUtils.GOOGLE_ACCOUNT_TYPE.equals(desc.type)) return true;
-        }
-        return false;
-    }
-
     /**
-     * Synchronously gets an OAuth2 access token. May return a cached version, use
-     * {@link #invalidateAccessToken} to invalidate a token in the cache.
+     * Synchronously gets an OAuth2 access token. May return a cached version, use {@link
+     * #invalidateAccessToken} to invalidate a token in the cache.
+     *
      * @param coreAccountInfo The {@link CoreAccountInfo} for which the token is requested.
      * @param scope OAuth2 scope for which the requested token should be valid.
      * @return The OAuth2 access token as an AccessTokenData with a string and an expiration time..
@@ -186,7 +176,7 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
 
             @Override
             protected void onPostExecute(Boolean isChild) {
-                // TODO(crbug.com/1258563): rework this interface to avoid passing a null account.
+                // TODO(crbug.com/40201126): rework this interface to avoid passing a null account.
                 listener.onStatusReady(isChild, isChild ? coreAccountInfo : null);
             }
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
@@ -365,7 +355,7 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
                         // We shouldn't wait indefinitely for the account fetching to succeed, at it
                         // might block certain features. Fall back to an empty list to allow the
                         // user to proceed.
-                        allAccounts = mAllAccounts.get() == null ? mAllAccounts.get() : List.of();
+                        allAccounts = mAllAccounts.get() == null ? List.of() : mAllAccounts.get();
                     }
                 }
                 if (mNumberOfRetries != 0) {
@@ -432,5 +422,11 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
             return capabilityName.substring(ACCOUNT_CAPABILITY_NAME_PREFIX.length());
         }
         return capabilityName;
+    }
+
+    public void resetAccountsForTesting() {
+        mCoreAccountInfosPromise = new Promise<>();
+        mAllAccounts.set(null);
+        updateAccounts();
     }
 }

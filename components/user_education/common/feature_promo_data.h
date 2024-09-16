@@ -5,8 +5,8 @@
 #ifndef COMPONENTS_USER_EDUCATION_COMMON_FEATURE_PROMO_DATA_H_
 #define COMPONENTS_USER_EDUCATION_COMMON_FEATURE_PROMO_DATA_H_
 
+#include <map>
 #include <ostream>
-#include <set>
 #include <string>
 
 #include "base/time/time.h"
@@ -35,11 +35,33 @@ enum class FeaturePromoClosedReason {
   kOverrideForTesting = 9,           // Promo aborted for tests.
   kOverrideForPrecedence = 10,       // Promo aborted for higher priority Promo.
 
-  kMaxValue = kOverrideForPrecedence,
+  // Additional ways a promo can be aborted.
+  kAbortedByFeature = 11,          // EndPromo() explicitly called.
+  kAbortedByAnchorHidden = 12,     // Anchor element disappeared.
+  kAbortedByBubbleDestroyed = 13,  // HelpBubble object destroyed.
+
+  kMaxValue = kAbortedByBubbleDestroyed,
 };
 
 std::ostream& operator<<(std::ostream& oss,
                          FeaturePromoClosedReason close_reason);
+
+// Per-key dismissal information.
+struct KeyedFeaturePromoData {
+  KeyedFeaturePromoData() = default;
+  KeyedFeaturePromoData(const KeyedFeaturePromoData&) = default;
+  KeyedFeaturePromoData(KeyedFeaturePromoData&&) noexcept = default;
+  KeyedFeaturePromoData& operator=(const KeyedFeaturePromoData&) = default;
+  KeyedFeaturePromoData& operator=(KeyedFeaturePromoData&&) noexcept = default;
+  ~KeyedFeaturePromoData() = default;
+
+  bool operator<=>(const KeyedFeaturePromoData& other) const = default;
+
+  int show_count = 0;
+  base::Time last_shown_time;
+};
+
+using KeyedFeaturePromoDataMap = std::map<std::string, KeyedFeaturePromoData>;
 
 // Dismissal and snooze information.
 struct FeaturePromoData {
@@ -58,7 +80,8 @@ struct FeaturePromoData {
   base::Time last_snooze_time;
   int snooze_count = 0;
   int show_count = 0;
-  std::set<std::string> shown_for_keys;
+  int promo_index = 0;
+  KeyedFeaturePromoDataMap shown_for_keys;
 };
 
 // Data about the current session, which can persist across browser restarts.

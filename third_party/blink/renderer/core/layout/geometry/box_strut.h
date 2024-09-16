@@ -24,7 +24,11 @@ class String;
 namespace blink {
 
 struct LineBoxStrut;
+struct LogicalRect;
+struct LogicalSize;
 struct PhysicalBoxStrut;
+struct PhysicalRect;
+struct PhysicalSize;
 
 // This struct is used for storing margins, borders or padding of a box on all
 // four edges.
@@ -39,6 +43,13 @@ struct CORE_EXPORT BoxStrut {
         block_start(block_start),
         block_end(block_end) {}
   BoxStrut(const LineBoxStrut&, bool is_flipped_lines);
+
+  // Create a strut based on an inner rectangle positioned within an area.
+  BoxStrut(const LogicalSize& outer_size, const LogicalRect& inner_rect);
+
+  // Update each of data members with std::min(this->member, other.member).
+  // This function returns `*this`.
+  BoxStrut& Intersect(const BoxStrut& other);
 
   LayoutUnit LineLeft(TextDirection direction) const {
     return IsLtr(direction) ? inline_start : inline_end;
@@ -162,6 +173,10 @@ struct CORE_EXPORT PhysicalBoxStrut {
         right(LayoutUnit(r)),
         bottom(LayoutUnit(b)),
         left(LayoutUnit(l)) {}
+
+  // Create a strut based on an inner rectangle positioned within an area.
+  PhysicalBoxStrut(const PhysicalSize& outer_size,
+                   const PhysicalRect& inner_rect);
 
   // Creates new PhysicalBoxStrut instance from the specified `outsets`.
   // A data member of `outsets` is rounded up to the minimum LayoutUnit value
@@ -299,7 +314,7 @@ inline PhysicalBoxStrut BoxStrut::ConvertToPhysical(
       return PhysicalBoxStrut(direction_end, block_end, direction_start,
                               block_start);
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return PhysicalBoxStrut();
   }
 }

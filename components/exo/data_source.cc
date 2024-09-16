@@ -2,10 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/exo/data_source.h"
 
 #include <limits>
 #include <optional>
+#include <string_view>
 
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
@@ -110,8 +116,8 @@ int GetImageTypeRank(const std::string& mime_type) {
 std::u16string CodepageToUTF16(const std::vector<uint8_t>& data,
                                const std::string& charset_input) {
   std::u16string output;
-  base::StringPiece piece(reinterpret_cast<const char*>(data.data()),
-                          data.size());
+  std::string_view piece(reinterpret_cast<const char*>(data.data()),
+                         data.size());
   const char* charset = charset_input.c_str();
 
   // Despite claims in the documentation to the contrary, the ICU UTF-16

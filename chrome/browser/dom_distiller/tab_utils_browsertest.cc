@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/dom_distiller/tab_utils.h"
+
 #include <string.h>
 
 #include <memory>
@@ -16,9 +18,7 @@
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/dom_distiller/dom_distiller_service_factory.h"
-#include "chrome/browser/dom_distiller/tab_utils.h"
 #include "chrome/browser/dom_distiller/test_distillation_observers.h"
-#include "chrome/browser/ssl/security_state_tab_helper.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -35,6 +35,7 @@
 #include "components/dom_distiller/core/url_utils.h"
 #include "components/favicon/content/content_favicon_driver.h"
 #include "components/favicon/core/favicon_driver_observer.h"
+#include "components/security_state/content/security_state_tab_helper.h"
 #include "components/security_state/core/security_state.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/render_frame_host.h"
@@ -260,33 +261,6 @@ IN_PROC_BROWSER_TEST_F(DomDistillerTabUtilsBrowserTest,
   destroyed_watcher.Wait();
 }
 
-IN_PROC_BROWSER_TEST_F(DomDistillerTabUtilsBrowserTest, ToggleOriginalPage) {
-  content::WebContents* source_web_contents =
-      browser()->tab_strip_model()->GetActiveWebContents();
-
-  // This blocks until the navigation has completely finished.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), article_url()));
-
-  // Create and navigate to the distilled page.
-  browser()->tab_strip_model()->AppendWebContents(
-      NewContentsWithSameParamsAs(source_web_contents),
-      /* foreground = */ true);
-  content::WebContents* destination_web_contents =
-      browser()->tab_strip_model()->GetWebContentsAt(1);
-
-  DistillAndView(source_web_contents, destination_web_contents);
-  DistilledPageObserver(destination_web_contents).WaitUntilFinishedLoading();
-  ASSERT_TRUE(url_utils::IsDistilledPage(
-      destination_web_contents->GetLastCommittedURL()));
-
-  // Now return to the original page.
-  ReturnToOriginalPage(destination_web_contents);
-  OriginalPageNavigationObserver(destination_web_contents)
-      .WaitUntilFinishedLoading();
-  EXPECT_EQ(source_web_contents->GetLastCommittedURL(),
-            destination_web_contents->GetLastCommittedURL());
-}
-
 IN_PROC_BROWSER_TEST_F(DomDistillerTabUtilsBrowserTest,
                        DomDistillDisableForBackForwardCache) {
   content::BackForwardCacheDisabledTester tester;
@@ -496,7 +470,8 @@ IN_PROC_BROWSER_TEST_F(DomDistillerTabUtilsPrerenderTest,
 
   // Add a prerender.
   const GURL prerender_url = https_server_->GetURL("/title1.html");
-  int host_id = prerender_test_helper().AddPrerender(prerender_url);
+  content::FrameTreeNodeId host_id =
+      prerender_test_helper().AddPrerender(prerender_url);
   content::test::PrerenderHostObserver prerender_observer(
       *source_web_contents(), host_id);
   EXPECT_FALSE(prerender_observer.was_activated());

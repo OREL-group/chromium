@@ -9,6 +9,7 @@
 #include "content/browser/webid/flags.h"
 #include "content/browser/webid/webid_utils.h"
 #include "net/base/net_errors.h"
+#include "net/base/schemeful_site.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
 #include "services/metrics/public/cpp/metrics_utils.h"
@@ -20,43 +21,33 @@ namespace content {
 namespace {
 
 FedCmRequesterFrameType ComputeRequesterFrameType(const RenderFrameHost& rfh,
-                                                  url::Origin requester,
-                                                  url::Origin embedder) {
+                                                  const url::Origin& requester,
+                                                  const url::Origin& embedder) {
   // Since FedCM methods are not supported in FencedFrames, we can know whether
   // this is a main frame by calling GetParent().
   if (!rfh.GetParent()) {
     return FedCmRequesterFrameType::kMainFrame;
   }
-  std::string requester_str =
-      webid::FormatUrlWithDomain(requester.GetURL(), /*for_display=*/false);
-  std::string embedder_str = webid::FormatUrlWithDomain(embedder.GetURL(),
-                                                        /*for_display=*/false);
-  if (requester_str == embedder_str) {
-    return FedCmRequesterFrameType::kSameSiteIframe;
-  }
-  return FedCmRequesterFrameType::kCrossSiteIframe;
+  return webid::IsSameSite(requester, embedder)
+             ? FedCmRequesterFrameType::kSameSiteIframe
+             : FedCmRequesterFrameType::kCrossSiteIframe;
 }
 
 }  // namespace
 
-FedCmMetrics::FedCmMetrics(const GURL& provider,
-                           ukm::SourceId page_source_id,
-                           int session_id)
-    : page_source_id_(page_source_id), session_id_(session_id) {
-  // TODO(crbug.com/326397737): Remove the |provider| parameter from the
-  // constructor.
-  ukm::SourceId source_id =
-      ukm::UkmRecorder::GetSourceIdForWebIdentityFromScope(
-          base::PassKey<FedCmMetrics>(), provider);
-  provider_source_ids_[provider] = source_id;
-  provider_source_id_ = source_id;
-}
+FedCmMetrics::FedCmMetrics(ukm::SourceId page_source_id)
+    : page_source_id_(page_source_id) {}
 
 FedCmMetrics::~FedCmMetrics() = default;
 
+void FedCmMetrics::SetSessionID(int session_id) {
+  session_id_ = session_id;
+}
+
 void FedCmMetrics::RecordShowAccountsDialogTime(
-    const std::vector<IdentityProviderData>& providers,
+    const std::vector<IdentityProviderDataPtr>& providers,
     base::TimeDelta duration) {
+  DCHECK_GT(session_id_, 0);
   auto RecordUkm = [&](auto& ukm_builder) {
     ukm_builder.SetTiming_ShowAccountsDialog(
         ukm::GetExponentialBucketMinForUserTiming(duration.InMilliseconds()));
@@ -68,9 +59,9 @@ void FedCmMetrics::RecordShowAccountsDialogTime(
   for (const auto& provider : providers) {
     // A provider may have no accounts, for instance if present due to IDP
     // mismatch.
-    if (!provider.accounts.empty()) {
+    if (!provider->has_login_status_mismatch) {
       ukm::builders::Blink_FedCmIdp fedcm_idp_builder(
-          GetOrCreateProviderSourceId(provider.idp_metadata.config_url));
+          GetOrCreateProviderSourceId(provider->idp_metadata.config_url));
       RecordUkm(fedcm_idp_builder);
     }
   }
@@ -83,6 +74,7 @@ void FedCmMetrics::RecordShowAccountsDialogTimeBreakdown(
     base::TimeDelta well_known_and_config_fetch_duration,
     base::TimeDelta accounts_fetch_duration,
     base::TimeDelta client_metadata_fetch_duration) {
+  DCHECK_GT(session_id_, 0);
   auto RecordUkm = [&](auto& ukm_builder) {
     ukm_builder.SetTiming_ShowAccountsDialogBreakdown_WellKnownAndConfigFetch(
         ukm::GetExponentialBucketMinForUserTiming(
@@ -129,8 +121,9 @@ void FedCmMetrics::RecordNumRequestsPerDocument(ukm::SourceId page_source_id,
                               num_requests);
 }
 
-void FedCmMetrics::RecordContinueOnDialogTime(const GURL& provider,
-                                              base::TimeDelta duration) {
+void FedCmMetrics::RecordContinueOnPopupTime(const GURL& provider,
+                                             base::TimeDelta duration) {
+  DCHECK_GT(session_id_, 0);
   auto RecordUkm = [&](auto& ukm_builder) {
     ukm_builder.SetTiming_ContinueOnDialog(
         ukm::GetExponentialBucketMinForUserTiming(duration.InMilliseconds()));
@@ -149,8 +142,9 @@ void FedCmMetrics::RecordContinueOnDialogTime(const GURL& provider,
 }
 
 void FedCmMetrics::RecordCancelOnDialogTime(
-    const std::vector<IdentityProviderData>& providers,
+    const std::vector<IdentityProviderDataPtr>& providers,
     base::TimeDelta duration) {
+  DCHECK_GT(session_id_, 0);
   auto RecordUkm = [&](auto& ukm_builder) {
     ukm_builder.SetTiming_CancelOnDialog(
         ukm::GetExponentialBucketMinForUserTiming(duration.InMilliseconds()));
@@ -162,7 +156,7 @@ void FedCmMetrics::RecordCancelOnDialogTime(
 
   for (const auto& provider : providers) {
     ukm::builders::Blink_FedCmIdp fedcm_idp_builder(
-        GetOrCreateProviderSourceId(provider.idp_metadata.config_url));
+        GetOrCreateProviderSourceId(provider->idp_metadata.config_url));
     RecordUkm(fedcm_idp_builder);
   }
 
@@ -170,8 +164,9 @@ void FedCmMetrics::RecordCancelOnDialogTime(
 }
 
 void FedCmMetrics::RecordAccountsDialogShownDuration(
-    const std::vector<IdentityProviderData>& providers,
+    const std::vector<IdentityProviderDataPtr>& providers,
     base::TimeDelta duration) {
+  DCHECK_GT(session_id_, 0);
   auto RecordUkm = [&](auto& ukm_builder) {
     ukm_builder.SetTiming_AccountsDialogShownDuration(
         ukm::GetExponentialBucketMinForUserTiming(duration.InMilliseconds()));
@@ -183,12 +178,11 @@ void FedCmMetrics::RecordAccountsDialogShownDuration(
 
   for (const auto& provider : providers) {
     ukm::builders::Blink_FedCmIdp fedcm_idp_builder(
-        GetOrCreateProviderSourceId(provider.idp_metadata.config_url));
+        GetOrCreateProviderSourceId(provider->idp_metadata.config_url));
     // A provider may have no accounts and be present due to IDP mismatch.
-    if (!provider.accounts.empty()) {
+    if (!provider->has_login_status_mismatch) {
       RecordUkm(fedcm_idp_builder);
     } else {
-      DCHECK(provider.has_login_status_mismatch);
       fedcm_idp_builder.SetTiming_MismatchDialogShownDuration(
           ukm::GetExponentialBucketMinForUserTiming(duration.InMilliseconds()));
       fedcm_idp_builder.SetFedCmSessionID(session_id_);
@@ -205,8 +199,9 @@ void FedCmMetrics::RecordAccountsDialogShownDuration(
 }
 
 void FedCmMetrics::RecordMismatchDialogShownDuration(
-    const std::vector<IdentityProviderData>& providers,
+    const std::vector<IdentityProviderDataPtr>& providers,
     base::TimeDelta duration) {
+  DCHECK_GT(session_id_, 0);
   auto RecordUkm = [&](auto& ukm_builder) {
     ukm_builder.SetTiming_MismatchDialogShownDuration(
         ukm::GetExponentialBucketMinForUserTiming(duration.InMilliseconds()));
@@ -219,7 +214,7 @@ void FedCmMetrics::RecordMismatchDialogShownDuration(
   for (const auto& provider : providers) {
     // We should only reach this if all `providers` are a mismatch.
     ukm::builders::Blink_FedCmIdp fedcm_idp_builder(
-        GetOrCreateProviderSourceId(provider.idp_metadata.config_url));
+        GetOrCreateProviderSourceId(provider->idp_metadata.config_url));
     RecordUkm(fedcm_idp_builder);
   }
 
@@ -240,6 +235,7 @@ void FedCmMetrics::RecordTokenResponseAndTurnaroundTime(
     const GURL& provider,
     base::TimeDelta token_response_time,
     base::TimeDelta turnaround_time) {
+  DCHECK_GT(session_id_, 0);
   auto RecordUkm = [&](auto& ukm_builder) {
     ukm_builder
         .SetTiming_IdTokenResponse(ukm::GetExponentialBucketMinForUserTiming(
@@ -262,6 +258,15 @@ void FedCmMetrics::RecordTokenResponseAndTurnaroundTime(
                                 turnaround_time);
 }
 
+void FedCmMetrics::RecordContinueOnResponseAndTurnaroundTime(
+    base::TimeDelta token_response_time,
+    base::TimeDelta turnaround_time) {
+  base::UmaHistogramMediumTimes("Blink.FedCm.Timing.ContinueOn.Response",
+                                token_response_time);
+  base::UmaHistogramMediumTimes("Blink.FedCm.Timing.ContinueOn.TurnaroundTime",
+                                turnaround_time);
+}
+
 void FedCmMetrics::RecordRequestTokenStatus(
     FedCmRequestIdTokenStatus status,
     MediationRequirement requirement,
@@ -269,15 +274,18 @@ void FedCmMetrics::RecordRequestTokenStatus(
     int num_idps_mismatch,
     const std::optional<GURL>& selected_idp_config_url,
     const RpMode& rp_mode) {
-  // If the request has failed but we have not yet rejected the promise,
-  // e.g. when the user has declined the permission or the API is disabled
-  // etc., we have already recorded a RequestTokenStatus. i.e.
-  // `request_token_status_recorded_` would be true. In this case, we
-  // shouldn't record another RequestTokenStatus.
-  if (request_token_status_recorded_) {
+  // The following check is to avoid double recording in the following scenario:
+  // 1. The request has failed but we have not yet rejected the promise, e.g.
+  // when the API is disabled. We record a metric immediately but only post a
+  // task to later reject the callback.
+  // 2. The page is unloaded. This invokes the FederatedAuthRequestImpl
+  // destructor. We record a metric with unhandled status since the callback is
+  // still present. Because we reset `session_id` at the end of the method, we
+  // can check its value to see if we have already recorded the status of this
+  // call.
+  if (session_id_ == -1) {
     return;
   }
-  request_token_status_recorded_ = true;
 
   // Use exponential bucketing to log these numbers.
   num_idps_mismatch =
@@ -301,7 +309,9 @@ void FedCmMetrics::RecordRequestTokenStatus(
   for (const auto& provider : requested_providers) {
     ukm::builders::Blink_FedCmIdp fedcm_idp_builder(
         GetOrCreateProviderSourceId(provider));
-    if (status == FedCmRequestIdTokenStatus::kSuccess) {
+    if (status == FedCmRequestIdTokenStatus::kSuccessUsingTokenInHttpResponse ||
+        status ==
+            FedCmRequestIdTokenStatus::kSuccessUsingIdentityProviderResolve) {
       CHECK(selected_idp_config_url);
       if (provider == *selected_idp_config_url) {
         RecordUkm(fedcm_idp_builder, status);
@@ -317,11 +327,14 @@ void FedCmMetrics::RecordRequestTokenStatus(
   base::UmaHistogramEnumeration("Blink.FedCm.Status.RequestIdToken", status);
   base::UmaHistogramEnumeration("Blink.FedCm.Status.MediationRequirement",
                                 requirement);
+  // Reset the `session_id_`. We expect no more metrics from this API call.
+  session_id_ = -1;
 }
 
 void FedCmMetrics::RecordSignInStateMatchStatus(
     const GURL& provider,
     FedCmSignInStateMatchStatus status) {
+  DCHECK_GT(session_id_, 0);
   auto RecordUkm = [&](auto& ukm_builder) {
     ukm_builder.SetStatus_SignInStateMatch(static_cast<int>(status));
     ukm_builder.SetFedCmSessionID(session_id_);
@@ -338,6 +351,7 @@ void FedCmMetrics::RecordSignInStateMatchStatus(
   base::UmaHistogramEnumeration("Blink.FedCm.Status.SignInStateMatch", status);
 }
 
+// static
 void FedCmMetrics::RecordIdpSigninMatchStatus(
     std::optional<bool> idp_signin_status,
     IdpNetworkRequestManager::ParseStatus accounts_endpoint_status) {
@@ -400,6 +414,7 @@ void FedCmMetrics::RecordAutoReauthnMetrics(
     bool is_auto_reauthn_embargoed,
     std::optional<base::TimeDelta> time_from_embargo,
     bool requires_user_mediation) {
+  DCHECK_GT(session_id_, 0);
   NumAccounts num_returning_accounts = NumAccounts::kZero;
   if (has_single_returning_account.has_value()) {
     if (*has_single_returning_account) {
@@ -449,7 +464,7 @@ void FedCmMetrics::RecordAutoReauthnMetrics(
 }
 
 void FedCmMetrics::RecordAccountsDialogShown(
-    const std::vector<IdentityProviderData>& providers) {
+    const std::vector<IdentityProviderDataPtr>& providers) {
   auto RecordUkm = [&](auto& ukm_builder) {
     ukm_builder.SetAccountsDialogShown(true);
     ukm_builder.SetFedCmSessionID(session_id_);
@@ -460,12 +475,12 @@ void FedCmMetrics::RecordAccountsDialogShown(
 
   for (const auto& provider : providers) {
     ukm::builders::Blink_FedCmIdp fedcm_idp_builder(
-        GetOrCreateProviderSourceId(provider.idp_metadata.config_url));
+        GetOrCreateProviderSourceId(provider->idp_metadata.config_url));
     // A provider may have no accounts and be present due to IDP mismatch.
-    if (!provider.accounts.empty()) {
+    if (!provider->has_login_status_mismatch) {
       RecordUkm(fedcm_idp_builder);
     } else {
-      DCHECK(provider.has_login_status_mismatch);
+      DCHECK(provider->has_login_status_mismatch);
       fedcm_idp_builder.SetMismatchDialogShown(true);
       fedcm_idp_builder.SetFedCmSessionID(session_id_);
       fedcm_idp_builder.Record(ukm::UkmRecorder::Get());
@@ -479,6 +494,7 @@ void FedCmMetrics::RecordSingleIdpMismatchDialogShown(
     const IdentityProviderData& provider,
     bool has_shown_mismatch,
     bool has_hints) {
+  DCHECK_GT(session_id_, 0);
   MismatchDialogType type;
   if (!has_shown_mismatch) {
     type = has_hints ? MismatchDialogType::kFirstWithHints
@@ -506,6 +522,7 @@ void FedCmMetrics::RecordSingleIdpMismatchDialogShown(
 }
 
 void FedCmMetrics::RecordAccountsRequestSent(const GURL& provider_url) {
+  DCHECK_GT(session_id_, 0);
   auto RecordUkm = [&](auto& ukm_builder) {
     ukm_builder.SetAccountsRequestSent(true);
     ukm_builder.SetFedCmSessionID(session_id_);
@@ -525,9 +542,11 @@ void FedCmMetrics::RecordDisconnectMetrics(
     FedCmDisconnectStatus status,
     std::optional<base::TimeDelta> duration,
     const RenderFrameHost& rfh,
-    url::Origin requester,
-    url::Origin embedder,
-    const GURL& provider_url) {
+    const url::Origin& requester,
+    const url::Origin& embedder,
+    const GURL& provider_url,
+    int disconnect_session_id) {
+  DCHECK_GT(disconnect_session_id, 0);
   FedCmRequesterFrameType requester_frame_type =
       ComputeRequesterFrameType(rfh, requester, embedder);
   auto RecordUkm = [&](auto& ukm_builder) {
@@ -538,7 +557,7 @@ void FedCmMetrics::RecordDisconnectMetrics(
           ukm::GetSemanticBucketMinForDurationTiming(
               duration->InMilliseconds()));
     }
-    ukm_builder.SetFedCmSessionID(session_id_);
+    ukm_builder.SetFedCmSessionID(disconnect_session_id);
     ukm_builder.Record(ukm::UkmRecorder::Get());
   };
   ukm::builders::Blink_FedCm fedcm_builder(page_source_id_);
@@ -556,8 +575,26 @@ void FedCmMetrics::RecordDisconnectMetrics(
   }
 }
 
+void FedCmMetrics::RecordContinueOnPopupStatus(
+    FedCmContinueOnPopupStatus status) {
+  base::UmaHistogramEnumeration("Blink.FedCm.ContinueOn.PopupWindowStatus",
+                                status);
+}
+
+void FedCmMetrics::RecordContinueOnPopupResult(
+    FedCmContinueOnPopupResult result) {
+  base::UmaHistogramEnumeration("Blink.FedCm.ContinueOn.PopupWindowResult",
+                                result);
+}
+
+void FedCmMetrics::RecordRpParameters(FedCmRpParameters parameters) {
+  base::UmaHistogramEnumeration("Blink.FedCm.RpParametersAndScopeState",
+                                parameters);
+}
+
 void FedCmMetrics::RecordErrorDialogResult(FedCmErrorDialogResult result,
                                            const GURL& provider_url) {
+  DCHECK_GT(session_id_, 0);
   auto RecordUkm = [&](auto& ukm_builder) {
     ukm_builder.SetError_ErrorDialogResult(static_cast<int>(result));
     ukm_builder.SetFedCmSessionID(session_id_);
@@ -578,6 +615,7 @@ void FedCmMetrics::RecordErrorMetricsBeforeShowingErrorDialog(
     std::optional<IdpNetworkRequestManager::FedCmErrorDialogType> dialog_type,
     std::optional<IdpNetworkRequestManager::FedCmErrorUrlType> url_type,
     const GURL& provider_url) {
+  DCHECK_GT(session_id_, 0);
   auto RecordUkm = [&](auto& ukm_builder) {
     ukm_builder.SetError_TokenResponseType(static_cast<int>(response_type));
     if (dialog_type) {
@@ -613,6 +651,7 @@ void FedCmMetrics::RecordMultipleRequestsRpMode(
     blink::mojom::RpMode pending_request_rp_mode,
     blink::mojom::RpMode new_request_rp_mode,
     const std::vector<GURL>& requested_providers) {
+  DCHECK_GT(session_id_, 0);
   FedCmMultipleRequestsRpMode status;
   if (pending_request_rp_mode == blink::mojom::RpMode::kWidget) {
     status = new_request_rp_mode == blink::mojom::RpMode::kWidget
@@ -642,6 +681,7 @@ void FedCmMetrics::RecordMultipleRequestsRpMode(
 
 void FedCmMetrics::RecordTimeBetweenUserInfoAndButtonModeAPI(
     base::TimeDelta duration) {
+  DCHECK_GT(session_id_, 0);
   auto RecordUkm = [&](auto& ukm_builder) {
     ukm_builder.SetTiming_GetUserInfoToButtonMode(
         ukm::GetExponentialBucketMinForUserTiming(duration.InMilliseconds()));
@@ -668,8 +708,8 @@ ukm::SourceId FedCmMetrics::GetOrCreateProviderSourceId(const GURL& provider) {
 }
 
 void RecordPreventSilentAccess(RenderFrameHost& rfh,
-                               url::Origin requester,
-                               url::Origin embedder) {
+                               const url::Origin& requester,
+                               const url::Origin& embedder) {
   FedCmRequesterFrameType requester_frame_type =
       ComputeRequesterFrameType(rfh, requester, embedder);
   base::UmaHistogramEnumeration("Blink.FedCm.PreventSilentAccessFrameType",
@@ -727,14 +767,14 @@ void RecordRawAccountsSize(int size) {
   CHECK_GT(size, 0);
   base::UmaHistogramCustomCounts("Blink.FedCm.AccountsSize.Raw", size,
                                  /*min=*/1,
-                                 /*max=*/10, /*buckets=*/10);
+                                 /*exclusive_max=*/10, /*buckets=*/10);
 }
 
 void RecordReadyToShowAccountsSize(int size) {
   CHECK_GT(size, 0);
   base::UmaHistogramCustomCounts("Blink.FedCm.AccountsSize.ReadyToShow", size,
                                  /*min=*/1,
-                                 /*max=*/10, /*buckets=*/10);
+                                 /*exclusive_max=*/10, /*buckets=*/10);
 }
 
 }  // namespace content

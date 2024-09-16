@@ -12,6 +12,7 @@
 
 #include "base/base64.h"
 #include "base/feature_list.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/token.h"
@@ -22,6 +23,7 @@
 #include "chrome/browser/policy/messaging_layer/upload/record_upload_request_builder.h"
 #include "components/reporting/proto/synced/configuration_file.pb.h"
 #include "components/reporting/util/encrypted_reporting_json_keys.h"
+#include "components/reporting/util/reporting_errors.h"
 #include "components/reporting/util/status.h"
 #include "components/reporting/util/status_macros.h"
 #include "components/reporting/util/statusor.h"
@@ -108,7 +110,7 @@ StatusOr<ConfigFile> GetConfigurationProtoFromDict(
 
   // Handle the version.
   const auto config_file_version =
-      file.FindInt(json_keys::kConfigurationFileVersion);
+      file.FindInt(json_keys::kConfigurationFileVersionResponse);
   if (!config_file_version.has_value()) {
     return base::unexpected(
         Status(error::INVALID_ARGUMENT,
@@ -159,12 +161,12 @@ StatusOr<ConfigFile> GetConfigurationProtoFromDict(
     // specified, if there are then we parse them and add them to the proto.
     // This fields are optional so if they are not present it is okay.
     const auto min_version =
-        dict->FindInt(json_keys::kConfigurationFileMinimumReleaseVerision);
+        dict->FindInt(json_keys::kConfigurationFileMinimumReleaseVersion);
     if (min_version.has_value()) {
       current_config->set_minimum_release_version(min_version.value());
     }
     const auto max_version =
-        dict->FindInt(json_keys::kConfigurationFileMaximumReleaseVerision);
+        dict->FindInt(json_keys::kConfigurationFileMaximumReleaseVersion);
     if (max_version.has_value()) {
       current_config->set_maximum_release_version(max_version.value());
     }
@@ -427,6 +429,11 @@ UploadResponseParser::HandleFailedUploadedSequenceInformation(
           highest_sequence_information.priority() ||
       sequence_information.sequencing_id() !=
           highest_sequence_information.sequencing_id() + 1) {
+    base::UmaHistogramEnumeration(
+        reporting::kUmaDataLossErrorReason,
+        DataLossErrorReason::
+            FAILED_UPLOAD_CONTAINS_INVALID_SEQUENCE_INFORMATION,
+        DataLossErrorReason::MAX_VALUE);
     return base::unexpected(
         Status(error::DATA_LOSS,
                base::StrCat({"Record was unprocessable by the server: ",

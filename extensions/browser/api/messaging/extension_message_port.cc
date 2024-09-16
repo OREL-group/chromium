@@ -34,6 +34,7 @@
 #include "extensions/browser/service_worker/service_worker_host.h"
 #include "extensions/common/api/messaging/message.h"
 #include "extensions/common/api/messaging/messaging_endpoint.h"
+#include "extensions/common/extension_id.h"
 #include "extensions/common/manifest_handlers/background_info.h"
 #include "extensions/common/mojom/message_port.mojom-shared.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
@@ -145,13 +146,14 @@ class ExtensionMessagePort::FrameTracker : public content::WebContentsObserver,
 
   // extensions::ProcessManagerObserver overrides:
   void OnExtensionFrameUnregistered(
-      const std::string& extension_id,
+      const ExtensionId& extension_id,
       content::RenderFrameHost* render_frame_host) override {
     if (extension_id == port_->extension_id_)
       port_->UnregisterFrame(render_frame_host);
   }
 
-  void OnServiceWorkerUnregistered(const WorkerId& worker_id) override {
+  void OnStoppedTrackingServiceWorkerInstance(
+      const WorkerId& worker_id) override {
     port_->UnregisterWorker(worker_id);
   }
 
@@ -163,7 +165,7 @@ class ExtensionMessagePort::FrameTracker : public content::WebContentsObserver,
 ExtensionMessagePort::ExtensionMessagePort(
     base::WeakPtr<ChannelDelegate> channel_delegate,
     const PortId& port_id,
-    const std::string& extension_id,
+    const ExtensionId& extension_id,
     content::RenderFrameHost* render_frame_host,
     bool include_child_frames)
     : MessagePort(std::move(channel_delegate), port_id),
@@ -175,7 +177,7 @@ ExtensionMessagePort::ExtensionMessagePort(
   CHECK(tab);
   frame_tracker_->TrackTabFrames(tab);
   if (include_child_frames) {
-    // TODO(https://crbug.com/1227787) We don't yet support MParch for
+    // TODO(crbug.com/40189370) We don't yet support MParch for
     // prerender so make sure `include_child_frames` is only provided for
     // primary main frames.
     CHECK(render_frame_host->IsInPrimaryMainFrame());
@@ -228,7 +230,7 @@ std::unique_ptr<ExtensionMessagePort> ExtensionMessagePort::CreateForExtension(
 std::unique_ptr<ExtensionMessagePort> ExtensionMessagePort::CreateForEndpoint(
     base::WeakPtr<ChannelDelegate> channel_delegate,
     const PortId& port_id,
-    const std::string& extension_id,
+    const ExtensionId& extension_id,
     const ChannelEndpoint& endpoint,
     mojo::PendingAssociatedRemote<extensions::mojom::MessagePort> message_port,
     mojo::PendingAssociatedReceiver<extensions::mojom::MessagePortHost>
@@ -491,7 +493,7 @@ void ExtensionMessagePort::IncrementLazyKeepaliveCount(
 
   // Increment keepalive count for service workers of the extension managed by
   // this port.
-  // TODO(https://crbug.com/1514471): Add a check to only increment count if
+  // TODO(crbug.com/41487026): Add a check to only increment count if
   // the port is in lazy context.
   for (const auto& worker_id :
        pm->GetServiceWorkersForExtension(extension_id_)) {
@@ -521,7 +523,7 @@ void ExtensionMessagePort::DecrementLazyKeepaliveCount(
 
   // Decrement keepalive count for service workers of the extension managed by
   // this port.
-  // TODO(https://crbug.com/1514471): Add a check to only decrement count if
+  // TODO(crbug.com/41487026): Add a check to only decrement count if
   // the port is in lazy context.
   for (const auto& worker_id :
        pm->GetServiceWorkersForExtension(extension_id_)) {
@@ -712,7 +714,7 @@ bool ExtensionMessagePort::IsServiceWorkerActivity(
       return is_for_onetime_channel() || should_have_strong_keepalive();
     default:
       // Extension message port should not check for other activity types.
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return false;
   }
 }
@@ -745,7 +747,7 @@ bool ExtensionMessagePort::ShouldSkipFrameForBFCache(
     // enabled, so no message will be sent to the BFCached target. There could
     // be some messages that were created before the ExtensionMessagePort is
     // disconnected, and they should be discarded.
-    // TODO(crbug.com/1488379): clean up the flag.
+    // TODO(crbug.com/40283601): clean up the flag.
     if (!base::FeatureList::IsEnabled(
             features::kDisconnectExtensionMessagePortWhenPageEntersBFCache)) {
       content::BackForwardCache::DisableForRenderFrameHost(

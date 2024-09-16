@@ -10,7 +10,7 @@
 #import "base/test/task_environment.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
 #import "ios/chrome/browser/shared/model/browser/test/test_browser.h"
-#import "ios/chrome/browser/shared/model/browser_state/test_chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/chrome/browser/signin/model/fake_system_identity.h"
 #import "ios/chrome/browser/signin/model/fake_system_identity_manager.h"
 #import "ios/chrome/browser/ui/authentication/identity_chooser/identity_chooser_view_controller.h"
@@ -66,10 +66,7 @@ class IdentityChooserCoordinatorTest : public PlatformTest {
 
 TEST_F(IdentityChooserCoordinatorTest, testValidIdentity) {
   // Set up a fake identity on device.
-  FakeSystemIdentity* identity =
-      [FakeSystemIdentity identityWithEmail:@"janedoe@gmail.com"
-                                     gaiaID:@"1"
-                                       name:@"Jane Doe"];
+  FakeSystemIdentity* identity = [FakeSystemIdentity fakeIdentity1];
   AddIdentity(identity);
 
   [coordinator_ start];
@@ -82,7 +79,7 @@ TEST_F(IdentityChooserCoordinatorTest, testValidIdentity) {
   // User selects a valid account.
   [GetViewControllerDelegate()
       identityChooserViewController:presented_view_controller
-        didSelectIdentityWithGaiaID:@"1"];
+        didSelectIdentityWithGaiaID:identity.gaiaID];
   EXPECT_NSEQ(identity, coordinator_.selectedIdentity);
   [coordinator_ stop];
 }

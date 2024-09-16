@@ -13,6 +13,7 @@
 #include "aida_client.h"
 #include "base/base64.h"
 #include "base/command_line.h"
+#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/json/json_reader.h"
@@ -22,6 +23,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/no_destructor.h"
+#include "base/not_fatal_until.h"
 #include "base/ranges/algorithm.h"
 #include "base/strings/escape.h"
 #include "base/strings/string_number_conversions.h"
@@ -82,6 +84,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_ui_url_loader_factory.h"
+#include "content/public/common/content_features.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/common/url_utils.h"
 #include "extensions/browser/extension_registry.h"
@@ -111,7 +114,7 @@ using content::BrowserThread;
 namespace content {
 struct LoadCommittedDetails;
 struct FrameNavigateParams;
-}
+}  // namespace content
 
 namespace {
 
@@ -242,8 +245,9 @@ base::Value::Dict BuildObjectForResponse(const net::HttpResponseHeaders* rh,
   std::string value;
   // TODO(caseq): this probably needs to handle duplicate header names
   // correctly by folding them.
-  while (rh && rh->EnumerateHeaderLines(&iterator, &name, &value))
+  while (rh && rh->EnumerateHeaderLines(&iterator, &name, &value)) {
     headers.Set(name, value);
+  }
 
   response.Set("headers", std::move(headers));
   return response;
@@ -257,10 +261,10 @@ GURL SanitizeFrontendURL(const GURL& url,
 
 std::string SanitizeRevision(const std::string& revision) {
   for (size_t i = 0; i < revision.length(); i++) {
-    if (!(revision[i] == '@' && i == 0)
-        && !(revision[i] >= '0' && revision[i] <= '9')
-        && !(revision[i] >= 'a' && revision[i] <= 'z')
-        && !(revision[i] >= 'A' && revision[i] <= 'Z')) {
+    if (!(revision[i] == '@' && i == 0) &&
+        !(revision[i] >= '0' && revision[i] <= '9') &&
+        !(revision[i] >= 'a' && revision[i] <= 'z') &&
+        !(revision[i] >= 'A' && revision[i] <= 'Z')) {
       return std::string();
     }
   }
@@ -270,19 +274,19 @@ std::string SanitizeRevision(const std::string& revision) {
 std::string SanitizeRemoteVersion(const std::string& remoteVersion) {
   for (size_t i = 0; i < remoteVersion.length(); i++) {
     if (remoteVersion[i] != '.' &&
-        !(remoteVersion[i] >= '0' && remoteVersion[i] <= '9'))
+        !(remoteVersion[i] >= '0' && remoteVersion[i] <= '9')) {
       return std::string();
+    }
   }
   return remoteVersion;
 }
 
 std::string SanitizeFrontendPath(const std::string& path) {
   for (size_t i = 0; i < path.length(); i++) {
-    if (path[i] != '/' && path[i] != '-' && path[i] != '_'
-        && path[i] != '.' && path[i] != '@'
-        && !(path[i] >= '0' && path[i] <= '9')
-        && !(path[i] >= 'a' && path[i] <= 'z')
-        && !(path[i] >= 'A' && path[i] <= 'Z')) {
+    if (path[i] != '/' && path[i] != '-' && path[i] != '_' && path[i] != '.' &&
+        path[i] != '@' && !(path[i] >= '0' && path[i] <= '9') &&
+        !(path[i] >= 'a' && path[i] <= 'z') &&
+        !(path[i] >= 'A' && path[i] <= 'Z')) {
       return std::string();
     }
   }
@@ -290,39 +294,43 @@ std::string SanitizeFrontendPath(const std::string& path) {
 }
 
 std::string SanitizeEndpoint(const std::string& value) {
-  if (value.find('&') != std::string::npos
-      || value.find('?') != std::string::npos)
+  if (value.find('&') != std::string::npos ||
+      value.find('?') != std::string::npos) {
     return std::string();
+  }
   return value;
 }
 
 std::string SanitizeRemoteBase(const std::string& value) {
   GURL url(value);
   std::string path = url.path();
-  std::vector<std::string> parts = base::SplitString(
-      path, "/", base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL);
+  std::vector<std::string> parts =
+      base::SplitString(path, "/", base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL);
   std::string revision = parts.size() > 2 ? parts[2] : "";
   revision = SanitizeRevision(revision);
   path = base::StringPrintf("/%s/%s/", kRemoteFrontendPath, revision.c_str());
-  return SanitizeFrontendURL(url, url::kHttpsScheme,
-                             kRemoteFrontendDomain, path, false).spec();
+  return SanitizeFrontendURL(url, url::kHttpsScheme, kRemoteFrontendDomain,
+                             path, false)
+      .spec();
 }
 
 std::string SanitizeRemoteFrontendURL(const std::string& value) {
   GURL url(base::UnescapeBinaryURLComponent(
       value, base::UnescapeRule::REPLACE_PLUS_WITH_SPACE));
   std::string path = url.path();
-  std::vector<std::string> parts = base::SplitString(
-      path, "/", base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL);
+  std::vector<std::string> parts =
+      base::SplitString(path, "/", base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL);
   std::string revision = parts.size() > 2 ? parts[2] : "";
   revision = SanitizeRevision(revision);
   std::string filename = !parts.empty() ? parts[parts.size() - 1] : "";
-  if (filename != "devtools.html")
+  if (filename != "devtools.html") {
     filename = "inspector.html";
-  path = base::StringPrintf("/serve_rev/%s/%s",
-                            revision.c_str(), filename.c_str());
+  }
+  path = base::StringPrintf("/serve_rev/%s/%s", revision.c_str(),
+                            filename.c_str());
   std::string sanitized = SanitizeFrontendURL(url, url::kHttpsScheme,
-      kRemoteFrontendDomain, path, true).spec();
+                                              kRemoteFrontendDomain, path, true)
+                              .spec();
   return base::EscapeQueryParamValue(sanitized, false);
 }
 
@@ -334,9 +342,8 @@ std::string SanitizeEnabledExperiments(const std::string& value) {
   return base::ranges::all_of(value, is_legal) ? value : std::string();
 }
 
-std::string SanitizeFrontendQueryParam(
-    const std::string& key,
-    const std::string& value) {
+std::string SanitizeFrontendQueryParam(const std::string& key,
+                                       const std::string& value) {
   // Convert boolean flags to true.
   if (key == "can_dock" || key == "debugFrontend" || key == "isSharedWorker" ||
       key == "v8only" || key == "remoteFrontend" || key == "nodeFrontend" ||
@@ -346,27 +353,34 @@ std::string SanitizeFrontendQueryParam(
   }
 
   // Pass connection endpoints as is.
-  if (key == "ws" || key == "service-backend")
+  if (key == "ws" || key == "service-backend") {
     return SanitizeEndpoint(value);
+  }
 
   if (key == "panel" &&
-      (value == "elements" || value == "console" || value == "sources"))
+      (value == "elements" || value == "console" || value == "sources")) {
     return value;
+  }
 
-  if (key == "remoteBase")
+  if (key == "remoteBase") {
     return SanitizeRemoteBase(value);
+  }
 
-  if (key == "remoteFrontendUrl")
+  if (key == "remoteFrontendUrl") {
     return SanitizeRemoteFrontendURL(value);
+  }
 
-  if (key == "remoteVersion")
+  if (key == "remoteVersion") {
     return SanitizeRemoteVersion(value);
+  }
 
-  if (key == "enabledExperiments")
+  if (key == "enabledExperiments") {
     return SanitizeEnabledExperiments(value);
+  }
 
-  if (key == "targetType" && value == "tab")
+  if (key == "targetType" && value == "tab") {
     return value;
+  }
 
   if (key == "noJavaScriptCompletion" && value == "true") {
     return value;
@@ -380,39 +394,7 @@ std::string SanitizeFrontendQueryParam(
     return value;
   }
 
-  if (base::FeatureList::IsEnabled(::features::kDevToolsConsoleInsights) ||
-      base::FeatureList::IsEnabled(
-          ::features::kDevToolsConsoleInsightsDogfood) ||
-      base::FeatureList::IsEnabled(
-          ::features::kDevToolsConsoleInsightsSettingVisible)) {
-    if (key == "enableAida" && value == "true") {
-      return value;
-    }
-    if (key == "aidaModelId") {
-      return value;
-    }
-    if (key == "aidaTemperature") {
-      return value;
-    }
-  }
-
-  if (key == "ci_blockedByAge" && value == "true") {
-    return value;
-  }
-
-  if (key == "ci_blockedByEnterprisePolicy" && value == "true") {
-    return value;
-  }
-
-  if (key == "ci_blockedByGeo" && value == "true") {
-    return value;
-  }
-
-  if (key == "ci_blockedByRollout" && value == "true") {
-    return value;
-  }
-
-  if (key == "ci_disabledByDefault" && value == "true") {
+  if (key == "disableSelfXssWarnings" && value == "true") {
     return value;
   }
 
@@ -436,8 +418,9 @@ GURL SanitizeFrontendURL(const GURL& url,
             base::StringPrintf("%s=%s", key.c_str(), value.c_str()));
       }
     }
-    if (url.has_ref() && url.ref_piece().find('\'') == base::StringPiece::npos)
+    if (url.has_ref() && url.ref_piece().find('\'') == std::string_view::npos) {
       fragment = '#' + url.ref();
+    }
   }
   std::string query =
       query_parts.empty() ? "" : "?" + base::JoinString(query_parts, "&");
@@ -445,8 +428,9 @@ GURL SanitizeFrontendURL(const GURL& url,
       base::StringPrintf("%s://%s%s%s%s", scheme.c_str(), host.c_str(),
                          path.c_str(), query.c_str(), fragment.c_str());
   GURL result = GURL(constructed);
-  if (!result.is_valid())
+  if (!result.is_valid()) {
     return GURL();
+  }
   return result;
 }
 
@@ -579,7 +563,9 @@ class DevToolsUIBindings::NetworkResourceLoader
     bindings_->loaders_.erase(bindings_->loaders_.find(this));
   }
 
-  void OnRetry(base::OnceClosure start_retry) override { NOTREACHED(); }
+  void OnRetry(base::OnceClosure start_retry) override {
+    NOTREACHED_IN_MIGRATION();
+  }
 
   const int stream_id_;
   const raw_ptr<DevToolsUIBindings> bindings_;
@@ -621,24 +607,23 @@ class DevToolsUIBindings::FrontendWebContentsObserver
 DevToolsUIBindings::FrontendWebContentsObserver::FrontendWebContentsObserver(
     DevToolsUIBindings* devtools_ui_bindings)
     : WebContentsObserver(devtools_ui_bindings->web_contents()),
-      devtools_bindings_(devtools_ui_bindings) {
-}
+      devtools_bindings_(devtools_ui_bindings) {}
 
 DevToolsUIBindings::FrontendWebContentsObserver::
-    ~FrontendWebContentsObserver() {
-}
+    ~FrontendWebContentsObserver() {}
 
 // static
 GURL DevToolsUIBindings::SanitizeFrontendURL(const GURL& url) {
   return ::SanitizeFrontendURL(url, content::kChromeDevToolsScheme,
-      chrome::kChromeUIDevToolsHost, SanitizeFrontendPath(url.path()), true);
+                               chrome::kChromeUIDevToolsHost,
+                               SanitizeFrontendPath(url.path()), true);
 }
 
 // static
 bool DevToolsUIBindings::IsValidFrontendURL(const GURL& url) {
   if (url.SchemeIs(content::kChromeUIScheme) &&
-      url.host() == content::kChromeUITracingHost &&
-      !url.has_query() && !url.has_ref()) {
+      url.host() == content::kChromeUITracingHost && !url.has_query() &&
+      !url.has_ref()) {
     return true;
   }
 
@@ -666,8 +651,9 @@ void DevToolsUIBindings::FrontendWebContentsObserver::
 #if BUILDFLAG(IS_WIN)
     case base::TERMINATION_STATUS_INTEGRITY_FAILURE:
 #endif
-      if (devtools_bindings_->agent_host_.get())
+      if (devtools_bindings_->agent_host_.get()) {
         devtools_bindings_->Detach();
+      }
       break;
     case base::TERMINATION_STATUS_NORMAL_TERMINATION:
     case base::TERMINATION_STATUS_STILL_RUNNING:
@@ -699,12 +685,13 @@ void DevToolsUIBindings::FrontendWebContentsObserver::PrimaryPageChanged(
 // DevToolsUIBindings ---------------------------------------------------------
 
 DevToolsUIBindings* DevToolsUIBindings::ForWebContents(
-     content::WebContents* web_contents) {
+    content::WebContents* web_contents) {
   DevToolsUIBindingsList& instances =
       DevToolsUIBindings::GetDevToolsUIBindings();
   for (DevToolsUIBindings* binding : instances) {
-    if (binding->web_contents() == web_contents)
+    if (binding->web_contents() == web_contents) {
       return binding;
+    }
   }
   return nullptr;
 }
@@ -750,8 +737,9 @@ DevToolsUIBindings::~DevToolsUIBindings() {
   ThemeServiceFactory::GetForProfile(profile_->GetOriginalProfile())
       ->RemoveObserver(this);
 
-  if (agent_host_.get())
+  if (agent_host_.get()) {
     agent_host_->DetachClient(this);
+  }
 
   for (IndexingJobsMap::const_iterator jobs_it(indexing_jobs_.begin());
        jobs_it != indexing_jobs_.end(); ++jobs_it) {
@@ -764,15 +752,16 @@ DevToolsUIBindings::~DevToolsUIBindings() {
   DevToolsUIBindingsList& instances =
       DevToolsUIBindings::GetDevToolsUIBindings();
   auto it = base::ranges::find(instances, this);
-  DCHECK(it != instances.end());
+  CHECK(it != instances.end(), base::NotFatalUntil::M130);
   instances.erase(it);
 }
 
 // content::DevToolsFrontendHost::Delegate implementation ---------------------
 void DevToolsUIBindings::HandleMessageFromDevToolsFrontend(
     base::Value::Dict message) {
-  if (!frontend_host_)
+  if (!frontend_host_) {
     return;
+  }
   const std::string* method = message.FindString(kFrontendHostMethod);
   base::Value* params = message.Find(kFrontendHostParams);
   if (!method || (params && !params->is_list())) {
@@ -781,8 +770,9 @@ void DevToolsUIBindings::HandleMessageFromDevToolsFrontend(
   }
   int id = message.FindInt(kFrontendHostId).value_or(0);
   base::Value::List params_list;
-  if (params)
+  if (params) {
     params_list = std::move(*params).TakeList();
+  }
   embedder_message_dispatcher_->Dispatch(
       base::BindOnce(&DevToolsUIBindings::SendMessageAck,
                      weak_factory_.GetWeakPtr(), id),
@@ -800,8 +790,9 @@ void DevToolsUIBindings::DispatchProtocolMessage(
     content::DevToolsAgentHost* agent_host,
     base::span<const uint8_t> message) {
   DCHECK(agent_host == agent_host_.get());
-  if (!frontend_host_)
+  if (!frontend_host_) {
     return;
+  }
 
   std::string_view message_sp(reinterpret_cast<const char*>(message.data()),
                               message.size());
@@ -938,10 +929,7 @@ void DevToolsUIBindings::OnAidaConversationRequest(
   }
   DevToolsUIBindings::NetworkResourceLoader::URLLoaderFactoryHolder
       url_loader_factory;
-  url_loader_factory = DevToolsWindow::AsDevToolsWindow(web_contents_)
-                           ->GetInspectedWebContents()
-                           ->GetPrimaryMainFrame()
-                           ->GetStoragePartition()
+  url_loader_factory = profile_->GetDefaultStoragePartition()
                            ->GetURLLoaderFactoryForBrowserProcess();
   auto resource_request =
       absl::get<network::ResourceRequest>(resource_request_or_error);
@@ -957,16 +945,19 @@ void DevToolsUIBindings::OnAidaConversationRequest(
 }
 
 void DevToolsUIBindings::OnRegisterAidaClientEventRequest(
+    DevToolsEmbedderMessageDispatcher::Delegate::DispatchCallback callback,
     const std::string& request,
     absl::variant<network::ResourceRequest, std::string>
         resource_request_or_error) {
   if (absl::holds_alternative<std::string>(resource_request_or_error)) {
+    base::Value::Dict response_dict;
+    response_dict.Set("response",
+                      absl::get<std::string>(resource_request_or_error));
+    auto response_value = base::Value(std::move(response_dict));
+    std::move(callback).Run(&response_value);
     return;
   }
-  auto url_loader_factory = DevToolsWindow::AsDevToolsWindow(web_contents_)
-                                ->GetInspectedWebContents()
-                                ->GetPrimaryMainFrame()
-                                ->GetStoragePartition()
+  auto url_loader_factory = profile_->GetDefaultStoragePartition()
                                 ->GetURLLoaderFactoryForBrowserProcess();
   auto resource_request = std::make_unique<network::ResourceRequest>(
       absl::get<network::ResourceRequest>(resource_request_or_error));
@@ -977,9 +968,12 @@ void DevToolsUIBindings::OnRegisterAidaClientEventRequest(
   simple_url_loader->AttachStringForUpload(request);
 
   network::SimpleURLLoader* simple_url_loader_ptr = simple_url_loader.get();
-  simple_url_loader_ptr->DownloadHeadersOnly(
+  simple_url_loader_ptr->DownloadToString(
       url_loader_factory.get(),
-      base::DoNothingWithBoundArgs(std::move(simple_url_loader)));
+      base::BindOnce(&DevToolsUIBindings::OnAidaClientResponse,
+                     base::Unretained(this), std::move(callback),
+                     std::move(simple_url_loader)),
+      network::SimpleURLLoader::kMaxBoundedStringDownloadSize);
 }
 
 void DevToolsUIBindings::OnAidaConversationResponse(
@@ -1008,6 +1002,30 @@ void DevToolsUIBindings::OnAidaConversationResponse(
   }
 }
 
+void DevToolsUIBindings::OnAidaClientResponse(
+    DevToolsEmbedderMessageDispatcher::Delegate::DispatchCallback callback,
+    std::unique_ptr<network::SimpleURLLoader> simple_url_loader,
+    std::optional<std::string> response_body) {
+  int response_code = -1;
+  if (simple_url_loader->ResponseInfo() &&
+      simple_url_loader->ResponseInfo()->headers) {
+    response_code = simple_url_loader->ResponseInfo()->headers->response_code();
+  }
+  if (response_code != net::HTTP_OK) {
+    base::Value::Dict error_dict;
+    error_dict.Set("error", "Got error response from AIDA");
+    error_dict.Set("detail", response_body.value_or(""));
+    auto error = base::Value(std::move(error_dict));
+    std::move(callback).Run(&error);
+    return;
+  }
+
+  base::Value::Dict response_dict;
+  response_dict.Set("response", response_body.value_or(""));
+  auto response = base::Value(std::move(response_dict));
+  std::move(callback).Run(&response);
+}
+
 void DevToolsUIBindings::InspectElementCompleted() {
   delegate_->InspectElementCompleted();
 }
@@ -1021,9 +1039,9 @@ void DevToolsUIBindings::InspectedURLChanged(const std::string& url) {
   const std::string simplified_url =
       base::StartsWith(url, kHttpsPrefix, base::CompareCase::SENSITIVE)
           ? url.substr(kHttpsPrefix.length())
-          : base::StartsWith(url, kHttpPrefix, base::CompareCase::SENSITIVE)
-                ? url.substr(kHttpPrefix.length())
-                : url;
+      : base::StartsWith(url, kHttpPrefix, base::CompareCase::SENSITIVE)
+          ? url.substr(kHttpPrefix.length())
+          : url;
   // DevTools UI is not localized.
   web_contents()->UpdateTitleForEntry(
       entry, base::UTF8ToUTF16(
@@ -1173,8 +1191,9 @@ void DevToolsUIBindings::ShowItemInFolder(const std::string& file_system_path) {
 
 void DevToolsUIBindings::SaveToFile(const std::string& url,
                                     const std::string& content,
-                                    bool save_as) {
-  file_helper_->Save(url, content, save_as,
+                                    bool save_as,
+                                    bool is_base64) {
+  file_helper_->Save(url, content, save_as, is_base64,
                      base::BindOnce(&DevToolsUIBindings::FileSavedAs,
                                     weak_factory_.GetWeakPtr(), url),
                      base::BindOnce(&DevToolsUIBindings::CanceledFileSaveAs,
@@ -1192,8 +1211,9 @@ void DevToolsUIBindings::RequestFileSystems() {
   CHECK(IsValidFrontendURL(web_contents_->GetLastCommittedURL()) &&
         frontend_host_);
   base::Value::List file_systems_value;
-  for (auto const& file_system : file_helper_->GetFileSystems())
+  for (auto const& file_system : file_helper_->GetFileSystems()) {
     file_systems_value.Append(CreateFileSystemValue(file_system));
+  }
   CallClientMethod("DevToolsAPI", "fileSystemsLoaded",
                    base::Value(std::move(file_systems_value)));
 }
@@ -1233,15 +1253,17 @@ void DevToolsUIBindings::IndexPath(
     IndexingDone(index_request_id, file_system_path);
     return;
   }
-  if (indexing_jobs_.count(index_request_id) != 0)
+  if (indexing_jobs_.count(index_request_id) != 0) {
     return;
+  }
   std::vector<std::string> excluded_folders;
   std::optional<base::Value> parsed_excluded_folders =
       base::JSONReader::Read(excluded_folders_message);
   if (parsed_excluded_folders && parsed_excluded_folders->is_list()) {
     for (const base::Value& folder_path : parsed_excluded_folders->GetList()) {
-      if (folder_path.is_string())
+      if (folder_path.is_string()) {
         excluded_folders.push_back(folder_path.GetString());
+      }
     }
   }
 
@@ -1253,8 +1275,8 @@ void DevToolsUIBindings::IndexPath(
                        weak_factory_.GetWeakPtr(), index_request_id,
                        file_system_path),
               BindRepeating(&DevToolsUIBindings::IndexingWorked,
-                       weak_factory_.GetWeakPtr(), index_request_id,
-                       file_system_path),
+                            weak_factory_.GetWeakPtr(), index_request_id,
+                            file_system_path),
               BindOnce(&DevToolsUIBindings::IndexingDone,
                        weak_factory_.GetWeakPtr(), index_request_id,
                        file_system_path)));
@@ -1263,8 +1285,9 @@ void DevToolsUIBindings::IndexPath(
 void DevToolsUIBindings::StopIndexing(int index_request_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   auto it = indexing_jobs_.find(index_request_id);
-  if (it == indexing_jobs_.end())
+  if (it == indexing_jobs_.end()) {
     return;
+  }
   it->second->Stop();
   indexing_jobs_.erase(it);
 }
@@ -1276,17 +1299,14 @@ void DevToolsUIBindings::SearchInPath(int search_request_id,
   CHECK(IsValidFrontendURL(web_contents_->GetLastCommittedURL()) &&
         frontend_host_);
   if (!file_helper_->IsFileSystemAdded(file_system_path)) {
-    SearchCompleted(search_request_id,
-                    file_system_path,
+    SearchCompleted(search_request_id, file_system_path,
                     std::vector<std::string>());
     return;
   }
-  file_system_indexer_->SearchInPath(file_system_path,
-                                     query,
-                                     BindOnce(&DevToolsUIBindings::SearchCompleted,
-                                              weak_factory_.GetWeakPtr(),
-                                              search_request_id,
-                                              file_system_path));
+  file_system_indexer_->SearchInPath(
+      file_system_path, query,
+      BindOnce(&DevToolsUIBindings::SearchCompleted, weak_factory_.GetWeakPtr(),
+               search_request_id, file_system_path));
 }
 
 void DevToolsUIBindings::SetWhitelistedShortcuts(const std::string& message) {
@@ -1321,16 +1341,18 @@ void DevToolsUIBindings::SetDevicesDiscoveryConfig(
     const std::string& network_discovery_config) {
   std::optional<base::Value> parsed_port_forwarding =
       base::JSONReader::Read(port_forwarding_config);
-  if (!parsed_port_forwarding || !parsed_port_forwarding->is_dict())
+  if (!parsed_port_forwarding || !parsed_port_forwarding->is_dict()) {
     return;
+  }
   std::optional<base::Value> parsed_network =
       base::JSONReader::Read(network_discovery_config);
-  if (!parsed_network || !parsed_network->is_list())
+  if (!parsed_network || !parsed_network->is_list()) {
     return;
-  profile_->GetPrefs()->SetBoolean(
-      prefs::kDevToolsDiscoverUsbDevicesEnabled, discover_usb_devices);
-  profile_->GetPrefs()->SetBoolean(
-      prefs::kDevToolsPortForwardingEnabled, port_forwarding_enabled);
+  }
+  profile_->GetPrefs()->SetBoolean(prefs::kDevToolsDiscoverUsbDevicesEnabled,
+                                   discover_usb_devices);
+  profile_->GetPrefs()->SetBoolean(prefs::kDevToolsPortForwardingEnabled,
+                                   port_forwarding_enabled);
   profile_->GetPrefs()->Set(prefs::kDevToolsPortForwardingConfig,
                             *parsed_port_forwarding);
   profile_->GetPrefs()->SetBoolean(prefs::kDevToolsDiscoverTCPTargetsEnabled,
@@ -1376,8 +1398,9 @@ void DevToolsUIBindings::SendPortForwardingStatus(base::Value status) {
 }
 
 void DevToolsUIBindings::SetDevicesUpdatesEnabled(bool enabled) {
-  if (devices_updates_enabled_ == enabled)
+  if (devices_updates_enabled_ == enabled) {
     return;
+  }
   devices_updates_enabled_ = enabled;
   if (enabled) {
     remote_targets_handler_ = DevToolsTargetsUIHandler::CreateForAdb(
@@ -1420,8 +1443,9 @@ void DevToolsUIBindings::SetDevicesUpdatesEnabled(bool enabled) {
 
 void DevToolsUIBindings::OpenRemotePage(const std::string& browser_id,
                                         const std::string& url) {
-  if (!remote_targets_handler_)
+  if (!remote_targets_handler_) {
     return;
+  }
   remote_targets_handler_->Open(browser_id, url);
 }
 
@@ -1476,11 +1500,12 @@ base::Value::Dict DevToolsUIBindings::GetSyncInformationForProfile(
 
   result.Set("isSyncActive", sync_service->IsSyncFeatureActive());
   result.Set("arePreferencesSynced", sync_service->GetActiveDataTypes().Has(
-                                         syncer::ModelType::PREFERENCES));
+                                         syncer::DataType::PREFERENCES));
 
   CoreAccountInfo account_info = sync_service->GetAccountInfo();
-  if (account_info.IsEmpty())
+  if (account_info.IsEmpty()) {
     return result;
+  }
 
   result.Set("accountEmail", account_info.email);
 
@@ -1497,10 +1522,83 @@ base::Value::Dict DevToolsUIBindings::GetSyncInformationForProfile(
   }
   scoped_refptr<base::RefCountedMemory> png_bytes =
       account_image.As1xPNGBytes();
-  if (png_bytes->size() > 0)
+  if (png_bytes->size() > 0) {
     result.Set("accountImage", base::Base64Encode(*png_bytes));
+  }
+
+  if (!extended_info.IsEmpty()) {
+    result.Set("accountFullName", extended_info.full_name);
+  }
 
   return result;
+}
+
+void DevToolsUIBindings::GetHostConfig(DispatchCallback callback) {
+  base::Value::Dict response_dict;
+
+  AidaClient::Availability availability = AidaClient::CanUseAida(profile_);
+
+  base::Value::Dict aida_availability;
+  aida_availability.Set("enabled", availability.available);
+  aida_availability.Set("blockedByAge", availability.blocked_by_age);
+  aida_availability.Set("blockedByEnterprisePolicy",
+                        availability.blocked_by_enterprise_policy);
+  aida_availability.Set("blockedByGeo", availability.blocked_by_geo);
+  aida_availability.Set("disallowLogging", availability.disallow_logging);
+  response_dict.Set("aidaAvailability", std::move(aida_availability));
+
+  base::Value::Dict console_insights_dict;
+  console_insights_dict.Set(
+      "enabled",
+      base::FeatureList::IsEnabled(::features::kDevToolsConsoleInsights));
+  console_insights_dict.Set("modelId",
+                            features::kDevToolsConsoleInsightsModelId.Get());
+  console_insights_dict.Set(
+      "temperature", features::kDevToolsConsoleInsightsTemperature.Get());
+  response_dict.Set("devToolsConsoleInsights",
+                    std::move(console_insights_dict));
+
+  base::Value::Dict freestyler_dogfood_dict;
+  freestyler_dogfood_dict.Set(
+      "enabled",
+      base::FeatureList::IsEnabled(::features::kDevToolsFreestylerDogfood));
+  freestyler_dogfood_dict.Set(
+      "modelId", features::kDevToolsFreestylerDogfoodModelId.Get());
+  freestyler_dogfood_dict.Set(
+      "temperature", features::kDevToolsFreestylerDogfoodTemperature.Get());
+  freestyler_dogfood_dict.Set(
+      "userTier", features::kDevToolsFreestylerDogfoodUserTier.GetName(
+        features::kDevToolsFreestylerDogfoodUserTier.Get()));
+  response_dict.Set("devToolsFreestylerDogfood",
+                    std::move(freestyler_dogfood_dict));
+
+  base::Value::Dict explain_this_resource_dogfood_dict;
+  explain_this_resource_dogfood_dict.Set(
+      "enabled", base::FeatureList::IsEnabled(
+                     ::features::kDevToolsExplainThisResourceDogfood));
+  explain_this_resource_dogfood_dict.Set(
+      "modelId", features::kDevToolsExplainThisResourceDogfoodModelId.Get());
+  explain_this_resource_dogfood_dict.Set(
+      "temperature",
+      features::kDevToolsExplainThisResourceDogfoodTemperature.Get());
+  response_dict.Set("devToolsExplainThisResourceDogfood",
+                    std::move(explain_this_resource_dogfood_dict));
+
+  base::Value::Dict ve_logging_dict;
+  ve_logging_dict.Set(
+      "enabled", base::FeatureList::IsEnabled(::features::kDevToolsVeLogging));
+  ve_logging_dict.Set("testing", ::features::kDevToolsVeLoggingTesting.Get());
+  response_dict.Set("devToolsVeLogging", std::move(ve_logging_dict));
+
+  response_dict.Set("isOffTheRecord", profile_->IsOffTheRecord());
+
+  base::Value::Dict devtools_privacy_ui_dict;
+  devtools_privacy_ui_dict.Set(
+      "enabled", base::FeatureList::IsEnabled(::features::kDevToolsPrivacyUI));
+  response_dict.Set("devToolsPrivacyUI", std::move(devtools_privacy_ui_dict));
+
+  base::Value response = base::Value(std::move(response_dict));
+  std::move(callback).Run(&response);
 }
 
 void DevToolsUIBindings::Reattach(DispatchCallback callback) {
@@ -1525,8 +1623,9 @@ void DevToolsUIBindings::SetOpenNewWindowForPopups(bool value) {
 
 void DevToolsUIBindings::DispatchProtocolMessageFromDevToolsFrontend(
     const std::string& message) {
-  if (!agent_host_)
+  if (!agent_host_) {
     return;
+  }
   agent_host_->DispatchProtocolMessage(
       this, base::as_bytes(base::make_span(message)));
 }
@@ -1559,8 +1658,9 @@ void DevToolsUIBindings::RecordCountHistogram(const std::string& name,
 void DevToolsUIBindings::RecordEnumeratedHistogram(const std::string& name,
                                                    int sample,
                                                    int boundary_value) {
-  if (!frontend_host_)
+  if (!frontend_host_) {
     return;
+  }
 
   DCHECK_GE(boundary_value, 0);
   DCHECK_LT(boundary_value, 1000);
@@ -1582,8 +1682,9 @@ void DevToolsUIBindings::RecordEnumeratedHistogram(const std::string& name,
 
 void DevToolsUIBindings::RecordPerformanceHistogram(const std::string& name,
                                                     double duration) {
-  if (!frontend_host_)
+  if (!frontend_host_) {
     return;
+  }
   if (duration < 0) {
     return;
   }
@@ -1594,8 +1695,9 @@ void DevToolsUIBindings::RecordPerformanceHistogram(const std::string& name,
 }
 
 void DevToolsUIBindings::RecordUserMetricsAction(const std::string& name) {
-  if (!frontend_host_)
+  if (!frontend_host_) {
     return;
+  }
   // Use RecordComputedAction instead of RecordAction as the name comes from
   // DevTools frontend javascript and so will always have the same call site.
   base::RecordComputedAction(name);
@@ -1661,6 +1763,7 @@ void DevToolsUIBindings::RecordClick(const ClickEvent& event) {
       metrics::structured::events::v2::dev_tools::Click()
           .SetVeId(event.veid)
           .SetMouseButton(event.mouse_button)
+          .SetDoubleClick(event.double_click)
           .SetContext(event.context)
           .SetTimeSinceSessionStart(GetTimeSinceSessionStart().InMilliseconds())
           .SetSessionId(session_id_for_logging_.GetLowForSerialization())));
@@ -1846,8 +1949,9 @@ void DevToolsUIBindings::SearchCompleted(
     const std::vector<std::string>& file_paths) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   base::Value::List file_paths_value;
-  for (auto const& file_path : file_paths)
+  for (auto const& file_path : file_paths) {
     file_paths_value.Append(file_path);
+  }
   CallClientMethod("DevToolsAPI", "searchCompleted", base::Value(request_id),
                    base::Value(file_system_path),
                    base::Value(std::move(file_paths_value)));
@@ -1866,8 +1970,9 @@ void DevToolsUIBindings::ShowDevToolsInfoBar(
 void DevToolsUIBindings::AddDevToolsExtensionsToClient() {
   const extensions::ExtensionRegistry* registry =
       extensions::ExtensionRegistry::Get(profile_->GetOriginalProfile());
-  if (!registry)
+  if (!registry) {
     return;
+  }
 
   base::Value::List results;
   base::Value::List forbidden_origins;
@@ -2008,8 +2113,13 @@ void DevToolsUIBindings::DoAidaConversation(DispatchCallback callback,
       std::move(callback), stream_id, request, base::TimeDelta()));
 }
 
-void DevToolsUIBindings::RegisterAidaClientEvent(const std::string& request) {
+void DevToolsUIBindings::RegisterAidaClientEvent(DispatchCallback callback,
+                                                 const std::string& request) {
   if (AidaClient::CanUseAida(profile_).blocked) {
+    base::Value::Dict response_dict;
+    response_dict.Set("error", "AIDA request was blocked");
+    base::Value response = base::Value(std::move(response_dict));
+    std::move(callback).Run(&response);
     return;
   }
   if (!aida_client_) {
@@ -2017,7 +2127,7 @@ void DevToolsUIBindings::RegisterAidaClientEvent(const std::string& request) {
   }
   aida_client_->PrepareRequestOrFail(
       base::BindOnce(&DevToolsUIBindings::OnRegisterAidaClientEventRequest,
-                     base::Unretained(this), request));
+                     base::Unretained(this), std::move(callback), request));
 }
 
 void DevToolsUIBindings::SetDelegate(Delegate* delegate) {
@@ -2026,8 +2136,9 @@ void DevToolsUIBindings::SetDelegate(Delegate* delegate) {
 
 void DevToolsUIBindings::AttachTo(
     const scoped_refptr<content::DevToolsAgentHost>& agent_host) {
-  if (agent_host_.get())
+  if (agent_host_.get()) {
     Detach();
+  }
   agent_host_ = agent_host;
   InnerAttach();
 }
@@ -2036,17 +2147,19 @@ void DevToolsUIBindings::AttachViaBrowserTarget(
     const scoped_refptr<content::DevToolsAgentHost>& agent_host) {
   DCHECK(!agent_host_ ||
          agent_host->GetType() == content::DevToolsAgentHost::kTypeBrowser);
-  if (!agent_host_)
+  if (!agent_host_) {
     agent_host_ = content::DevToolsAgentHost::CreateForBrowser(
         nullptr /* tethering_task_runner */,
         content::DevToolsAgentHost::CreateServerSocketCallback());
+  }
   initial_target_id_ = agent_host->GetId();
   InnerAttach();
 }
 
 void DevToolsUIBindings::Detach() {
-  if (agent_host_.get())
+  if (agent_host_.get()) {
     agent_host_->DetachClient(this);
+  }
   agent_host_.reset();
 }
 
@@ -2068,12 +2181,14 @@ void DevToolsUIBindings::CallClientMethod(
     base::Value arg3,
     base::OnceCallback<void(base::Value)> completion_callback) {
   // If we're not exposing bindings, we shouldn't call functions either.
-  if (!frontend_host_)
+  if (!frontend_host_) {
     return;
+  }
   // If the client renderer is gone (e.g., the window was closed with both the
   // inspector and client being destroyed), the message can not be sent.
-  if (!web_contents_->GetPrimaryMainFrame()->IsRenderFrameLive())
+  if (!web_contents_->GetPrimaryMainFrame()->IsRenderFrameLive()) {
     return;
+  }
   base::Value::List arguments;
   if (!arg1.is_none()) {
     arguments.Append(std::move(arg1));
@@ -2102,15 +2217,17 @@ void DevToolsUIBindings::ReadyToCommitNavigation(
       frontend_host_.reset();
       return;
     }
-    if (frontend_host_)
+    if (frontend_host_) {
       return;
+    }
     if (content::RenderFrameHost* opener = web_contents_->GetOpener()) {
       content::WebContents* opener_wc =
           content::WebContents::FromRenderFrameHost(opener);
       DevToolsUIBindings* opener_bindings =
           opener_wc ? DevToolsUIBindings::ForWebContents(opener_wc) : nullptr;
-      if (!opener_bindings || !opener_bindings->frontend_host_)
+      if (!opener_bindings || !opener_bindings->frontend_host_) {
         return;
+      }
     }
     frontend_host_ = content::DevToolsFrontendHost::Create(
         navigation_handle->GetRenderFrameHost(),
@@ -2124,8 +2241,9 @@ void DevToolsUIBindings::ReadyToCommitNavigation(
   std::string origin =
       navigation_handle->GetURL().DeprecatedGetOriginAsURL().spec();
   auto it = extensions_api_.find(origin);
-  if (it == extensions_api_.end())
+  if (it == extensions_api_.end()) {
     return;
+  }
   std::string script = base::StringPrintf(
       "%s(\"%s\")", it->second.c_str(),
       base::Uuid::GenerateRandomV4().AsLowercaseString().c_str());
@@ -2141,16 +2259,18 @@ void DevToolsUIBindings::PrimaryPageChanged() {
 }
 
 void DevToolsUIBindings::FrontendLoaded() {
-  if (frontend_loaded_)
+  if (frontend_loaded_) {
     return;
+  }
   frontend_loaded_ = true;
 
   // Call delegate first - it seeds importants bit of information.
   delegate_->OnLoadCompleted();
 
-  if (!initial_target_id_.empty())
+  if (!initial_target_id_.empty()) {
     CallClientMethod("DevToolsAPI", "setInitialTargetId",
                      base::Value(initial_target_id_));
+  }
   AddDevToolsExtensionsToClient();
 }
 

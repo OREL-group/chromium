@@ -5,6 +5,7 @@
 #import "ios/chrome/browser/ui/authentication/authentication_flow_performer.h"
 
 #import <MaterialComponents/MaterialSnackbar.h>
+
 #import <memory>
 
 #import "base/check_op.h"
@@ -19,6 +20,9 @@
 #import "components/prefs/pref_service.h"
 #import "components/signin/public/identity_manager/identity_manager.h"
 #import "components/strings/grit/components_strings.h"
+#import "components/sync/base/user_selectable_type.h"
+#import "components/sync/service/sync_service.h"
+#import "components/sync/service/sync_user_settings.h"
 #import "google_apis/gaia/gaia_auth_util.h"
 #import "google_apis/gaia/gaia_urls.h"
 #import "ios/chrome/browser/policy/model/cloud/user_policy_signin_service.h"
@@ -27,12 +31,13 @@
 #import "ios/chrome/browser/shared/coordinator/alert/alert_coordinator.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
-#import "ios/chrome/browser/shared/public/commands/browsing_data_commands.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
 #import "ios/chrome/browser/shared/public/commands/snackbar_commands.h"
+#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/public/features/system_flags.h"
+#import "ios/chrome/browser/shared/ui/util/snackbar_util.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
 #import "ios/chrome/browser/signin/model/authentication_service.h"
 #import "ios/chrome/browser/signin/model/authentication_service_factory.h"
@@ -40,6 +45,7 @@
 #import "ios/chrome/browser/signin/model/identity_manager_factory.h"
 #import "ios/chrome/browser/signin/model/system_identity.h"
 #import "ios/chrome/browser/signin/model/system_identity_manager.h"
+#import "ios/chrome/browser/sync/model/sync_service_factory.h"
 #import "ios/chrome/browser/ui/authentication/authentication_constants.h"
 #import "ios/chrome/browser/ui/authentication/authentication_ui_util.h"
 #import "ios/chrome/grit/ios_branded_strings.h"
@@ -83,7 +89,7 @@ NSString* const kAuthenticationSnackbarCategory =
                      subtitle:(NSString*)subtitle
                   acceptLabel:(NSString*)acceptLabel
                   cancelLabel:(NSString*)cancelLabel {
-  if (self = [super init]) {
+  if ((self = [super init])) {
     _title = title;
     _subtitle = subtitle;
     _acceptLabel = acceptLabel;
@@ -98,7 +104,7 @@ NSString* const kAuthenticationSnackbarCategory =
   __weak id<AuthenticationFlowPerformerDelegate> _delegate;
   // This code uses three variables for alert coordinators in order to clarify
   // crash reports related to crbug.com/1482623
-  // TODO(crbug.com/1482623): The 2 alert coordinator variables can be merged
+  // TODO(crbug.com/40072272): The 2 alert coordinator variables can be merged
   // into one alert coordinator once the bug is fixed.
   // Dialog for the managed confirmation dialog.
   AlertCoordinator* _managedConfirmationAlertCoordinator;
@@ -132,7 +138,7 @@ NSString* const kAuthenticationSnackbarCategory =
   [self stopWatchdogTimer];
 }
 
-- (void)fetchManagedStatus:(ChromeBrowserState*)browserState
+- (void)fetchManagedStatus:(ProfileIOS*)profile
                forIdentity:(id<SystemIdentity>)identity {
   SystemIdentityManager* systemIdentityManager =
       GetApplicationContext()->GetSystemIdentityManager();
@@ -153,24 +159,24 @@ NSString* const kAuthenticationSnackbarCategory =
 - (void)signInIdentity:(id<SystemIdentity>)identity
          atAccessPoint:(signin_metrics::AccessPoint)accessPoint
       withHostedDomain:(NSString*)hostedDomain
-        toBrowserState:(ChromeBrowserState*)browserState {
-  AuthenticationServiceFactory::GetForBrowserState(browserState)
-      ->SignIn(identity, accessPoint);
+             toProfile:(ProfileIOS*)profile {
+  AuthenticationServiceFactory::GetForBrowserState(profile)->SignIn(
+      identity, accessPoint);
 }
 
-- (void)signOutBrowserState:(ChromeBrowserState*)browserState {
+- (void)signOutProfile:(ProfileIOS*)profile {
   __weak __typeof(_delegate) weakDelegate = _delegate;
-  AuthenticationServiceFactory::GetForBrowserState(browserState)
-      ->SignOut(signin_metrics::ProfileSignout::kUserClickedSignoutSettings,
-                /*force_clear_browsing_data=*/false, ^{
-                  [weakDelegate didSignOut];
-                });
+  AuthenticationServiceFactory::GetForBrowserState(profile)->SignOut(
+      signin_metrics::ProfileSignout::kUserClickedSignoutSettings,
+      /*force_clear_browsing_data=*/false, ^{
+        [weakDelegate didSignOut];
+      });
 }
 
-- (void)signOutImmediatelyFromBrowserState:(ChromeBrowserState*)browserState {
-  AuthenticationServiceFactory::GetForBrowserState(browserState)
-      ->SignOut(signin_metrics::ProfileSignout::kAbortSignin,
-                /*force_clear_browsing_data=*/false, nil);
+- (void)signOutImmediatelyFromProfile:(ProfileIOS*)profile {
+  AuthenticationServiceFactory::GetForBrowserState(profile)->SignOut(
+      signin_metrics::ProfileSignout::kAbortSignin,
+      /*force_clear_browsing_data=*/false, nil);
 }
 
 // Retuns the ManagedConfirmationDialogContent that corresponds to the
@@ -232,7 +238,7 @@ NSString* const kAuthenticationSnackbarCategory =
     if (!strongSelf)
       return;
 
-    // TODO(crbug.com/1326767): Nullify the browser object in the
+    // TODO(crbug.com/40225944): Nullify the browser object in the
     // AlertCoordinator when the coordinator is stopped to avoid using the
     // browser object at that moment, in which case the browser object may have
     // been deleted before the callback block is called. This is to avoid
@@ -240,7 +246,7 @@ NSString* const kAuthenticationSnackbarCategory =
     Browser* alertedBrowser = weakAlert.browser;
     if (alertedBrowser) {
       PrefService* prefService = alertedBrowser->GetBrowserState()->GetPrefs();
-      // TODO(crbug.com/1325115): Remove this line once we determined that the
+      // TODO(crbug.com/40225352): Remove this line once we determined that the
       // notification isn't needed anymore.
       [strongSelf updateUserPolicyNotificationStatusIfNeeded:prefService];
     }
@@ -271,10 +277,39 @@ NSString* const kAuthenticationSnackbarCategory =
   [_managedConfirmationAlertCoordinator start];
 }
 
-- (void)showSnackbarWithSignInIdentity:(id<SystemIdentity>)identity
-                               browser:(Browser*)browser {
+- (void)completePostSignInActions:(PostSignInActionSet)postSignInActions
+                     withIdentity:(id<SystemIdentity>)identity
+                          browser:(Browser*)browser {
   DCHECK(browser);
   base::WeakPtr<Browser> weakBrowser = browser->AsWeakPtr();
+  ProfileIOS* profile = browser->GetProfile()->GetOriginalChromeBrowserState();
+  syncer::SyncService* syncService =
+      SyncServiceFactory::GetForBrowserState(profile);
+
+  // Signing in from bookmarks and reading list enables the corresponding
+  // type.
+  BOOL bookmarksToggleEnabledWithSigninFlow = NO;
+  BOOL readingListToggleEnabledWithSigninFlow = NO;
+  if (postSignInActions.Has(
+          PostSignInAction::kEnableUserSelectableTypeBookmarks) &&
+      !syncService->GetUserSettings()->GetSelectedTypes().Has(
+          syncer::UserSelectableType::kBookmarks)) {
+    syncService->GetUserSettings()->SetSelectedType(
+        syncer::UserSelectableType::kBookmarks, true);
+    bookmarksToggleEnabledWithSigninFlow = YES;
+  } else if (postSignInActions.Has(
+                 PostSignInAction::kEnableUserSelectableTypeReadingList) &&
+             !syncService->GetUserSettings()->GetSelectedTypes().Has(
+                 syncer::UserSelectableType::kReadingList)) {
+    syncService->GetUserSettings()->SetSelectedType(
+        syncer::UserSelectableType::kReadingList, true);
+    readingListToggleEnabledWithSigninFlow = YES;
+  }
+
+  if (!postSignInActions.Has(PostSignInAction::kShowSnackbar)) {
+    return;
+  }
+
   MDCSnackbarMessageAction* action = [[MDCSnackbarMessageAction alloc] init];
   action.handler = ^{
     if (!weakBrowser.get()) {
@@ -282,11 +317,18 @@ NSString* const kAuthenticationSnackbarCategory =
     }
     base::RecordAction(
         base::UserMetricsAction("Mobile.Signin.SnackbarUndoTapped"));
-    ChromeBrowserState* browserState =
-        weakBrowser->GetBrowserState()->GetOriginalChromeBrowserState();
     AuthenticationService* authService =
-        AuthenticationServiceFactory::GetForBrowserState(browserState);
+        AuthenticationServiceFactory::GetForBrowserState(profile);
     if (authService->HasPrimaryIdentity(signin::ConsentLevel::kSignin)) {
+      // Signing in from bookmarks and reading list enables the corresponding
+      // type. The undo button should handle that before signing out.
+      if (bookmarksToggleEnabledWithSigninFlow) {
+        syncService->GetUserSettings()->SetSelectedType(
+            syncer::UserSelectableType::kBookmarks, false);
+      } else if (readingListToggleEnabledWithSigninFlow) {
+        syncService->GetUserSettings()->SetSelectedType(
+            syncer::UserSelectableType::kReadingList, false);
+      }
       authService->SignOut(
           signin_metrics::ProfileSignout::kUserTappedUndoRightAfterSignIn,
           /*force_clear_browsing_data=*/false, nil);
@@ -297,8 +339,7 @@ NSString* const kAuthenticationSnackbarCategory =
   NSString* messageText =
       l10n_util::GetNSStringF(IDS_IOS_SIGNIN_SNACKBAR_SIGNED_IN_AS,
                               base::SysNSStringToUTF16(identity.userEmail));
-  MDCSnackbarMessage* message =
-      [MDCSnackbarMessage messageWithText:messageText];
+  MDCSnackbarMessage* message = CreateSnackbarMessage(messageText);
   message.action = action;
   message.category = kAuthenticationSnackbarCategory;
 
@@ -340,19 +381,18 @@ NSString* const kAuthenticationSnackbarCategory =
   [_errorAlertCoordinator start];
 }
 
-- (void)registerUserPolicy:(ChromeBrowserState*)browserState
+- (void)registerUserPolicy:(ProfileIOS*)profile
                forIdentity:(id<SystemIdentity>)identity {
   // Should only fetch user policies when the feature is enabled.
   DCHECK(policy::IsAnyUserPolicyFeatureEnabled());
 
   std::string userEmail = base::SysNSStringToUTF8(identity.userEmail);
   CoreAccountId accountID =
-      IdentityManagerFactory::GetForBrowserState(browserState)
-          ->PickAccountIdForAccount(base::SysNSStringToUTF8(identity.gaiaID),
-                                    userEmail);
+      IdentityManagerFactory::GetForProfile(profile)->PickAccountIdForAccount(
+          base::SysNSStringToUTF8(identity.gaiaID), userEmail);
 
   policy::UserPolicySigninService* userPolicyService =
-      policy::UserPolicySigninServiceFactory::GetForBrowserState(browserState);
+      policy::UserPolicySigninServiceFactory::GetForBrowserState(profile);
 
   __weak __typeof(self) weakSelf = self;
 
@@ -379,7 +419,7 @@ NSString* const kAuthenticationSnackbarCategory =
       }));
 }
 
-- (void)fetchUserPolicy:(ChromeBrowserState*)browserState
+- (void)fetchUserPolicy:(ProfileIOS*)profile
             withDmToken:(NSString*)dmToken
                clientID:(NSString*)clientID
      userAffiliationIDs:(NSArray<NSString*>*)userAffiliationIDs
@@ -392,7 +432,7 @@ NSString* const kAuthenticationSnackbarCategory =
   DCHECK([clientID length] > 0);
 
   policy::UserPolicySigninService* policyService =
-      policy::UserPolicySigninServiceFactory::GetForBrowserState(browserState);
+      policy::UserPolicySigninServiceFactory::GetForBrowserState(profile);
   const std::string userEmail = base::SysNSStringToUTF8(identity.userEmail);
 
   AccountId accountID =
@@ -411,8 +451,7 @@ NSString* const kAuthenticationSnackbarCategory =
   policyService->FetchPolicyForSignedInUser(
       accountID, base::SysNSStringToUTF8(dmToken),
       base::SysNSStringToUTF8(clientID), userAffiliationIDsVector,
-      browserState->GetSharedURLLoaderFactory(),
-      base::BindOnce(^(bool success) {
+      profile->GetSharedURLLoaderFactory(), base::BindOnce(^(bool success) {
         if (![self stopWatchdogTimer]) {
           // Watchdog timer has already fired, don't notify the delegate.
           return;
@@ -520,7 +559,7 @@ NSString* const kAuthenticationSnackbarCategory =
   } else if (_errorAlertCoordinator == alertCoordinator) {
     _errorAlertCoordinator = nil;
   }
-  // TODO(crbug.com/1482623): This code needs to be simpler and clearer.
+  // TODO(crbug.com/40072272): This code needs to be simpler and clearer.
   // At least NOTREACHED should be added here.
 }
 

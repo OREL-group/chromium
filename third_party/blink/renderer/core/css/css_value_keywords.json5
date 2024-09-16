@@ -161,6 +161,7 @@
     "cap-height",
     "ch-width",
     "ic-width",
+    "ic-height",
     // from-font
 
     //
@@ -190,6 +191,13 @@
     // https://drafts.csswg.org/css-conditional-5/#typedef-supports-font-tech-fn
     "font-tech",
     "font-format",
+
+    //
+    // font-variant-emoji
+    // normal
+    // text
+    "emoji",
+    "unicode",
 
     //
     // font-palette animation
@@ -279,6 +287,12 @@
     // <https://github.com/w3c/csswg-drafts/issues/7522>
     "-internal-spelling-error-color",
     "-internal-grammar-error-color",
+    // ::search-text
+    // <https://github.com/w3c/csswg-drafts/issues/10329>
+    "-internal-search-color",
+    "-internal-search-text-color",
+    "-internal-current-search-color",
+    "-internal-current-search-text-color",
 
     //
     // "Extended" named colors
@@ -506,6 +520,7 @@
     "table",
     "flex",
     "grid",
+    "masonry",
     //"math",
     //"ruby",
     // The order must match the order found in IsDisplayBox().
@@ -526,6 +541,7 @@
     "inline-table",
     "inline-flex",
     "inline-grid",
+    "inline-masonry",
     "-webkit-box",
     "-webkit-inline-box",
     "-webkit-flex",
@@ -596,6 +612,7 @@
     "visible",
     //hidden
     "collapse",
+    "inert",
     //
     // white-space and its longhands (white-space-collapse and text-wrap)
     // https://w3c.github.io/csswg-drafts/css-text-4/#white-space-property
@@ -778,6 +795,7 @@
     //
     // text-box-edge
     //
+    // "auto"
     // "alphabetic",
     // "text"
     //
@@ -786,7 +804,14 @@
     // "ideographic-ink",
     "cap",
     "ex",
-    "leading",
+
+    //
+    // text-box-trim
+    //
+    // "none"
+    "trim-both",
+    "trim-end",
+    "trim-start",
 
     //
     // text-overflow
@@ -818,7 +843,7 @@
     // normal
     "space-all",
     "space-first",
-    "trim-start",
+    // "trim-start",
 
     // text-underline-position
     // auto
@@ -870,20 +895,8 @@
     "searchfield",
     "textfield",
     "textarea",
-    // TODO(crbug/924486) All appearance values that should not be accepted by the parser (high usage).
-    "inner-spin-button",
-    "push-button",
-    "square-button",
-    "slider-horizontal",
-    "searchfield-cancel-button",
-    // TODO(crbug/924486) All appearance values that should not be accepted by the parser (low usage).
-    "media-slider",
-    "media-sliderthumb",
-    "media-volume-slider",
-    "media-volume-sliderthumb",
-    "sliderthumb-horizontal",
-    "sliderthumb-vertical",
-    // TODO(crbug/1426629) All appearance values that should not be accepted by the parser (special case).
+    // TODO(crbug/1426629) slider-vertical is a non-standard value. We are
+    // waiting for its usage to be lower before deprecating it.
     "slider-vertical",
     //
     // border-image
@@ -1058,10 +1071,18 @@
     "horizontal-tb",
     "vertical-rl",
     "vertical-lr",
+    "sideways-rl",
+    "sideways-lr",
 
     // -webkit-ruby-position
     "after",
     "before",
+
+    // ruby-position
+    "inter-character",
+    // over
+    // under
+    // alternate
 
     // text-emphasis-position
     "over",
@@ -1560,10 +1581,10 @@
     // left
     // right
     // bottom
-    "inset-block-start",
-    "inset-block-end",
-    "inset-inline-start",
-    "inset-inline-end",
+    "block-start",
+    "block-end",
+    // inline-start,
+    // inline-end,
 
     // grid auto-repeat
     "auto-fill",
@@ -1739,7 +1760,7 @@
     "self-inline",
 
     // position-anchor
-    "implicit",
+    // auto,
     // none,
 
     // animation-[end-]delay
@@ -1777,7 +1798,7 @@
     "initial-only",
     // none
 
-    // inset-area
+    // position-area
     // none,
     // left,
     // center,
@@ -1805,8 +1826,8 @@
     "y-self-end",
     "span-y-self-start",
     "span-y-self-end",
-    "block-start",
-    "block-end",
+    // block-start,
+    // block-end,
     "span-block-start",
     "span-block-end",
     "self-block-start",
@@ -1829,8 +1850,8 @@
     // self-end,
     "span-self-start",
     "span-self-end",
-    // inset-area()
-    "inset-area",
+    // inset-area() (deprecated)
+    "position-area",
 
     // resize
     // none
@@ -1849,7 +1870,7 @@
     "most-block-size",
     "most-inline-size",
 
-    // position-try-options
+    // position-try-fallbacks
     // none
     "flip-block",
     "flip-inline",
@@ -1862,7 +1883,7 @@
     "anchors-visible",
     "no-overflow",
 
-    // reading-order-items
+    // reading-flow
     // normal
     "flex-visual",
     "flex-flow",
@@ -1880,5 +1901,12 @@
     // container-progress()
     "container-progress",
     "of",
+
+    // @supports blink-feature(RuntimeEnabledFeatureName)
+    "blink-feature",
+
+    // interpolate-size
+    "numeric-only",
+    "allow-keywords",
   ],
 }

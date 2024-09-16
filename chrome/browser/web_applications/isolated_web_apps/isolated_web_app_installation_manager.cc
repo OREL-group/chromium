@@ -41,6 +41,7 @@
 #include "components/keep_alive_registry/keep_alive_types.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_thread.h"
+#include "services/network/public/cpp/is_potentially_trustworthy.h"
 #include "third_party/abseil-cpp/absl/types/variant.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -109,21 +110,22 @@ void GetBundlePathFromCommandLine(
       std::move(callback));
 }
 
-base::expected<url::Origin, std::string> GetProxyUrl(const GURL& gurl) {
-  url::Origin url_origin = url::Origin::Create(gurl);
-
-  // The .is_valid() check here will also capture an empty URL.
-  if (!gurl.is_valid() || url_origin.opaque()) {
-    return base::unexpected(
-        base::StrCat({"Invalid URL provided: ", gurl.possibly_invalid_spec()}));
-  }
-
-  if (url_origin.GetURL() != gurl) {
+base::expected<url::Origin, std::string> ValidateProxyOrigin(const GURL& gurl) {
+  if (!gurl.SchemeIsHTTPOrHTTPS()) {
     return base::unexpected(base::StrCat(
-        {"Non-origin URL provided: '", gurl.possibly_invalid_spec(), "'",
-         ". Possible origin URL: '", url_origin.Serialize(), "'."}));
+        {"Proxy URL must be HTTP or HTTPS: ", gurl.possibly_invalid_spec()}));
   }
 
+  if (gurl.path() != "/") {
+    return base::unexpected(base::StrCat(
+        {"Non-origin URL provided: '", gurl.possibly_invalid_spec()}));
+  }
+
+  url::Origin url_origin = url::Origin::Create(gurl);
+  if (!network::IsUrlPotentiallyTrustworthy(gurl)) {
+    return base::unexpected(base::StrCat(
+        {"Proxy URL not trustworthy: ", gurl.possibly_invalid_spec()}));
+  }
   return url_origin;
 }
 
@@ -134,10 +136,11 @@ MaybeIwaInstallSource GetProxyUrlFromCommandLine(
   if (switch_value.empty()) {
     return std::nullopt;
   }
-  return GetProxyUrl(GURL(switch_value)).transform([](url::Origin proxy_url) {
-    return IsolatedWebAppInstallSource::FromDevCommandLine(
-        IwaSourceProxy(proxy_url));
-  });
+  return ValidateProxyOrigin(GURL(switch_value))
+      .transform([](url::Origin proxy_url) {
+        return IsolatedWebAppInstallSource::FromDevCommandLine(
+            IwaSourceProxy(proxy_url));
+      });
 }
 
 }  // namespace
@@ -201,7 +204,8 @@ void IsolatedWebAppInstallationManager::InstallIsolatedWebAppFromDevModeProxy(
   CHECK(!callback.is_null());
 
   // Ensure the URL we're given is okay.
-  base::expected<url::Origin, std::string> proxy_origin = GetProxyUrl(gurl);
+  base::expected<url::Origin, std::string> proxy_origin =
+      ValidateProxyOrigin(gurl);
   if (!proxy_origin.has_value()) {
     std::move(callback).Run(base::unexpected(proxy_origin.error()));
     return;
@@ -221,6 +225,18 @@ void IsolatedWebAppInstallationManager::InstallIsolatedWebAppFromDevModeBundle(
 
   InstallIsolatedWebAppFromInstallSource(
       CreateInstallSource(path, install_surface), std::move(callback));
+}
+
+void IsolatedWebAppInstallationManager::InstallIsolatedWebAppFromDevModeBundle(
+    const base::ScopedTempFile* file,
+    InstallSurface install_surface,
+    base::OnceCallback<void(MaybeInstallIsolatedWebAppCommandSuccess)>
+        callback) {
+  CHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
+  CHECK(!callback.is_null());
+
+  InstallIsolatedWebAppFromInstallSource(
+      CreateInstallSource(file, install_surface), std::move(callback));
 }
 
 // static
@@ -302,7 +318,8 @@ void IsolatedWebAppInstallationManager::
 // static
 IsolatedWebAppInstallSource
 IsolatedWebAppInstallationManager::CreateInstallSource(
-    absl::variant<base::FilePath, url::Origin> source,
+    absl::variant<base::FilePath, const base::ScopedTempFile*, url::Origin>
+        source,
     InstallSurface surface) {
   switch (surface) {
     case InstallSurface::kDevUi:
@@ -311,6 +328,11 @@ IsolatedWebAppInstallationManager::CreateInstallSource(
               [](base::FilePath path) -> IwaSourceDevModeWithFileOp {
                 return IwaSourceBundleDevModeWithFileOp(
                     std::move(path), kDefaultBundleDevFileOp);
+              },
+              [](const base::ScopedTempFile* temp_file)
+                  -> IwaSourceDevModeWithFileOp {
+                return IwaSourceBundleDevModeWithFileOp(
+                    temp_file->path(), IwaSourceBundleDevFileOp::kMove);
               },
               [](url::Origin proxy_url) -> IwaSourceDevModeWithFileOp {
                 return IwaSourceProxy(std::move(proxy_url));
@@ -361,11 +383,8 @@ void IsolatedWebAppInstallationManager::InstallIsolatedWebAppFromInstallSource(
   auto keep_alive = std::make_unique<ScopedKeepAlive>(
       KeepAliveOrigin::ISOLATED_WEB_APP_INSTALL,
       KeepAliveRestartOption::DISABLED);
-  std::unique_ptr<ScopedProfileKeepAlive> optional_profile_keep_alive;
-  if (!profile_->IsOffTheRecord()) {
-    optional_profile_keep_alive = std::make_unique<ScopedProfileKeepAlive>(
-        &*profile_, ProfileKeepAliveOrigin::kIsolatedWebAppInstall);
-  }
+  auto optional_profile_keep_alive = std::make_unique<ScopedProfileKeepAlive>(
+      &profile_.get(), ProfileKeepAliveOrigin::kIsolatedWebAppInstall);
   InstallIsolatedWebAppFromInstallSource(std::move(keep_alive),
                                          std::move(optional_profile_keep_alive),
                                          install_source, std::move(callback));
@@ -459,7 +478,7 @@ void IsolatedWebAppInstallationManager::MaybeScheduleGarbageCollection() {
   // We are migrating from `ExtensionsPref::kStorageGarbageCollect` to
   // `prefs::kShouldGarbageCollectStoragePartitions`. During the migration,
   // either one of the prefs can trigger garbage collection.
-  // TODO(crbug.com/1463825): Delete `ExtensionsPref::kStorageGarbageCollect`.
+  // TODO(crbug.com/40922689): Delete `ExtensionsPref::kStorageGarbageCollect`.
   if (profile_->GetPrefs()->GetBoolean(
           prefs::kShouldGarbageCollectStoragePartitions) ||
       provider_->extensions_manager().ShouldGarbageCollectStoragePartitions()) {

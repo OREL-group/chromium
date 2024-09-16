@@ -14,6 +14,7 @@
 #include "third_party/blink/renderer/bindings/core/v8/idl_types.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
+#include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/platform/bindings/exception_messages.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "v8/include/v8.h"
@@ -41,8 +42,9 @@ class CORE_EXPORT ExceptionToRejectPromiseScope final {
                                 ExceptionState& exception_state)
       : info_(info), exception_state_(exception_state) {}
   ~ExceptionToRejectPromiseScope() {
-    if (LIKELY(!exception_state_.HadException()))
+    if (!exception_state_.HadException()) [[likely]] {
       return;
+    }
 
     ConvertExceptionToRejectPromise();
   }
@@ -125,8 +127,9 @@ typename IDLSequence<T>::ImplType VariadicArgumentsToNativeValues(
   for (int i = start_index; i < length; ++i) {
     result.UncheckedAppend(NativeValueTraits<T>::ArgumentValue(
         isolate, i, info[i], exception_state, extra_args...));
-    if (UNLIKELY(exception_state.HadException()))
+    if (exception_state.HadException()) [[unlikely]] {
       return VectorType();
+    }
   }
   return std::move(result);
 }
@@ -183,6 +186,14 @@ CORE_EXPORT v8::Local<v8::Array> EnumerateIndexedProperties(
     v8::Isolate* isolate,
     uint32_t length);
 
+// Helper for GetDictionaryMemberFromV8Object() to add context information in
+// the case of exception.
+CORE_EXPORT void AddDictionaryContextToException(
+    v8::Isolate* isolate,
+    const char* dictionary_name,
+    v8::Local<v8::Name> v8_member_name,
+    ExceptionState&);
+
 // Performs the ES value to IDL value conversion of IDL dictionary member.
 // Sets a dictionary member |value| and |presence| to the resulting values.
 // Returns true on success, otherwise returns false and throws an exception.
@@ -196,17 +207,18 @@ bool GetDictionaryMemberFromV8Object(v8::Isolate* isolate,
                                      v8::Local<v8::Name> v8_member_name,
                                      bool& presence,
                                      ValueType& value,
-                                     v8::TryCatch& try_block,
+                                     const char* dictionary_name,
                                      ExceptionState& exception_state) {
   v8::Local<v8::Value> v8_value;
   if (!v8_dictionary->Get(current_context, v8_member_name).ToLocal(&v8_value)) {
-    exception_state.RethrowV8Exception(try_block.Exception());
     return false;
   }
 
   if (v8_value->IsUndefined()) {
-    if (is_required) {
+    if (is_required) [[unlikely]] {
       exception_state.ThrowTypeError("Required member is undefined.");
+      AddDictionaryContextToException(isolate, dictionary_name, v8_member_name,
+                                      exception_state);
       return false;
     }
     return true;
@@ -214,7 +226,14 @@ bool GetDictionaryMemberFromV8Object(v8::Isolate* isolate,
 
   value = NativeValueTraits<IDLType>::NativeValue(isolate, v8_value,
                                                   exception_state);
-  if (UNLIKELY(exception_state.HadException())) {
+  if (exception_state.HadException()) [[unlikely]] {
+    // If the exception state is rethrowing via a v8::TryCatch, we have either
+    // already applied context information, or intentionally skipped it, so
+    // don't add it here.
+    if (!exception_state.DidRethrowViaV8TryCatch()) {
+      AddDictionaryContextToException(isolate, dictionary_name, v8_member_name,
+                                      exception_state);
+    }
     return false;
   }
   presence = true;
@@ -243,6 +262,8 @@ CORE_EXPORT void PerformAttributeSetCEReactionsReflectTypeStringOrNull(
     const QualifiedName& content_attribute,
     const char* interface_name,
     const char* attribute_name);
+
+CORE_EXPORT void CountWebDXFeature(v8::Isolate* isolate, WebDXFeature feature);
 
 }  // namespace bindings
 

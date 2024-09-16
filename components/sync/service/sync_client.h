@@ -10,9 +10,8 @@
 #include "base/files/file_path.h"
 #include "base/functional/callback_forward.h"
 #include "base/memory/ref_counted.h"
+#include "components/sync/base/data_type.h"
 #include "components/sync/base/extensions_activity.h"
-#include "components/sync/base/model_type.h"
-#include "components/sync/service/model_type_controller.h"
 
 class PrefService;
 
@@ -27,9 +26,9 @@ class TrustedVaultClient;
 namespace syncer {
 
 struct LocalDataDescription;
-class SyncApiComponentFactory;
+class SyncEngineFactory;
 class SyncInvalidationsService;
-class SyncService;
+class TrustedVaultAutoUpgradeSyntheticFieldTrialGroup;
 
 // Interface for clients of the Sync API to plumb through necessary dependent
 // components. This interface is purely for abstracting dependencies, and
@@ -53,25 +52,15 @@ class SyncClient {
   // It is only used when sync is running against a local backend.
   virtual base::FilePath GetLocalSyncBackendFolder() = 0;
 
-  // Returns a vector with all supported datatypes and their controllers.
-  virtual ModelTypeController::TypeVector CreateModelTypeControllers(
-      SyncService* sync_service) = 0;
-
   virtual SyncInvalidationsService* GetSyncInvalidationsService() = 0;
   virtual trusted_vault::TrustedVaultClient* GetTrustedVaultClient() = 0;
   virtual scoped_refptr<ExtensionsActivity> GetExtensionsActivity() = 0;
 
-  // Returns the current SyncApiComponentFactory instance.
-  virtual SyncApiComponentFactory* GetSyncApiComponentFactory() = 0;
+  // Returns the current SyncEngineFactory instance.
+  virtual SyncEngineFactory* GetSyncEngineFactory() = 0;
 
   // Returns whether custom passphrase is allowed for the current user.
   virtual bool IsCustomPassphraseAllowed() = 0;
-
-  // Notifies the client that local sync metadata in preferences has been
-  // cleared.
-  // TODO(crbug.com/40724759): Replace this mechanism with a more universal one,
-  // e.g. using SyncServiceObserver.
-  virtual void OnLocalSyncTransportDataCleared() = 0;
 
   // Necessary but not sufficient condition for password sync to be enabled,
   // i.e. it influences the value of SyncUserSettings::GetSelectedTypes().
@@ -91,20 +80,26 @@ class SyncClient {
   // `types` is available.
   // Note: Only data types that are enabled and support this functionality are
   // part of the response.
-  // TODO(crbug.com/1451508): Mark as pure virtual once all implementations have
-  // overridden this.
+  // TODO(crbug.com/40065374): Mark as pure virtual once all implementations
+  // have overridden this.
   virtual void GetLocalDataDescriptions(
-      ModelTypeSet types,
-      base::OnceCallback<void(std::map<ModelType, LocalDataDescription>)>
+      DataTypeSet types,
+      base::OnceCallback<void(std::map<DataType, LocalDataDescription>)>
           callback);
 
   // Requests the client to move all local data to account for `types` data
   // types. This is an asynchronous method which moves the local data for all
   // `types` to the account store locally. Upload to the server will happen as
   // part of the regular commit process, and is NOT part of this method.
-  // TODO(crbug.com/1451508): Mark as pure virtual once all implementations have
-  // overridden this.
-  virtual void TriggerLocalDataMigration(ModelTypeSet types);
+  // TODO(crbug.com/40065374): Mark as pure virtual once all implementations
+  // have overridden this.
+  virtual void TriggerLocalDataMigration(DataTypeSet types);
+
+  // Registers synthetic field trials corresponding to autoupgrading users to
+  // trusted vault passphrase type. `group` must be valid. Must be invoked at
+  // most once.
+  virtual void RegisterTrustedVaultAutoUpgradeSyntheticFieldTrial(
+      const TrustedVaultAutoUpgradeSyntheticFieldTrialGroup& group) = 0;
 };
 
 }  // namespace syncer

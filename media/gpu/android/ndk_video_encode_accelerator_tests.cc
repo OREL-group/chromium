@@ -24,8 +24,8 @@
 #include "media/base/video_frame.h"
 #include "media/base/video_frame_converter.h"
 #include "media/base/video_util.h"
+#include "media/parsers/h264_parser.h"
 #include "media/video/fake_gpu_memory_buffer.h"
-#include "media/video/h264_parser.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/libyuv/include/libyuv.h"
 #include "third_party/libyuv/include/libyuv/convert_from.h"
@@ -129,12 +129,12 @@ class NdkVideoEncoderAcceleratorTest
     auto y = color & 0xFF;
     auto u = (color >> 8) & 0xFF;
     auto v = (color >> 16) & 0xFF;
-    libyuv::I420Rect(frame->writable_data(VideoFrame::kYPlane),
-                     frame->stride(VideoFrame::kYPlane),
-                     frame->writable_data(VideoFrame::kUPlane),
-                     frame->stride(VideoFrame::kUPlane),
-                     frame->writable_data(VideoFrame::kVPlane),
-                     frame->stride(VideoFrame::kVPlane),
+    libyuv::I420Rect(frame->writable_data(VideoFrame::Plane::kY),
+                     frame->stride(VideoFrame::Plane::kY),
+                     frame->writable_data(VideoFrame::Plane::kU),
+                     frame->stride(VideoFrame::Plane::kU),
+                     frame->writable_data(VideoFrame::Plane::kV),
+                     frame->stride(VideoFrame::Plane::kV),
                      0,                               // left
                      0,                               // top
                      frame->visible_rect().width(),   // right
@@ -162,8 +162,8 @@ class NdkVideoEncoderAcceleratorTest
     auto frame = VideoFrame::CreateFrame(PIXEL_FORMAT_XRGB, size,
                                          gfx::Rect(size), size, timestamp);
 
-    libyuv::ARGBRect(frame->writable_data(VideoFrame::kARGBPlane),
-                     frame->stride(VideoFrame::kARGBPlane),
+    libyuv::ARGBRect(frame->writable_data(VideoFrame::Plane::kARGB),
+                     frame->stride(VideoFrame::Plane::kARGB),
                      0,                               // left
                      0,                               // top
                      frame->visible_rect().width(),   // right

@@ -9,8 +9,8 @@
 #include "components/password_manager/core/browser/features/password_features.h"
 #include "components/password_manager/core/browser/features/password_manager_features_util.h"
 #include "components/password_manager/core/browser/password_manager_client.h"
-#include "components/password_manager/core/browser/password_store/split_stores_and_local_upm.h"
 #include "components/password_manager/core/browser/password_sync_util.h"
+#include "components/password_manager/core/browser/split_stores_and_local_upm.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/sync/service/sync_service.h"
@@ -41,7 +41,7 @@ bool PasswordFeatureManagerImpl::IsGenerationEnabled() const {
 
 bool PasswordFeatureManagerImpl::IsBiometricAuthenticationBeforeFillingEnabled()
     const {
-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS)
   // This checking order is important to ensure balanced experiment groups.
   // First check for `kHadBiometricsAvailable` ensures that user have biometric
   // scanner on their devices, shrinking down the amount of affected users.
@@ -123,20 +123,13 @@ bool PasswordFeatureManagerImpl::
 
 bool PasswordFeatureManagerImpl::ShouldChangeDefaultPasswordStore() const {
   return IsOptedInForAccountStorage() && IsDefaultPasswordStoreSet() &&
-         GetDefaultPasswordStore() == PasswordForm::Store::kProfileStore &&
-         base::FeatureList::IsEnabled(
-             password_manager::features::kButterOnDesktopFollowup);
+         GetDefaultPasswordStore() == PasswordForm::Store::kProfileStore;
 }
 #endif  // !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(IS_ANDROID)
 bool PasswordFeatureManagerImpl::ShouldUpdateGmsCore() {
-  bool is_pwd_sync_enabled =
-      sync_util::IsSyncFeatureEnabledIncludingPasswords(sync_service_);
-  std::string gms_version_str =
-      base::android::BuildInfo::GetInstance()->gms_version_code();
-  return IsGmsCoreUpdateRequired(pref_service_, is_pwd_sync_enabled,
-                                 gms_version_str);
+  return IsGmsCoreUpdateRequired(pref_service_, sync_service_);
 }
 #endif  // BUILDFLAG(IS_ANDROID)
 

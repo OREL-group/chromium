@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/gpu/mac/video_toolbox_h265_accelerator.h"
 
 #include <array>
@@ -268,7 +273,7 @@ VideoToolboxH265Accelerator::Status VideoToolboxH265Accelerator::SubmitDecode(
 
   // Create a new format description if necessary.
   // We assume that session metadata can only change at a keyframe.
-  // TODO(crbug.com/1331597): It's not clear when it is better to inline the
+  // TODO(crbug.com/40227557): It's not clear when it is better to inline the
   // parameter sets vs. creating a new format.
   if (!active_format_ || (combined_nalu_data.size() && frame_is_keyframe_)) {
     combined_nalu_data.clear();
@@ -314,7 +319,7 @@ VideoToolboxH265Accelerator::Status VideoToolboxH265Accelerator::SubmitDecode(
   for (const auto& nalu_data : combined_nalu_data) {
     // Write length header.
     std::array<uint8_t, kNALUHeaderLength> header =
-        base::numerics::U32ToBigEndian(static_cast<uint32_t>(nalu_data.size()));
+        base::U32ToBigEndian(static_cast<uint32_t>(nalu_data.size()));
     status = CMBlockBufferReplaceDataBytes(header.data(), data.get(), offset,
                                            header.size());
     if (status != noErr) {

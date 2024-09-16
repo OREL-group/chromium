@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "ash/wm/overview/overview_window_drag_controller.h"
+
 #include "ash/display/screen_orientation_controller.h"
 #include "ash/display/screen_orientation_controller_test_api.h"
 #include "ash/shell.h"
@@ -13,12 +14,13 @@
 #include "ash/wm/desks/desks_controller.h"
 #include "ash/wm/desks/desks_histogram_enums.h"
 #include "ash/wm/desks/desks_util.h"
-#include "ash/wm/desks/legacy_desk_bar_view.h"
+#include "ash/wm/desks/overview_desk_bar_view.h"
 #include "ash/wm/overview/overview_controller.h"
 #include "ash/wm/overview/overview_drop_target.h"
 #include "ash/wm/overview/overview_grid.h"
 #include "ash/wm/overview/overview_grid_test_api.h"
 #include "ash/wm/overview/overview_item.h"
+#include "ash/wm/overview/overview_item_base.h"
 #include "ash/wm/overview/overview_session.h"
 #include "ash/wm/overview/overview_test_util.h"
 #include "ash/wm/splitview/split_view_constants.h"
@@ -140,11 +142,10 @@ class OverviewWindowDragControllerTest : public AshTestBase {
   }
 
   int GetDesksBarViewExpandedStateHeight(
-      const LegacyDeskBarView* desks_bar_view) {
-    return LegacyDeskBarView::GetPreferredBarHeight(
+      const OverviewDeskBarView* desks_bar_view) {
+    return DeskBarViewBase::GetPreferredBarHeight(
         desks_bar_view->GetWidget()->GetNativeWindow()->GetRootWindow(),
-        LegacyDeskBarView::Type::kOverview,
-        LegacyDeskBarView::State::kExpanded);
+        DeskBarViewBase::Type::kOverview, DeskBarViewBase::State::kExpanded);
   }
 };
 
@@ -197,7 +198,7 @@ TEST_F(OverviewWindowDragControllerTest, DropTargetBoundsTest) {
 
   auto* overview_grid = GetOverviewGridForRoot(Shell::GetPrimaryRootWindow());
   ASSERT_TRUE(overview_grid);
-  const auto& window_list = overview_grid->window_list();
+  const auto& window_list = overview_grid->item_list();
   ASSERT_EQ(window_list.size(), 1u);
 
   OverviewSession* overview_session = overview_controller->overview_session();
@@ -214,7 +215,7 @@ TEST_F(OverviewWindowDragControllerTest, DropTargetBoundsTest) {
         event_generator, by_touch, /*drop=*/false);
     EXPECT_TRUE(overview_controller->InOverviewSession());
 
-    const OverviewDropTarget* drop_target = overview_grid->drop_target();
+    const OverviewItemBase* drop_target = overview_grid->drop_target();
     EXPECT_TRUE(drop_target);
     EXPECT_EQ(gfx::RectF(drop_target->item_widget()->GetWindowBoundsInScreen()),
               target_bounds_before_dragging);
@@ -377,7 +378,7 @@ TEST_F(OverviewWindowDragControllerTest, DragWindowInPortraitMode) {
   // item in the list to check if there's overlap or not.
   EXPECT_FALSE(
       desks_bar_view->GetBoundsInScreen().Intersects(gfx::ToEnclosedRect(
-          overview_grid()->window_list()[1].get()->target_bounds())));
+          overview_grid()->item_list()[1].get()->target_bounds())));
 }
 
 // Tests that if a user starts dragging an overview item and the desks bar(s)
@@ -561,10 +562,11 @@ TEST_F(OverviewWindowDragControllerDesksPortraitTabletTest,
        DragWindowInPortraitMode) {
   UpdateDisplay("700x1000");
 
-  // Create 7 windows to make sure we can use tablet mode grid layout.
+  // Create 9 windows to make sure we can use tablet mode grid layout.
   std::vector<std::unique_ptr<aura::Window>> windows;
-  for (int i = 0; i < 7; ++i)
-    windows.push_back(CreateAppWindow(gfx::Rect()));
+  for (int i = 0; i < 9; ++i) {
+    windows.push_back(CreateAppWindow());
+  }
 
   StartDraggingAndValidateDesksBarShifted(windows[4].get());
 
@@ -581,9 +583,17 @@ TEST_F(OverviewWindowDragControllerDesksPortraitTabletTest,
   const auto* desks_bar_view = overview_grid()->desks_bar_view();
   ASSERT_TRUE(desks_bar_view);
 
-  // Check there's no overlap between overview items and desks bar view.
-  EXPECT_FALSE(desks_bar_view->GetBoundsInScreen().Intersects(
-      gfx::ToEnclosedRect(overview_grid()->window_list()[0]->target_bounds())));
+  const gfx::Rect desk_bar_bounds = desks_bar_view->GetBoundsInScreen();
+  const gfx::Rect first_item_bounds =
+      gfx::ToEnclosedRect(overview_grid()->item_list()[0]->target_bounds());
+  if (features::IsForestFeatureEnabled()) {
+    // With forest, a little overlap is ok since the desk bar is transparent.
+    // TODO(sammiequon|zxdan): Check if this gap is okay.
+    EXPECT_NEAR(desk_bar_bounds.bottom(), first_item_bounds.y(), 20);
+  } else {
+    // Check there's no overlap between overview items and desks bar view.
+    EXPECT_FALSE(desk_bar_bounds.Intersects(first_item_bounds));
+  }
 }
 
 }  // namespace ash

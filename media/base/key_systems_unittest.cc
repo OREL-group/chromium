@@ -44,7 +44,7 @@ const char kRobustnessNotSupported[] = "not-supported";
 
 // Codecs only supported in FOO container. Pick some arbitrary bit fields as
 // long as they are not in conflict with the real ones (static_asserted below).
-// TODO(crbug.com/724362): Remove container type (FOO) from codec enums.
+// TODO(crbug.com/40521627): Remove container type (FOO) from codec enums.
 enum TestCodec : uint32_t {
   TEST_CODEC_FOO_AUDIO = 1 << 25,
   TEST_CODEC_FOO_AUDIO_ALL = TEST_CODEC_FOO_AUDIO,
@@ -130,7 +130,7 @@ class ExternalKeySystemInfo : public TestKeySystemInfoBase {
       case EncryptionScheme::kCbcs:
         return EmeConfig{.hw_secure_codecs = EmeConfigRuleState::kNotAllowed};
     }
-    NOTREACHED_NORETURN();
+    NOTREACHED();
   }
 
   // We have hardware secure codec support for FOO_VIDEO and FOO_SECURE_VIDEO.

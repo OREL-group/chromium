@@ -4,6 +4,8 @@
 
 #include "content/common/input/synthetic_pointer_action.h"
 
+#include <array>
+
 #include "base/functional/bind.h"
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
@@ -38,11 +40,12 @@ WebTouchPoint::State ToWebTouchPointState(
       return WebTouchPoint::State::kStateStationary;
     case SyntheticPointerActionParams::PointerActionType::LEAVE:
     case SyntheticPointerActionParams::PointerActionType::NOT_INITIALIZED:
-      NOTREACHED()
+      NOTREACHED_IN_MIGRATION()
           << "Invalid SyntheticPointerActionParams::PointerActionType.";
       return WebTouchPoint::State::kStateUndefined;
   }
-  NOTREACHED() << "Invalid SyntheticPointerActionParams::PointerActionType.";
+  NOTREACHED_IN_MIGRATION()
+      << "Invalid SyntheticPointerActionParams::PointerActionType.";
   return WebTouchPoint::State::kStateUndefined;
 }
 
@@ -60,11 +63,12 @@ WebInputEvent::Type ToWebMouseEventType(
     case SyntheticPointerActionParams::PointerActionType::CANCEL:
     case SyntheticPointerActionParams::PointerActionType::IDLE:
     case SyntheticPointerActionParams::PointerActionType::NOT_INITIALIZED:
-      NOTREACHED()
+      NOTREACHED_IN_MIGRATION()
           << "Invalid SyntheticPointerActionParams::PointerActionType.";
       return WebInputEvent::Type::kUndefined;
   }
-  NOTREACHED() << "Invalid SyntheticPointerActionParams::PointerActionType.";
+  NOTREACHED_IN_MIGRATION()
+      << "Invalid SyntheticPointerActionParams::PointerActionType.";
   return WebInputEvent::Type::kUndefined;
 }
 
@@ -242,7 +246,7 @@ class MockSyntheticPointerTouchActionTarget
 
   testing::AssertionResult SyntheticTouchActionListDispatchedCorrectly(
       const std::vector<SyntheticPointerActionParams>& params_list,
-      int index_array[]) {
+      const std::vector<int>& index_array) {
     testing::AssertionResult result = testing::AssertionSuccess();
     num_dispatched_pointer_actions_ = 0;
     int result_index = 0;
@@ -264,15 +268,15 @@ class MockSyntheticPointerTouchActionTarget
 
  private:
   int num_dispatched_pointer_actions_;
-  gfx::PointF positions_[WebTouchEvent::kTouchesLengthCap];
-  uint32_t indexes_[WebTouchEvent::kTouchesLengthCap];
-  WebTouchPoint::State states_[WebTouchEvent::kTouchesLengthCap];
-  float widths_[WebTouchEvent::kTouchesLengthCap];
-  float heights_[WebTouchEvent::kTouchesLengthCap];
-  float rotation_angles_[WebTouchEvent::kTouchesLengthCap];
-  float forces_[WebTouchEvent::kTouchesLengthCap];
-  base::TimeTicks timestamps_[WebTouchEvent::kTouchesLengthCap];
-  int modifiers_[WebTouchEvent::kTouchesLengthCap];
+  std::array<gfx::PointF, WebTouchEvent::kTouchesLengthCap> positions_;
+  std::array<uint32_t, WebTouchEvent::kTouchesLengthCap> indexes_;
+  std::array<WebTouchPoint::State, WebTouchEvent::kTouchesLengthCap> states_;
+  std::array<float, WebTouchEvent::kTouchesLengthCap> widths_;
+  std::array<float, WebTouchEvent::kTouchesLengthCap> heights_;
+  std::array<float, WebTouchEvent::kTouchesLengthCap> rotation_angles_;
+  std::array<float, WebTouchEvent::kTouchesLengthCap> forces_;
+  std::array<base::TimeTicks, WebTouchEvent::kTouchesLengthCap> timestamps_;
+  std::array<int, WebTouchEvent::kTouchesLengthCap> modifiers_;
 };
 
 class MockSyntheticPointerMouseActionTarget
@@ -535,7 +539,7 @@ TEST_F(SyntheticPointerActionTest, PointerTouchAction) {
   ForwardSyntheticPointerAction();
   MockSyntheticPointerTouchActionTarget* pointer_touch_target =
       static_cast<MockSyntheticPointerTouchActionTarget*>(target_.get());
-  int index_array[2] = {0, 1};
+  std::vector<int> index_array = {0, 1};
   EXPECT_EQ(1, num_success_);
   EXPECT_EQ(0, num_failure_);
   EXPECT_EQ(pointer_touch_target->type(), WebInputEvent::Type::kTouchStart);
@@ -607,7 +611,7 @@ TEST_F(SyntheticPointerActionTest, PointerTouchActionsMultiPressRelease) {
   ForwardSyntheticPointerAction();
   MockSyntheticPointerTouchActionTarget* pointer_touch_target =
       static_cast<MockSyntheticPointerTouchActionTarget*>(target_.get());
-  int index_array[2] = {0, 1};
+  std::vector<int> index_array = {0, 1};
   EXPECT_EQ(count_success++, num_success_);
   EXPECT_EQ(0, num_failure_);
   EXPECT_EQ(pointer_touch_target->type(), WebInputEvent::Type::kTouchStart);
@@ -676,7 +680,7 @@ TEST_F(SyntheticPointerActionTest, PointerTouchActionCancel) {
   ForwardSyntheticPointerAction();
   MockSyntheticPointerTouchActionTarget* pointer_touch_target =
       static_cast<MockSyntheticPointerTouchActionTarget*>(target_.get());
-  int index_array[2] = {0, 1};
+  std::vector<int> index_array = {0, 1};
   EXPECT_EQ(1, num_success_);
   EXPECT_EQ(0, num_failure_);
   EXPECT_EQ(pointer_touch_target->type(), WebInputEvent::Type::kTouchStart);
@@ -791,7 +795,7 @@ TEST_F(SyntheticPointerActionTest, PointerTouchActionFromDebugger) {
   ForwardSyntheticPointerAction();
   MockSyntheticPointerTouchActionTarget* pointer_touch_target =
       static_cast<MockSyntheticPointerTouchActionTarget*>(target_.get());
-  int index_array[2] = {0, 1};
+  std::vector<int> index_array = {0, 1};
   EXPECT_EQ(1, num_success_);
   EXPECT_EQ(0, num_failure_);
   EXPECT_TRUE(pointer_touch_target->SyntheticTouchActionListDispatchedCorrectly(

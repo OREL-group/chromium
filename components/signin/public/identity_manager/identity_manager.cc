@@ -80,7 +80,7 @@ void SetPrimaryAccount(IdentityManager* identity_manager,
 
   if (!primary_account_id.empty()) {
     // Different primary account found, have to clear it first.
-    // TODO(https://crbug.com/1223364): Replace this if with a CHECK after all
+    // TODO(crbug.com/40774609): Replace this if with a CHECK after all
     //                                  the existing users have been migrated.
     identity_manager->GetPrimaryAccountMutator()->ClearPrimaryAccount(
         signin_metrics::ProfileSignout::kAccountRemovedFromDevice);
@@ -314,6 +314,14 @@ bool IdentityManager::HasAccountWithRefreshTokenInPersistentErrorState(
   return GetErrorStateOfRefreshTokenForAccount(account_id).IsPersistentError();
 }
 
+#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+std::vector<uint8_t>
+IdentityManager::GetWrappedBindingKeyOfRefreshTokenForAccount(
+    const CoreAccountId& account_id) const {
+  return token_service_->GetWrappedBindingKey(account_id);
+}
+#endif
+
 GoogleServiceAuthError IdentityManager::GetErrorStateOfRefreshTokenForAccount(
     const CoreAccountId& account_id) const {
   return token_service_->GetAuthError(account_id);
@@ -424,11 +432,6 @@ void IdentityManager::PrepareForAddingNewAccount() {
 }
 
 #if BUILDFLAG(IS_ANDROID)
-base::android::ScopedJavaLocalRef<jobject>
-IdentityManager::LegacyGetAccountTrackerServiceJavaObject() {
-  return account_tracker_service_->GetJavaObject();
-}
-
 base::android::ScopedJavaLocalRef<jobject> IdentityManager::GetJavaObject() {
   DCHECK(java_identity_manager_);
   return base::android::ScopedJavaLocalRef<jobject>(java_identity_manager_);
@@ -541,7 +544,7 @@ IdentityManager::GetAccountManagerFacade() const {
 
 AccountInfo IdentityManager::GetAccountInfoForAccountWithRefreshToken(
     const CoreAccountId& account_id) const {
-  // TODO(https://crbug.com/919793): This invariant is not currently possible to
+  // TODO(crbug.com/41434401): This invariant is not currently possible to
   // enforce on Android due to the underlying relationship between
   // O2TS::GetAccounts(), O2TS::RefreshTokenIsAvailable(), and
   // O2TS::Observer::OnRefreshTokenAvailable().
@@ -663,7 +666,7 @@ void IdentityManager::OnFetchAccessTokenComplete(
     const CoreAccountId& account_id,
     const std::string& consumer_id,
     const ScopeSet& scopes,
-    GoogleServiceAuthError error,
+    const GoogleServiceAuthError& error,
     base::Time expiration_time) {
   for (auto& observer : diagnostics_observation_list_)
     observer.OnAccessTokenRequestCompleted(account_id, consumer_id, scopes,
@@ -723,9 +726,7 @@ void IdentityManager::OnAccountUpdated(const AccountInfo& info) {
 
 void IdentityManager::OnAccountRemoved(const AccountInfo& info) {
 #if (BUILDFLAG(IS_ANDROID))
-  if (base::FeatureList::IsEnabled(switches::kSeedAccountsRevamp)) {
     account_fetcher_service_->DestroyFetchers(info.account_id);
-  }
 #endif
   for (auto& observer : observer_list_)
     observer.OnExtendedAccountInfoRemoved(info);

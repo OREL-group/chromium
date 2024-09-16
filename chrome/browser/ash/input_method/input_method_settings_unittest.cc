@@ -27,6 +27,7 @@ constexpr char kUsEnglishEngineId[] = "xkb:us::eng";
 constexpr char kKoreanEngineId[] = "ko-t-i0-und";
 constexpr char kPinyinEngineId[] = "zh-t-i0-pinyin";
 constexpr char kZhuyinEngineId[] = "zh-hant-t-i0-und";
+constexpr char kJapaneseEngineId[] = "nacl_mozc_jp";
 
 constexpr char kVietnameseVniEngineId[] = "vkd_vi_vni";
 constexpr char kVietnameseTelexEngineId[] = "vkd_vi_telex";
@@ -49,20 +50,21 @@ TEST(CreateSettingsFromPrefsTest, CreateLatinSettingsDefault) {
   ASSERT_TRUE(settings->is_latin_settings());
   const auto& latin_settings = *settings->get_latin_settings();
   EXPECT_FALSE(latin_settings.autocorrect);
-  EXPECT_FALSE(latin_settings.predictive_writing);
+  EXPECT_TRUE(latin_settings.predictive_writing);
 }
 
-TEST(CreateSettingsFromPrefsTest, CreateLatinSettings) {
+TEST(CreateSettingsFromPrefsTest, CreateLatinSettingsWithMultiwordEnabled) {
   base::test::ScopedFeatureList features;
-  features.InitWithFeatures({features::kAssistMultiWord}, {});
   TestingPrefServiceSimple prefs;
   base::Value::Dict dict;
   dict.SetByDottedPath(base::StrCat({kUsEnglishEngineId,
                                      ".physicalKeyboardAutoCorrectionLevel"}),
                        1);
+  dict.SetByDottedPath(
+      base::StrCat(
+          {kUsEnglishEngineId, ".physicalKeyboardEnablePredictiveWriting"}),
+      base::Value(true));
   RegisterTestingPrefs(prefs, dict);
-  prefs.registry()->RegisterBooleanPref(prefs::kAssistPredictiveWritingEnabled,
-                                        true);
 
   const auto settings = CreateSettingsFromPrefs(prefs, kUsEnglishEngineId);
 
@@ -72,15 +74,33 @@ TEST(CreateSettingsFromPrefsTest, CreateLatinSettings) {
   EXPECT_TRUE(latin_settings.predictive_writing);
 }
 
+TEST(CreateSettingsFromPrefsTest, CreateLatinSettingsWithMultiwordDisabled) {
+  base::test::ScopedFeatureList features;
+  TestingPrefServiceSimple prefs;
+  base::Value::Dict dict;
+  dict.SetByDottedPath(base::StrCat({kUsEnglishEngineId,
+                                     ".physicalKeyboardAutoCorrectionLevel"}),
+                       1);
+  dict.SetByDottedPath(
+      base::StrCat(
+          {kUsEnglishEngineId, ".physicalKeyboardEnablePredictiveWriting"}),
+      base::Value(false));
+  RegisterTestingPrefs(prefs, dict);
+
+  const auto settings = CreateSettingsFromPrefs(prefs, kUsEnglishEngineId);
+
+  ASSERT_TRUE(settings->is_latin_settings());
+  const auto& latin_settings = *settings->get_latin_settings();
+  EXPECT_TRUE(latin_settings.autocorrect);
+  EXPECT_FALSE(latin_settings.predictive_writing);
+}
+
 TEST(CreateSettingsFromPrefsTest,
      PredictiveWritingEnabledWhenMultiWordAllowedAndEnabled) {
   base::test::ScopedFeatureList features;
-  features.InitWithFeatures({features::kAssistMultiWord}, {});
   TestingPrefServiceSimple prefs;
   base::Value::Dict dict;
   RegisterTestingPrefs(prefs, dict);
-  prefs.registry()->RegisterBooleanPref(prefs::kAssistPredictiveWritingEnabled,
-                                        true);
 
   const auto settings = CreateSettingsFromPrefs(prefs, kUsEnglishEngineId);
 
@@ -96,8 +116,6 @@ TEST(CreateSettingsFromPrefsTest,
   TestingPrefServiceSimple prefs;
   base::Value::Dict dict;
   RegisterTestingPrefs(prefs, dict);
-  prefs.registry()->RegisterBooleanPref(prefs::kAssistPredictiveWritingEnabled,
-                                        true);
 
   const auto settings = CreateSettingsFromPrefs(prefs, kUsEnglishEngineId);
 
@@ -271,6 +289,53 @@ TEST(CreateSettingsFromPrefsTest, CreateZhuyinSettings) {
   EXPECT_EQ(zhuyin_settings.selection_keys,
             mojom::ZhuyinSelectionKeys::kAsdfghjkl);
   EXPECT_EQ(zhuyin_settings.page_size, 8u);
+}
+
+TEST(CreateSettingsFromPrefsTest, CreateJapaneseSettings) {
+  using ::ash::ime::mojom::JapaneseSettings;
+
+  base::Value::Dict jp_prefs;
+  jp_prefs.Set("AutomaticallySendStatisticsToGoogle", false);
+  jp_prefs.Set("AutomaticallySwitchToHalfwidth", false);
+  jp_prefs.Set("JapaneseDisableSuggestions", true);
+  jp_prefs.Set("JapaneseInputMode", "Kana");
+  jp_prefs.Set("JapaneseKeymapStyle", "ChromeOs");
+  jp_prefs.Set("JapanesePunctuationStyle", "CommaPeriod");
+  jp_prefs.Set("JapaneseSectionShortcut", "ASDFGHJKL");
+  jp_prefs.Set("JapaneseSpaceInputStyle", "Fullwidth");
+  jp_prefs.Set("JapaneseSymbolStyle", "SquareBracketMiddleDot");
+  jp_prefs.Set("ShiftKeyModeStyle", "Off");
+  jp_prefs.Set("UseInputHistory", false);
+  jp_prefs.Set("UseSystemDictionary", false);
+  jp_prefs.Set("numberOfSuggestions", 5);
+
+  base::Value::Dict full_prefs;
+  full_prefs.Set(kJapaneseEngineId, std::move(jp_prefs));
+  TestingPrefServiceSimple prefs;
+  RegisterTestingPrefs(prefs, full_prefs);
+
+  const mojom::InputMethodSettingsPtr settings =
+      CreateSettingsFromPrefs(prefs, kJapaneseEngineId);
+
+  ASSERT_TRUE(settings->is_japanese_settings());
+  mojom::JapaneseSettingsPtr expected = mojom::JapaneseSettings::New();
+  expected->automatically_send_statistics_to_google = false;
+  expected->automatically_switch_to_halfwidth = true;
+  expected->disable_personalized_suggestions = true;
+  expected->input_mode = JapaneseSettings::InputMode::kKana;
+  expected->keymap_style = JapaneseSettings::KeymapStyle::kChromeos;
+  expected->punctuation_style =
+      JapaneseSettings::PunctuationStyle::kCommaPeriod;
+  expected->selection_shortcut =
+      JapaneseSettings::SelectionShortcut::kAsdfghjkl;
+  expected->space_input_style = JapaneseSettings::SpaceInputStyle::kFullWidth;
+  expected->symbol_style =
+      JapaneseSettings::SymbolStyle::kSquareBracketMiddleDot;
+  expected->shift_key_mode_style = JapaneseSettings::ShiftKeyModeStyle::kOff;
+  expected->use_input_history = false;
+  expected->use_system_dictionary = false;
+  expected->number_of_suggestions = 5;
+  EXPECT_EQ(settings->get_japanese_settings(), expected);
 }
 
 TEST(CreateSettingsFromPrefsTest, AutocorrectIsSupportedForLatin) {

@@ -9,13 +9,12 @@ import {webUIListenerCallback} from 'chrome://resources/js/cr.js';
 import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 import type {SettingsSyncControlsElement} from 'chrome://settings/lazy_load.js';
 import type {CrLinkRowElement, CrRadioButtonElement, CrToggleElement, SyncPrefs} from 'chrome://settings/settings.js';
-import {Router, StatusAction, SyncBrowserProxyImpl} from 'chrome://settings/settings.js';
+import {Router, SignedInState, StatusAction, SyncBrowserProxyImpl} from 'chrome://settings/settings.js';
 import {assertEquals, assertDeepEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {waitBeforeNextRender} from 'chrome://webui-test/polymer_test_util.js';
 import {eventToPromise, isVisible} from 'chrome://webui-test/test_util.js';
 
-import type {SyncRoutes} from './sync_test_util.js';
-import {getSyncAllPrefs, getSyncAllPrefsManaged, setupRouterWithSyncRoutes} from './sync_test_util.js';
+import {getSyncAllPrefs, getSyncAllPrefsManaged} from './sync_test_util.js';
 import {TestSyncBrowserProxy} from './test_sync_browser_proxy.js';
 
 // <if expr="chromeos_lacros">
@@ -32,7 +31,6 @@ suite('SyncControlsTest', async function() {
   let radioGroup: HTMLElement;
 
   setup(async function() {
-    setupRouterWithSyncRoutes();
     browserProxy = new TestSyncBrowserProxy();
     SyncBrowserProxyImpl.setInstance(browserProxy);
 
@@ -145,7 +143,7 @@ suite('SyncControlsTest', async function() {
     syncControls.syncStatus = {
       disabled: false,
       hasError: false,
-      signedIn: true,
+      signedInState: SignedInState.SYNCING,
       statusAction: StatusAction.NO_ACTION,
     };
     // Controls are available when signed in and there is no error.
@@ -156,7 +154,7 @@ suite('SyncControlsTest', async function() {
     syncControls.syncStatus = {
       disabled: true,
       hasError: false,
-      signedIn: true,
+      signedInState: SignedInState.SYNCING,
       statusAction: StatusAction.NO_ACTION,
     };
     // Controls are hidden when sync is disabled.
@@ -167,7 +165,7 @@ suite('SyncControlsTest', async function() {
     syncControls.syncStatus = {
       disabled: false,
       hasError: true,
-      signedIn: true,
+      signedInState: SignedInState.SYNCING,
       statusAction: StatusAction.NO_ACTION,
     };
     // Controls are hidden when there is an error but it's not a
@@ -177,12 +175,58 @@ suite('SyncControlsTest', async function() {
     syncControls.syncStatus = {
       disabled: false,
       hasError: true,
-      signedIn: true,
+      signedInState: SignedInState.SYNCING,
       statusAction: StatusAction.ENTER_PASSPHRASE,
     };
     // Controls are available when there is a passphrase error.
     assertFalse(syncControls.hidden);
   });
+
+  // <if expr="chromeos_ash">
+  test('SyncCookiesSupported', async function() {
+    // Sync everything enabled.
+    assertTrue(syncEverything.checked);
+    assertFalse(customizeSync.checked);
+
+    // The cookies element is not visible when syncCookiesSupported is disabled
+    // (default).
+    let cookieListItem = syncControls.shadowRoot!.querySelector(
+        '#cookiesSyncItem:not([hidden])');
+    assertFalse(!!cookieListItem);
+
+    // Enable syncCookiesSupported.
+    syncControls.syncStatus = {
+      disabled: false,
+      hasError: false,
+      signedInState: SignedInState.SYNCING,
+      statusAction: StatusAction.NO_ACTION,
+      syncCookiesSupported: true,
+    };
+    // The cookies element is now visible.
+    cookieListItem = syncControls.shadowRoot!.querySelector(
+        '#cookiesSyncItem:not([hidden])');
+    assertTrue(!!cookieListItem);
+    // Cookies checkbox is disabled.
+    let cookiesCheckbox: CrToggleElement =
+        syncControls.shadowRoot!.querySelector('#cookiesCheckbox')!;
+    assertTrue(!!cookiesCheckbox);
+    assertTrue(cookiesCheckbox.disabled);
+    assertTrue(cookiesCheckbox.checked);
+
+    // Customize sync enabled.
+    customizeSync.click();
+    await eventToPromise('selected-changed', radioGroup);
+    assertFalse(syncEverything.checked);
+    assertTrue(customizeSync.checked);
+
+    // Cookies checkbox is enabled.
+    cookiesCheckbox =
+        syncControls.shadowRoot!.querySelector('#cookiesCheckbox')!;
+    assertTrue(!!cookiesCheckbox);
+    assertFalse(cookiesCheckbox.disabled);
+    assertTrue(cookiesCheckbox.checked);
+  });
+  // </if>
 });
 
 suite('SyncControlsSubpageTest', function() {
@@ -197,73 +241,65 @@ suite('SyncControlsSubpageTest', function() {
 
     syncControls = document.createElement('settings-sync-controls');
     const router = Router.getInstance();
-    router.navigateTo((router.getRoutes() as SyncRoutes).SYNC_ADVANCED);
+    router.navigateTo(router.getRoutes().SYNC_ADVANCED);
     document.body.appendChild(syncControls);
 
     syncControls.syncStatus = {
       disabled: false,
       hasError: false,
-      signedIn: true,
+      signedInState: SignedInState.SYNCING,
       statusAction: StatusAction.NO_ACTION,
     };
     flush();
 
-    assertEquals(
-        (router.getRoutes() as SyncRoutes).SYNC_ADVANCED,
-        router.getCurrentRoute());
+    assertEquals(router.getRoutes().SYNC_ADVANCED, router.getCurrentRoute());
   });
 
   test('SignedOut', function() {
     syncControls.syncStatus = {
       disabled: false,
       hasError: false,
-      signedIn: false,
+      signedInState: SignedInState.SIGNED_OUT,
       statusAction: StatusAction.NO_ACTION,
     };
     const router = Router.getInstance();
-    assertEquals(
-        (router.getRoutes() as SyncRoutes).SYNC.path,
-        router.getCurrentRoute().path);
+    assertEquals(router.getRoutes().SYNC.path, router.getCurrentRoute().path);
   });
 
   test('PassphraseError', function() {
     syncControls.syncStatus = {
       disabled: false,
       hasError: true,
-      signedIn: true,
+      signedInState: SignedInState.SYNCING,
       statusAction: StatusAction.ENTER_PASSPHRASE,
     };
     const router = Router.getInstance();
     assertEquals(
-        (router.getRoutes() as SyncRoutes).SYNC_ADVANCED.path,
-        router.getCurrentRoute().path);
+        router.getRoutes().SYNC_ADVANCED.path, router.getCurrentRoute().path);
   });
 
   test('SyncPaused', function() {
     syncControls.syncStatus = {
       disabled: false,
       hasError: true,
-      signedIn: true,
+      signedInState: SignedInState.SYNCING,
       statusAction: StatusAction.REAUTHENTICATE,
     };
     const router = Router.getInstance();
-    assertEquals(
-        (router.getRoutes() as SyncRoutes).SYNC.path,
-        router.getCurrentRoute().path);
+    assertEquals(router.getRoutes().SYNC.path, router.getCurrentRoute().path);
   });
 });
 
 // Test to check that toggles are disabled when sync types are managed by
 // policy.
 suite('SyncControlsManagedTest', async function() {
-  let syncControls: HTMLElement;
+  let syncControls: SettingsSyncControlsElement;
   let browserProxy: TestSyncBrowserProxy;
   let syncEverything: CrRadioButtonElement;
   let customizeSync: CrRadioButtonElement;
   let radioGroup: HTMLElement;
 
   setup(async function() {
-    setupRouterWithSyncRoutes();
     browserProxy = new TestSyncBrowserProxy();
     SyncBrowserProxyImpl.setInstance(browserProxy);
 
@@ -273,6 +309,14 @@ suite('SyncControlsManagedTest', async function() {
 
     // Start with all prefs managed.
     webUIListenerCallback('sync-prefs-changed', getSyncAllPrefsManaged());
+    // Enable Cookie sync.
+    syncControls.syncStatus = {
+      disabled: false,
+      hasError: false,
+      signedInState: SignedInState.SYNCING,
+      statusAction: StatusAction.NO_ACTION,
+      syncCookiesSupported: true,
+    };
     flush();
 
     await waitBeforeNextRender(syncControls);
@@ -362,7 +406,6 @@ suite('AutofillAndPaymentsToggles', async function() {
   }
 
   setup(async function() {
-    setupRouterWithSyncRoutes();
     const browserProxy = new TestSyncBrowserProxy();
     SyncBrowserProxyImpl.setInstance(browserProxy);
 

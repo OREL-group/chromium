@@ -15,6 +15,7 @@
 
 #include "base/base_switches.h"
 #include "base/command_line.h"
+#include "base/containers/fixed_flat_set.h"
 #include "base/containers/flat_set.h"
 #include "base/feature_list.h"
 #include "base/files/file.h"
@@ -63,6 +64,7 @@
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switch_dependent_feature_overrides.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/common/isolated_world_ids.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/common/user_agent.h"
 #include "content/shell/browser/shell.h"
@@ -179,14 +181,14 @@ class ShellControllerImpl : public mojom::ShellController {
     CHECK(!Shell::windows().empty());
     WebContents* contents = Shell::windows()[0]->web_contents();
     contents->GetPrimaryMainFrame()->ExecuteJavaScriptForTests(
-        script, std::move(callback));
+        script, std::move(callback), ISOLATED_WORLD_ID_GLOBAL);
   }
 
   void ShutDown() override { Shell::Shutdown(); }
 };
 
-// TODO(crbug/1219642): Consider not needing VariationsServiceClient just to use
-// VariationsFieldTrialCreator.
+// TODO(crbug.com/40772375): Consider not needing VariationsServiceClient just
+// to use VariationsFieldTrialCreator.
 class ShellVariationsServiceClient
     : public variations::VariationsServiceClient {
  public:
@@ -243,7 +245,7 @@ base::flat_set<url::Origin> GetIsolatedContextOriginSetFromFlag() {
       cmdline_origins, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
 
   base::flat_set<url::Origin> origin_set;
-  for (const std::string_view& origin_string : origin_strings) {
+  for (std::string_view origin_string : origin_strings) {
     url::Origin allowed_origin = url::Origin::Create(GURL(origin_string));
     if (!allowed_origin.opaque()) {
       origin_set.insert(allowed_origin);
@@ -376,7 +378,7 @@ ShellContentBrowserClient::CreateURLLoaderThrottles(
     BrowserContext* browser_context,
     const base::RepeatingCallback<WebContents*()>& wc_getter,
     NavigationUIData* navigation_ui_data,
-    int frame_tree_node_id,
+    FrameTreeNodeId frame_tree_node_id,
     std::optional<int64_t> navigation_id) {
   std::vector<std::unique_ptr<blink::URLLoaderThrottle>> result;
 
@@ -392,19 +394,24 @@ ShellContentBrowserClient::CreateURLLoaderThrottles(
 }
 
 bool ShellContentBrowserClient::IsHandledURL(const GURL& url) {
-  if (!url.is_valid())
+  if (!url.is_valid()) {
     return false;
-  static const char* const kProtocolList[] = {
-      url::kHttpScheme, url::kHttpsScheme,        url::kWsScheme,
-      url::kWssScheme,  url::kBlobScheme,         url::kFileSystemScheme,
-      kChromeUIScheme,  kChromeUIUntrustedScheme, kChromeDevToolsScheme,
-      url::kDataScheme, url::kFileScheme,
-  };
-  for (const char* supported_protocol : kProtocolList) {
-    if (url.scheme_piece() == supported_protocol)
-      return true;
   }
-  return false;
+  constexpr auto kProtocolList = base::MakeFixedFlatSet<std::string_view>({
+      url::kHttpScheme,
+      url::kHttpsScheme,
+      url::kWsScheme,
+      url::kWssScheme,
+      url::kBlobScheme,
+      url::kFileSystemScheme,
+      kChromeUIScheme,
+      kChromeUIUntrustedScheme,
+      kChromeDevToolsScheme,
+      url::kDataScheme,
+      url::kFileScheme,
+  });
+
+  return kProtocolList.contains(url.scheme_piece());
 }
 
 bool ShellContentBrowserClient::AreIsolatedWebAppsEnabled(
@@ -478,8 +485,6 @@ std::string ShellContentBrowserClient::GetDefaultDownloadName() {
 std::unique_ptr<WebContentsViewDelegate>
 ShellContentBrowserClient::GetWebContentsViewDelegate(
     WebContents* web_contents) {
-  performance_manager::PerformanceManagerRegistry::GetInstance()
-      ->MaybeCreatePageNodeForWebContents(web_contents);
   return CreateShellWebContentsViewDelegate(web_contents);
 }
 
@@ -496,7 +501,8 @@ bool ShellContentBrowserClient::IsSharedStorageAllowed(
     content::RenderFrameHost* rfh,
     const url::Origin& top_frame_origin,
     const url::Origin& accessing_origin,
-    std::string* out_debug_message) {
+    std::string* out_debug_message,
+    bool* out_block_is_site_setting_specific) {
   return true;
 }
 
@@ -504,7 +510,8 @@ bool ShellContentBrowserClient::IsSharedStorageSelectURLAllowed(
     content::BrowserContext* browser_context,
     const url::Origin& top_frame_origin,
     const url::Origin& accessing_origin,
-    std::string* out_debug_message) {
+    std::string* out_debug_message,
+    bool* out_block_is_site_setting_specific) {
   return true;
 }
 
@@ -531,6 +538,7 @@ ShellContentBrowserClient::GetGeneratedCodeCacheSettings(
 
 base::OnceClosure ShellContentBrowserClient::SelectClientCertificate(
     BrowserContext* browser_context,
+    int process_id,
     WebContents* web_contents,
     net::SSLCertRequestInfo* cert_request_info,
     net::ClientCertIdentityList client_certs,
@@ -718,7 +726,7 @@ void ShellContentBrowserClient::GetAdditionalMappedFilesForChildProcess(
 // Note that ShellContentBrowserClient overrides this method to work around
 // test flakiness that happens when NetworkService::SetTestDohConfigForTesting()
 // is used.
-// TODO(crbug.com/1521190): Remove that override once the flakiness is fixed.
+// TODO(crbug.com/41494161): Remove that override once the flakiness is fixed.
 void ShellContentBrowserClient::OnNetworkServiceCreated(
     network::mojom::NetworkService* network_service) {
   // TODO(bashi): Consider enabling this for Android. Excluded because the
@@ -822,6 +830,12 @@ bool ShellContentBrowserClient::HasErrorPage(int http_status_code) {
   return http_status_code >= 400 && http_status_code < 600;
 }
 
+void ShellContentBrowserClient::OnWebContentsCreated(
+    WebContents* web_contents) {
+  performance_manager::PerformanceManagerRegistry::GetInstance()
+      ->MaybeCreatePageNodeForWebContents(web_contents);
+}
+
 void ShellContentBrowserClient::CreateFeatureListAndFieldTrials() {
   GetSharedState().local_state = CreateLocalState();
   SetUpFieldTrials();
@@ -897,7 +911,7 @@ void ShellContentBrowserClient::SetUpFieldTrials() {
 
   // Since this is a test-only code path, some arguments to SetUpFieldTrials are
   // null.
-  // TODO(crbug/1248066): Consider passing a low entropy source.
+  // TODO(crbug.com/40790318): Consider passing a low entropy source.
   variations::PlatformFieldTrials platform_field_trials;
   variations::SyntheticTrialRegistry synthetic_trial_registry;
   field_trial_creator.SetUpFieldTrials(

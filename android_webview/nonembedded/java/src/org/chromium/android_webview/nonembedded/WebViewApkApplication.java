@@ -15,7 +15,6 @@ import org.jni_zero.JNINamespace;
 import org.jni_zero.NativeMethods;
 
 import org.chromium.android_webview.AwLocaleConfig;
-import org.chromium.android_webview.ProductConfig;
 import org.chromium.android_webview.common.CommandLineUtil;
 import org.chromium.android_webview.common.PlatformServiceBridge;
 import org.chromium.android_webview.common.SafeModeController;
@@ -64,7 +63,7 @@ public class WebViewApkApplication extends Application {
                 VersionConstants.PRODUCT_VERSION,
                 BuildConfig.VERSION_CODE,
                 BuildConfig.MIN_SDK_VERSION,
-                ProductConfig.IS_BUNDLE,
+                BuildConfig.IS_BUNDLE,
                 ContextUtils.getProcessName());
 
         ContextUtils.initApplicationContext(this);
@@ -103,7 +102,7 @@ public class WebViewApkApplication extends Application {
             PureJavaExceptionHandler.installHandler(AwPureJavaExceptionReporter::new);
             CustomAssertionHandler.installPreNativeHandler(AwPureJavaExceptionReporter::new);
 
-            // TODO(crbug.com/1182693): Do set up a native UMA recorder once we support recording
+            // TODO(crbug.com/40751605): Do set up a native UMA recorder once we support recording
             // metrics from native nonembedded code.
             UmaRecorderHolder.setUpNativeUmaRecorder(false);
 

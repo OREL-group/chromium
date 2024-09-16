@@ -11,23 +11,20 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/notreached.h"
 #include "base/time/time.h"
-#include "chrome/browser/picture_in_picture/picture_in_picture_window_manager.h"
-#include "chrome/browser/platform_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
-#include "chrome/browser/ui/views/bubble_anchor_util_views.h"
 #include "chrome/browser/ui/views/chrome_widget_sublevel.h"
 #include "chrome/browser/ui/web_applications/app_browser_controller.h"
 #include "components/permissions/features.h"
 #include "components/permissions/permission_request.h"
 #include "components/permissions/permission_uma_util.h"
-#include "components/permissions/permission_util.h"
 #include "components/permissions/request_type.h"
 #include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/gfx/geometry/insets.h"
@@ -54,11 +51,10 @@ PermissionPromptBubbleBaseView::PermissionPromptBubbleBaseView(
     base::TimeTicks permission_requested_time,
     PermissionPromptStyle prompt_style)
     : PermissionPromptBaseView(browser, delegate),
-      browser_(browser),
       delegate_(delegate),
       permission_requested_time_(permission_requested_time),
       is_one_time_permission_(IsOneTimePermission(*delegate.get())) {
-  // Note that browser_ may be null in unit tests.
+  // Note that browser() may be null in unit tests.
   SetPromptStyle(prompt_style);
 
   SetLayoutManager(std::make_unique<views::BoxLayout>(
@@ -77,7 +73,7 @@ PermissionPromptBubbleBaseView::~PermissionPromptBubbleBaseView() = default;
 void PermissionPromptBubbleBaseView::CreatePermissionButtons(
     const std::u16string& allow_always_text) {
   if (is_one_time_permission_) {
-    SetButtons(ui::DIALOG_BUTTON_NONE);
+    SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
 
     auto buttons_container = std::make_unique<views::View>();
     buttons_container->SetLayoutManager(std::make_unique<views::BoxLayout>(
@@ -121,14 +117,17 @@ void PermissionPromptBubbleBaseView::CreatePermissionButtons(
                               kBlockButtonElementId);
     block_button->SetID(GetViewId(PermissionDialogButton::kDeny));
 
-    if (features::IsChromeRefresh2023()) {
-      allow_once_button->SetStyle(ui::ButtonStyle::kTonal);
-      allow_always_button->SetStyle(ui::ButtonStyle::kTonal);
-      block_button->SetStyle(ui::ButtonStyle::kTonal);
-    }
+    allow_once_button->SetStyle(ui::ButtonStyle::kTonal);
+    allow_always_button->SetStyle(ui::ButtonStyle::kTonal);
+    block_button->SetStyle(ui::ButtonStyle::kTonal);
 
-    buttons_container->AddChildView(std::move(allow_once_button));
-    buttons_container->AddChildView(std::move(allow_always_button));
+    if (permissions::feature_params::kShowAllowAlwaysAsFirstButton.Get()) {
+      buttons_container->AddChildView(std::move(allow_always_button));
+      buttons_container->AddChildView(std::move(allow_once_button));
+    } else {
+      buttons_container->AddChildView(std::move(allow_once_button));
+      buttons_container->AddChildView(std::move(allow_always_button));
+    }
     buttons_container->AddChildView(std::move(block_button));
 
     views::LayoutProvider* const layout_provider = views::LayoutProvider::Get();
@@ -140,22 +139,20 @@ void PermissionPromptBubbleBaseView::CreatePermissionButtons(
         buttons_container->GetPreferredSize().height()));
     SetExtraView(std::move(buttons_container));
   } else {
-    SetButtonLabel(ui::DIALOG_BUTTON_OK,
+    SetButtonLabel(ui::mojom::DialogButton::kOk,
                    l10n_util::GetStringUTF16(IDS_PERMISSION_ALLOW));
     SetAcceptCallback(base::BindOnce(
         &PermissionPromptBubbleBaseView::RunButtonCallback,
         base::Unretained(this), GetViewId(PermissionDialogButton::kAccept)));
 
-    SetButtonLabel(ui::DIALOG_BUTTON_CANCEL,
+    SetButtonLabel(ui::mojom::DialogButton::kCancel,
                    l10n_util::GetStringUTF16(IDS_PERMISSION_DENY));
     SetCancelCallback(base::BindOnce(
         &PermissionPromptBubbleBaseView::RunButtonCallback,
         base::Unretained(this), GetViewId(PermissionDialogButton::kDeny)));
 
-    if (features::IsChromeRefresh2023()) {
-      SetButtonStyle(ui::DIALOG_BUTTON_OK, ui::ButtonStyle::kTonal);
-      SetButtonStyle(ui::DIALOG_BUTTON_CANCEL, ui::ButtonStyle::kTonal);
-    }
+    SetButtonStyle(ui::mojom::DialogButton::kOk, ui::ButtonStyle::kTonal);
+    SetButtonStyle(ui::mojom::DialogButton::kCancel, ui::ButtonStyle::kTonal);
   }
 }
 
@@ -168,10 +165,8 @@ void PermissionPromptBubbleBaseView::CreateExtraTextLabel(
                               .SetID(permissions::PermissionPromptViewID::
                                          VIEW_ID_PERMISSION_PROMPT_EXTRA_TEXT)
                               .Build();
-  if (features::IsChromeRefresh2023()) {
-    extra_text_label->SetTextStyle(views::style::STYLE_BODY_3);
-    extra_text_label->SetEnabledColorId(kColorPermissionPromptRequestText);
-  }
+  extra_text_label->SetTextStyle(views::style::STYLE_BODY_3);
+  extra_text_label->SetEnabledColorId(kColorPermissionPromptRequestText);
   AddChildView(std::move(extra_text_label));
 }
 
@@ -181,7 +176,7 @@ void PermissionPromptBubbleBaseView::Show() {
 }
 
 void PermissionPromptBubbleBaseView::CreateWidget() {
-  DCHECK(browser_->window());
+  CHECK(browser()->window());
 
   UpdateAnchorPosition();
 
@@ -200,33 +195,15 @@ void PermissionPromptBubbleBaseView::CreateWidget() {
 void PermissionPromptBubbleBaseView::ShowWidget() {
   // If a browser window (or popup) other than the bubble parent has focus,
   // don't take focus.
-  if (browser_->window()->IsActive()) {
+  if (browser()->window()->IsActive()) {
     GetWidget()->Show();
   } else {
     GetWidget()->ShowInactive();
   }
-
-  SizeToContents();
 }
 
 void PermissionPromptBubbleBaseView::UpdateAnchorPosition() {
-  bubble_anchor_util::AnchorConfiguration configuration =
-      bubble_anchor_util::GetPermissionPromptBubbleAnchorConfiguration(
-          browser_);
-  SetAnchorView(configuration.anchor_view);
-  // In fullscreen, `anchor_view` may be nullptr because the toolbar is hidden,
-  // therefore anchor to the browser window instead.
-  if (configuration.anchor_view) {
-    set_parent_window(configuration.anchor_view->GetWidget()->GetNativeView());
-  } else {
-    set_parent_window(
-        platform_util::GetViewForWindow(browser_->window()->GetNativeWindow()));
-  }
-  SetHighlightedButton(configuration.highlighted_button);
-  if (!configuration.anchor_view) {
-    SetAnchorRect(bubble_anchor_util::GetPageInfoAnchorRect(browser_));
-  }
-  SetArrow(configuration.bubble_arrow);
+  AnchorToPageInfoOrChip();
 }
 
 void PermissionPromptBubbleBaseView::SetPromptStyle(
@@ -270,7 +247,7 @@ void PermissionPromptBubbleBaseView::RunButtonCallback(int button_id) {
       delegate_->Deny();
       return;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 std::u16string PermissionPromptBubbleBaseView::GetPermissionFragmentForTesting()
@@ -292,28 +269,12 @@ bool PermissionPromptBubbleBaseView::IsOneTimePermission(
     auto content_setting_type =
         permissions::RequestTypeToContentSettingsType(request->request_type());
     if (!content_setting_type.has_value() ||
-        !permissions::PermissionUtil::CanPermissionBeAllowedOnce(
+        !permissions::PermissionUtil::DoesSupportTemporaryGrants(
             content_setting_type.value())) {
       return false;
     }
   }
   return true;
-}
-
-std::u16string PermissionPromptBubbleBaseView::GetAllowAlwaysText(
-    const std::vector<raw_ptr<permissions::PermissionRequest,
-                              VectorExperimental>>& visible_requests) {
-  CHECK_GT(visible_requests.size(), 0u);
-
-  if (visible_requests.size() == 1 &&
-      visible_requests[0]->GetAllowAlwaysText().has_value()) {
-    // A prompt for a single request can use an "allow always" text that is
-    // customized for it.
-    return visible_requests[0]->GetAllowAlwaysText().value();
-  }
-
-  // Use the generic text.
-  return l10n_util::GetStringUTF16(IDS_PERMISSION_ALLOW_EVERY_VISIT);
 }
 
 BEGIN_METADATA(PermissionPromptBubbleBaseView)

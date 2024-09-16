@@ -157,11 +157,14 @@ export class CrInputElement extends CrLitElement {
         notify: true,
       },
 
-      internalValue_: {type: String},
+      internalValue_: {
+        type: String,
+        state: true,
+      },
     };
   }
 
-  override ariaDescription: string|null;
+  override ariaDescription: string|null = null;
   override ariaLabel: string = '';
   override autofocus: boolean = false;
   autoValidate: boolean = false;

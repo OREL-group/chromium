@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/cast/encoding/audio_encoder.h"
 
 #include <stdint.h>
@@ -22,11 +27,12 @@
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
+#include "media/base/audio_codecs.h"
 #include "media/base/audio_sample_types.h"
 #include "media/cast/common/rtp_time.h"
 #include "media/cast/common/sender_encoded_frame.h"
 #include "media/cast/constants.h"
-#include "third_party/openscreen/src/cast/streaming/encoded_frame.h"
+#include "third_party/openscreen/src/cast/streaming/public/encoded_frame.h"
 #include "third_party/opus/src/include/opus.h"
 
 #if BUILDFLAG(IS_APPLE)
@@ -53,7 +59,7 @@ class AudioEncoder::ImplBase
     : public base::RefCountedThreadSafe<AudioEncoder::ImplBase> {
  public:
   ImplBase(const scoped_refptr<CastEnvironment>& cast_environment,
-           Codec codec,
+           AudioCodec codec,
            int num_channels,
            int sampling_rate,
            int samples_per_frame,
@@ -154,7 +160,7 @@ class AudioEncoder::ImplBase
       audio_frame->rtp_timestamp = frame_rtp_timestamp_;
       audio_frame->reference_time = frame_capture_time_;
 
-      // TODO(https://crbug.com/1478375): get accurate timestamps for both
+      // TODO(crbug.com/40280546): get accurate timestamps for both
       // capture begin and capture end.
       audio_frame->capture_begin_time = frame_capture_time_;
       audio_frame->capture_end_time = frame_capture_time_;
@@ -201,7 +207,7 @@ class AudioEncoder::ImplBase
   virtual bool EncodeFromFilledBuffer(std::string* out) = 0;
 
   const scoped_refptr<CastEnvironment> cast_environment_;
-  const Codec codec_;
+  const AudioCodec codec_;
   const int num_channels_;
   const int samples_per_frame_;
   const int bitrate_;
@@ -249,7 +255,7 @@ class AudioEncoder::OpusImpl final : public AudioEncoder::ImplBase {
            int bitrate,
            FrameEncodedCallback callback)
       : ImplBase(cast_environment,
-                 Codec::kAudioOpus,
+                 AudioCodec::kOpus,
                  num_channels,
                  sampling_rate,
                  sampling_rate / kDefaultFramesPerSecond, /* 10 ms frames */
@@ -362,7 +368,7 @@ class AudioEncoder::AppleAacImpl final : public AudioEncoder::ImplBase {
                int bitrate,
                FrameEncodedCallback callback)
       : ImplBase(cast_environment,
-                 Codec::kAudioAac,
+                 AudioCodec::kAAC,
                  num_channels,
                  sampling_rate,
                  kAccessUnitSamples,
@@ -627,7 +633,7 @@ class AudioEncoder::AppleAacImpl final : public AudioEncoder::ImplBase {
                                    void* in_buffer,
                                    UInt32* out_size) {
     // This class only does writing.
-    NOTREACHED_NORETURN();
+    NOTREACHED();
   }
 
   // The AudioFile write callback function. Appends the data to the encoder's
@@ -653,7 +659,7 @@ class AudioEncoder::AppleAacImpl final : public AudioEncoder::ImplBase {
   // The AudioFile getsize callback function.
   static SInt64 FileGetSizeCallback(void* in_encoder) {
     // This class only does writing.
-    NOTREACHED_NORETURN();
+    NOTREACHED();
   }
 
   // The AudioFile setsize callback function.
@@ -699,87 +705,31 @@ class AudioEncoder::AppleAacImpl final : public AudioEncoder::ImplBase {
 };
 #endif  // BUILDFLAG(IS_APPLE)
 
-class AudioEncoder::Pcm16Impl final : public AudioEncoder::ImplBase {
- public:
-  Pcm16Impl(const scoped_refptr<CastEnvironment>& cast_environment,
-            int num_channels,
-            int sampling_rate,
-            FrameEncodedCallback callback)
-      : ImplBase(cast_environment,
-                 Codec::kAudioPcm16,
-                 num_channels,
-                 sampling_rate,
-                 sampling_rate / kDefaultFramesPerSecond, /* 10 ms frames */
-                 0 /* bitrate, which is unused for the PCM16 implementation */,
-                 std::move(callback)),
-        buffer_(base::HeapArray<int16_t>::WithSize(num_channels *
-                                                   samples_per_frame_)) {
-    if (ImplBase::operational_status_ != STATUS_UNINITIALIZED)
-      return;
-    operational_status_ = STATUS_INITIALIZED;
-  }
-
-  Pcm16Impl(const Pcm16Impl&) = delete;
-  Pcm16Impl& operator=(const Pcm16Impl&) = delete;
-
- private:
-  ~Pcm16Impl() final = default;
-
-  void TransferSamplesIntoBuffer(const AudioBus* audio_bus,
-                                 int source_offset,
-                                 int buffer_fill_offset,
-                                 int num_samples) final {
-    audio_bus->ToInterleavedPartial<SignedInt16SampleTypeTraits>(
-        source_offset, num_samples,
-        buffer_.data() + buffer_fill_offset * num_channels_);
-  }
-
-  bool EncodeFromFilledBuffer(std::string* out) final {
-    // Output 16-bit PCM integers in big-endian byte order.
-    out->resize(buffer_.size() * sizeof(int16_t));
-    base::span<int16_t> src = buffer_.as_span();
-    base::span<uint8_t> out_span = base::as_writable_byte_span(*out);
-    for (int16_t src_value : src) {
-      auto [write, rem] = out_span.split_at<sizeof(int16_t)>();
-      write.copy_from(
-          base::numerics::U16ToBigEndian(static_cast<uint16_t>(src_value)));
-      out_span = rem;
-    }
-    return true;
-  }
-
- private:
-  base::HeapArray<int16_t> buffer_;
-};
-
 AudioEncoder::AudioEncoder(
     const scoped_refptr<CastEnvironment>& cast_environment,
     int num_channels,
     int sampling_rate,
     int bitrate,
-    Codec codec,
+    AudioCodec codec,
     FrameEncodedCallback frame_encoded_callback)
     : cast_environment_(cast_environment) {
   // Note: It doesn't matter which thread constructs AudioEncoder, just so long
   // as all calls to InsertAudio() are by the same thread.
   DETACH_FROM_THREAD(insert_thread_checker_);
   switch (codec) {
-    case Codec::kAudioOpus:
+    case AudioCodec::kOpus:
       impl_ = new OpusImpl(cast_environment, num_channels, sampling_rate,
                            bitrate, std::move(frame_encoded_callback));
       break;
 #if BUILDFLAG(IS_APPLE)
-    case Codec::kAudioAac:
+    case AudioCodec::kAAC:
       impl_ = new AppleAacImpl(cast_environment, num_channels, sampling_rate,
                                bitrate, std::move(frame_encoded_callback));
       break;
 #endif  // BUILDFLAG(IS_MAC)
-    case Codec::kAudioPcm16:
-      impl_ = new Pcm16Impl(cast_environment, num_channels, sampling_rate,
-                            std::move(frame_encoded_callback));
-      break;
     default:
-      NOTREACHED() << "Unsupported or unspecified codec for audio encoder";
+      NOTREACHED_IN_MIGRATION()
+          << "Unsupported or unspecified codec for audio encoder";
       break;
   }
 }

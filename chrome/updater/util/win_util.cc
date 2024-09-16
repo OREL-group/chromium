@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/updater/util/win_util.h"
 
 #include <windows.h>
@@ -16,7 +21,6 @@
 #include <wrl/client.h>
 #include <wtsapi32.h>
 
-#include <algorithm>
 #include <cstdlib>
 #include <memory>
 #include <optional>
@@ -44,6 +48,7 @@
 #include "base/ranges/algorithm.h"
 #include "base/scoped_native_library.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
@@ -53,6 +58,7 @@
 #include "base/time/time.h"
 #include "base/uuid.h"
 #include "base/win/atl.h"
+#include "base/win/elevation_util.h"
 #include "base/win/registry.h"
 #include "base/win/scoped_bstr.h"
 #include "base/win/scoped_handle.h"
@@ -374,13 +380,12 @@ bool SetRegistryKey(HKEY root,
   return result == ERROR_SUCCESS;
 }
 
-int GetDownloadProgress(int64_t downloaded_bytes, int64_t total_bytes) {
-  if (downloaded_bytes == -1 || total_bytes == -1 || total_bytes == 0) {
-    return -1;
-  }
-  CHECK_LE(downloaded_bytes, total_bytes);
-  return 100 * std::clamp(static_cast<double>(downloaded_bytes) / total_bytes,
-                          0.0, 1.0);
+bool SetEulaAccepted(UpdaterScope scope, bool eula_accepted) {
+  const HKEY root = UpdaterScopeToHKeyRoot(scope);
+  return eula_accepted
+             ? DeleteRegValue(root, UPDATER_KEY, L"eulaaccepted")
+             : base::win::RegKey(root, UPDATER_KEY, Wow6432(KEY_WRITE))
+                       .WriteValue(L"eulaaccepted", 0ul) == ERROR_SUCCESS;
 }
 
 HResultOr<bool> IsTokenAdmin(HANDLE token) {
@@ -570,78 +575,16 @@ HResultOr<DWORD> RunElevated(const base::FilePath& file_path,
   return ShellExecuteAndWait(file_path, parameters, L"runas");
 }
 
-HRESULT RunDeElevated(const std::wstring& path,
-                      const std::wstring& parameters) {
-  Microsoft::WRL::ComPtr<IShellWindows> shell;
-  HRESULT hr = ::CoCreateInstance(CLSID_ShellWindows, nullptr,
-                                  CLSCTX_LOCAL_SERVER, IID_PPV_ARGS(&shell));
-  if (FAILED(hr)) {
-    return hr;
-  }
-
-  long hwnd = 0;
-  Microsoft::WRL::ComPtr<IDispatch> dispatch;
-  hr = shell->FindWindowSW(base::win::ScopedVariant(CSIDL_DESKTOP).AsInput(),
-                           base::win::ScopedVariant().AsInput(), SWC_DESKTOP,
-                           &hwnd, SWFO_NEEDDISPATCH, &dispatch);
-  if (hr == S_FALSE || FAILED(hr)) {
-    return hr == S_FALSE ? E_FAIL : hr;
-  }
-
-  Microsoft::WRL::ComPtr<IServiceProvider> service;
-  hr = dispatch.As(&service);
-  if (FAILED(hr)) {
-    return hr;
-  }
-
-  Microsoft::WRL::ComPtr<IShellBrowser> browser;
-  hr = service->QueryService(SID_STopLevelBrowser, IID_PPV_ARGS(&browser));
-  if (FAILED(hr)) {
-    return hr;
-  }
-
-  Microsoft::WRL::ComPtr<IShellView> view;
-  hr = browser->QueryActiveShellView(&view);
-  if (FAILED(hr)) {
-    return hr;
-  }
-
-  hr = view->GetItemObject(SVGIO_BACKGROUND, IID_PPV_ARGS(&dispatch));
-  if (FAILED(hr)) {
-    return hr;
-  }
-
-  Microsoft::WRL::ComPtr<IShellFolderViewDual> folder;
-  hr = dispatch.As(&folder);
-  if (FAILED(hr)) {
-    return hr;
-  }
-
-  hr = folder->get_Application(&dispatch);
-  if (FAILED(hr)) {
-    return hr;
-  }
-
-  Microsoft::WRL::ComPtr<IShellDispatch2> shell_dispatch;
-  hr = dispatch.As(&shell_dispatch);
-  if (FAILED(hr)) {
-    return hr;
-  }
-
-  return shell_dispatch->ShellExecute(
-      base::win::ScopedBstr(path).Get(),
-      base::win::ScopedVariant(parameters.c_str()),
-      base::win::ScopedVariant::kEmptyVariant,
-      base::win::ScopedVariant::kEmptyVariant,
-      base::win::ScopedVariant::kEmptyVariant);
-}
-
 HRESULT RunDeElevatedCmdLine(const std::wstring& cmd_line) {
   if (!IsElevatedWithUACOn()) {
     auto process = base::LaunchProcess(cmd_line, {});
     return process.IsValid() ? S_OK : HRESULTFromLastError();
   }
 
+  // Custom processing is used here instead of using
+  // `base::CommandLine::FromString` because this `cmd_line` string can have a
+  // parameter format that is different from what is expected of
+  // `base::CommandLine` parameters.
   std::wstring command_format = cmd_line;
   int num_args = 0;
   base::win::ScopedLocalAllocTyped<wchar_t*> argv(
@@ -651,7 +594,7 @@ HRESULT RunDeElevatedCmdLine(const std::wstring& cmd_line) {
     return E_INVALIDARG;
   }
 
-  return RunDeElevated(
+  return base::win::RunDeElevatedNoWait(
       argv.get()[0],
       base::JoinString(
           [&]() -> std::vector<std::wstring> {
@@ -975,7 +918,13 @@ std::optional<base::CommandLine> CommandLineForLegacyFormat(
       VLOG(1) << "Empty switch in command line: [" << cmd_string << "]";
       return std::nullopt;
     }
-
+    if (base::StringPairs switch_value_pairs;
+        base::SplitStringIntoKeyValuePairs(switch_name, '=', '\n',
+                                           &switch_value_pairs)) {
+      command_line.AppendSwitchASCII(switch_value_pairs[0].first,
+                                     switch_value_pairs[0].second);
+      continue;
+    }
     if (is_legacy_switch(next_arg) || next_arg.empty()) {
       command_line.AppendSwitch(switch_name);
     } else {
@@ -1502,6 +1451,27 @@ std::wstring StringFromGuid(const GUID& guid) {
   wchar_t guid_string[kGuidStringCharacters] = {0};
   CHECK_NE(::StringFromGUID2(guid, guid_string, kGuidStringCharacters), 0);
   return guid_string;
+}
+
+bool StoreRunTimeEnrollmentToken(const std::string& enrollment_token) {
+  VLOG(1) << __func__ << ": " << enrollment_token;
+  return base::win::RegKey(HKEY_LOCAL_MACHINE,
+                           GetAppClientsKey(kUpdaterAppId).c_str(),
+                           Wow6432(KEY_SET_VALUE))
+             .WriteValue(kRegValueCloudManagementEnrollmentToken,
+                         base::SysUTF8ToWide(enrollment_token).c_str()) ==
+         ERROR_SUCCESS;
+}
+
+std::optional<base::FilePath> GetUniqueTempFilePath(base::FilePath file) {
+  base::FilePath temp_dir;
+  if (file.empty() || !base::GetTempDir(&temp_dir)) {
+    return {};
+  }
+  return temp_dir.Append(base::StrCat(
+      {file.RemoveExtension().BaseName().value(),
+       base::UTF8ToWide(base::Uuid::GenerateRandomV4().AsLowercaseString()),
+       file.Extension()}));
 }
 
 }  // namespace updater

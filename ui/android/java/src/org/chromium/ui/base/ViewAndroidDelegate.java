@@ -96,14 +96,23 @@ public class ViewAndroidDelegate {
     }
 
     /**
-     * Adds observer that needs notification when container view is updated. Note that
-     * there is no {@code removObserver} since the added observers are all supposed to
-     * go away with this object together.
-     * @param observer {@link ContainerViewObserver} object. The object should have
-     *        the lifetime same as this {@link ViewAndroidDelegate} to avoid gc issues.
+     * Adds observer that needs notification when container view is updated.
+     *
+     * @param observer {@link ContainerViewObserver} object. If {@code removObserver} is not used,
+     *     then the object should have the lifetime same as this {@link ViewAndroidDelegate} to
+     *     avoid gc issues.
      */
     public final void addObserver(ContainerViewObserver observer) {
         mContainerViewObservers.addObserver(observer);
+    }
+
+    /**
+     * Removes observer that does not need notification when container view is updated anymore.
+     *
+     * @param observer {@link ContainerViewObserver} object.
+     */
+    public final void removeObserver(ContainerViewObserver observer) {
+        mContainerViewObservers.removeObserver(observer);
     }
 
     /** Adds the provided {@link VerticalScrollDirectionChangeListener}. */
@@ -165,8 +174,9 @@ public class ViewAndroidDelegate {
     }
 
     /**
-     * Transfer existing anchor views from the old to the new container view. Called by
-     * {@link setContainerView} only.
+     * Transfer existing anchor views from the old to the new container view. Called by {@link
+     * setContainerView} only.
+     *
      * @param oldContainerView Old container view just replaced by a new one.
      */
     public void updateAnchorViews(ViewGroup oldContainerView) {}
@@ -243,6 +253,7 @@ public class ViewAndroidDelegate {
      *
      * @param shadowImage The shadow image for the dragged object.
      * @param dropData The drop data presenting the drag target.
+     * @param windowAndroid The WindowAndroid used to retrieve a relevant Context.
      * @param cursorOffsetX The x offset of the cursor w.r.t. to top-left corner of the drag-image.
      * @param cursorOffsetY The y offset of the cursor w.r.t. to top-left corner of the drag-image.
      * @param dragObjRectWidth The width of the drag object.
@@ -252,18 +263,20 @@ public class ViewAndroidDelegate {
     private boolean startDragAndDrop(
             Bitmap shadowImage,
             DropDataAndroid dropData,
+            WindowAndroid windowAndroid,
             int cursorOffsetX,
             int cursorOffsetY,
             int dragObjRectWidth,
             int dragObjRectHeight) {
         ViewGroup containerView = getContainerViewGroup();
-        if (containerView == null) return false;
+        if (containerView == null || windowAndroid == null) return false;
 
         return getDragAndDropDelegate()
                 .startDragAndDrop(
                         containerView,
                         shadowImage,
                         dropData,
+                        windowAndroid.getContext().get(),
                         cursorOffsetX,
                         cursorOffsetY,
                         dragObjRectWidth,
@@ -579,7 +592,7 @@ public class ViewAndroidDelegate {
     public void autofill(final SparseArray<AutofillValue> values) {}
 
     /**
-     * Check whether the Android can request a ViewStructure for Autofill.
+     * Check whether the Android Autofill Framework can request a ViewStructure for Autofill.
      *
      * @return true iff an AutofillProvider provides a ViewStructure when prompted.
      */

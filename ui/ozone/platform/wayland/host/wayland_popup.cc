@@ -114,7 +114,7 @@ bool WaylandPopup::CreateShellPopup() {
     zaura_surface->set_delegate(AsWeakPtr());
   }
 
-  parent_window()->set_child_window(this);
+  parent_window()->set_child_popup(this);
   UpdateDecoration();
   return true;
 }
@@ -157,8 +157,9 @@ void WaylandPopup::Hide() {
   if (!shell_popup_)
     return;
 
-  if (child_window())
-    child_window()->Hide();
+  if (child_popup()) {
+    child_popup()->Hide();
+  }
   WaylandWindow::Hide();
   // Mutter compositor crashes if we don't reset subsurfaces when hiding.
   if (WaylandWindow::primary_subsurface()) {
@@ -170,7 +171,7 @@ void WaylandPopup::Hide() {
   }
 
   if (shell_popup_) {
-    parent_window()->set_child_window(nullptr);
+    parent_window()->set_child_popup(nullptr);
     shell_popup_.reset();
     decorated_via_aura_popup_ = false;
   }
@@ -312,6 +313,10 @@ bool WaylandPopup::IsScreenCoordinatesEnabled() const {
   return parent_window()->IsScreenCoordinatesEnabled();
 }
 
+base::WeakPtr<WaylandWindow> WaylandPopup::AsWeakPtr() {
+  return weak_ptr_factory_.GetWeakPtr();
+}
+
 void WaylandPopup::OnCloseRequest() {
   // Before calling OnCloseRequest, the |shell_popup_| must become hidden and
   // only then call OnCloseRequest().
@@ -332,7 +337,6 @@ bool WaylandPopup::OnInitialize(PlatformWindowInitProperties properties,
   state->size_px = ScaleToEnclosingRectIgnoringError(
                        gfx::Rect(state->bounds_dip.size()), state->window_scale)
                        .size();
-  set_ui_scale(parent_window()->ui_scale());
   shadow_type_ = properties.shadow_type;
   return true;
 }

@@ -7,17 +7,15 @@ import type {VolumeInfo} from '../../background/js/volume_info.js';
 import type {VolumeManager} from '../../background/js/volume_manager.js';
 import type {FakeEntry, FilesAppDirEntry, FilesAppEntry} from '../../common/js/files_app_entry_types.js';
 import {ODFS_EXTENSION_ID} from '../../foreground/js/constants.js';
-import type {DirectoryItem} from '../../foreground/js/ui/directory_tree.js';
-import type {TreeItem} from '../../foreground/js/ui/tree.js';
 import {driveRootEntryListKey, myFilesEntryListKey, recentRootKey, trashRootKey} from '../../state/ducks/volumes.js';
-import {type CurrentDirectory, EntryType, type FileData, type State, type Volume} from '../../state/state.js';
+import {type CurrentDirectory, EntryType, type FileData, type FileKey, type State, type Volume} from '../../state/state.js';
 import {getEntry, getStore, getVolume} from '../../state/store.js';
 import type {XfTreeItem} from '../../widgets/xf_tree_item.js';
 
 import {createDOMError} from './dom_utils.js';
 import type {VolumeEntry} from './files_app_entry_types.js';
 import {EntryList, FakeEntryImpl} from './files_app_entry_types.js';
-import {isArcVmEnabled, isNewDirectoryTreeEnabled, isPluginVmEnabled} from './flags.js';
+import {isArcVmEnabled, isPluginVmEnabled} from './flags.js';
 import {collator, getEntryLabel} from './translations.js';
 import type {TrashEntry} from './trash.js';
 import {FileErrorToDomError} from './util.js';
@@ -298,10 +296,11 @@ export function isRecentRoot(entry: Entry|FilesAppEntry) {
 
 /**
  * Whether the `fileData` the is RECENT root.
- * NOTE: Drive shared with me and offline are marked as RECENT.
+ * NOTE: Drive shared with me and offline are marked as RECENT for its "type"
+ * field, so we need to use "rootType" instead.
  */
 export function isRecentFileData(fileData: FileData|null|undefined): boolean {
-  return !!fileData && fileData.type === EntryType.RECENT;
+  return !!fileData && fileData.rootType === RootType.RECENT;
 }
 
 /**
@@ -352,6 +351,13 @@ export function isTrashEntry(entry: Entry|FilesAppEntry): entry is TrashEntry {
 
 export function isTrashFileData(fileData: FileData): boolean {
   return fileData.fullPath === '/' && fileData.type === EntryType.TRASH;
+}
+
+/**
+ * Returns true if the given entry is a placeholder for OneDrive.
+ */
+export function isOneDrivePlaceholder(entry: Entry|FilesAppEntry) {
+  return isFakeEntry(entry) && isOneDrivePlaceholderKey(entry.toURL());
 }
 
 /**
@@ -906,6 +912,12 @@ export function isOneDrive(volumeInfo: VolumeInfo|Volume) {
   return isOneDriveId(volumeInfo?.providerId);
 }
 
+export function isOneDrivePlaceholderKey(key: FileKey|undefined) {
+  if (!key) {
+    return false;
+  }
+  return isOneDriveId(key.substr(key.lastIndexOf('/') + 1));
+}
 
 /**
  * Returns a boolean indicating whether the volume is a GuestOs volume. And
@@ -936,23 +948,15 @@ export function shouldSupportDriveSpecificIcons(fileData: FileData): boolean {
  * Extracts the `entry` from the supplied `treeItem` depending on if the new
  * directory tree is enabled or not.
  */
-export function getTreeItemEntry(treeItem: DirectoryItem|XfTreeItem|TreeItem|
-                                 null|undefined): Entry|FilesAppEntry|null {
+export function getTreeItemEntry(treeItem: XfTreeItem|null|undefined): Entry|
+    FilesAppEntry|null {
   if (!treeItem) {
     return null;
   }
 
-  if ('entry' in treeItem && treeItem.entry) {
-    return treeItem.entry;
-  }
-
-  if (isNewDirectoryTreeEnabled()) {
-    const item = treeItem as XfTreeItem;
-    const state = getStore().getState();
-    return getEntry(state, item.dataset['navigationKey']!);
-  }
-
-  return null;
+  const item = treeItem as XfTreeItem;
+  const state = getStore().getState();
+  return getEntry(state, item.dataset['navigationKey']!);
 }
 
 /**

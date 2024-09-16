@@ -110,7 +110,7 @@ AutofillField* GetBestPossibleCVCFieldForUpload(
     AutofillField* result =
         FindFirstFieldWithValue(form_structure, last_unlocked_credit_card_cvc);
     if (result) {
-      result->properties_mask = FieldPropertiesFlags::kKnownValue;
+      result->set_properties_mask(FieldPropertiesFlags::kKnownValue);
     }
     return result;
   }
@@ -135,16 +135,23 @@ void FindAndSetPossibleFieldTypesForField(
     return;
   }
   FieldTypeSet matching_types;
-  std::u16string value;
-  // Note: in case of a <select><option value="A">B</option></select>, the
-  // `field.value` stores "B".
-  base::TrimWhitespace(field.value(), base::TRIM_ALL, &value);
+
+  // If `field` has a selected option, we give precedence to the option's text
+  // over its value because the user-visible text is likely more meaningful.
+  // Currently, only <select> elements may have a selected option.
+  base::optional_ref<const SelectOption> selected_option =
+      field.selected_option();
+  std::u16string value =
+      selected_option ? selected_option->text : field.value();
+  base::TrimWhitespace(value, base::TRIM_ALL, &value);
 
   for (const AutofillProfile& profile : profiles) {
-    profile.GetMatchingTypes(value, app_locale, &matching_types);
+    profile.GetMatchingTypesWithProfileSources(value, app_locale,
+                                               &matching_types, nullptr);
   }
   for (const CreditCard& card : credit_cards) {
-    card.GetMatchingTypes(value, app_locale, &matching_types);
+    card.GetMatchingTypesWithProfileSources(value, app_locale, &matching_types,
+                                            nullptr);
   }
   // If the input's content matches a valid email format, include email
   // address as one of the possible matching types.

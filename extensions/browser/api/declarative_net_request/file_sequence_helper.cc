@@ -40,7 +40,7 @@ namespace {
 namespace dnr_api = extensions::api::declarative_net_request;
 
 // A class to help in indexing multiple rulesets.
-// TODO(crbug.com/1254680): Look into unifying this with the InstallIndexHelper
+// TODO(crbug.com/40794487): Look into unifying this with the InstallIndexHelper
 //                          class, moving any differing logic to the clients.
 class IndexHelper : public base::RefCountedThreadSafe<IndexHelper> {
  public:
@@ -57,8 +57,9 @@ class IndexHelper : public base::RefCountedThreadSafe<IndexHelper> {
 
     std::vector<RulesetInfo*> rulesets_to_index;
     for (auto& ruleset : data_.rulesets) {
-      if (ruleset.did_load_successfully())
+      if (ruleset.did_load_successfully()) {
         continue;
+      }
 
       rulesets_to_index.push_back(&ruleset);
     }
@@ -160,7 +161,7 @@ UpdateDynamicRulesStatus GetUpdateDynamicRuleStatus(LoadRulesetResult result) {
       break;
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return UpdateDynamicRulesStatus::kSuccess;
 }
 
@@ -258,8 +259,9 @@ bool UpdateAndIndexDynamicRules(const FileBackedRulesetSource& source,
   DCHECK_EQ(source.indexed_path().DirName(), source.json_path().DirName());
 
   std::set<int> rule_ids_to_add;
-  for (const dnr_api::Rule& rule : rules_to_add)
+  for (const dnr_api::Rule& rule : rules_to_add) {
     rule_ids_to_add.insert(rule.id);
+  }
 
   std::vector<dnr_api::Rule> new_rules;
   if (!GetNewDynamicRules(source, std::move(rule_ids_to_remove),
@@ -293,7 +295,7 @@ bool UpdateAndIndexDynamicRules(const FileBackedRulesetSource& source,
     if (!base::Contains(rule_ids_to_add, warning.rule_id)) {
       // Any rule added earlier which is ignored now (say due to exceeding the
       // regex memory limit), will be silently ignored.
-      // TODO(crbug.com/1050780): Notify the extension about the same.
+      // TODO(crbug.com/40118204): Notify the extension about the same.
       continue;
     }
 

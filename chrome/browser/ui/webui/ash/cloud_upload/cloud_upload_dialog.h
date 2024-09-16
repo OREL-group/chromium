@@ -20,10 +20,13 @@
 #include "chrome/browser/ui/webui/ash/cloud_upload/cloud_open_metrics.h"
 #include "chrome/browser/ui/webui/ash/cloud_upload/cloud_upload.mojom.h"
 #include "chrome/browser/ui/webui/ash/cloud_upload/cloud_upload_util.h"
-#include "chrome/browser/ui/webui/ash/system_web_dialog_delegate.h"
+#include "chrome/browser/ui/webui/ash/cloud_upload/drive_upload_handler.h"
+#include "chrome/browser/ui/webui/ash/cloud_upload/one_drive_upload_handler.h"
+#include "chrome/browser/ui/webui/ash/system_web_dialog/system_web_dialog_delegate.h"
 #include "chromeos/ash/components/drivefs/mojom/drivefs.mojom-forward.h"
 #include "components/drive/file_errors.h"
 #include "storage/browser/file_system/file_system_url.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/native_widget_types.h"
 
@@ -37,7 +40,6 @@ namespace file_manager::file_tasks {
 FORWARD_DECLARE_TEST(DriveTest, OpenFileInDrive);
 FORWARD_DECLARE_TEST(OneDriveTest, OpenFileFromODFS);
 FORWARD_DECLARE_TEST(OneDriveTest, OpenFileNotFromODFS);
-FORWARD_DECLARE_TEST(OneDriveTest, CannotShowMoveConfirmation);
 FORWARD_DECLARE_TEST(OneDriveTest,
                      FailToOpenFileFromODFSReauthenticationRequired);
 FORWARD_DECLARE_TEST(OneDriveTest, FailToOpenFileFromODFSOtherAccessError);
@@ -139,8 +141,6 @@ class CloudOpenTask : public BrowserListObserver,
   FRIEND_TEST_ALL_PREFIXES(::file_manager::file_tasks::OneDriveTest,
                            OpenFileNotFromODFS);
   FRIEND_TEST_ALL_PREFIXES(::file_manager::file_tasks::OneDriveTest,
-                           CannotShowMoveConfirmation);
-  FRIEND_TEST_ALL_PREFIXES(::file_manager::file_tasks::OneDriveTest,
                            FailToOpenFileFromODFSReauthenticationRequired);
   FRIEND_TEST_ALL_PREFIXES(::file_manager::file_tasks::OneDriveTest,
                            FailToOpenFileFromODFSOtherAccessError);
@@ -171,7 +171,7 @@ class CloudOpenTask : public BrowserListObserver,
   // See the .cc implementation for comments on private methods.
   bool ExecuteInternal();
   bool MaybeRunFixupFlow();
-  void OpenOrMoveFiles();
+  bool OpenOrMoveFiles();
   void OpenAlreadyHostedDriveUrls();
   void OnGoogleDriveGetMetadata(drive::FileError error,
                                 drivefs::mojom::FileMetadataPtr metadata);
@@ -185,7 +185,7 @@ class CloudOpenTask : public BrowserListObserver,
       const storage::FileSystemURL& android_onedrive_url);
 
   bool ShouldShowConfirmationDialog();
-  void ConfirmMoveOrStartUpload();
+  bool ConfirmMoveOrStartUpload();
   void StartUpload();
   void StartNextGoogleDriveUpload();
   void StartNextOneDriveUpload();
@@ -237,13 +237,15 @@ class CloudOpenTask : public BrowserListObserver,
       std::unique_ptr<std::vector<std::string>> mime_types);
   void RecordUploadLatencyUMA();
 
-  raw_ptr<Profile, DanglingUntriaged> profile_;
+  raw_ptr<Profile> profile_;
   std::vector<storage::FileSystemURL> file_urls_;
   // File being currently uploaded.
   size_t file_urls_idx_ = 0;
   const ::file_manager::file_tasks::TaskDescriptor task_;
   CloudProvider cloud_provider_;
   std::unique_ptr<CloudOpenMetrics> cloud_open_metrics_;
+  std::unique_ptr<DriveUploadHandler> drive_upload_handler_;
+  std::unique_ptr<OneDriveUploadHandler> one_drive_upload_handler_;
   std::vector<::file_manager::file_tasks::TaskDescriptor> local_tasks_;
   raw_ptr<CloudUploadDialog> pending_dialog_ = nullptr;
   base::ElapsedTimer upload_timer_;
@@ -307,7 +309,7 @@ class CloudUploadDialog : public SystemWebDialogDelegate {
 
  protected:
   ~CloudUploadDialog() override;
-  ui::ModalType GetDialogModalType() const override;
+  ui::mojom::ModalType GetDialogModalType() const override;
   bool ShouldCloseDialogOnEscape() const override;
   bool ShouldShowCloseButton() const override;
   void GetDialogSize(gfx::Size* size) const override;

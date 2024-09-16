@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_ASH_LOGIN_SAML_LOCKSCREEN_REAUTH_DIALOG_TEST_HELPER_H_
 
 #include <optional>
+#include <string>
 
 #include "base/memory/raw_ptr.h"
 #include "chrome/browser/ash/login/test/js_checker.h"
@@ -17,7 +18,6 @@ class WebContents;
 namespace ash {
 
 class LockScreenStartReauthDialog;
-class LockScreenStartReauthUI;
 class LockScreenReauthHandler;
 class LockScreenNetworkDialog;
 class LockScreenNetworkUI;
@@ -39,6 +39,11 @@ class LockScreenReauthDialogTestHelper {
   static std::optional<LockScreenReauthDialogTestHelper>
   StartSamlAndWaitForIdpPageLoad();
 
+  // Initialize and return (if successful) an instance of
+  // `LockScreenReauthDialogTestHelper` for an already shown online
+  // re-authentication dialog.
+  static std::optional<LockScreenReauthDialogTestHelper> InitForShownDialog();
+
   ~LockScreenReauthDialogTestHelper();
 
   // Non-copyable, movable.
@@ -51,22 +56,8 @@ class LockScreenReauthDialogTestHelper {
   LockScreenReauthDialogTestHelper& operator=(
       LockScreenReauthDialogTestHelper&& other);
 
-  // Waits for the 'Verify Account' screen (the first screen the dialog shows)
-  // to be visible.
-  void WaitForVerifyAccountScreen();
-
-  // Clicks the 'Verify' button on the 'Verify Account' screen and wait for the
-  // authenticator page to be loaded.
-  // For SAML flows this proceeds to the SAML flow.
-  void ClickVerifyButton();
-
-  // Clicks the 'Cancel' button on the 'Verify Account' screen.
-  void ClickCancelButtonOnVerifyScreen();
-
-  // Clicks the 'Cancel' button on the 'Error' screen.
   void ClickCancelButtonOnErrorScreen();
 
-  // Clicks the 'Cancel' button on the 'Saml Account' screen.
   void ClickCancelButtonOnSamlScreen();
 
   // Clicks the 'Enter Google Account Info' button on the SAML screen.
@@ -85,11 +76,8 @@ class LockScreenReauthDialogTestHelper {
   void ExpectChangeIdPButtonVisible();
   void ExpectChangeIdPButtonHidden();
 
-  // Waits for sign-in webview to be shown.
   void WaitForSigninWebview();
 
-  void ExpectVerifyAccountScreenVisible();
-  void ExpectVerifyAccountScreenHidden();
   void ExpectErrorScreenVisible();
   void ExpectSigninWebviewVisible();
   void ExpectSigninWebviewHidden();
@@ -117,9 +105,13 @@ class LockScreenReauthDialogTestHelper {
   // Wait until the main dialog closes.
   void WaitForReauthDialogToClose();
 
-  // Wait for the SAML IdP page to load.
-  // Precondition: The SAML container is visible.
-  void WaitForIdpPageLoad();
+  // SAML notice message is displayed when we show a 3P IdP page.
+  test::UIPath SamlNoticeMessage() const;
+  void WaitForSamlNoticeMessage();
+  void ExpectSamlNoticeMessageVisible();
+  void ExpectSamlNoticeMessageHidden();
+
+  void WaitForSamlIdpPageLoad();
 
   // Next members allow to wait for the captive portal dialog to load (i.e. be
   // initialized in `LockScreenStartReauthDialog`), be shown or be closed.
@@ -132,7 +124,6 @@ class LockScreenReauthDialogTestHelper {
   void ExpectCaptivePortalDialogHidden();
   void CloseCaptivePortalDialogAndWait();
 
-  // Returns the WebContents of the dialog's WebUI.
   content::WebContents* DialogWebContents();
   // Returns a JSChecker for the WebContents of the dialog's WebUI.
   test::JSChecker DialogJS();
@@ -145,10 +136,8 @@ class LockScreenReauthDialogTestHelper {
   test::JSChecker SigninFrameJS();
 
  private:
-  // Instantiate using the static function `ShowDialogAndWait`.
+  // Instantiate using public static factory methods.
   LockScreenReauthDialogTestHelper();
-
-  bool ShowDialogAndWaitImpl();
 
   void WaitForAuthenticatorToLoad();
   void WaitForReauthDialogToLoad();
@@ -160,8 +149,6 @@ class LockScreenReauthDialogTestHelper {
   // Main Dialog
   raw_ptr<LockScreenStartReauthDialog, AcrossTasksDanglingUntriaged>
       reauth_dialog_ = nullptr;
-  raw_ptr<LockScreenStartReauthUI, AcrossTasksDanglingUntriaged>
-      reauth_webui_controller_ = nullptr;
   raw_ptr<LockScreenReauthHandler, AcrossTasksDanglingUntriaged> main_handler_ =
       nullptr;
 

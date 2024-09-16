@@ -294,7 +294,7 @@ void TestGpuServiceHolder::InitializeOnGpuThread(
       LOG(FATAL) << "Failed to create and initialize Vulkan implementation.";
     }
 #else
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
 #endif
   }
 
@@ -308,10 +308,6 @@ void TestGpuServiceHolder::InitializeOnGpuThread(
   gpu_feature_info.status_values[gpu::GPU_FEATURE_TYPE_GPU_TILE_RASTERIZATION] =
       gpu::kGpuFeatureStatusEnabled;
 
-#if BUILDFLAG(IS_MAC)
-  gpu::SetMacOSSpecificTextureTargetFromCurrentGLImplementation();
-#endif  // BUILDFLAG(IS_MAC)
-
   GpuServiceImpl::InitParams init_params;
   init_params.io_runner = io_thread_.task_runner();
 #if BUILDFLAG(ENABLE_VULKAN)
@@ -322,12 +318,12 @@ void TestGpuServiceHolder::InitializeOnGpuThread(
   if (gpu_preferences.gr_context_type == gpu::GrContextType::kGraphiteDawn) {
 #if BUILDFLAG(SKIA_USE_DAWN)
     init_params.dawn_context_provider = gpu::DawnContextProvider::Create(
-        gpu_preferences,
+        gpu_preferences, gpu::DawnContextProvider::DefaultValidateAdapterFn,
         gpu::GpuDriverBugWorkarounds(
             gpu_feature_info.enabled_gpu_driver_bug_workarounds));
     CHECK(init_params.dawn_context_provider);
 #else
-    NOTREACHED_NORETURN();
+    NOTREACHED();
 #endif
   }
 
@@ -352,7 +348,7 @@ void TestGpuServiceHolder::InitializeOnGpuThread(
 
   main_task_executor_ = std::make_unique<gpu::GpuInProcessThreadService>(
       this, gpu_main_thread_.task_runner(), gpu_service_->GetGpuScheduler(),
-      gpu_service_->sync_point_manager(), gpu_service_->mailbox_manager(),
+      gpu_service_->sync_point_manager(),
       gpu_service_->gpu_channel_manager()
           ->default_offscreen_surface()
           ->GetFormat(),

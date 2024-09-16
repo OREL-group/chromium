@@ -17,7 +17,6 @@ import androidx.test.ext.junit.rules.ActivityScenarioRule;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
@@ -27,10 +26,14 @@ import org.robolectric.annotation.Config;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Features;
+import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.JniMocker;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.commerce.ShoppingServiceFactory;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
+import org.chromium.chrome.browser.page_image_service.ImageServiceBridge;
+import org.chromium.chrome.browser.page_image_service.ImageServiceBridgeJni;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.signin.services.IdentityServicesProvider;
 import org.chromium.chrome.browser.signin.services.SigninManager;
@@ -54,10 +57,16 @@ import org.chromium.ui.base.TestActivity;
     ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
     ChromeSwitches.DISABLE_NATIVE_INITIALIZATION
 })
-@Features.EnableFeatures(SyncFeatureMap.ENABLE_BOOKMARK_FOLDERS_FOR_ACCOUNT_STORAGE)
+@EnableFeatures({
+    SyncFeatureMap.SYNC_ENABLE_BOOKMARKS_IN_TRANSPORT_MODE,
+    ChromeFeatureList.ANDROID_IMPROVED_BOOKMARKS,
+    ChromeFeatureList.ENABLE_PASSWORDS_ACCOUNT_STORAGE_FOR_NON_SYNCING_USERS,
+    ChromeFeatureList.REPLACE_SYNC_PROMOS_WITH_SIGN_IN_PROMOS
+})
+// TODO(crbug.com/327387704): Add tests with this flag enabled.
+@Features.DisableFeatures(ChromeFeatureList.UNO_PHASE_2_FOLLOW_UP)
 public class BookmarkManagerCoordinatorTest {
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
-    @Rule public TestRule mFeaturesProcessorRule = new Features.JUnitProcessor();
     @Rule public JniMocker mJniMocker = new JniMocker();
 
     @Rule
@@ -67,6 +76,7 @@ public class BookmarkManagerCoordinatorTest {
     @Mock private SnackbarManager mSnackbarManager;
     @Mock private Profile mProfile;
     @Mock private LargeIconBridge.Natives mMockLargeIconBridgeJni;
+    @Mock private ImageServiceBridge.Natives mImageServiceBridgeJni;
     @Mock private SyncService mSyncService;
     @Mock private IdentityServicesProvider mIdentityServicesProvider;
     @Mock private SigninManager mSigninManager;
@@ -83,6 +93,7 @@ public class BookmarkManagerCoordinatorTest {
     public void setUp() {
         // Setup JNI mocks.
         mJniMocker.mock(LargeIconBridgeJni.TEST_HOOKS, mMockLargeIconBridgeJni);
+        mJniMocker.mock(ImageServiceBridgeJni.TEST_HOOKS, mImageServiceBridgeJni);
 
         // Setup service mocks.
         doReturn(mProfile).when(mProfile).getOriginalProfile();
@@ -131,11 +142,7 @@ public class BookmarkManagerCoordinatorTest {
         assertNotNull(mCoordinator.buildPersonalizedPromoView(parent));
         assertNotNull(mCoordinator.buildLegacyPromoView(parent));
         assertNotNull(mCoordinator.buildSectionHeaderView(parent));
-        assertNotNull(mCoordinator.buildAndInitBookmarkFolderView(parent));
-        assertNotNull(mCoordinator.buildAndInitBookmarkItemRow(parent));
-        assertNotNull(mCoordinator.buildAndInitShoppingItemView(parent));
         assertNotNull(BookmarkManagerCoordinator.buildDividerView(parent));
-        assertNotNull(BookmarkManagerCoordinator.buildShoppingFilterView(parent));
         assertNotNull(BookmarkManagerCoordinator.buildCompactImprovedBookmarkRow(parent));
         assertNotNull(BookmarkManagerCoordinator.buildVisualImprovedBookmarkRow(parent));
         assertNotNull(mCoordinator.buildSearchBoxRow(parent));

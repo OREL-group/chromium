@@ -42,7 +42,6 @@ import androidx.test.core.app.ApplicationProvider;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.ArgumentMatcher;
@@ -59,8 +58,8 @@ import org.robolectric.shadows.ShadowLooper;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.supplier.OneshotSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.Features.DisableFeatures;
+import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.JniMocker;
 import org.chromium.build.BuildConfig;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
@@ -91,6 +90,10 @@ import org.chromium.chrome.test.util.browser.signin.AccountManagerTestRule;
 import org.chromium.components.browser_ui.styles.ChromeColors;
 import org.chromium.components.embedder_support.util.UrlUtilities;
 import org.chromium.components.embedder_support.util.UrlUtilitiesJni;
+import org.chromium.components.omnibox.AutocompleteMatchBuilder;
+import org.chromium.components.omnibox.OmniboxFeatureList;
+import org.chromium.components.omnibox.OmniboxFeatures;
+import org.chromium.components.omnibox.OmniboxSuggestionType;
 import org.chromium.components.search_engines.TemplateUrlService;
 import org.chromium.components.signin.identitymanager.IdentityManager;
 import org.chromium.content_public.browser.LoadUrlParams;
@@ -114,9 +117,7 @@ import java.util.List;
             LocationBarMediatorTest.ShadowGeolocationHeader.class,
             LocationBarMediatorTest.ObjectAnimatorShadow.class
         })
-@DisableFeatures({
-    ChromeFeatureList.ADAPTIVE_BUTTON_IN_TOP_TOOLBAR_CUSTOMIZATION_V2
-})
+@DisableFeatures({ChromeFeatureList.ADAPTIVE_BUTTON_IN_TOP_TOOLBAR_CUSTOMIZATION_V2})
 public class LocationBarMediatorTest {
     @Implements(UrlUtilities.class)
     static class ShadowUrlUtilities {
@@ -140,6 +141,11 @@ public class LocationBarMediatorTest {
                 Profile profile, TemplateUrlService templateService) {
             sGeoHeaderPrimeCount++;
         }
+
+        @Implementation
+        public static void stopListeningForLocationUpdates() {
+            sGeoHeaderStopCount++;
+        }
     }
 
     @Implements(ObjectAnimator.class)
@@ -160,9 +166,9 @@ public class LocationBarMediatorTest {
     private static final String TEST_URL = "http://www.example.org";
 
     private static int sGeoHeaderPrimeCount;
+    private static int sGeoHeaderStopCount;
 
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
-    @Rule public TestRule mProcessor = new Features.JUnitProcessor();
     @Rule public JniMocker mJniMocker = new JniMocker();
     @Rule public AccountManagerTestRule mAccountManagerTestRule = new AccountManagerTestRule();
 
@@ -285,6 +291,8 @@ public class LocationBarMediatorTest {
         mTabletMediator.setCoordinators(
                 mUrlCoordinator, mAutocompleteCoordinator, mStatusCoordinator);
         ShadowUrlUtilities.sIsNtp = false;
+        sGeoHeaderPrimeCount = 0;
+        sGeoHeaderStopCount = 0;
     }
 
     @Test
@@ -347,10 +355,16 @@ public class LocationBarMediatorTest {
         doReturn(PreloadPagesState.NO_PRELOADING)
                 .when(mPreloadPagesSettingsJni)
                 .getState(eq(profile));
-        mMediator.onSuggestionsChanged("text", true);
+        mMediator.onSuggestionsChanged(
+                AutocompleteMatchBuilder.searchWithType(OmniboxSuggestionType.SEARCH_SUGGEST)
+                        .setDisplayText("text")
+                        .setIsSearch(true)
+                        .setAllowedToBeDefaultMatch(true)
+                        .build());
         verify(mPrerenderJni, never())
                 .prerenderMaybe(
                         anyLong(), any(), anyString(), anyString(), anyLong(), any(), any());
+        verify(mStatusCoordinator).onDefaultMatchClassified(true);
 
         doReturn(PreloadPagesState.STANDARD_PRELOADING)
                 .when(mPreloadPagesSettingsJni)
@@ -365,7 +379,14 @@ public class LocationBarMediatorTest {
         mMediator.setIsUrlBarFocusedWithoutAnimationsForTesting(true);
         mMediator.onUrlFocusChange(true);
 
-        mMediator.onSuggestionsChanged("textWithAutocomplete", true);
+        mMediator.onSuggestionsChanged(
+                AutocompleteMatchBuilder.searchWithType(OmniboxSuggestionType.SEARCH_SUGGEST)
+                        .setDisplayText("text")
+                        .setInlineAutocompletion("textWithAutocomplete")
+                        .setAdditionalText("additionalText")
+                        .setIsSearch(false)
+                        .setAllowedToBeDefaultMatch(true)
+                        .build());
         verify(mPrerenderJni)
                 .prerenderMaybe(
                         123L,
@@ -375,7 +396,19 @@ public class LocationBarMediatorTest {
                         456L,
                         profile,
                         mTab);
-        verify(mUrlCoordinator).setAutocompleteText("text", "textWithAutocomplete");
+        verify(mStatusCoordinator).onDefaultMatchClassified(false);
+        verify(mUrlCoordinator)
+                .setAutocompleteText("text", "textWithAutocomplete", "additionalText");
+    }
+
+    @Test
+    public void testOnSuggestionsChanged_nullMatch() {
+        doReturn("text").when(mUrlCoordinator).getTextWithoutAutocomplete();
+        doReturn(true).when(mUrlCoordinator).shouldAutocomplete();
+
+        mMediator.onSuggestionsChanged(null);
+        verify(mStatusCoordinator).onDefaultMatchClassified(true);
+        verify(mUrlCoordinator).setAutocompleteText("text", null, null);
     }
 
     @Test
@@ -507,10 +540,10 @@ public class LocationBarMediatorTest {
 
     @Test
     public void testAllowKeyboardLearning() {
-        doReturn(false).when(mLocationBarDataProvider).isIncognito();
+        doReturn(false).when(mLocationBarDataProvider).isOffTheRecord();
         assertTrue(mMediator.allowKeyboardLearning());
 
-        doReturn(true).when(mLocationBarDataProvider).isIncognito();
+        doReturn(true).when(mLocationBarDataProvider).isOffTheRecord();
         assertFalse(mMediator.allowKeyboardLearning());
     }
 
@@ -733,16 +766,13 @@ public class LocationBarMediatorTest {
     }
 
     @Test
-    public void testOnKey_triggersFocusAnimation() {
+    public void testHandleTypingStarted_triggersFocusAnimation() {
         mMediator.addUrlFocusChangeListener(mUrlCoordinator);
-        doReturn(KeyEvent.ACTION_DOWN).when(mKeyEvent).getAction();
-        doReturn(true).when(mAutocompleteCoordinator).handleKeyEvent(KeyEvent.KEYCODE_9, mKeyEvent);
-        doReturn(true).when(mKeyEvent).isPrintingKey();
-        doReturn(true).when(mKeyEvent).hasNoModifiers();
         mMediator.onUrlFocusChange(true);
         mMediator.setIsUrlBarFocusedWithoutAnimationsForTesting(true);
-        assertTrue(mMediator.onKey(mView, KeyEvent.KEYCODE_9, mKeyEvent));
-        verify(mAutocompleteCoordinator).handleKeyEvent(KeyEvent.KEYCODE_9, mKeyEvent);
+
+        mMediator.completeUrlFocusAnimationAndEnableSuggestions();
+
         verify(mUrlCoordinator, times(2)).onUrlFocusChange(true);
     }
 
@@ -778,7 +808,7 @@ public class LocationBarMediatorTest {
     public void testUpdateColors_incognito() {
         final int primaryColor = ChromeColors.getDefaultThemeColor(mContext, true);
         doReturn(primaryColor).when(mLocationBarDataProvider).getPrimaryColor();
-        doReturn(true).when(mLocationBarDataProvider).isIncognito();
+        doReturn(true).when(mLocationBarDataProvider).isIncognitoBranded();
 
         mMediator.updateBrandedColorScheme();
 
@@ -867,16 +897,38 @@ public class LocationBarMediatorTest {
 
     @Test
     public void testOnUrlFocusChange() {
+        testOnUrlFocusChange(/* expectRetainOmniboxOnFocus= */ false);
+    }
+
+    @Test
+    public void testOnUrlFocusChange_shouldNotRetainOmniboxOnFocus() {
+        OmniboxFeatures.setShouldRetainOmniboxOnFocusForTesting(Boolean.FALSE);
+        testOnUrlFocusChange(/* expectRetainOmniboxOnFocus= */ false);
+    }
+
+    @Test
+    public void testOnUrlFocusChange_shouldRetainOmniboxOnFocus() {
+        OmniboxFeatures.setShouldRetainOmniboxOnFocusForTesting(Boolean.TRUE);
+        testOnUrlFocusChange(/* expectRetainOmniboxOnFocus= */ true);
+    }
+
+    private void testOnUrlFocusChange(boolean expectRetainOmniboxOnFocus) {
         mMediator.addUrlFocusChangeListener(mUrlCoordinator);
         mMediator.onUrlFocusChange(true);
 
         assertTrue(mMediator.isUrlBarFocused());
         verify(mStatusCoordinator).setShouldAnimateIconChanges(true);
-        verify(mUrlCoordinator)
+        verify(mUrlCoordinator, times(expectRetainOmniboxOnFocus ? 0 : 1))
                 .setUrlBarData(
                         UrlBarData.EMPTY, UrlBar.ScrollType.NO_SCROLL, SelectionState.SELECT_END);
         verify(mStatusCoordinator).onUrlFocusChange(true);
         verify(mUrlCoordinator).onUrlFocusChange(true);
+        verify(mUrlCoordinator, times(expectRetainOmniboxOnFocus ? 1 : 0))
+                .setSelectAllOnFocus(true);
+
+        mMediator.finishUrlFocusChange(true, true);
+
+        verify(mUrlCoordinator, times(1)).setSelectAllOnFocus(false);
     }
 
     @Test
@@ -1355,6 +1407,27 @@ public class LocationBarMediatorTest {
         mMediator.setIsUrlBarFocusedWithoutAnimationsForTesting(true);
         mMediator.onTouchAfterFocus();
         verify(mUrlCoordinator, never()).onUrlFocusChange(true);
+    }
+
+    @Test
+    @EnableFeatures(OmniboxFeatureList.USE_FUSED_LOCATION_PROVIDER)
+    public void testFusedLocationProvider() {
+        ShadowLooper looper = ShadowLooper.shadowMainLooper();
+        Profile profile = mock(Profile.class);
+        mProfileSupplier.set(profile);
+        doReturn(true).when(mTemplateUrlService).isDefaultSearchEngineGoogle();
+        mMediator.onFinishNativeInitialization();
+        looper.idle();
+
+        assertEquals(sGeoHeaderPrimeCount, 1);
+
+        mMediator.onPauseWithNative();
+        assertEquals(sGeoHeaderStopCount, 1);
+        assertEquals(sGeoHeaderPrimeCount, 1);
+
+        mMediator.onResumeWithNative();
+        assertEquals(sGeoHeaderPrimeCount, 2);
+        assertEquals(sGeoHeaderStopCount, 1);
     }
 
     private ArgumentMatcher<UrlBarData> matchesUrlBarDataForQuery(String query) {

@@ -45,10 +45,12 @@
 #include "chrome/browser/ash/crosapi/crosapi_util.h"
 #include "chrome/browser/ash/crosapi/primary_profile_creation_waiter.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/common/channel_info.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/logging_chrome.h"
+#include "chromeos/ash/components/channel/channel_info.h"
+#include "chromeos/ash/components/standalone_browser/channel_util.h"
+#include "chromeos/ash/components/standalone_browser/lacros_selection.h"
 #include "chromeos/crosapi/cpp/crosapi_constants.h"
 #include "chromeos/crosapi/mojom/crosapi.mojom-shared.h"
 #include "chromeos/dbus/constants/dbus_switches.h"
@@ -66,6 +68,7 @@
 #include "gpu/config/gpu_switches.h"
 #include "media/base/media_switches.h"
 #include "media/capture/capture_switches.h"
+#include "media/media_buildflags.h"
 #include "mojo/public/cpp/platform/platform_channel.h"
 #include "third_party/widevine/cdm/buildflags.h"
 #include "ui/base/resource/temporary_shared_resource_path_chromeos.h"
@@ -75,6 +78,12 @@
 
 #if BUILDFLAG(ENABLE_NACL)
 #include "components/nacl/common/nacl_switches.h"
+#endif
+
+#if BUILDFLAG(ENABLE_WIDEVINE)
+#include "base/path_service.h"
+#include "chrome/common/chrome_paths.h"
+#include "chrome/common/media/cdm_registration.h"
 #endif
 
 namespace crosapi {
@@ -278,9 +287,6 @@ void DoLacrosBackgroundWorkPreLaunch(
     clear_shared_resource_file = true;
   }
 
-  params.enable_fork_zygotes_at_login_screen = base::FeatureList::IsEnabled(
-      browser_util::kLacrosForkZygotesAtLoginScreen);
-
   // Clear shared resource file cache if it's initial lacros launch after ash
   // reboot. If not, rename shared resource file cache to temporal name on
   // Lacros launch.
@@ -354,7 +360,7 @@ base::CommandLine CreateCommandLine(const base::FilePath& chrome_path) {
   command_line.AppendSwitchASCII(switches::kLang,
                                  g_browser_process->GetApplicationLocale());
 
-#if defined(USE_CRAS)
+#if BUILDFLAG(USE_CRAS)
   // CrAS is the default audio server in Chrome OS.
   if (base::SysInfo::IsRunningOnChromeOS()) {
     command_line.AppendSwitch(switches::kUseCras);
@@ -371,18 +377,18 @@ base::LaunchOptions CreateLaunchOptions() {
   return options;
 }
 
-void SetUpEnvironment(browser_util::LacrosSelection lacros_selection,
+void SetUpEnvironment(ash::standalone_browser::LacrosSelection lacros_selection,
                       base::LaunchOptions& options) {
   // If Ash is an unknown channel then this is not a production build and we
   // should be using an unknown channel for Lacros as well. This prevents Lacros
   // from picking up Finch experiments.
   version_info::Channel update_channel = version_info::Channel::UNKNOWN;
-  if (chrome::GetChannel() != version_info::Channel::UNKNOWN) {
-    update_channel =
-        browser_util::GetLacrosSelectionUpdateChannel(lacros_selection);
+  if (ash::GetChannel() != version_info::Channel::UNKNOWN) {
+    update_channel = ash::standalone_browser::GetLacrosSelectionUpdateChannel(
+        lacros_selection);
     // If we don't have channel information, we default to the "dev" channel.
     if (update_channel == version_info::Channel::UNKNOWN) {
-      update_channel = browser_util::kLacrosDefaultChannel;
+      update_channel = ash::standalone_browser::kLacrosDefaultChannel;
     }
   }
 
@@ -431,6 +437,28 @@ void SetUpForNacl(base::CommandLine& command_line) {
   }
 }
 #endif
+
+#if BUILDFLAG(ENABLE_WIDEVINE)
+void SetUpForWidevine(base::CommandLine& command_line) {
+  if (base::FeatureList::IsEnabled(media::kLacrosUseAshWidevine)) {
+    // These directories are needed to load the Widevine CDM before zygote fork.
+    base::FilePath bundled_dir;
+    if (base::PathService::Get(chrome::DIR_BUNDLED_WIDEVINE_CDM,
+                               &bundled_dir)) {
+      command_line.AppendSwitchASCII(switches::kCrosWidevineBundledDir,
+                                     bundled_dir.AsUTF8Unsafe());
+    }
+
+    base::FilePath component_updated_hint_file;
+    if (base::PathService::Get(chrome::FILE_COMPONENT_WIDEVINE_CDM_HINT,
+                               &component_updated_hint_file)) {
+      command_line.AppendSwitchASCII(
+          switches::kCrosWidevineComponentUpdatedHintFile,
+          component_updated_hint_file.AsUTF8Unsafe());
+    }
+  }
+}
+#endif  // BUILDFLAG(ENABLE_WIDEVINE)
 
 void SetUpLacrosAdditionalParameters(const LaunchParamsFromBackground& params,
                                      LaunchParams& parameters) {
@@ -576,11 +604,6 @@ void SetUpFeatures(const LaunchParamsFromBackground& params,
     // ash behavior(clear or move cached shared resource file at lacros launch).
     parameters.command_line.AppendSwitch(switches::kEnableResourcesFileSharing);
   }
-
-  if (params.enable_fork_zygotes_at_login_screen) {
-    parameters.command_line.AppendSwitch(
-        switches::kEnableLacrosForkZygotesAtLoginScreen);
-  }
 }
 
 }  // namespace
@@ -589,7 +612,7 @@ void SetUpFeatures(const LaunchParamsFromBackground& params,
 class LacrosThreadTypeDelegate : public base::LaunchOptions::PreExecDelegate {
  public:
   void RunAsyncSafe() override {
-    // TODO(crbug.com/1289736): Currently, this is causing some deadlock issue.
+    // TODO(crbug.com/40212082): Currently, this is causing some deadlock issue.
     // It looks like inside the function, we seem to call async unsafe API.
     // For the mitigation, disabling this temporarily.
     // We should revisit here, and see the impact of performance.
@@ -633,15 +656,11 @@ std::vector<base::FilePath> BrowserLauncher::GetPreloadFiles(
   // These files are the Lacros equivalent of Ash's files preloaded at boot by
   // ureadahead.
   static constexpr const char* kPreloadFiles[] = {
-#if BUILDFLAG(ENABLE_WIDEVINE)
-      "WidevineCdm/manifest.json",
-#endif
       "chrome",
       "chrome_100_percent.pak",
       "chrome_200_percent.pak",
       "chrome_crashpad_handler",
       "icudtl.dat",
-      "icudtl.dat.hash",
 #if BUILDFLAG(ENABLE_NACL)
       "nacl_helper",
 #endif
@@ -659,32 +678,25 @@ std::vector<base::FilePath> BrowserLauncher::GetPreloadFiles(
   paths.push_back(
       lacros_dir.Append(base::StringPrintf("locales/%s.pak", locale.c_str())));
 
-  // Preload Widevine for the right architecture.
+  // Preload Widevine CDM. Not needed for hardware secure CDMs as they are done
+  // by the device firmware.
 #if BUILDFLAG(ENABLE_WIDEVINE)
-#if defined(ARCH_CPU_ARM_FAMILY)
-#if defined(ARCH_CPU_ARM64)
-  base::FilePath libwidevine_path = lacros_dir.Append(
-      "WidevineCdm/_platform_specific/cros_arm64/libwidevinecdm.so");
-#else
-  base::FilePath libwidevine_path = lacros_dir.Append(
-      "WidevineCdm/_platform_specific/cros_arm/libwidevinecdm.so");
-#endif  // defined(ARCH_CPU_ARM64)
-#else
-  base::FilePath libwidevine_path = lacros_dir.Append(
-      "WidevineCdm/_platform_specific/cros_x64/libwidevinecdm.so");
-#endif  // defined(ARCH_CPU_ARM_FAMILY)
-  paths.push_back(libwidevine_path);
+  // Locate the Widevine CDM used by Ash. Lacros is switching to use it.
+  for (const auto& cdm : GetSoftwareSecureWidevine()) {
+    paths.push_back(cdm.path);
+  }
 #endif  // BUILDFLAG(ENABLE_WIDEVINE)
 
   return paths;
 }
 
-void BrowserLauncher::Launch(const base::FilePath& chrome_path,
-                             bool launching_at_login_screen,
-                             browser_util::LacrosSelection lacros_selection,
-                             base::OnceClosure mojo_disconnection_cb,
-                             bool is_keep_alive_enabled,
-                             LaunchCompletionCallback callback) {
+void BrowserLauncher::Launch(
+    const base::FilePath& chrome_path,
+    bool launching_at_login_screen,
+    ash::standalone_browser::LacrosSelection lacros_selection,
+    base::OnceClosure mojo_disconnection_cb,
+    bool is_keep_alive_enabled,
+    LaunchCompletionCallback callback) {
   auto* params = new LaunchParamsFromBackground();
 
   // Represents the number of tasks to complete before starting launch. If we
@@ -778,7 +790,7 @@ LaunchParams BrowserLauncher::CreateLaunchParamsForTesting(
     std::optional<int> startup_fd,
     std::optional<int> read_pipe_fd,
     mojo::PlatformChannel& channel,
-    browser_util::LacrosSelection lacros_selection) {
+    ash::standalone_browser::LacrosSelection lacros_selection) {
   return CreateLaunchParams(chrome_path, params, launching_at_login_screen,
                             startup_fd, read_pipe_fd, channel,
                             lacros_selection);
@@ -857,7 +869,7 @@ void BrowserLauncher::LaunchProcess(
     const base::FilePath& chrome_path,
     std::unique_ptr<LaunchParamsFromBackground> params,
     bool launching_at_login_screen,
-    browser_util::LacrosSelection lacros_selection,
+    ash::standalone_browser::LacrosSelection lacros_selection,
     base::OnceClosure mojo_disconnection_cb,
     bool is_keep_alive_enabled,
     LaunchCompletionCallback callback) {
@@ -926,7 +938,7 @@ LaunchParams BrowserLauncher::CreateLaunchParams(
     std::optional<int> startup_fd,
     std::optional<int> read_pipe_fd,
     mojo::PlatformChannel& channel,
-    browser_util::LacrosSelection lacros_selection) {
+    ash::standalone_browser::LacrosSelection lacros_selection) {
   // Static configuration should be enabled from Lacros rather than Ash. This
   // vector should only be used for dynamic configuration.
   // TODO(crbug.com/40729628): Remove existing static configuration.
@@ -937,6 +949,9 @@ LaunchParams BrowserLauncher::CreateLaunchParams(
   SetUpForDevMode(parameters.command_line);
 #if BUILDFLAG(ENABLE_NACL)
   SetUpForNacl(parameters.command_line);
+#endif
+#if BUILDFLAG(ENABLE_WIDEVINE)
+  SetUpForWidevine(parameters.command_line);
 #endif
   SetUpForGpu(parameters.command_line);
   SetUpLogging(launching_at_login_screen,

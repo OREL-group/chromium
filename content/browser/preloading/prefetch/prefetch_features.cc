@@ -22,12 +22,12 @@ BASE_FEATURE(kPrefetchNIKScope,
              "PrefetchNIKScope",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-BASE_FEATURE(kPrefetchBrowserInitiatedTriggers,
-             "PrefetchBrowserInitiatedTriggers",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
 BASE_FEATURE(kPrefetchClientHints,
              "PrefetchClientHints",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+BASE_FEATURE(kPrefetchXClientDataHeader,
+             "PrefetchXClientDataHeader",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
 constexpr base::FeatureParam<PrefetchClientHintsCrossSiteBehavior>::Option
@@ -48,8 +48,20 @@ BASE_FEATURE(kPrefetchStateContaminationMitigation,
 
 const base::FeatureParam<bool>
     kPrefetchStateContaminationSwapsBrowsingContextGroup{
-        &kPrefetchStateContaminationMitigation, "swaps_bcg", false};
+        &kPrefetchStateContaminationMitigation, "swaps_bcg", true};
 
 BASE_FEATURE(kPrefetchProxy, "PrefetchProxy", base::FEATURE_ENABLED_BY_DEFAULT);
+
+BASE_FEATURE(kPrefetchCookieIndices,
+             "PrefetchCookieIndices",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kPrefetchNewLimits,
+             "PrefetchNewLimits",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+BASE_FEATURE(kPrefetchNewWaitLoop,
+             "PrefetchNewWaitLoop",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 }  // namespace features

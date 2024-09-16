@@ -11,6 +11,7 @@
 
 #include "base/memory/raw_ptr.h"
 #include "components/autofill/core/browser/autofill_field.h"
+#include "components/autofill/core/browser/autofill_testing_pref_service.h"
 #include "components/autofill/core/browser/data_model/autofill_offer_data.h"
 #include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/autofill/core/browser/data_model/autofill_wallet_usage_data.h"
@@ -24,9 +25,10 @@
 #include "components/autofill/core/browser/payments/card_unmask_challenge_option.h"
 #include "components/autofill/core/browser/proto/api_v1.pb.h"
 #include "components/autofill/core/browser/proto/server.pb.h"
-#include "components/autofill/core/browser/ui/popup_item_ids.h"
 #include "components/autofill/core/browser/ui/suggestion.h"
+#include "components/autofill/core/browser/ui/suggestion_type.h"
 #include "components/autofill/core/common/autofill_test_utils.h"
+#include "components/sync/protocol/autofill_specifics.pb.h"
 
 class PrefService;
 
@@ -39,8 +41,8 @@ namespace autofill {
 class AutofillExternalDelegate;
 class AutofillProfile;
 class BankAccount;
-struct FormData;
-struct FormFieldData;
+class FormData;
+class FormFieldData;
 struct FormDataPredictions;
 struct FormFieldDataPredictions;
 class PaymentsAutofillTable;
@@ -87,7 +89,7 @@ inline constexpr char kEmptyOrigin[] = "";
 // have to be constructed manually (e.g., in unit tests within Autofill core
 // code). The returned PrefService has had Autofill preferences registered on
 // its associated registry.
-std::unique_ptr<PrefService> PrefServiceForTesting();
+std::unique_ptr<AutofillTestingPrefService> PrefServiceForTesting();
 std::unique_ptr<PrefService> PrefServiceForTesting(
     user_prefs::PrefRegistrySyncable* registry);
 
@@ -100,10 +102,12 @@ std::unique_ptr<PrefService> PrefServiceForTesting(
 AutofillProfile GetFullValidProfileForCanada();
 
 // Returns a profile full of dummy info.
-AutofillProfile GetFullProfile();
+AutofillProfile GetFullProfile(
+    AddressCountryCode country_code = AddressCountryCode("US"));
 
 // Returns a profile full of dummy info, different to the above.
-AutofillProfile GetFullProfile2();
+AutofillProfile GetFullProfile2(
+    AddressCountryCode country_code = AddressCountryCode("US"));
 
 // Returns a profile full of dummy info, different to the above.
 AutofillProfile GetFullCanadianProfile();
@@ -114,10 +118,10 @@ AutofillProfile GetIncompleteProfile1();
 // Returns an incomplete profile of dummy info, different to the above.
 AutofillProfile GetIncompleteProfile2();
 
-// Sets the `profile`s source and initial creator to match `category`.
+// Sets the `profile`s record type and initial creator to match `category`.
 void SetProfileCategory(
     AutofillProfile& profile,
-    autofill_metrics::AutofillProfileSourceCategory category);
+    autofill_metrics::AutofillProfileRecordTypeCategory category);
 
 // Returns the stripped (without characters representing whitespace) value of
 // the given `value`.
@@ -294,15 +298,6 @@ CreditCard CreateCreditCardWithInfo(const char* name_on_card,
                                     const std::string& billing_address_id,
                                     const std::u16string& cvc = u"");
 
-// TODO(isherman): We should do this automatically for all tests, not manually
-// on a per-test basis: http://crbug.com/57221
-// Disables or mocks out code that would otherwise reach out to system services.
-// Revert this configuration with |ReenableSystemServices|.
-void DisableSystemServices(PrefService* prefs);
-
-// Undoes the mocking set up by |DisableSystemServices|
-void ReenableSystemServices();
-
 // Sets |cards| for |table|. |cards| may contain full, unmasked server cards,
 // whereas PaymentsAutofillTable::SetServerCreditCards can only contain masked
 // cards.
@@ -381,12 +376,24 @@ void AddFieldPredictionsToForm(
     ::autofill::AutofillQueryResponse_FormSuggestion* form_suggestion);
 
 Suggestion CreateAutofillSuggestion(
-    PopupItemId popup_item_id,
+    SuggestionType type,
     const std::u16string& main_text_value = std::u16string(),
     const Suggestion::Payload& payload = Suggestion::Payload());
 
+Suggestion CreateAutofillSuggestion(const std::u16string& main_text_value,
+                                    const std::u16string& minor_text_value,
+                                    bool apply_deactivated_style);
+
 // Returns a bank account enabled for Pix with fake data.
 BankAccount CreatePixBankAccount(int64_t instrument_id);
+
+// Returns a payment instrument with a bank account filled with fake data.
+sync_pb::PaymentInstrument CreatePaymentInstrumentWithBankAccount(
+    int64_t instrument_id);
+
+// Returns a payment instrument with an IBAN filled with fake data.
+sync_pb::PaymentInstrument CreatePaymentInstrumentWithIban(
+    int64_t instrument_id);
 
 }  // namespace test
 }  // namespace autofill

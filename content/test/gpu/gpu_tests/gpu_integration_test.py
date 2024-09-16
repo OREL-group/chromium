@@ -118,7 +118,7 @@ class GpuIntegrationTest(
   _last_launched_browser_info = _BrowserLaunchInfo()
 
   # Keeps track of flaky tests that we're retrying.
-  # TODO(crbug.com/1248602): Remove this in favor of a method that doesn't rely
+  # TODO(crbug.com/40197330): Remove this in favor of a method that doesn't rely
   # on assumptions about retries, etc. if possible.
   _flaky_test_tries = collections.Counter()
 
@@ -129,6 +129,8 @@ class GpuIntegrationTest(
   # Keeps track of whether this is the first browser start on a shard for a
   # flakiness workaround. See crbug.com/323927831.
   _is_first_browser_start = True
+
+  _is_asan = False
 
   tab: Optional[ct.Tab] = None
 
@@ -266,6 +268,10 @@ class GpuIntegrationTest(
     """
     default_args = [
         '--disable-metal-test-shaders',
+        # TODO(crbug.com/339479329): Remove this once we either determine that
+        # RenderDocument is not the culprit or it is and the root cause of
+        # flakiness is fixed.
+        '--disable-features=RenderDocument',
     ]
     if cls._SuiteSupportsParallelTests():
       # When running tests in parallel, windows can be treated as occluded if a
@@ -274,13 +280,6 @@ class GpuIntegrationTest(
       # Linux/Mac stagger new windows, but pass in on all platforms since it
       # could technically be hit on any platform.
       default_args.append('--disable-backgrounding-occluded-windows')
-
-      if host_information.IsMac():
-        # TODO(crbug.com/333443445): Remove this once the feature no longer
-        # causes screenshot capturing to hang when run with multiple Chrome
-        # instances
-        default_args.append(
-            '--disable-features=UseScreenCaptureKitForSnapshots')
 
     return default_args + additional_args
 
@@ -328,7 +327,7 @@ class GpuIntegrationTest(
     ]:
       # Reduce number of video buffers when running tests on Fuchsia to
       # workaround crbug.com/1203580
-      # TODO(https://crbug.com/1203580): Remove this once the bug is resolved.
+      # TODO(crbug.com/40763608): Remove this once the bug is resolved.
       browser_args.append('--double-buffer-compositing')
 
       # Increase GPU watchdog timeout to 60 seconds to avoid flake when
@@ -678,7 +677,7 @@ class GpuIntegrationTest(
       # Perform the same data collection as we do for an unexpected failure
       # but only if this was the last try for a flaky test so we don't
       # waste time symbolizing minidumps for expected flaky crashes.
-      # TODO(crbug.com/1248602): Replace this with a different method of
+      # TODO(crbug.com/40197330): Replace this with a different method of
       # tracking retries if possible.
       self._flaky_test_tries[test_name] += 1
       if self._flaky_test_tries[test_name] == _MAX_TEST_TRIES:
@@ -929,6 +928,7 @@ class GpuIntegrationTest(
     if system_info:
       gpu_tags = []
       gpu_info = system_info.gpu
+      cls._is_asan = gpu_info.aux_attributes.get('is_asan', False)
       # On the dual-GPU MacBook Pros, surface the tags of the secondary GPU if
       # it's the discrete GPU, so that test expectations can be written that
       # target the discrete GPU.
@@ -1067,6 +1067,8 @@ class GpuIntegrationTest(
         # device name is clearer.
         'arm-mali-g52',  # android-sm-a135m
         'arm-mali-t860',  # chromeos-board-kevin
+        # android-moto-g-power-5g---2023
+        'imagination-powervr-b-series-bxm-8-256',
         'qualcomm-adreno-(tm)-418',  # android-nexus-5x
         'qualcomm-adreno-(tm)-540',  # android-pixel-2
         'qualcomm-adreno-(tm)-610',  # android-sm-a235m
@@ -1082,7 +1084,7 @@ class GpuIntegrationTest(
         'chromium-os',  # ChromeOS
         'cros-chrome',  # ChromeOS
         'web-engine-shell',  # Fuchsia
-        'cast-streaming-shell',  # Syonymous with cast_streaming suite
+        'cast-streaming-shell',  # Synonymous with cast_streaming suite
         # GPU tests are always run in remote mode on the bots, and it shouldn't
         # make a difference to these tests anyways.
         'chromeos-local',

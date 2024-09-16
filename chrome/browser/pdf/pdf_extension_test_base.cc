@@ -47,13 +47,8 @@ PDFExtensionTestBase::~PDFExtensionTestBase() = default;
 
 void PDFExtensionTestBase::SetUpCommandLine(
     base::CommandLine* /*command_line*/) {
-  feature_list_.InitWithFeatures(GetEnabledFeatures(), GetDisabledFeatures());
-
-  if (UseOopif()) {
-    factory_ = std::make_unique<pdf::TestPdfViewerStreamManagerFactory>();
-  } else {
-    factory_ = std::make_unique<guest_view::TestGuestViewManagerFactory>();
-  }
+  feature_list_.InitWithFeaturesAndParameters(GetEnabledFeatures(),
+                                              GetDisabledFeatures());
 }
 
 void PDFExtensionTestBase::SetUpOnMainThread() {
@@ -62,6 +57,12 @@ void PDFExtensionTestBase::SetUpOnMainThread() {
   ASSERT_TRUE(embedded_test_server()->InitializeAndListen());
   content::SetupCrossSiteRedirector(embedded_test_server());
   embedded_test_server()->StartAcceptingConnections();
+
+  if (UseOopif()) {
+    factory_ = std::make_unique<pdf::TestPdfViewerStreamManagerFactory>();
+  } else {
+    factory_ = std::make_unique<guest_view::TestGuestViewManagerFactory>();
+  }
 }
 
 void PDFExtensionTestBase::TearDownOnMainThread() {
@@ -114,7 +115,8 @@ testing::AssertionResult PDFExtensionTestBase::LoadPdfInNewTab(
   EXPECT_TRUE(ui_test_utils::NavigateToURLWithDisposition(
       browser(), url, WindowOpenDisposition::NEW_FOREGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP));
-  return EnsureFullPagePDFHasLoadedWithValidFrameTree(GetActiveWebContents());
+  return EnsureFullPagePDFHasLoadedWithValidFrameTree(
+      GetActiveWebContents(), /*allow_multiple_frames=*/false);
 }
 
 testing::AssertionResult PDFExtensionTestBase::LoadPdfInFirstChild(
@@ -235,7 +237,11 @@ content::WebContents* PDFExtensionTestBase::GetEmbedderWebContents() {
   return guest ? guest->embedder_web_contents() : nullptr;
 }
 
-TestGuestViewManager* PDFExtensionTestBase::GetGuestViewManager(
+TestGuestViewManager* PDFExtensionTestBase::GetGuestViewManager() {
+  return GetGuestViewManagerForProfile(nullptr);
+}
+
+TestGuestViewManager* PDFExtensionTestBase::GetGuestViewManagerForProfile(
     content::BrowserContext* profile) {
   if (!profile) {
     profile = browser()->profile();
@@ -255,10 +261,10 @@ PDFExtensionTestBase::GetTestPdfViewerStreamManager(
       ->GetTestPdfViewerStreamManager(contents);
 }
 
-void PDFExtensionTestBase::CreateTestPdfViewerStreamManager() {
+void PDFExtensionTestBase::CreateTestPdfViewerStreamManager(
+    content::WebContents* contents) {
   absl::get<std::unique_ptr<pdf::TestPdfViewerStreamManagerFactory>>(factory_)
-      ->CreatePdfViewerStreamManager(
-          browser()->tab_strip_model()->GetActiveWebContents());
+      ->CreatePdfViewerStreamManager(contents);
 }
 
 content::RenderFrameHost*
@@ -278,7 +284,7 @@ PDFExtensionTestBase::GetOnlyPdfExtensionHostEnsureValid() {
   return extension_host;
 }
 
-int PDFExtensionTestBase::CountPDFProcesses() {
+int PDFExtensionTestBase::CountPDFProcesses() const {
   return pdf_extension_test_util::CountPdfPluginProcesses(browser());
 }
 
@@ -316,16 +322,6 @@ PDFExtensionTestBase::EnsurePDFHasLoadedInFirstChildWithValidFrameTree(
 }
 
 void PDFExtensionTestBase::SimulateMouseClickAt(
-    extensions::MimeHandlerViewGuest* guest,
-    int modifiers,
-    blink::WebMouseEvent::Button button,
-    const gfx::Point& point_in_guest) {
-  SimulateMouseClickAt(guest->GetGuestMainFrame(),
-                       guest->embedder_web_contents(), modifiers, button,
-                       point_in_guest);
-}
-
-void PDFExtensionTestBase::SimulateMouseClickAt(
     content::RenderFrameHost* extension_host,
     content::WebContents* contents,
     int modifiers,
@@ -344,11 +340,11 @@ bool PDFExtensionTestBase::UseOopif() const {
   return false;
 }
 
-std::vector<base::test::FeatureRef> PDFExtensionTestBase::GetEnabledFeatures()
-    const {
-  std::vector<base::test::FeatureRef> enabled;
+std::vector<base::test::FeatureRefAndParams>
+PDFExtensionTestBase::GetEnabledFeatures() const {
+  std::vector<base::test::FeatureRefAndParams> enabled;
   if (UseOopif()) {
-    enabled.push_back(chrome_pdf::features::kPdfOopif);
+    enabled.push_back({chrome_pdf::features::kPdfOopif, {}});
   }
   return enabled;
 }

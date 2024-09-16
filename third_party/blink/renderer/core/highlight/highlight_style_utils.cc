@@ -44,7 +44,8 @@ mojom::blink::ColorScheme UsedColorScheme(
 // Returns the forced foreground color for the given |pseudo|.
 Color ForcedForegroundColor(PseudoId pseudo,
                             mojom::blink::ColorScheme color_scheme,
-                            const ui::ColorProvider* color_provider) {
+                            const ui::ColorProvider* color_provider,
+                            bool is_in_web_app_scope) {
   CSSValueID keyword = CSSValueID::kHighlighttext;
   switch (pseudo) {
     case kPseudoIdTargetText:
@@ -62,17 +63,18 @@ Color ForcedForegroundColor(PseudoId pseudo,
       keyword = CSSValueID::kCanvastext;
       break;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
   }
-  return LayoutTheme::GetTheme().SystemColor(keyword, color_scheme,
-                                             color_provider);
+  return LayoutTheme::GetTheme().SystemColor(
+      keyword, color_scheme, color_provider, is_in_web_app_scope);
 }
 
 // Returns the forced ‘background-color’ for the given |pseudo|.
 Color ForcedBackgroundColor(PseudoId pseudo,
                             mojom::blink::ColorScheme color_scheme,
-                            const ui::ColorProvider* color_provider) {
+                            const ui::ColorProvider* color_provider,
+                            bool is_in_web_app_scope) {
   CSSValueID keyword = CSSValueID::kHighlight;
   switch (pseudo) {
     case kPseudoIdTargetText:
@@ -90,11 +92,11 @@ Color ForcedBackgroundColor(PseudoId pseudo,
       keyword = CSSValueID::kCanvas;
       break;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
   }
-  return LayoutTheme::GetTheme().SystemColor(keyword, color_scheme,
-                                             color_provider);
+  return LayoutTheme::GetTheme().SystemColor(
+      keyword, color_scheme, color_provider, is_in_web_app_scope);
 }
 
 // Returns the forced background color if |property| is ‘background-color’,
@@ -104,13 +106,16 @@ Color ForcedColor(const ComputedStyle& originating_style,
                   const ComputedStyle* pseudo_style,
                   PseudoId pseudo,
                   const CSSProperty& property,
-                  const ui::ColorProvider* color_provider) {
+                  const ui::ColorProvider* color_provider,
+                  bool is_in_web_app_scope) {
   mojom::blink::ColorScheme color_scheme =
       UsedColorScheme(originating_style, pseudo_style);
   if (property.IDEquals(CSSPropertyID::kBackgroundColor)) {
-    return ForcedBackgroundColor(pseudo, color_scheme, color_provider);
+    return ForcedBackgroundColor(pseudo, color_scheme, color_provider,
+                                 is_in_web_app_scope);
   }
-  return ForcedForegroundColor(pseudo, color_scheme, color_provider);
+  return ForcedForegroundColor(pseudo, color_scheme, color_provider,
+                               is_in_web_app_scope);
 }
 
 // Returns the UA default ‘color’ for the given |pseudo|.
@@ -132,13 +137,14 @@ std::optional<Color> DefaultForegroundColor(
     case kPseudoIdTargetText:
       return LayoutTheme::GetTheme().PlatformTextSearchColor(
           false /* active match */, document.InForcedColorsMode(), color_scheme,
-          document.GetColorProviderForPainting(color_scheme));
+          document.GetColorProviderForPainting(color_scheme),
+          document.IsInWebAppScope());
     case kPseudoIdSpellingError:
     case kPseudoIdGrammarError:
     case kPseudoIdHighlight:
       return std::nullopt;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return std::nullopt;
   }
 }
@@ -162,7 +168,7 @@ Color DefaultBackgroundColor(const Document& document,
     case kPseudoIdHighlight:
       return Color::kTransparent;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return Color();
   }
 }
@@ -298,7 +304,8 @@ std::optional<Color> HighlightStyleUtils::MaybeResolveColor(
   if (UseForcedColors(document, originating_style, pseudo_style)) {
     return ForcedColor(originating_style, pseudo_style, pseudo, property,
                        document.GetColorProviderForPainting(
-                           UsedColorScheme(originating_style, pseudo_style)));
+                           UsedColorScheme(originating_style, pseudo_style)),
+                       document.IsInWebAppScope());
   }
   if (UseDefaultHighlightColors(pseudo_style, pseudo, property)) {
     return DefaultHighlightColor(document, originating_style, pseudo_style,
@@ -344,7 +351,7 @@ const ComputedStyle* HighlightStyleUtils::HighlightPseudoStyle(
     case kPseudoIdHighlight:
       return style.HighlightData().CustomHighlight(pseudo_argument);
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return nullptr;
   }
 }
@@ -438,6 +445,7 @@ HighlightStyleUtils::HighlightPaintingStyle(
     highlight_style.selection_decoration_color = Color::kBlack;
   }
   Color text_decoration_color = Color::kBlack;
+  Color background_color = Color::kTransparent;
 
   // Each highlight overlay’s shadows are completely independent of any shadows
   // specified on the originating element (or the other highlight overlays).
@@ -491,6 +499,14 @@ HighlightStyleUtils::HighlightPaintingStyle(
       colors_from_previous_layer.Put(
           HighlightColorProperty::kTextDecorationColor);
     }
+
+    maybe_color = MaybeResolveColor(document, style, pseudo_style, pseudo,
+                                    GetCSSPropertyBackgroundColor());
+    if (maybe_color) {
+      background_color = maybe_color.value();
+    } else {
+      colors_from_previous_layer.Put(HighlightColorProperty::kBackgroundColor);
+    }
   }
 
   if (pseudo_style) {
@@ -530,7 +546,8 @@ HighlightStyleUtils::HighlightPaintingStyle(
     highlight_style.shadow = nullptr;
   }
 
-  return {highlight_style, text_decoration_color, colors_from_previous_layer};
+  return {highlight_style, text_decoration_color, background_color,
+          colors_from_previous_layer};
 }
 
 void HighlightStyleUtils::ResolveColorsFromPreviousLayer(
@@ -546,26 +563,29 @@ void HighlightStyleUtils::ResolveColorsFromPreviousLayer(
   }
   if (text_style.properties_using_current_color.Has(
           HighlightColorProperty::kFillColor)) {
-    text_style.style.fill_color = previous_layer_style.style.fill_color;
+    text_style.style.fill_color = previous_layer_style.style.current_color;
   }
   if (text_style.properties_using_current_color.Has(
           HighlightColorProperty::kStrokeColor)) {
-    text_style.style.stroke_color = previous_layer_style.style.stroke_color;
+    text_style.style.stroke_color = previous_layer_style.style.current_color;
   }
   if (text_style.properties_using_current_color.Has(
           HighlightColorProperty::kEmphasisColor)) {
     text_style.style.emphasis_mark_color =
-        previous_layer_style.style.emphasis_mark_color;
+        previous_layer_style.style.current_color;
   }
   if (text_style.properties_using_current_color.Has(
           HighlightColorProperty::kSelectionDecorationColor)) {
     text_style.style.selection_decoration_color =
-        previous_layer_style.style.selection_decoration_color;
+        previous_layer_style.style.current_color;
   }
   if (text_style.properties_using_current_color.Has(
           HighlightColorProperty::kTextDecorationColor)) {
-    text_style.text_decoration_color =
-        previous_layer_style.text_decoration_color;
+    text_style.text_decoration_color = previous_layer_style.style.current_color;
+  }
+  if (text_style.properties_using_current_color.Has(
+          HighlightColorProperty::kBackgroundColor)) {
+    text_style.background_color = previous_layer_style.style.current_color;
   }
 }
 

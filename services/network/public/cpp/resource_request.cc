@@ -153,6 +153,8 @@ ResourceRequest::TrustedParams& ResourceRequest::TrustedParams::operator=(
   disable_secure_dns = other.disable_secure_dns;
   has_user_activation = other.has_user_activation;
   allow_cookies_from_browser = other.allow_cookies_from_browser;
+  include_request_cookies_with_response =
+      other.include_request_cookies_with_response;
   cookie_observer =
       Clone(&const_cast<mojo::PendingRemote<mojom::CookieAccessObserver>&>(
           other.cookie_observer));
@@ -185,6 +187,8 @@ bool ResourceRequest::TrustedParams::EqualsForTesting(
          disable_secure_dns == other.disable_secure_dns &&
          has_user_activation == other.has_user_activation &&
          allow_cookies_from_browser == other.allow_cookies_from_browser &&
+         include_request_cookies_with_response ==
+             other.include_request_cookies_with_response &&
          client_security_state == other.client_security_state;
 }
 
@@ -241,12 +245,7 @@ ResourceRequest::WebBundleTokenParams::CloneHandle() const {
   return new_remote;
 }
 
-#if BUILDFLAG(IS_ANDROID)
-ResourceRequest::ResourceRequest(const base::Location& location)
-    : created_location(location.ToString()) {}
-#else
 ResourceRequest::ResourceRequest() = default;
-#endif
 ResourceRequest::ResourceRequest(const ResourceRequest& request) {
   TRACE_EVENT("loading", "ResourceRequest::ResourceRequest.copy_constructor");
   *this = request;
@@ -357,7 +356,7 @@ net::ReferrerPolicy ReferrerPolicyForUrlRequest(
     case mojom::ReferrerPolicy::kStrictOriginWhenCrossOrigin:
       return net::ReferrerPolicy::REDUCE_GRANULARITY_ON_TRANSITION_CROSS_ORIGIN;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return net::ReferrerPolicy::CLEAR_ON_TRANSITION_FROM_SECURE_TO_INSECURE;
 }
 

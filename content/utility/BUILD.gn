@@ -74,7 +74,7 @@ source_set("utility") {
     "//services/tracing/public/mojom",
     "//services/video_capture:lib",
     "//services/video_capture/public/mojom:constants",
-    "//services/video_effects:buildflags",
+    "//services/video_effects/buildflags",
     "//third_party/blink/public:blink_headers",
     "//url",
   ]
@@ -142,7 +142,7 @@ source_set("utility") {
     }
   }
 
-  if (is_linux || is_chromeos) {
+  if (enable_screen_ai_service && (is_linux || is_chromeos)) {
     deps += [ "//services/screen_ai:screen_ai_sandbox_hook" ]
   }
 

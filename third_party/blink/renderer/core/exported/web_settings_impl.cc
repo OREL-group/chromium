@@ -149,11 +149,6 @@ void WebSettingsImpl::SetRequireTransientActivationForShowFileOrDirectoryPicker(
       required);
 }
 
-void WebSettingsImpl::SetRequireTransientActivationForHtmlFullscreen(
-    bool required) {
-  settings_->SetRequireTransientActivationForHtmlFullscreen(required);
-}
-
 void WebSettingsImpl::SetAutoZoomFocusedEditableToLegibleScale(
     bool auto_zoom_focused_editable_to_legible_scale) {
   auto_zoom_focused_editable_to_legible_scale_ =
@@ -757,9 +752,14 @@ void WebSettingsImpl::SetInForcedColors(bool in_forced_colors) {
   settings_->SetInForcedColors(in_forced_colors);
 }
 
-void WebSettingsImpl::SetBrowserPreferredColorScheme(
+void WebSettingsImpl::SetIsForcedColorsDisabled(
+    bool is_forced_colors_disabled) {
+  settings_->SetIsForcedColorsDisabled(is_forced_colors_disabled);
+}
+
+void WebSettingsImpl::SetPreferredRootScrollbarColorScheme(
     mojom::blink::PreferredColorScheme color_scheme) {
-  settings_->SetBrowserPreferredColorScheme(color_scheme);
+  settings_->SetPreferredRootScrollbarColorScheme(color_scheme);
 }
 
 void WebSettingsImpl::SetPreferredColorScheme(
@@ -779,10 +779,6 @@ void WebSettingsImpl::SetNavigationControls(
 
 void WebSettingsImpl::SetAriaModalPrunesAXTree(bool enabled) {
   settings_->SetAriaModalPrunesAXTree(enabled);
-}
-
-void WebSettingsImpl::SetUseAXMenuList(bool enabled) {
-  settings_->SetUseAXMenuList(enabled);
 }
 
 void WebSettingsImpl::SetSelectionClipboardBufferAvailable(bool available) {

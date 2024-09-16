@@ -216,6 +216,7 @@ COMPONENT_EXPORT(ONC) extern const char kApnTypeAttach[];
 COMPONENT_EXPORT(ONC) extern const char kApnTypeTether[];
 COMPONENT_EXPORT(ONC) extern const char kSource[];
 COMPONENT_EXPORT(ONC) extern const char kSourceUi[];
+COMPONENT_EXPORT(ONC) extern const char kSourceAdmin[];
 COMPONENT_EXPORT(ONC) extern const char kSourceModb[];
 COMPONENT_EXPORT(ONC) extern const char kSourceModem[];
 }  // namespace cellular_apn
@@ -258,6 +259,7 @@ COMPONENT_EXPORT(ONC) extern const char kIncludedRoutes[];
 COMPONENT_EXPORT(ONC) extern const char kExcludedRoutes[];
 COMPONENT_EXPORT(ONC) extern const char kType[];
 COMPONENT_EXPORT(ONC) extern const char kWebProxyAutoDiscoveryUrl[];
+COMPONENT_EXPORT(ONC) extern const char kMTU[];
 }  // namespace ipconfig
 
 namespace ethernet {
@@ -573,6 +575,10 @@ COMPONENT_EXPORT(ONC) extern const char kPSIMAdminAssignedAPNIds[];
 COMPONENT_EXPORT(ONC) extern const char kPSIMAdminAssignedAPNs[];
 COMPONENT_EXPORT(ONC)
 extern const char kUserCreatedNetworkConfigurationsAreEphemeral[];
+COMPONENT_EXPORT(ONC) extern const char kDisconnectWiFiOnEthernet[];
+COMPONENT_EXPORT(ONC)
+extern const char kDisconnectWiFiOnEthernetWhenConnected[];
+COMPONENT_EXPORT(ONC) extern const char kDisconnectWiFiOnEthernetWhenOnline[];
 }  // namespace global_network_config
 
 namespace device_state {

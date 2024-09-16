@@ -59,9 +59,11 @@ class PhoneNumber : public FormGroup {
   void set_profile(const AutofillProfile* profile) { profile_ = profile; }
 
   // FormGroup implementation:
-  void GetMatchingTypes(const std::u16string& text,
-                        const std::string& app_locale,
-                        FieldTypeSet* matching_types) const override;
+  void GetMatchingTypesWithProfileSources(
+      const std::u16string& text,
+      const std::string& app_locale,
+      FieldTypeSet* matching_types,
+      PossibleProfileValueSources* profile_value_sources) const override;
   std::u16string GetRawInfo(FieldType type) const override;
   void SetRawInfoWithVerificationStatus(FieldType type,
                                         const std::u16string& value,
@@ -73,10 +75,8 @@ class PhoneNumber : public FormGroup {
     PhoneCombineHelper();
     ~PhoneCombineHelper();
 
-    // If |type| is a phone field type, processes the |value| accordingly and
-    // returns true. This function always returns true for all phone number
-    // field types. For all other field types false is returned.
-    bool SetInfo(const AutofillType& type, const std::u16string& value);
+    // Processes the `value` accordingly given a phone number `field_type`.
+    void SetInfo(FieldType field_type, const std::u16string& value);
 
     // Parses the number built up from pieces stored via SetInfo() according to
     // the specified |profile|'s country code, falling back to the given

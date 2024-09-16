@@ -13,6 +13,7 @@
 #include "chrome/browser/ui/tabs/organization/tab_organization_utils.h"
 #include "chrome/browser/ui/tabs/tab_menu_model_delegate.h"
 #include "chrome/browser/ui/tabs/test_tab_strip_model_delegate.h"
+#include "chrome/browser/ui/tabs/test_util.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/menu_model_test.h"
@@ -26,6 +27,7 @@
 
 class TabMenuModelTest : public MenuModelTest,
                          public BrowserWithTestWindowTest {
+  tabs::PreventTabFeatureInitialization prevent_;
 };
 
 TEST_F(TabMenuModelTest, Basics) {
@@ -47,10 +49,7 @@ TEST_F(TabMenuModelTest, Basics) {
 TEST_F(TabMenuModelTest, OrganizeTabs) {
   TabOrganizationUtils::GetInstance()->SetIgnoreOptGuideForTesting(true);
   base::test::ScopedFeatureList feature_list;
-  feature_list.InitWithFeatures(
-      {features::kTabOrganization, features::kChromeRefresh2023,
-       features::kChromeWebuiRefresh2023},
-      {});
+  feature_list.InitWithFeatures({features::kTabOrganization}, {});
 
   chrome::NewTab(browser());
   TabMenuModel model(&delegate_, browser()->tab_menu_model_delegate(),

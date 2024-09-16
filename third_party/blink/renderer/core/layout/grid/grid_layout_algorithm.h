@@ -220,8 +220,7 @@ class CORE_EXPORT GridLayoutAlgorithm
       const LogicalSize& fixed_available_size,
       GridLayoutSubtree&& opt_layout_subtree = GridLayoutSubtree(),
       bool min_block_size_should_encompass_intrinsic_size = false,
-      std::optional<LayoutUnit> opt_fragment_relative_block_offset =
-          std::nullopt) const;
+      std::optional<LayoutUnit> opt_child_block_offset = std::nullopt) const;
 
   // `containing_grid_area` is an optional out parameter that holds the computed
   // grid area (offset and size) of the specified grid item.
@@ -232,8 +231,7 @@ class CORE_EXPORT GridLayoutAlgorithm
       LogicalRect* containing_grid_area = nullptr,
       LayoutUnit unavailable_block_size = LayoutUnit(),
       bool min_block_size_should_encompass_intrinsic_size = false,
-      std::optional<LayoutUnit> opt_fragment_relative_block_offset =
-          std::nullopt) const;
+      std::optional<LayoutUnit> opt_child_block_offset = std::nullopt) const;
 
   ConstraintSpace CreateConstraintSpaceForMeasure(
       const SubgriddedItemData& subgridded_item,
@@ -264,13 +262,16 @@ class CORE_EXPORT GridLayoutAlgorithm
       Vector<GridItemPlacementData>* grid_item_placement_data,
       Vector<LayoutUnit>* row_offset_adjustments,
       LayoutUnit* intrinsic_block_size,
-      LayoutUnit* consumed_grid_block_size);
+      LayoutUnit* offset_in_stitched_container);
 
   // Computes the static position, grid area and its offset of out of flow
   // elements in the grid (as provided by `oof_children`).
   void PlaceOutOfFlowItems(const GridLayoutData& layout_data,
                            const LayoutUnit block_size,
                            HeapVector<Member<LayoutBox>>& oof_children);
+
+  // Set reading flow elements so they can be accessed by LayoutBox.
+  void SetReadingFlowElements(const GridSizingTree& sizing_tree);
 
   LayoutUnit ComputeGridItemAvailableSize(
       const GridItemData& grid_item,

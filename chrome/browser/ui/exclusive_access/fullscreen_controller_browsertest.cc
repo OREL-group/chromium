@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
+
 #include "base/functional/bind.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "base/test/test_mock_time_task_runner.h"
@@ -17,15 +19,14 @@
 #include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_test.h"
-#include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
+#include "components/input/native_web_keyboard_event.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/input/native_web_keyboard_event.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/test/browser_test.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
@@ -62,7 +63,13 @@ void WaitForDisplayed(Browser* browser) {
 //
 // Fullscreen tests.
 //
-IN_PROC_BROWSER_TEST_F(FullscreenControllerTest, FullscreenOnFileURL) {
+#if BUILDFLAG(IS_MAC)
+#define MAYBE_FullscreenOnFileURL DISABLED_FullscreenOnFileURL
+#else
+#define MAYBE_FullscreenOnFileURL FullscreenOnFileURL
+#endif
+// TODO(https://crbug.com/330729275): Re-enable when fixed on macOS 14.
+IN_PROC_BROWSER_TEST_F(FullscreenControllerTest, MAYBE_FullscreenOnFileURL) {
   static const base::FilePath::CharType* kEmptyFile =
       FILE_PATH_LITERAL("empty.html");
   GURL file_url(ui_test_utils::GetTestUrl(
@@ -224,8 +231,8 @@ IN_PROC_BROWSER_TEST_F(FullscreenControllerTest, FastKeyboardLockUnlockRelock) {
   base::TestMockTimeTaskRunner::ScopedContext scoped_context(task_runner.get());
 
   ASSERT_TRUE(RequestKeyboardLock(/*esc_key_locked=*/true));
-  // Shorter than |ExclusiveAccessBubble::kInitialDelayMs|.
-  task_runner->FastForwardBy(base::Milliseconds(InitialBubbleDelayMs() / 2));
+  // Shorter than `ExclusiveAccessBubble::kShowTime`.
+  task_runner->FastForwardBy(ExclusiveAccessBubble::kShowTime / 2);
   CancelKeyboardLock();
   ASSERT_TRUE(RequestKeyboardLock(/*esc_key_locked=*/true));
   ASSERT_TRUE(GetExclusiveAccessManager()
@@ -241,8 +248,8 @@ IN_PROC_BROWSER_TEST_F(FullscreenControllerTest, SlowKeyboardLockUnlockRelock) {
   base::TestMockTimeTaskRunner::ScopedContext scoped_context(task_runner.get());
 
   ASSERT_TRUE(RequestKeyboardLock(/*esc_key_locked=*/true));
-  // Longer than |ExclusiveAccessBubble::kInitialDelayMs|.
-  task_runner->FastForwardBy(base::Milliseconds(InitialBubbleDelayMs() + 20));
+  // Longer than `ExclusiveAccessBubble::kShowTime`.
+  task_runner->FastForwardBy(ExclusiveAccessBubble::kShowTime * 2);
   CancelKeyboardLock();
   ASSERT_TRUE(RequestKeyboardLock(/*esc_key_locked=*/true));
   ASSERT_TRUE(GetExclusiveAccessManager()
@@ -271,13 +278,13 @@ IN_PROC_BROWSER_TEST_F(FullscreenControllerTest,
                   ->keyboard_lock_controller()
                   ->IsKeyboardLockActive());
 
-  content::NativeWebKeyboardEvent key_down_event(
+  input::NativeWebKeyboardEvent key_down_event(
       blink::WebKeyboardEvent::Type::kRawKeyDown,
       blink::WebInputEvent::kNoModifiers,
       blink::WebInputEvent::GetStaticTimeStampForTests());
   key_down_event.windows_key_code = ui::VKEY_ESCAPE;
 
-  content::NativeWebKeyboardEvent key_up_event(
+  input::NativeWebKeyboardEvent key_up_event(
       blink::WebKeyboardEvent::Type::kKeyUp, blink::WebInputEvent::kNoModifiers,
       blink::WebInputEvent::GetStaticTimeStampForTests());
   key_up_event.windows_key_code = ui::VKEY_ESCAPE;
@@ -320,13 +327,13 @@ IN_PROC_BROWSER_TEST_F(FullscreenControllerTest,
                   ->keyboard_lock_controller()
                   ->IsKeyboardLockActive());
 
-  content::NativeWebKeyboardEvent key_down_event(
+  input::NativeWebKeyboardEvent key_down_event(
       blink::WebKeyboardEvent::Type::kRawKeyDown,
       blink::WebInputEvent::kNoModifiers,
       blink::WebInputEvent::GetStaticTimeStampForTests());
   key_down_event.windows_key_code = ui::VKEY_ESCAPE;
 
-  content::NativeWebKeyboardEvent key_up_event(
+  input::NativeWebKeyboardEvent key_up_event(
       blink::WebKeyboardEvent::Type::kKeyUp, blink::WebInputEvent::kNoModifiers,
       blink::WebInputEvent::GetStaticTimeStampForTests());
   key_up_event.windows_key_code = ui::VKEY_ESCAPE;

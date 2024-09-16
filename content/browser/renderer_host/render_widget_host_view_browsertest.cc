@@ -179,7 +179,7 @@ class RenderWidgetHostViewBrowserTest : public ContentBrowserTest {
   static void GiveItSomeTime() {
     base::RunLoop run_loop;
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
-        FROM_HERE, run_loop.QuitClosure(), base::Milliseconds(250));
+        FROM_HERE, run_loop.QuitClosure(), TestTimeouts::tiny_timeout());
     run_loop.Run();
   }
 
@@ -994,7 +994,8 @@ IN_PROC_BROWSER_TEST_F(RenderWidgetHostViewBrowserTestBase,
       WebContents::Create(new_contents_params));
 
   new_web_contents->GetController().LoadURLWithParams(
-      NavigationController::LoadURLParams(GURL(url::kAboutBlankURL)));
+      NavigationController::LoadURLParams(
+          embedded_test_server()->GetURL("/empty.html")));
   EXPECT_TRUE(WaitForLoadStop(new_web_contents.get()));
 
   // Start a cross-process navigation.
@@ -1338,7 +1339,7 @@ class CompositingRenderWidgetHostViewBrowserTestTabCapture
         default:
           LOG(ERROR)
               << "Invalid readback response value: " << readback_result_;
-          NOTREACHED();
+          NOTREACHED_IN_MIGRATION();
       }
       // clang-format on
     } while (readback_result_ != READBACK_SUCCESS &&
@@ -1584,7 +1585,8 @@ class RenderWidgetHostViewPresentationFeedbackBrowserTest
     const base::TimeTicks start_time = base::TimeTicks::Now();
     // The full action_timeout is excessively long when expecting nothing to be
     // logged.
-    while (base::TimeTicks::Now() - start_time < base::Seconds(1)) {
+    const base::TimeDelta kTimeout = TestTimeouts::action_timeout() / 10;
+    while (base::TimeTicks::Now() - start_time < kTimeout) {
       GiveItSomeTime();
       ASSERT_TRUE(
           histogram_tester_.GetAllSamples("Browser.Tabs.TabSwitchResult3")
@@ -1630,8 +1632,14 @@ class RenderWidgetHostViewPresentationFeedbackBrowserTest
   base::HistogramTester histogram_tester_;
 };
 
+// TODO(crbug.com/353234554): Flaky on linux-lacros-tester-rel.
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+#define MAYBE_Show DISABLED_Show
+#else
+#define MAYBE_Show Show
+#endif
 IN_PROC_BROWSER_TEST_F(RenderWidgetHostViewPresentationFeedbackBrowserTest,
-                       Show) {
+                       MAYBE_Show) {
   CreateVisibleTimeRequest();
   GetRenderWidgetHostView()->ShowWithVisibility(PageVisibilityState::kVisible);
   ExpectPresentationFeedback(TabSwitchResult::kSuccess);
@@ -1657,8 +1665,14 @@ IN_PROC_BROWSER_TEST_F(RenderWidgetHostViewPresentationFeedbackBrowserTest,
   ExpectNoPresentationFeedback();
 }
 
+// TODO(crbug.com/353234554): Flaky on linux-lacros-tester-rel.
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+#define MAYBE_ShowWhileCapturing DISABLED_ShowWhileCapturing
+#else
+#define MAYBE_ShowWhileCapturing ShowWhileCapturing
+#endif
 IN_PROC_BROWSER_TEST_F(RenderWidgetHostViewPresentationFeedbackBrowserTest,
-                       ShowWhileCapturing) {
+                       MAYBE_ShowWhileCapturing) {
   // Frame is captured and then becomes visible.
   CreateVisibleTimeRequest();
   GetRenderWidgetHostView()->ShowWithVisibility(
@@ -1704,7 +1718,7 @@ IN_PROC_BROWSER_TEST_F(RenderWidgetHostViewPresentationFeedbackBrowserTest,
 // when the RWHV is visible. These tests add a parent layer to make sure that
 // presentation feedback is logged when the state is UseParentLayerCompositor.
 
-// TODO(https://crbug.com/1164477): These tests don't match the behaviour of the
+// TODO(crbug.com/40163556): These tests don't match the behaviour of the
 // browser. In production the Browser.Tabs.* histograms are logged but in this
 // test, the presentation time request is swallowed during the
 // UseParentLayerCompositor state. Need to find out what's wrong with the test
@@ -1915,7 +1929,7 @@ namespace {
 //    BFCached, but the OOPIF still has reference to a RWHV/NativeView that it
 //    shouldn't have.
 //
-// TODO(https://crbug.com/1492600):
+// TODO(crbug.com/40285569):
 // - A page shouldn't be BFCached if it is no longer reachable via session
 //   history navigations (i.e., if the navigation entry is replaced).
 // - When the browser is in a steady state with no on-going navigations, there
@@ -1950,6 +1964,13 @@ class RenderWidgetHostViewOOPIFNavigatesMainFrameLocationReplaceBrowserTest
       scoped_feature_list_.InitWithFeaturesAndParameters(enabled_features, {});
       command_line->AppendSwitch(switches::kDisableBackForwardCache);
     }
+    // Disable the delay of creating the speculative RFH for test
+    // TouchEventsForwardedToTheCorrectRenderWidgetHostView.
+    // The test involves receiving a coop header for a non-coop speculative RFH.
+    // The speculatve RFH must be created when the request is sent.
+    feature_list_for_defer_speculative_rfh_.InitAndEnableFeatureWithParameters(
+        features::kDeferSpeculativeRFHCreation,
+        {{"create_speculative_rfh_delay_ms", "0"}});
 
     RenderWidgetHostViewBrowserTest::SetUpCommandLine(command_line);
   }
@@ -2002,6 +2023,7 @@ class RenderWidgetHostViewOOPIFNavigatesMainFrameLocationReplaceBrowserTest
   net::EmbeddedTestServer https_server_{
       net::EmbeddedTestServer::Type::TYPE_HTTPS};
   base::test::ScopedFeatureList scoped_feature_list_;
+  base::test::ScopedFeatureList feature_list_for_defer_speculative_rfh_;
 };
 
 std::string DescribeBFCacheFeatureStatus(
@@ -2015,7 +2037,7 @@ std::string DescribeBFCacheFeatureStatus(
 
 }  // namespace
 
-// TODO(https://crbug.com/1492600): When fix the BFCache behavior, move this
+// TODO(crbug.com/40285569): When fix the BFCache behavior, move this
 // test into "back_forward_cache_basics_browsertest.cc". Temporarily placed here
 // to reuse the testing harness.
 IN_PROC_BROWSER_TEST_P(
@@ -2040,7 +2062,7 @@ IN_PROC_BROWSER_TEST_P(
 
   bool bfcache_enabled = GetParam();
   if (bfcache_enabled) {
-    // TODO(https://crbug.com/1492600): We shouldn't store the old page and its
+    // TODO(crbug.com/40285569): We shouldn't store the old page and its
     // OOPIF in the BFCache.
     ASSERT_FALSE(old_main_frame.IsDestroyed());
     ASSERT_FALSE(subframe_rfh.IsDestroyed());
@@ -2058,6 +2080,7 @@ IN_PROC_BROWSER_TEST_P(
 // to the main frame's `RenderWidgetHostViewAndroid` and its `ui::ViewAndroid`,
 // no matter if there are redundant RWHVAs / VAs under the same WebContents.
 #if BUILDFLAG(IS_ANDROID)
+
 IN_PROC_BROWSER_TEST_P(
     RenderWidgetHostViewOOPIFNavigatesMainFrameLocationReplaceBrowserTest,
     TouchEventsForwardedToTheCorrectRenderWidgetHostView) {
@@ -2082,7 +2105,7 @@ IN_PROC_BROWSER_TEST_P(
   // Three RWHV when BFCache is enabled: old main frame and its OOPIF, and the
   // new main frame.
   //
-  // TODO(https://crbug.com/1492600): The number of RWHVs should be one,
+  // TODO(crbug.com/40285569): The number of RWHVs should be one,
   // regardless of BFCache.
   size_t num_expected_rwhv = bfcache_enabled ? 3u : 1u;
   size_t num_actual_rwhv = 0u;
@@ -2099,8 +2122,12 @@ IN_PROC_BROWSER_TEST_P(
   // view from the native view tree. Thus the number of ViewAndroids is two
   // instead of three, when the old main frame and the OOPIF are BFCached. See
   // `WebContentsViewAndroid::RenderViewHostChanged()`.
+  // If the DeferSpeculativeRFHCreation feature is enabled, the RWHV won't be
+  // created when the navigation starts so only one native view will be left.
+  // For some reason the android view for the first speculative RFH is not
+  // removed when the response arrives (a new speculiatve RFH will be created).
   //
-  // TODO(https://crbug.com/1492600): The number of `ui::ViewAndroid`s should be
+  // TODO(crbug.com/40285569): The number of `ui::ViewAndroid`s should be
   // one, regardless of BFCache.
   size_t num_expected_native_view = bfcache_enabled ? 2u : 1u;
   auto* web_contents_view_android =

@@ -11,24 +11,24 @@
 #include "base/files/file_util.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/notreached.h"
+#include "base/values.h"
 #include "base/version.h"
 #include "build/build_config.h"
 #include "chrome/updater/test/integration_test_commands.h"
 #include "chrome/updater/test/integration_tests_impl.h"
 #include "chrome/updater/test/server.h"
-#include "chrome/updater/test_scope.h"
 #include "chrome/updater/update_service.h"
 #include "chrome/updater/updater_scope.h"
 #include "chrome/updater/util/util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
-namespace updater {
-namespace test {
+namespace updater::test {
 
 class IntegrationTestCommandsUser : public IntegrationTestCommands {
  public:
-  IntegrationTestCommandsUser() = default;
+  explicit IntegrationTestCommandsUser(UpdaterScope scope)
+      : updater_scope_(scope) {}
 
   void ExpectNoCrashes() const override {
     updater::test::ExpectNoCrashes(updater_scope_);
@@ -36,11 +36,11 @@ class IntegrationTestCommandsUser : public IntegrationTestCommands {
 
   void PrintLog() const override { updater::test::PrintLog(updater_scope_); }
 
-  void CopyLog() const override {
+  void CopyLog(const std::string& infix) const override {
     std::optional<base::FilePath> path = GetInstallDirectory(updater_scope_);
     EXPECT_TRUE(path);
     if (path) {
-      updater::test::CopyLog(*path);
+      updater::test::CopyLog(*path, infix);
     }
   }
 
@@ -59,10 +59,13 @@ class IntegrationTestCommandsUser : public IntegrationTestCommands {
                             const std::string& tag,
                             const std::string& child_window_text_to_find,
                             const bool always_launch_cmd,
-                            const bool verify_app_logo_loaded) const override {
+                            const bool verify_app_logo_loaded,
+                            const bool expect_success,
+                            const bool wait_for_the_installer) const override {
     updater::test::InstallUpdaterAndApp(
         updater_scope_, app_id, is_silent_install, tag,
-        child_window_text_to_find, always_launch_cmd, verify_app_logo_loaded);
+        child_window_text_to_find, always_launch_cmd, verify_app_logo_loaded,
+        expect_success, wait_for_the_installer);
   }
 
   void ExpectInstalled() const override {
@@ -144,10 +147,11 @@ class IntegrationTestCommandsUser : public IntegrationTestCommands {
                             const std::string& install_data_index,
                             UpdateService::Priority priority,
                             const base::Version& from_version,
-                            const base::Version& to_version) const override {
-    updater::test::ExpectUpdateSequence(updater_scope_, test_server, app_id,
-                                        install_data_index, priority,
-                                        from_version, to_version);
+                            const base::Version& to_version,
+                            bool do_fault_injection) const override {
+    updater::test::ExpectUpdateSequence(
+        updater_scope_, test_server, app_id, install_data_index, priority,
+        from_version, to_version, do_fault_injection);
   }
 
   void ExpectUpdateSequenceBadHash(
@@ -167,10 +171,11 @@ class IntegrationTestCommandsUser : public IntegrationTestCommands {
                              const std::string& install_data_index,
                              UpdateService::Priority priority,
                              const base::Version& from_version,
-                             const base::Version& to_version) const override {
-    updater::test::ExpectInstallSequence(updater_scope_, test_server, app_id,
-                                         install_data_index, priority,
-                                         from_version, to_version);
+                             const base::Version& to_version,
+                             bool do_fault_injection) const override {
+    updater::test::ExpectInstallSequence(
+        updater_scope_, test_server, app_id, install_data_index, priority,
+        from_version, to_version, do_fault_injection);
   }
 
   void ExpectVersionActive(const std::string& version) const override {
@@ -221,6 +226,11 @@ class IntegrationTestCommandsUser : public IntegrationTestCommands {
     updater::test::ExpectAppTag(updater_scope_, app_id, tag);
   }
 
+  void SetAppTag(const std::string& app_id,
+                 const std::string& tag) const override {
+    updater::test::SetAppTag(updater_scope_, app_id, tag);
+  }
+
   void ExpectAppVersion(const std::string& app_id,
                         const base::Version& version) const override {
     updater::test::ExpectAppVersion(updater_scope_, app_id, version);
@@ -258,6 +268,10 @@ class IntegrationTestCommandsUser : public IntegrationTestCommands {
     updater::test::RunServer(updater_scope_, exit_code, internal);
   }
 
+  void RegisterApp(const RegistrationRequest& registration) const override {
+    updater::test::RegisterApp(updater_scope_, registration);
+  }
+
   void CheckForUpdate(const std::string& app_id) const override {
     updater::test::CheckForUpdate(updater_scope_, app_id);
   }
@@ -289,10 +303,6 @@ class IntegrationTestCommandsUser : public IntegrationTestCommands {
   void InstallApp(const std::string& app_id,
                   const base::Version& version) const override {
     updater::test::InstallApp(updater_scope_, app_id, version);
-  }
-
-  bool WaitForUpdaterExit() const override {
-    return updater::test::WaitForUpdaterExit(updater_scope_);
   }
 
 #if BUILDFLAG(IS_WIN)
@@ -353,7 +363,7 @@ class IntegrationTestCommandsUser : public IntegrationTestCommands {
     // /Library is owned by root.
     return base::FilePath(FILE_PATH_LITERAL("/Library"));
 #else
-    NOTREACHED() << __func__ << ": not implemented.";
+    NOTREACHED_IN_MIGRATION() << __func__ << ": not implemented.";
     return base::FilePath();
 #endif
   }
@@ -394,6 +404,16 @@ class IntegrationTestCommandsUser : public IntegrationTestCommands {
   void ExpectPrepareToRunBundleSuccess(
       const base::FilePath& bundle_path) const override {
     updater::test::ExpectPrepareToRunBundleSuccess(bundle_path);
+  }
+
+  void ExpectKSAdminFetchTag(
+      bool elevate,
+      const std::string& product_id,
+      const base::FilePath& xc_path,
+      std::optional<UpdaterScope> store_flag,
+      std::optional<std::string> want_tag) const override {
+    updater::test::ExpectKSAdminFetchTag(updater_scope_, elevate, product_id,
+                                         xc_path, store_flag, want_tag);
   }
 #endif  // BUILDFLAG(IS_MAC)
 
@@ -444,17 +464,24 @@ class IntegrationTestCommandsUser : public IntegrationTestCommands {
 
   void DMCleanup() override { updater::test::DMCleanup(updater_scope_); }
 
+  void InstallEnterpriseCompanionApp(
+      const base::Value::Dict& external_overrides) override {
+    updater::test::InstallEnterpriseCompanionApp(external_overrides);
+  }
+
+  void UninstallEnterpriseCompanionApp() override {
+    updater::test::UninstallEnterpriseCompanionApp();
+  }
+
  private:
   ~IntegrationTestCommandsUser() override = default;
 
-  static const UpdaterScope updater_scope_;
+  const UpdaterScope updater_scope_;
 };
 
-const UpdaterScope IntegrationTestCommandsUser::updater_scope_ = GetTestScope();
-
-scoped_refptr<IntegrationTestCommands> CreateIntegrationTestCommandsUser() {
-  return base::MakeRefCounted<IntegrationTestCommandsUser>();
+scoped_refptr<IntegrationTestCommands> CreateIntegrationTestCommandsUser(
+    UpdaterScope scope) {
+  return base::MakeRefCounted<IntegrationTestCommandsUser>(scope);
 }
 
-}  // namespace test
-}  // namespace updater
+}  // namespace updater::test

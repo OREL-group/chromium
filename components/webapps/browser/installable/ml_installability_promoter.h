@@ -43,7 +43,8 @@ class AppBannerManager;
 class MlInstallOperationTracker;
 class SiteManifestMetricsTask;
 
-constexpr base::TimeDelta kTimeToWaitForWebContentsObservers = base::Seconds(3);
+constexpr base::TimeDelta kTimeToWaitForWebContentsObservers =
+    base::Seconds(10);
 
 struct SiteInstallMetrics {
   bool is_fully_installed;
@@ -95,6 +96,7 @@ class MLInstallabilityPromoter
       public content::WebContentsUserData<MLInstallabilityPromoter> {
  public:
   static constexpr char kShowInstallPromptLabel[] = "ShowInstallPrompt";
+  static constexpr char kDontShowLabel[] = "DontShow";
 
   ~MLInstallabilityPromoter() override;
 
@@ -178,7 +180,7 @@ class MLInstallabilityPromoter
 
   // These variables are set on page load.
   GURL site_url_;
-  // TODO(https://crbug.com/1455521) Use raw_ptr when this class is owned by
+  // TODO(crbug.com/40272826) Use raw_ptr when this class is owned by
   // AppBannerManager.
   base::WeakPtr<AppBannerManager> app_banner_manager_;
 

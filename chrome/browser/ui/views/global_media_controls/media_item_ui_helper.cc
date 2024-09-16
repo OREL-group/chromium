@@ -4,12 +4,12 @@
 
 #include "chrome/browser/ui/views/global_media_controls/media_item_ui_helper.h"
 
-#include <string>
-
+#include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/media/router/media_router_feature.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/global_media_controls/cast_media_notification_item.h"
 #include "chrome/browser/ui/global_media_controls/media_item_ui_metrics.h"
+#include "chrome/browser/ui/views/global_media_controls/cast_device_footer_view.h"
 #include "chrome/browser/ui/views/global_media_controls/cast_device_selector_view.h"
 #include "chrome/browser/ui/views/global_media_controls/media_dialog_view.h"
 #include "chrome/browser/ui/views/global_media_controls/media_item_ui_cast_footer_view.h"
@@ -253,27 +253,28 @@ std::unique_ptr<global_media_controls::MediaItemUIFooter> BuildFooter(
   // Show a footer view for a Cast item.
   if (item->GetSourceType() == media_message_center::SourceType::kCast &&
       media_router::GlobalMediaControlsCastStartStopEnabled(profile)) {
+    auto media_cast_item =
+        static_cast<CastMediaNotificationItem*>(item.get())->GetWeakPtr();
 #if BUILDFLAG(IS_CHROMEOS)
-    bool use_updated_ui =
-        base::FeatureList::IsEnabled(media::kGlobalMediaControlsCrOSUpdatedUI);
-#else
-    bool use_updated_ui =
-        base::FeatureList::IsEnabled(media::kGlobalMediaControlsUpdatedUI);
-#endif
-
-    if (use_updated_ui && media_color_theme.has_value()) {
+    if (media_color_theme.has_value()) {
       return std::make_unique<MediaItemUICastFooterView>(
-          base::BindRepeating(
-              &CastMediaNotificationItem::StopCasting,
-              static_cast<CastMediaNotificationItem*>(item.get())
-                  ->GetWeakPtr()),
+          base::BindRepeating(&CastMediaNotificationItem::StopCasting,
+                              media_cast_item),
           media_color_theme.value());
     }
+#else
+    if (media_color_theme.has_value()) {
+      return std::make_unique<CastDeviceFooterView>(
+          media_cast_item->device_name(),
+          base::BindRepeating(&CastMediaNotificationItem::StopCasting,
+                              media_cast_item),
+          media_color_theme.value());
+    }
+#endif
 
     return std::make_unique<MediaItemUILegacyCastFooterView>(
-        base::BindRepeating(
-            &CastMediaNotificationItem::StopCasting,
-            static_cast<CastMediaNotificationItem*>(item.get())->GetWeakPtr()));
+        base::BindRepeating(&CastMediaNotificationItem::StopCasting,
+                            media_cast_item));
   }
 
   base::RepeatingClosure stop_casting_cb =
@@ -281,6 +282,17 @@ std::unique_ptr<global_media_controls::MediaItemUIFooter> BuildFooter(
   if (stop_casting_cb.is_null()) {
     return nullptr;
   }
+
+#if !BUILDFLAG(IS_CHROMEOS)
+  if (media_color_theme.has_value()) {
+    auto* media_session_item =
+        static_cast<global_media_controls::MediaSessionNotificationItem*>(
+            item.get());
+    return std::make_unique<CastDeviceFooterView>(
+        media_session_item->device_name(), std::move(stop_casting_cb),
+        media_color_theme.value());
+  }
+#endif
 
   return std::make_unique<MediaItemUILegacyCastFooterView>(
       std::move(stop_casting_cb));
@@ -292,22 +304,44 @@ media_message_center::MediaColorTheme GetMediaColorTheme() {
   theme.secondary_foreground_color_id = ui::kColorSysOnSurfaceSubtle;
 
   // Colors for the play/pause button.
-  theme.play_button_foreground_color_id = ui::kColorSysOnTonalContainer;
-  theme.play_button_container_color_id = ui::kColorSysTonalContainer;
+  theme.play_button_foreground_color_id = ui::kColorSysOnPrimary;
+  theme.play_button_container_color_id = ui::kColorSysPrimary;
   theme.pause_button_foreground_color_id = ui::kColorSysOnTonalContainer;
   theme.pause_button_container_color_id = ui::kColorSysTonalContainer;
 
   // Colors for the progress view.
-  theme.playing_progress_foreground_color_id = ui::kColorSysOnTonalContainer;
-  theme.playing_progress_background_color_id = ui::kColorSysTonalContainer;
-  theme.paused_progress_foreground_color_id = ui::kColorSysOnTonalContainer;
-  theme.paused_progress_background_color_id = ui::kColorSysTonalContainer;
+  theme.playing_progress_foreground_color_id = ui::kColorSysPrimary;
+  theme.playing_progress_background_color_id =
+      ui::kColorSysStateDisabledContainer;
+  theme.paused_progress_foreground_color_id =
+      ui::kColorSysStateDisabledContainer;
+  theme.paused_progress_background_color_id =
+      ui::kColorSysStateDisabledContainer;
 
   theme.background_color_id = ui::kColorSysSurface2;
   theme.device_selector_border_color_id = ui::kColorSysDivider;
+  theme.device_selector_foreground_color_id = ui::kColorSysPrimary;
   theme.device_selector_background_color_id = ui::kColorSysSurface5;
   theme.error_foreground_color_id = ui::kColorSysError;
   theme.error_container_color_id = ui::kColorSysErrorContainer;
   theme.focus_ring_color_id = ui::kColorSysStateFocusRing;
   return theme;
+}
+
+const gfx::VectorIcon& GetVectorIcon(
+    global_media_controls::mojom::IconType icon) {
+  switch (icon) {
+    case global_media_controls::mojom::IconType::kInfo:
+      return kInfoIcon;
+    case global_media_controls::mojom::IconType::kSpeaker:
+      return kSpeakerIcon;
+    case global_media_controls::mojom::IconType::kSpeakerGroup:
+      return kSpeakerGroupIcon;
+    case global_media_controls::mojom::IconType::kInput:
+      return kInputIcon;
+    case global_media_controls::mojom::IconType::kThrobber:
+    case global_media_controls::mojom::IconType::kTv:
+    case global_media_controls::mojom::IconType::kUnknown:
+      return kTvIcon;
+  }
 }

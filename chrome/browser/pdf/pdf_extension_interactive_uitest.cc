@@ -196,7 +196,8 @@ views::Widget* TouchSelectText(content::WebContents* contents,
                                const gfx::Point& screen_pos) {
   views::NamedWidgetShownWaiter waiter(views::test::AnyWidgetTestPasskey{},
                                        "TouchSelectionMenuViews");
-  content::SimulateTouchEventAt(contents, ui::ET_TOUCH_PRESSED, screen_pos);
+  content::SimulateTouchEventAt(contents, ui::EventType::kTouchPressed,
+                                screen_pos);
 
   EXPECT_EQ(true, content::EvalJs(
                       listener_host,
@@ -207,7 +208,8 @@ views::Widget* TouchSelectText(content::WebContents* contents,
                       "  });"
                       "});"));
 
-  content::SimulateTouchEventAt(contents, ui::ET_TOUCH_RELEASED, screen_pos);
+  content::SimulateTouchEventAt(contents, ui::EventType::kTouchReleased,
+                                screen_pos);
   return waiter.WaitIfNeededAndGet();
 }
 
@@ -246,7 +248,7 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionInteractiveUITest,
   ASSERT_TRUE(ellipsis_button);
   ContextMenuWaiter context_menu_observer;
   ui::GestureEvent tap(0, 0, 0, ui::EventTimeForNow(),
-                       ui::GestureEventDetails(ui::ET_GESTURE_TAP));
+                       ui::GestureEventDetails(ui::EventType::kGestureTap));
   ellipsis_button->OnGestureEvent(&tap);
   context_menu_observer.WaitForMenuOpenAndClose();
 
@@ -311,6 +313,6 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionInteractiveUITest,
 }
 #endif  // defined(TOOLKIT_VIEWS) && defined(USE_AURA)
 
-// TODO(crbug.com/1445746): Stop testing both modes after OOPIF PDF viewer
+// TODO(crbug.com/40268279): Stop testing both modes after OOPIF PDF viewer
 // launches.
 INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(PDFExtensionInteractiveUITest);

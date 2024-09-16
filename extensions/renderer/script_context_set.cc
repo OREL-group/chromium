@@ -30,11 +30,6 @@
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-object.h"
 
-#if BUILDFLAG(ENABLE_PDF)
-#include "base/feature_list.h"
-#include "pdf/pdf_features.h"
-#endif  // BUILDFLAG(ENABLE_PDF)
-
 namespace extensions {
 
 namespace {
@@ -92,9 +87,9 @@ ScriptContext* ScriptContextSet::Register(
   } else if (effective_context_type == mojom::ContextType::kWebUi) {
     host_id.type = mojom::HostID::HostType::kWebUi;
   } else if (effective_context_type == mojom::ContextType::kWebPage &&
-             !is_webview && context_data.IsIsolatedApplication()) {
+             !is_webview && context_data.HasControlledFrameCapability()) {
     host_id.type = mojom::HostID::HostType::kControlledFrameEmbedder;
-    // TODO(crbug.com/1517392): Improve how we derive origin for controlled
+    // TODO(crbug.com/41490370): Improve how we derive origin for controlled
     // frame embedders in renderer.
     host_id.id = "";
     if (frame_url.has_scheme()) {
@@ -128,7 +123,7 @@ void ScriptContextSet::Remove(ScriptContext* context) {
 
 ScriptContext* ScriptContextSet::GetCurrent() const {
   v8::Isolate* isolate = v8::Isolate::TryGetCurrent();
-  if (UNLIKELY(!isolate)) {
+  if (!isolate) [[unlikely]] {
     return nullptr;
   }
   return isolate->InContext() ? GetByV8Context(isolate->GetCurrentContext())
@@ -295,14 +290,21 @@ mojom::ContextType ScriptContextSet::ClassifyJavaScriptContext(
 
   // We have an explicit check for sandboxed pages before checking whether the
   // extension is active in this process because:
-  // 1. Sandboxed pages run in the same process as regular extension pages, so
-  //    the extension is considered active.
+  // 1. Sandboxed extension pages which are not listed in the extension's
+  //    manifest sandbox section run in the same process as regular extension
+  //    pages, so the extension is considered active. (In contrast,
+  //    manifest-sandboxed pages run in a different process because they do not
+  //    have API access.)
   // 2. ScriptContext creation (which triggers bindings injection) happens
   //    before the SecurityContext is updated with the sandbox flags (after
   //    reading the CSP header), so the caller can't check if the context's
   //    security origin is unique yet.
-  if (ScriptContext::IsSandboxedPage(url))
+  if (ScriptContext::IsSandboxedPage(url)) {
+    // TODO(https://crbug.com/347031402): it's weird returning kWebPage if
+    // `extension` is non-null (which it is if `IsSandboxedPage` returns true).
+    // It would be better to return kUnprivileged in that case.
     return mojom::ContextType::kWebPage;
+  }
 
   if (extension && active_extension_ids_->count(extension->id()) > 0) {
     // |extension| is active in this process, but it could be either a true
@@ -315,15 +317,15 @@ mojom::ContextType ScriptContextSet::ClassifyJavaScriptContext(
       return mojom::ContextType::kPrivilegedWebPage;
     }
 
-    if (is_lock_screen_context_)
+    if (is_lock_screen_context_) {
       return mojom::ContextType::kLockscreenExtension;
+    }
 
     if (is_webview) {
 #if BUILDFLAG(ENABLE_PDF)
       // The PDF Viewer extension in a webview needs to be a privileged
       // extension in order to load.
-      if (base::FeatureList::IsEnabled(chrome_pdf::features::kPdfOopif) &&
-          extension->id() == extension_misc::kPdfExtensionId) {
+      if (extension->id() == extension_misc::kPdfExtensionId) {
         return mojom::ContextType::kPrivilegedExtension;
       }
 #endif  // BUILDFLAG(ENABLE_PDF)
@@ -331,8 +333,9 @@ mojom::ContextType ScriptContextSet::ClassifyJavaScriptContext(
       return mojom::ContextType::kUnprivilegedExtension;
     }
 
-    if (view_type == mojom::ViewType::kOffscreenDocument)
+    if (view_type == mojom::ViewType::kOffscreenDocument) {
       return mojom::ContextType::kOffscreenExtension;
+    }
 
     return mojom::ContextType::kPrivilegedExtension;
   }
@@ -352,14 +355,17 @@ mojom::ContextType ScriptContextSet::ClassifyJavaScriptContext(
                : mojom::ContextType::kUnprivilegedExtension;
   }
 
-  if (!url.is_valid())
+  if (!url.is_valid()) {
     return mojom::ContextType::kUnspecified;
+  }
 
-  if (url.SchemeIs(content::kChromeUIScheme))
+  if (url.SchemeIs(content::kChromeUIScheme)) {
     return mojom::ContextType::kWebUi;
+  }
 
-  if (url.SchemeIs(content::kChromeUIUntrustedScheme))
+  if (url.SchemeIs(content::kChromeUIUntrustedScheme)) {
     return mojom::ContextType::kUntrustedWebUi;
+  }
 
   return mojom::ContextType::kWebPage;
 }

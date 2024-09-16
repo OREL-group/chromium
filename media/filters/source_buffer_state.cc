@@ -46,7 +46,7 @@ base::TimeDelta EndTimestamp(const StreamParser::BufferQueue& queue) {
 bool CheckBytestreamTrackIds(const MediaTracks& tracks) {
   std::set<StreamParser::TrackId> bytestream_ids;
   for (const auto& track : tracks.tracks()) {
-    const StreamParser::TrackId& track_id = track->bytestream_track_id();
+    const StreamParser::TrackId& track_id = track->stream_id();
     if (bytestream_ids.find(track_id) != bytestream_ids.end()) {
       return false;
     }
@@ -196,9 +196,8 @@ void SourceBufferState::SetParseWarningCallback(
   frame_processor_->SetParseWarningCallback(std::move(parse_warning_cb));
 }
 
-bool SourceBufferState::AppendToParseBuffer(const uint8_t* data,
-                                            size_t length) {
-  return stream_parser_->AppendToParseBuffer(data, length);
+bool SourceBufferState::AppendToParseBuffer(base::span<const uint8_t> data) {
+  return stream_parser_->AppendToParseBuffer(data);
 }
 
 StreamParser::ParseStatus SourceBufferState::RunSegmentParserLoop(
@@ -501,7 +500,7 @@ void SourceBufferState::SetMemoryLimits(DemuxerStream::Type type,
       }
       break;
     case DemuxerStream::UNKNOWN:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
   }
 }
@@ -571,7 +570,7 @@ bool SourceBufferState::OnNewConfigs(std::unique_ptr<MediaTracks> tracks) {
   if (!CheckBytestreamTrackIds(*tracks)) {
     MEDIA_LOG(ERROR, media_log_) << "Duplicate bytestream track ids detected";
     for (const auto& track : tracks->tracks()) {
-      const StreamParser::TrackId& track_id = track->bytestream_track_id();
+      const StreamParser::TrackId& track_id = track->stream_id();
       MEDIA_LOG(DEBUG, media_log_) << TrackTypeToStr(track->type()) << " track "
                                    << " bytestream track id=" << track_id;
     }
@@ -596,7 +595,7 @@ bool SourceBufferState::OnNewConfigs(std::unique_ptr<MediaTracks> tracks) {
 
   FrameProcessor::TrackIdChanges track_id_changes;
   for (const auto& track : tracks->tracks()) {
-    const auto& track_id = track->bytestream_track_id();
+    const auto& track_id = track->stream_id();
 
     if (track->type() == MediaTrack::Type::kAudio) {
       AudioDecoderConfig audio_config = tracks->getAudioConfig(track_id);

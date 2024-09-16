@@ -8,6 +8,7 @@
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
 #import "ios/chrome/browser/shared/ui/util/util_swift.h"
+#import "ios/chrome/browser/ui/toolbar/buttons/buttons_constants.h"
 #import "ios/chrome/browser/ui/toolbar/buttons/toolbar_configuration.h"
 #import "ios/chrome/browser/ui/toolbar/public/toolbar_constants.h"
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
@@ -16,6 +17,9 @@
 namespace {
 const CGFloat kSpotlightSize = 38;
 const CGFloat kSpotlightCornerRadius = 7;
+const CGFloat kToolsMenuButtonImageSize = 35;
+const CGFloat kBlueDotSize = 10;
+const CGFloat kButtonImageInset = 3;
 }  // namespace
 
 @interface ToolbarButton () {
@@ -33,27 +37,11 @@ const CGFloat kSpotlightCornerRadius = 7;
 // iphHighlighted effect will be replacing the default image with this one,
 // instead of using tint color OR `self.spotlightView`.
 @property(nonatomic, strong) UIImage* IPHHighlightedImage;
+// View used to display the blue dot on the icon.
+@property(nonatomic, strong) UIView* blueDotView;
 @end
 
 @implementation ToolbarButton
-
-- (instancetype)initWithImage:(UIImage*)image {
-  return [self initWithImage:image IPHHighlightedImage:nil];
-}
-
-- (instancetype)initWithImage:(UIImage*)image
-          IPHHighlightedImage:(UIImage*)IPHHighlightedImage {
-  self = [[super class] buttonWithType:UIButtonTypeSystem];
-  if (self) {
-    DCHECK(!base::FeatureList::IsEnabled(kEnableStartupImprovements));
-    self.image = image;
-    self.IPHHighlightedImage = IPHHighlightedImage;
-    [self setImage:image forState:UIControlStateNormal];
-
-    [self initializeButton];
-  }
-  return self;
-}
 
 - (instancetype)initWithImageLoader:(ToolbarButtonImageLoader)imageLoader {
   return [self initWithImageLoader:imageLoader IPHHighlightedImageLoader:nil];
@@ -64,14 +52,22 @@ const CGFloat kSpotlightCornerRadius = 7;
               (ToolbarButtonImageLoader)IPHHighlightedImageLoader {
   self = [[super class] buttonWithType:UIButtonTypeSystem];
   if (self) {
-    DCHECK(imageLoader);
-    DCHECK(base::FeatureList::IsEnabled(kEnableStartupImprovements));
-    _imageLoader = imageLoader;
-    _IPHHighlightedImageLoader = IPHHighlightedImageLoader;
+    CHECK(imageLoader);
+    _imageLoader = [imageLoader copy];
+    _IPHHighlightedImageLoader = [IPHHighlightedImageLoader copy];
 
     [self initializeButton];
   }
   return self;
+}
+
+- (void)setImageLoader:(ToolbarButtonImageLoader)imageLoader {
+  CHECK(imageLoader);
+  _imageLoader = [imageLoader copy];
+  if (_image != nil) {
+    _image = nil;
+    [self updateImage];
+  }
 }
 
 #pragma mark - Public Methods
@@ -108,9 +104,7 @@ const CGFloat kSpotlightCornerRadius = 7;
   }
 
   [self checkNamedGuide];
-  if (base::FeatureList::IsEnabled(kEnableStartupImprovements)) {
-    [self checkImageVisibility];
-  }
+  [self checkImageVisibility];
 }
 
 - (void)setHiddenInCurrentState:(BOOL)hiddenInCurrentState {
@@ -140,54 +134,50 @@ const CGFloat kSpotlightCornerRadius = 7;
   [self updateTintColor];
 }
 
+- (void)setHasBlueDot:(BOOL)hasBlueDot {
+  if (_hasBlueDot == hasBlueDot) {
+    return;
+  }
+
+  _hasBlueDot = hasBlueDot;
+
+  if (hasBlueDot) {
+    [self addBlueDotViewIfNeeded];
+  } else {
+    [self removeBlueDotViewIfNeeded];
+  }
+}
+
 #pragma mark - Accessors
 
 - (UIView*)spotlightView {
-  if (base::FeatureList::IsEnabled(kEnableStartupImprovements)) {
-    // Lazy load spotlightView to improve startup latency.
-    if (!_spotlightView) {
-      [self createSpotlightViewIfNeeded];
-    }
-    return _spotlightView;
-  } else {
-    return _spotlightView;
+  // Lazy load spotlightView to improve startup latency.
+  if (!_spotlightView) {
+    [self createSpotlightViewIfNeeded];
   }
+  return _spotlightView;
 }
 
 - (UIImage*)image {
-  if (base::FeatureList::IsEnabled(kEnableStartupImprovements)) {
-    // Lazy load image to improve startup latency.
-    if (!_image) {
-      _image = _imageLoader();
-    }
-    return _image;
-  } else {
-    return _image;
+  // Lazy load image to improve startup latency.
+  if (!_image) {
+    _image = _imageLoader();
   }
+  return _image;
 }
 
 - (UIImage*)IPHHighlightedImage {
-  if (base::FeatureList::IsEnabled(kEnableStartupImprovements)) {
-    // Lazy load IPHHighlightedImage to improve startup latency.
-    if (!_IPHHighlightedImage && _IPHHighlightedImageLoader) {
-      _IPHHighlightedImage = _IPHHighlightedImageLoader();
-    }
-    return _IPHHighlightedImage;
-  } else {
-    return _IPHHighlightedImage;
+  // Lazy load IPHHighlightedImage to improve startup latency.
+  if (!_IPHHighlightedImage && _IPHHighlightedImageLoader) {
+    _IPHHighlightedImage = _IPHHighlightedImageLoader();
   }
+  return _IPHHighlightedImage;
 }
 
 #pragma mark - Private
 
 - (void)initializeButton {
   self.translatesAutoresizingMaskIntoConstraints = NO;
-
-  // Lazy load spotlight view to improve startup latency when
-  // kEnableStartupImprovements is enabled.
-  if (!base::FeatureList::IsEnabled(kEnableStartupImprovements)) {
-    [self createSpotlightViewIfNeeded];
-  }
 
   __weak __typeof(self) weakSelf = self;
   CustomHighlightableButtonHighlightHandler handler = ^(BOOL highlighted) {
@@ -225,9 +215,7 @@ const CGFloat kSpotlightCornerRadius = 7;
   self.hidden = self.hiddenInCurrentState || self.hiddenInCurrentSizeClass;
 
   [self checkNamedGuide];
-  if (base::FeatureList::IsEnabled(kEnableStartupImprovements)) {
-    [self checkImageVisibility];
-  }
+  [self checkImageVisibility];
 }
 
 // Checks whether the named guide associated with this button, if there is one,
@@ -271,11 +259,45 @@ const CGFloat kSpotlightCornerRadius = 7;
 
 // Whether there is an IPH highlighted image can be used.
 - (BOOL)canUseIPHHighlightedImage {
-  if (base::FeatureList::IsEnabled(kEnableStartupImprovements)) {
-    return _IPHHighlightedImageLoader != nil;
-  } else {
-    return self.IPHHighlightedImage != nil;
+  return _IPHHighlightedImageLoader != nil;
+}
+
+// Adds blue dot view to the button if there is none yet.
+- (void)addBlueDotViewIfNeeded {
+  if (self.blueDotView) {
+    return;
   }
+
+  self.blueDotView = [[UIView alloc] init];
+  self.blueDotView.translatesAutoresizingMaskIntoConstraints = NO;
+  self.blueDotView.accessibilityIdentifier = kToolbarButtonBlueDotViewID;
+  self.blueDotView.layer.cornerRadius = kBlueDotSize / 2;
+  self.blueDotView.backgroundColor = [UIColor colorNamed:kBlue600Color];
+  [self addSubview:self.blueDotView];
+
+  [NSLayoutConstraint activateConstraints:@[
+    [self.blueDotView.widthAnchor constraintEqualToConstant:kBlueDotSize],
+    [self.blueDotView.heightAnchor constraintEqualToConstant:kBlueDotSize],
+    // Position the blue dot at right top corner of the button image.
+    [self.blueDotView.centerXAnchor
+        constraintEqualToAnchor:self.centerXAnchor
+                       constant:kToolsMenuButtonImageSize / 2 -
+                                kButtonImageInset],
+    [self.blueDotView.centerYAnchor
+        constraintEqualToAnchor:self.centerYAnchor
+                       constant:-kToolsMenuButtonImageSize / 2 +
+                                kButtonImageInset],
+  ]];
+}
+
+// Removes blue dot view from the button if there is one.
+- (void)removeBlueDotViewIfNeeded {
+  if (!self.blueDotView) {
+    return;
+  }
+
+  [self.blueDotView removeFromSuperview];
+  self.blueDotView = nil;
 }
 
 @end

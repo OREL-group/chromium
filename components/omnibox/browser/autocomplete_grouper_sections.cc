@@ -125,19 +125,23 @@ void ZpsSection::InitFromMatches(ACMatches& matches) {
 /* static */ size_t AndroidNonZPSSection::num_visible_matches_{6};
 
 AndroidNonZPSSection::AndroidNonZPSSection(
+    bool show_only_search_suggestions,
     omnibox::GroupConfigMap& group_configs)
     : Section(
           15,
           {{1,  // Default match, not part of the Grouping.
             {{omnibox::GROUP_SEARCH, {1}},
-             {omnibox::GROUP_OTHER_NAVS, {1}},
+             {omnibox::GROUP_OTHER_NAVS, {1u}},
              {omnibox::GROUP_MOBILE_RICH_ANSWER,
               {OmniboxFieldTrial::kAnswerActionsShowRichCard.Get() &&
                        !OmniboxFieldTrial::kAnswerActionsShowAboveKeyboard.Get()
                    ? 1u
                    : 0u}}}},
+
            {num_visible_matches_ - 1,  // Top section / above the keyboard.
-            {{omnibox::GROUP_SEARCH, {5}}, {omnibox::GROUP_OTHER_NAVS, {5}}}},
+            {{omnibox::GROUP_SEARCH, {14}},
+             {omnibox::GROUP_OTHER_NAVS,
+              {show_only_search_suggestions ? 0u : 14u}}}},
            {1,  // Dedicated section for rich answer card just above the fold.
             {{omnibox::GROUP_MOBILE_RICH_ANSWER,
               {OmniboxFieldTrial::kAnswerActionsShowRichCard.Get() &&
@@ -145,22 +149,37 @@ AndroidNonZPSSection::AndroidNonZPSSection(
                    ? 1u
                    : 0u}}}},
            {14,  // Bottom section, up to the Section limit.
-            {{omnibox::GROUP_SEARCH, {9}}, {omnibox::GROUP_OTHER_NAVS, {9}}}}},
+            {{omnibox::GROUP_SEARCH, {14}},
+             {omnibox::GROUP_OTHER_NAVS,
+              {show_only_search_suggestions ? 0u : 14u}}}}},
           group_configs,
           omnibox::GroupConfig_SideType_DEFAULT_PRIMARY) {}
 
 void AndroidNonZPSSection::InitFromMatches(ACMatches& matches) {
+  auto rich_answer_match = base::ranges::find_if(
+      matches,
+      [&](const auto& match) { return match.answer_template.has_value(); });
+  bool has_rich_answer = rich_answer_match != matches.end();
+  if (!has_rich_answer) {
+    return;
+  }
+
+  bool has_url = base::ranges::any_of(matches, [](const auto& match) {
+    return !AutocompleteMatch::IsSearchType(match.type);
+  });
+  bool hide_if_urls_present =
+      !OmniboxFieldTrial::kAnswerActionsShowIfUrlsPresent.Get();
+  if (has_url && hide_if_urls_present) {
+    rich_answer_match->suggestion_group_id = omnibox::GROUP_SEARCH;
+  }
+
   if (!OmniboxFieldTrial::kAnswerActionsShowRichCard.Get() ||
       !OmniboxFieldTrial::kAnswerActionsShowAboveKeyboard.Get()) {
     return;
   }
 
   auto& above_keyboard_group = groups_[1];
-  bool has_answer = base::ranges::any_of(
-      matches, [&](const auto& match) { return match.answer; });
-  if (has_answer) {
-    above_keyboard_group.set_limit(above_keyboard_group.limit() - 1);
-  }
+  above_keyboard_group.set_limit(above_keyboard_group.limit() - 1);
 }
 
 AndroidNTPZpsSection::AndroidNTPZpsSection(
@@ -170,17 +189,7 @@ AndroidNTPZpsSection::AndroidNTPZpsSection(
           {
               {1, omnibox::GROUP_MOBILE_CLIPBOARD},
               {15, omnibox::GROUP_PERSONALIZED_ZERO_SUGGEST},
-              {OmniboxFieldTrial::kQueryTilesShowAboveTrends.Get()
-                   ? (OmniboxFieldTrial::kQueryTilesShowAsCarousel.Get() ? 10u
-                                                                         : 5u)
-                   : 0u,
-               omnibox::GROUP_MOBILE_QUERY_TILES},
               {5, omnibox::GROUP_TRENDS},
-              {OmniboxFieldTrial::kQueryTilesShowAboveTrends.Get()
-                   ? 0u
-                   : (OmniboxFieldTrial::kQueryTilesShowAsCarousel.Get() ? 10u
-                                                                         : 5u),
-               omnibox::GROUP_MOBILE_QUERY_TILES},
           },
           group_configs) {}
 
@@ -210,11 +219,20 @@ AndroidWebZpsSection::AndroidWebZpsSection(
           group_configs) {}
 
 DesktopNTPZpsSection::DesktopNTPZpsSection(
-    omnibox::GroupConfigMap& group_configs)
-    : ZpsSection(8,
+    omnibox::GroupConfigMap& group_configs,
+    size_t limit)
+    : ZpsSection(limit,
                  {
                      {8, omnibox::GROUP_PERSONALIZED_ZERO_SUGGEST},
                      {8, omnibox::GROUP_TRENDS},
+                 },
+                 group_configs) {}
+
+DesktopNTPZpsIPHSection::DesktopNTPZpsIPHSection(
+    omnibox::GroupConfigMap& group_configs)
+    : ZpsSection(1,
+                 {
+                     {1, omnibox::GROUP_ZERO_SUGGEST_IN_PRODUCT_HELP},
                  },
                  group_configs) {}
 

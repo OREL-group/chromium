@@ -110,7 +110,8 @@ void NotificationItemView::UpdateContents(const std::u16string& title,
   proportional_icon_view_->SetImage(icon, kProportionalIconViewSize);
 }
 
-gfx::Size NotificationItemView::CalculatePreferredSize() const {
+gfx::Size NotificationItemView::CalculatePreferredSize(
+    const views::SizeBounds& available_size) const {
   return gfx::Size(views::MenuConfig::instance().touchable_menu_min_width -
                        kBorderStrokeWidth,
                    kNotificationItemViewHeight);
@@ -163,7 +164,7 @@ void NotificationItemView::OnMouseReleased(const ui::MouseEvent& event) {
 void NotificationItemView::OnGestureEvent(ui::GestureEvent* event) {
   // Drag gestures are handled by |slide_out_controller_|.
   switch (event->type()) {
-    case ui::ET_GESTURE_TAP:
+    case ui::EventType::kGestureTap:
       event->SetHandled();
       delegate_->ActivateNotificationAndClose(notification_id_);
       return;

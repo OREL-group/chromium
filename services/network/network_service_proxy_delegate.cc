@@ -67,7 +67,7 @@ bool RulesContainsProxy(const net::ProxyConfig::ProxyRules& proxy_rules,
              CheckProxyList(proxy_rules.proxies_for_https, target_proxy);
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return false;
 }
 
@@ -84,7 +84,7 @@ bool IsValidCustomProxyConfig(const mojom::CustomProxyConfig& config) {
              !config.rules.proxies_for_https.IsEmpty();
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return false;
 }
 
@@ -93,9 +93,9 @@ bool IsValidCustomProxyConfig(const mojom::CustomProxyConfig& config) {
 void MergeRequestHeaders(net::HttpRequestHeaders* out,
                          const net::HttpRequestHeaders& in) {
   for (net::HttpRequestHeaders::Iterator it(in); it.GetNext();) {
-    std::string old_value;
-    if (out->GetHeader(it.name(), &old_value)) {
-      out->SetHeader(it.name(), old_value + ", " + it.value());
+    std::optional<std::string> old_value = out->GetHeader(it.name());
+    if (old_value) {
+      out->SetHeader(it.name(), *old_value + ", " + it.value());
     } else {
       out->SetHeader(it.name(), it.value());
     }
@@ -157,13 +157,14 @@ void NetworkServiceProxyDelegate::OnFallback(const net::ProxyChain& bad_chain,
   }
 }
 
-void NetworkServiceProxyDelegate::OnBeforeTunnelRequest(
+net::Error NetworkServiceProxyDelegate::OnBeforeTunnelRequest(
     const net::ProxyChain& proxy_chain,
     size_t chain_index,
     net::HttpRequestHeaders* extra_headers) {
   if (IsInProxyConfig(proxy_chain)) {
     MergeRequestHeaders(extra_headers, proxy_config_->connect_tunnel_headers);
   }
+  return net::OK;
 }
 
 net::Error NetworkServiceProxyDelegate::OnTunnelHeadersReceived(
@@ -199,7 +200,7 @@ bool NetworkServiceProxyDelegate::IsInProxyConfig(
     return false;
   }
 
-  // TODO(https://crbug.com/1491092): Support nested proxies.
+  // TODO(crbug.com/40284947): Support nested proxies.
   if (proxy_chain.is_single_proxy() &&
       RulesContainsProxy(proxy_config_->rules, proxy_chain.First())) {
     return true;

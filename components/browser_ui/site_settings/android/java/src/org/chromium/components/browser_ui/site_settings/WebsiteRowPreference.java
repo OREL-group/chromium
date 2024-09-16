@@ -61,7 +61,10 @@ public class WebsiteRowPreference extends ChromeImageViewPreference {
         setTitle(mSiteEntry.getTitleForPreferenceRow());
         setImageView(
                 R.drawable.ic_delete_white_24dp,
-                R.string.webstorage_delete_data_dialog_title,
+                context.getResources()
+                        .getString(
+                                R.string.webstorage_delete_data_content_description,
+                                mSiteEntry.getTitleForPreferenceRow()),
                 (View view) -> {
                     displayResetDialog();
                 });
@@ -118,7 +121,7 @@ public class WebsiteRowPreference extends ChromeImageViewPreference {
         signedOutText.setText(R.string.webstorage_clear_data_dialog_sign_out_message);
         TextView offlineText = dialogView.findViewById(R.id.offline_text);
         offlineText.setText(R.string.webstorage_delete_data_dialog_offline_message);
-        // TODO(crbug.com/1342991): Refactor and combine this with the ClearWebsiteStorageDialog
+        // TODO(crbug.com/40231223): Refactor and combine this with the ClearWebsiteStorageDialog
         // code.
         mConfirmationDialog =
                 new AlertDialog.Builder(getContext(), R.style.ThemeOverlay_BrowserUI_AlertDialog)

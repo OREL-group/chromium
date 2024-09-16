@@ -13,7 +13,6 @@
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/extensions/extension_side_panel_utils.h"
-#include "chrome/browser/ui/ui_features.h"
 #include "chrome/common/extensions/api/side_panel.h"
 #include "chrome/common/extensions/api/side_panel/side_panel_info.h"
 #include "components/sessions/core/session_id.h"
@@ -67,8 +66,7 @@ bool SidePanelService::HasSidePanelActionForTab(const Extension& extension,
 bool SidePanelService::HasSidePanelContextMenuActionForTab(
     const Extension& extension,
     TabId tab_id) {
-  if (!features::IsSidePanelPinningEnabled() ||
-      !base::FeatureList::IsEnabled(
+  if (!base::FeatureList::IsEnabled(
           extensions_features::kExtensionSidePanelIntegration)) {
     return false;
   }
@@ -225,10 +223,11 @@ base::expected<bool, std::string> SidePanelService::OpenSidePanelForWindow(
     int window_id,
     bool include_incognito_information) {
   std::string error;
-  Browser* browser = ExtensionTabUtil::GetBrowserInProfileWithId(
-      Profile::FromBrowserContext(context), window_id,
-      include_incognito_information, &error);
-  if (!browser) {
+  WindowController* window_controller =
+      ExtensionTabUtil::GetControllerInProfileWithId(
+          Profile::FromBrowserContext(context), window_id,
+          include_incognito_information, &error);
+  if (!window_controller) {
     return base::unexpected(error);
   }
 
@@ -240,7 +239,8 @@ base::expected<bool, std::string> SidePanelService::OpenSidePanelForWindow(
   }
 
   side_panel_util::OpenGlobalExtensionSidePanel(
-      *browser, /*web_contents=*/nullptr, extension.id());
+      *window_controller->GetBrowser(), /*web_contents=*/nullptr,
+      extension.id());
   return true;
 }
 

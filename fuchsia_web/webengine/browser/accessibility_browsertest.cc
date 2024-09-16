@@ -147,7 +147,7 @@ class FuchsiaFrameAccessibilityTest : public WebEngineBrowserTest {
   }
 
  protected:
-  // TODO(crbug.com/1038786): Maybe move to WebEngineBrowserTest.
+  // TODO(crbug.com/42050058): Maybe move to WebEngineBrowserTest.
   std::optional<base::TestComponentContextForProcess> test_context_;
 
   FrameForTest frame_;
@@ -301,7 +301,7 @@ IN_PROC_BROWSER_TEST_F(FuchsiaFrameAccessibilityTest,
 }
 
 // This test times out frequently, presumably due to a race condition.
-// TODO(crbug.com/1421236): Re-enable this test when it is no longer flaky.
+// TODO(crbug.com/40896150): Re-enable this test when it is no longer flaky.
 IN_PROC_BROWSER_TEST_F(FuchsiaFrameAccessibilityTest, DISABLED_Disconnect) {
   base::RunLoop run_loop;
   frame_.ptr().set_error_handler([&run_loop](zx_status_t status) {

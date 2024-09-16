@@ -93,6 +93,7 @@ bool ConstraintSetHasImageCapture(
          constraint_set->hasFocusDistance() || constraint_set->hasPan() ||
          constraint_set->hasTilt() || constraint_set->hasZoom() ||
          constraint_set->hasTorch() || constraint_set->hasBackgroundBlur() ||
+         constraint_set->hasBackgroundSegmentationMask() ||
          constraint_set->hasEyeGazeCorrection() ||
          constraint_set->hasFaceFraming();
 }
@@ -215,7 +216,7 @@ WebString GetDisplaySurfaceString(
     case media::mojom::DisplayCaptureSurfaceType::BROWSER:
       return WebString::FromUTF8("browser");
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return WebString();
 }
 
@@ -311,7 +312,7 @@ String MediaStreamTrackImpl::kind() const {
       return video_kind;
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return audio_kind;
 }
 
@@ -755,7 +756,7 @@ ScriptPromise<IDLUndefined> MediaStreamTrackImpl::applyConstraints(
     ScriptState* script_state,
     const MediaTrackConstraints* constraints) {
   if (!script_state->ContextIsValid()) {
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   auto* resolver =
@@ -940,25 +941,6 @@ void MediaStreamTrackImpl::PropagateTrackEnded() {
   is_iterating_registered_media_streams_ = false;
 }
 
-#if !BUILDFLAG(IS_ANDROID)
-void MediaStreamTrackImpl::SendWheel(
-    double relative_x,
-    double relative_y,
-    int wheel_delta_x,
-    int wheel_delta_y,
-    base::OnceCallback<void(DOMException*)> callback) {
-  std::move(callback).Run(MakeGarbageCollected<DOMException>(
-      DOMExceptionCode::kNotSupportedError, "Unsupported."));
-}
-
-void MediaStreamTrackImpl::SetZoomLevel(
-    int zoom_level,
-    base::OnceCallback<void(DOMException*)> callback) {
-  std::move(callback).Run(MakeGarbageCollected<DOMException>(
-      DOMExceptionCode::kNotSupportedError, "Unsupported."));
-}
-#endif
-
 bool MediaStreamTrackImpl::HasPendingActivity() const {
   // If 'ended' listeners exist and the object hasn't yet reached
   // that state, keep the object alive.
@@ -1097,12 +1079,8 @@ void MediaStreamTrackImpl::CloneInternal(MediaStreamTrackImpl* cloned_track) {
 
 void MediaStreamTrackImpl::EnsureFeatureHandleForScheduler() {
   // The two handlers must be in sync.
-  if (features::IsAllowBFCacheWhenClosedMediaStreamTrackEnabled()) {
-    CHECK_EQ(!!feature_handle_for_scheduler_,
-             !!feature_handle_for_scheduler_on_live_media_stream_track_);
-  } else {
-    CHECK(!feature_handle_for_scheduler_on_live_media_stream_track_);
-  }
+  CHECK_EQ(!!feature_handle_for_scheduler_,
+           !!feature_handle_for_scheduler_on_live_media_stream_track_);
 
   if (feature_handle_for_scheduler_) {
     return;
@@ -1123,12 +1101,11 @@ void MediaStreamTrackImpl::EnsureFeatureHandleForScheduler() {
           SchedulingPolicy::Feature::kWebRTC,
           {SchedulingPolicy::DisableAggressiveThrottling(),
            SchedulingPolicy::DisableAlignWakeUps()});
-  if (features::IsAllowBFCacheWhenClosedMediaStreamTrackEnabled()) {
-    feature_handle_for_scheduler_on_live_media_stream_track_ =
-        GetExecutionContext()->GetScheduler()->RegisterFeature(
-            SchedulingPolicy::Feature::kLiveMediaStreamTrack,
-            {SchedulingPolicy::DisableBackForwardCache()});
-  }
+
+  feature_handle_for_scheduler_on_live_media_stream_track_ =
+      GetExecutionContext()->GetScheduler()->RegisterFeature(
+          SchedulingPolicy::Feature::kLiveMediaStreamTrack,
+          {SchedulingPolicy::DisableBackForwardCache()});
 }
 
 void MediaStreamTrackImpl::AddObserver(MediaStreamTrack::Observer* observer) {

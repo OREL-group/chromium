@@ -25,6 +25,9 @@
 #import "components/url_formatter/elide_url.h"
 #import "ios/chrome/browser/net/model/crurl.h"
 #import "ios/chrome/browser/ntp/model/new_tab_page_tab_helper.h"
+#import "ios/chrome/browser/ntp/shared/metrics/home_metrics.h"
+#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_actions_delegate.h"
+#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_feature.h"
 #import "ios/chrome/browser/shared/coordinator/scene/scene_state.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
@@ -33,18 +36,15 @@
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/public/features/system_flags.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
+#import "ios/chrome/browser/ui/content_suggestions/cells/most_visited_tiles_config.h"
 #import "ios/chrome/browser/ui/content_suggestions/cells/most_visited_tiles_mediator.h"
 #import "ios/chrome/browser/ui/content_suggestions/cells/shortcuts_mediator.h"
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_constants.h"
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_delegate.h"
 #import "ios/chrome/browser/ui/content_suggestions/magic_stack/magic_stack_consumer.h"
 #import "ios/chrome/browser/ui/content_suggestions/magic_stack/magic_stack_ranking_model.h"
-#import "ios/chrome/browser/ui/content_suggestions/magic_stack/most_visited_tiles_config.h"
 #import "ios/chrome/browser/ui/content_suggestions/magic_stack/placeholder_config.h"
 #import "ios/chrome/browser/ui/content_suggestions/set_up_list/set_up_list_mediator.h"
-#import "ios/chrome/browser/ui/ntp/metrics/home_metrics.h"
-#import "ios/chrome/browser/ui/ntp/new_tab_page_feature.h"
-#import "ios/chrome/browser/ui/ntp/new_tab_page_metrics_delegate.h"
 #import "ios/chrome/grit/ios_strings.h"
 #import "ui/base/l10n/l10n_util_mac.h"
 
@@ -103,13 +103,17 @@
   [self.magicStackConsumer removeItem:item];
 }
 
+- (void)magicStackRankingModel:(MagicStackRankingModel*)model
+            didReconfigureItem:(MagicStackModule*)item {
+  [self.magicStackConsumer reconfigureItem:item];
+}
+
 #pragma mark - Private
 
 - (void)configureConsumer {
   if (!self.consumer) {
     return;
   }
-  [self.magicStackRankingModel fetchLatestMagicStackRanking];
   if (!ShouldPutMostVisitedSitesInMagicStack() &&
       self.mostVisitedTilesMediator.mostVisitedConfig) {
     [self.consumer setMostVisitedTilesConfig:self.mostVisitedTilesMediator

@@ -29,6 +29,7 @@
 #include "third_party/blink/renderer/core/editing/markers/document_marker_controller.h"
 
 #include <algorithm>
+
 #include "base/debug/dump_without_crashing.h"
 #include "third_party/blink/renderer/core/accessibility/ax_object_cache.h"
 #include "third_party/blink/renderer/core/dom/node.h"
@@ -59,6 +60,7 @@
 #include "third_party/blink/renderer/core/highlight/highlight_style_utils.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/layout/layout_text.h"
+#include "third_party/blink/renderer/core/layout/layout_text_fragment.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_set.h"
 
@@ -87,7 +89,7 @@ DocumentMarker::MarkerTypeIndex MarkerTypeToMarkerIndex(
       return DocumentMarker::kCustomHighlightMarkerIndex;
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return DocumentMarker::kSpellingMarkerIndex;
 }
 
@@ -111,7 +113,7 @@ DocumentMarkerList* CreateListForType(DocumentMarker::MarkerType type) {
       return MakeGarbageCollected<CustomHighlightMarkerListImpl>();
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return nullptr;
 }
 
@@ -128,12 +130,25 @@ void InvalidateVisualOverflowForNode(const Node& node,
 }
 
 void InvalidatePaintForNode(const Node& node) {
-  if (!node.GetLayoutObject()) {
+  LayoutObject* layout_object = node.GetLayoutObject();
+  if (!layout_object) {
     return;
   }
 
-  node.GetLayoutObject()->SetShouldDoFullPaintInvalidation(
+  layout_object->SetShouldDoFullPaintInvalidation(
       PaintInvalidationReason::kDocumentMarker);
+
+  if (RuntimeEnabledFeatures::PaintHighlightsForFirstLetterEnabled()) {
+    // When first-letter css is present, the node only points to remainder.
+    // So first letter part would not be invalidated by the above.
+    auto* text_layout = DynamicTo<LayoutTextFragment>(layout_object);
+    if (text_layout && text_layout->GetFirstLetterPseudoElement()) {
+      LayoutText* first_letter_layout = text_layout->GetFirstLetterPart();
+      CHECK(first_letter_layout);
+      first_letter_layout->SetShouldDoFullPaintInvalidation(
+          PaintInvalidationReason::kDocumentMarker);
+    }
+  }
 
   // Tell accessibility about the new marker.
   AXObjectCache* ax_object_cache = node.GetDocument().ExistingAXObjectCache();
@@ -540,7 +555,7 @@ DocumentMarker* DocumentMarkerController::FirstMarkerAroundPosition(
 
   if (start > end) {
     // TODO(crbug/1114021): Investigate why this might happen.
-    DUMP_WILL_BE_NOTREACHED_NORETURN() << "|start| should be before |end|.";
+    DUMP_WILL_BE_NOTREACHED() << "|start| should be before |end|.";
     return nullptr;
   }
 

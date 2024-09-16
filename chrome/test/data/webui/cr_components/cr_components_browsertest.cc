@@ -8,26 +8,8 @@
 #include "components/history_clusters/core/features.h"
 #include "components/history_embeddings/history_embeddings_features.h"
 #include "content/public/test/browser_test.h"
-#include "crypto/crypto_buildflags.h"
 
 typedef WebUIMochaBrowserTest CrComponentsTest;
-
-#if BUILDFLAG(USE_NSS_CERTS)
-IN_PROC_BROWSER_TEST_F(CrComponentsTest, CertificateManager) {
-  // Loaded from a settings URL so that localized strings are present.
-  set_test_loader_host(chrome::kChromeUISettingsHost);
-  RunTest("cr_components/certificate_manager_test.js", "mocha.run()");
-}
-#endif  // BUILDFLAG(USE_NSS_CERTS)
-
-#if BUILDFLAG(USE_NSS_CERTS) && BUILDFLAG(IS_CHROMEOS)
-IN_PROC_BROWSER_TEST_F(CrComponentsTest, CertificateManagerProvisioning) {
-  // Loaded from a settings URL so that localized strings are present.
-  set_test_loader_host(chrome::kChromeUISettingsHost);
-  RunTest("cr_components/certificate_manager_provisioning_test.js",
-          "mocha.run()");
-}
-#endif  // BUILDFLAG(USE_NSS_CERTS) && BUILDFLAG(IS_CHROMEOS)
 
 IN_PROC_BROWSER_TEST_F(CrComponentsTest, ColorChangeListener) {
   RunTest("cr_components/color_change_listener_test.js", "mocha.run()");
@@ -38,19 +20,20 @@ IN_PROC_BROWSER_TEST_F(CrComponentsTest, CustomizeColorSchemeMode) {
   RunTest("cr_components/customize_color_scheme_mode_test.js", "mocha.run()");
 }
 
-IN_PROC_BROWSER_TEST_F(CrComponentsTest, CustomizeThemes) {
-  set_test_loader_host(chrome::kChromeUINewTabPageHost);
-  RunTest("cr_components/customize_themes_test.js", "mocha.run()");
-}
-
 IN_PROC_BROWSER_TEST_F(CrComponentsTest, HelpBubbleMixin) {
   set_test_loader_host(chrome::kChromeUINewTabPageHost);
-  RunTest("cr_components/help_bubble_mixin_test.js", "mocha.run()");
+  RunTest("cr_components/help_bubble/help_bubble_mixin_test.js", "mocha.run()");
+}
+
+IN_PROC_BROWSER_TEST_F(CrComponentsTest, HelpBubbleMixinLit) {
+  set_test_loader_host(chrome::kChromeUINewTabPageHost);
+  RunTest("cr_components/help_bubble/help_bubble_mixin_lit_test.js",
+          "mocha.run()");
 }
 
 IN_PROC_BROWSER_TEST_F(CrComponentsTest, HelpBubble) {
   set_test_loader_host(chrome::kChromeUINewTabPageHost);
-  RunTest("cr_components/help_bubble_test.js", "mocha.run()");
+  RunTest("cr_components/help_bubble/help_bubble_test.js", "mocha.run()");
 }
 
 IN_PROC_BROWSER_TEST_F(CrComponentsTest, HorizontalCarousel) {
@@ -98,17 +81,17 @@ IN_PROC_BROWSER_TEST_F(CrComponentsTest, LocalizedLink) {
 typedef WebUIMochaBrowserTest CrComponentsSearchboxTest;
 IN_PROC_BROWSER_TEST_F(CrComponentsSearchboxTest, RealboxMatchTest) {
   set_test_loader_host(chrome::kChromeUINewTabPageHost);
-  RunTest("cr_components/searchbox/realbox_match_test.js", "mocha.run()");
+  RunTest("cr_components/searchbox/searchbox_match_test.js", "mocha.run()");
 }
 
 IN_PROC_BROWSER_TEST_F(CrComponentsSearchboxTest, RealboxTest) {
   set_test_loader_host(chrome::kChromeUINewTabPageHost);
-  RunTest("cr_components/searchbox/realbox_test.js", "mocha.run()");
+  RunTest("cr_components/searchbox/searchbox_test.js", "mocha.run()");
 }
 
 IN_PROC_BROWSER_TEST_F(CrComponentsSearchboxTest, RealboxLensTest) {
   set_test_loader_host(chrome::kChromeUINewTabPageHost);
-  RunTest("cr_components/searchbox/realbox_lens_test.js", "mocha.run()");
+  RunTest("cr_components/searchbox/searchbox_lens_test.js", "mocha.run()");
 }
 
 class CrComponentsHistoryClustersTest : public WebUIMochaBrowserTest {
@@ -126,6 +109,10 @@ class CrComponentsHistoryClustersTest : public WebUIMochaBrowserTest {
 IN_PROC_BROWSER_TEST_F(CrComponentsHistoryClustersTest, All) {
   RunTest("cr_components/history_clusters/history_clusters_test.js",
           "mocha.run()");
+}
+
+IN_PROC_BROWSER_TEST_F(CrComponentsHistoryClustersTest, Cluster) {
+  RunTest("cr_components/history_clusters/cluster_test.js", "mocha.run()");
 }
 
 class CrComponentsMostVisitedTest : public WebUIMochaBrowserTest {

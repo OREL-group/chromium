@@ -29,7 +29,6 @@
 #include "components/webapps/browser/android/bottomsheet/pwa_bottom_sheet_controller.h"
 #include "components/webapps/browser/android/shortcut_info.h"
 #include "components/webapps/browser/android/webapps_icon_utils.h"
-#include "components/webapps/browser/android/webapps_jni_headers/AppBannerManager_jni.h"
 #include "components/webapps/browser/android/webapps_utils.h"
 #include "components/webapps/browser/banners/app_banner_metrics.h"
 #include "components/webapps/browser/banners/app_banner_settings_helper.h"
@@ -49,6 +48,9 @@
 #include "skia/ext/skia_utils_base.h"
 #include "third_party/blink/public/mojom/manifest/manifest.mojom.h"
 #include "third_party/skia/include/core/SkBitmap.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "components/webapps/browser/android/webapps_jni_headers/AppBannerManager_jni.h"
 
 using base::android::ConvertJavaStringToUTF16;
 using base::android::ConvertJavaStringToUTF8;
@@ -239,14 +241,11 @@ AppBannerManagerAndroid::ParamsToPerformInstallableWebAppCheck() {
   InstallableParams params;
   params.valid_primary_icon = true;
   params.installable_criteria =
-      base::FeatureList::IsEnabled(features::kUniversalInstallManifest)
-          ? InstallableCriteria::kImplicitManifestFieldsHTML
-          : InstallableCriteria::kValidManifestWithIcons;
+      InstallableCriteria::kImplicitManifestFieldsHTML;
   params.fetch_screenshots = true;
   params.prefer_maskable_icon =
       WebappsIconUtils::DoesAndroidSupportMaskableIcons();
-  params.fetch_favicon =
-      base::FeatureList::IsEnabled(features::kUniversalInstallIcon);
+  params.fetch_favicon = true;
   return params;
 }
 
@@ -484,7 +483,7 @@ void AppBannerManagerAndroid::OnInstallEvent(
               web_contents(), a2hs_params.shortcut_info->url.spec());
           break;
         default:
-          NOTREACHED();
+          NOTREACHED_IN_MIGRATION();
       }
       break;
 
@@ -666,13 +665,6 @@ bool AppBannerManagerAndroid::MaybeShowPwaBottomSheetController(
       std::move(a2hs_params));
 }
 
-void AppBannerManagerAndroid::PerformWorkerCheckForAmbientBadge(
-    InstallableParams params,
-    InstallableCallback callback) {
-  InstallableManager::FromWebContents(&GetWebContents())
-      ->GetData(params, std::move(callback));
-}
-
 void AppBannerManagerAndroid::OnMlInstallPrediction(
     base::PassKey<MLInstallabilityPromoter>,
     std::string result_label) {
@@ -718,16 +710,6 @@ JNI_AppBannerManager_GetJavaBannerManagerForWebContents(
 
 // static
 base::android::ScopedJavaLocalRef<jstring>
-JNI_AppBannerManager_GetInstallableWebAppName(
-    JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& java_web_contents) {
-  return base::android::ConvertUTF16ToJavaString(
-      env, AppBannerManager::GetInstallableWebAppName(
-               content::WebContents::FromJavaWebContents(java_web_contents)));
-}
-
-// static
-base::android::ScopedJavaLocalRef<jstring>
 JNI_AppBannerManager_GetInstallableWebAppManifestId(
     JNIEnv* env,
     const base::android::JavaParamRef<jobject>& java_web_contents) {
@@ -759,6 +741,13 @@ void JNI_AppBannerManager_SetTimeDeltaForTesting(JNIEnv* env, jint days) {
 void JNI_AppBannerManager_SetTotalEngagementToTrigger(JNIEnv* env,
                                                       jdouble engagement) {
   AppBannerSettingsHelper::SetTotalEngagementToTrigger(engagement);
+}
+
+// static
+void JNI_AppBannerManager_SetOverrideSegmentationResultForTesting(  // IN-TEST
+    JNIEnv* env,
+    jboolean show) {
+  AmbientBadgeManager::SetOverrideSegmentationResultForTesting(show);
 }
 
 }  // namespace webapps

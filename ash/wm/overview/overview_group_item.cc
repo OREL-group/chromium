@@ -7,26 +7,31 @@
 #include <algorithm>
 
 #include "ash/shell.h"
+#include "ash/style/rounded_label_widget.h"
 #include "ash/wm/desks/desks_util.h"
 #include "ash/wm/overview/overview_constants.h"
-#include "ash/wm/overview/overview_focusable_view.h"
+#include "ash/wm/overview/overview_controller.h"
 #include "ash/wm/overview/overview_grid.h"
 #include "ash/wm/overview/overview_group_container_view.h"
 #include "ash/wm/overview/overview_item.h"
 #include "ash/wm/overview/overview_item_base.h"
 #include "ash/wm/overview/overview_item_view.h"
+#include "ash/wm/overview/overview_session.h"
+#include "ash/wm/overview/overview_utils.h"
 #include "ash/wm/snap_group/snap_group.h"
 #include "ash/wm/snap_group/snap_group_controller.h"
+#include "ash/wm/splitview/layout_divider_controller.h"
 #include "ash/wm/splitview/split_view_utils.h"
 #include "ash/wm/window_util.h"
 #include "ash/wm/wm_constants.h"
 #include "base/check_op.h"
 #include "base/containers/unique_ptr_adapters.h"
-#include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/notreached.h"
 #include "base/trace_event/trace_event.h"
+#include "third_party/abseil-cpp/absl/cleanup/cleanup.h"
+#include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/views/widget/widget.h"
@@ -72,6 +77,58 @@ OverviewGroupItem::OverviewGroupItem(const Windows& windows,
 }
 
 OverviewGroupItem::~OverviewGroupItem() = default;
+
+void OverviewGroupItem::SetOpacity(float opacity) {
+  OverviewItemBase::SetOpacity(opacity);
+
+  for (const auto& overview_item : overview_items_) {
+    overview_item->SetOpacity(opacity);
+  }
+}
+
+aura::Window::Windows OverviewGroupItem::GetWindowsForHomeGesture() {
+  aura::Window::Windows windows = OverviewItemBase::GetWindowsForHomeGesture();
+
+  for (const auto& overview_item : overview_items_) {
+    aura::Window::Windows item_windows =
+        overview_item->GetWindowsForHomeGesture();
+    windows.insert(windows.end(), item_windows.begin(), item_windows.end());
+  }
+
+  return windows;
+}
+
+void OverviewGroupItem::HideForSavedDeskLibrary(bool animate) {
+  for (const auto& item : overview_items_) {
+    item->HideForSavedDeskLibrary(animate);
+  }
+
+  OverviewItemBase::HideForSavedDeskLibrary(animate);
+}
+
+void OverviewGroupItem::RevertHideForSavedDeskLibrary(bool animate) {
+  for (const auto& item : overview_items_) {
+    item->RevertHideForSavedDeskLibrary(animate);
+  }
+
+  OverviewItemBase::RevertHideForSavedDeskLibrary(animate);
+}
+
+void OverviewGroupItem::UpdateMirrorsForDragging(bool is_touch_dragging) {
+  // TODO(http://b/339516036): Revisit whether we should update mirror for the
+  // group's `item_widget_` after the blue background issue is resolved.
+  for (const auto& overview_item : overview_items_) {
+    overview_item->UpdateMirrorsForDragging(is_touch_dragging);
+  }
+}
+
+void OverviewGroupItem::DestroyMirrorsForDragging() {
+  // TODO(http://b/339516036): Revisit whether we should destroy mirror for the
+  // group's `item_widget_` after the blue background issue is resolved.
+  for (const auto& overview_item : overview_items_) {
+    overview_item->DestroyMirrorsForDragging();
+  }
+}
 
 aura::Window* OverviewGroupItem::GetWindow() {
   // TODO(michelefan): `GetWindow()` will be replaced by `GetWindows()` in a
@@ -129,13 +186,12 @@ void OverviewGroupItem::RestoreWindow(bool reset_transform, bool animate) {
 void OverviewGroupItem::SetBounds(const gfx::RectF& target_bounds,
                                   OverviewAnimationType animation_type) {
   // Run at the exit of this function to `UpdateRoundedCornersAndShadow()`.
-  base::ScopedClosureRunner exit_runner(base::BindOnce(
-      [](base::WeakPtr<OverviewGroupItem> overview_group_item) {
-        if (overview_group_item) {
-          overview_group_item->UpdateRoundedCornersAndShadow();
-        }
-      },
-      weak_ptr_factory_.GetWeakPtr()));
+  // TODO(dcheng): This can probably just capture `this`.
+  absl::Cleanup exit_runner = [overview_group_item =
+                                   weak_ptr_factory_.GetWeakPtr()] {
+    CHECK(overview_group_item);
+    overview_group_item->UpdateRoundedCornersAndShadow();
+  };
 
   target_bounds_ = target_bounds;
 
@@ -145,7 +201,7 @@ void OverviewGroupItem::SetBounds(const gfx::RectF& target_bounds,
     return item0->SetBounds(target_bounds, animation_type);
   }
 
-  CHECK_EQ(size, 2);
+  CHECK_EQ(2, size);
   auto& item1 = overview_items_[1];
 
   aura::Window* item0_window = item0->GetWindow();
@@ -209,12 +265,7 @@ gfx::RectF OverviewGroupItem::GetTargetBoundsWithInsets() const {
 }
 
 gfx::RectF OverviewGroupItem::GetTransformedBounds() const {
-  // TODO(michelefan): This is a temporary placeholder for the transformed
-  // bounds calculation, which needs to be updated when we start working on the
-  // actual implementation of this function.
-  CHECK_GE(overview_items_.size(), 1u);
-  CHECK_LE(overview_items_.size(), 2u);
-  return overview_items_[0]->GetTransformedBounds();
+  return GetWindowsUnionScreenBounds();
 }
 
 float OverviewGroupItem::GetItemScale(int height) {
@@ -276,17 +327,18 @@ float OverviewGroupItem::GetItemScale(int height) {
 void OverviewGroupItem::ScaleUpSelectedItem(
     OverviewAnimationType animation_type) {}
 
-void OverviewGroupItem::EnsureVisible() {}
-
-std::vector<OverviewFocusableView*> OverviewGroupItem::GetFocusableViews()
-    const {
-  std::vector<OverviewFocusableView*> focusable_views;
+void OverviewGroupItem::EnsureVisible() {
   for (const auto& overview_item : overview_items_) {
-    if (auto* overview_item_view = overview_item->overview_item_view()) {
-      focusable_views.push_back(overview_item_view);
-    }
+    overview_item->EnsureVisible();
   }
-  return focusable_views;
+}
+
+std::vector<views::Widget*> OverviewGroupItem::GetFocusableWidgets() {
+  std::vector<views::Widget*> focusable_widgets;
+  for (const auto& overview_item : overview_items_) {
+    focusable_widgets.push_back(overview_item->item_widget());
+  }
+  return focusable_widgets;
 }
 
 views::View* OverviewGroupItem::GetBackDropView() const {
@@ -305,8 +357,6 @@ void OverviewGroupItem::UpdateRoundedCornersAndShadow() {
   RefreshShadowVisuals(/*shadow_visible=*/true);
 }
 
-void OverviewGroupItem::SetOpacity(float opacity) {}
-
 float OverviewGroupItem::GetOpacity() const {
   // TODO(michelefan): This is a temporary placeholder value. The opacity
   // settings will be handled in a separate task.
@@ -314,6 +364,10 @@ float OverviewGroupItem::GetOpacity() const {
 }
 
 void OverviewGroupItem::PrepareForOverview() {
+  for (const auto& overview_item : overview_items_) {
+    overview_item->PrepareForOverview();
+  }
+
   prepared_for_overview_ = true;
 }
 
@@ -331,17 +385,49 @@ void OverviewGroupItem::OnStartingAnimationComplete() {
   }
 }
 
-void OverviewGroupItem::HideForSavedDeskLibrary(bool animate) {}
+void OverviewGroupItem::Restack() {
+  if (overview_items_.empty() || !item_widget_) {
+    return;
+  }
 
-void OverviewGroupItem::RevertHideForSavedDeskLibrary(bool animate) {}
-
-void OverviewGroupItem::CloseWindows() {
+  // Sort the items in `sorted_items` based on their stacking order, starting
+  // with the lowest.
+  std::vector<OverviewItem*> sorted_items;
   for (const auto& overview_item : overview_items_) {
-    overview_item->CloseWindows();
+    sorted_items.push_back(overview_item.get());
+  }
+
+  std::sort(sorted_items.begin(), sorted_items.end(),
+            [](OverviewItem* a, OverviewItem* b) {
+              return window_util::IsStackedBelow(a->GetWindow(),
+                                                 b->GetWindow());
+            });
+
+  for (auto* overview_item : sorted_items) {
+    overview_item->Restack();
+  }
+
+  // Then `sorted_items.front()` is the lowest, and `sorted_items.back()` is the
+  // topmost.
+  aura::Window* group_item_widget_window = item_widget_->GetNativeWindow();
+  aura::Window* group_item_widget_window_parent =
+      group_item_widget_window->parent();
+
+  // Adjust the stacking order between the two individual items and the group
+  // item and stack group item widget below the bottom window between the two.
+  group_item_widget_window_parent->StackChildBelow(
+      group_item_widget_window,
+      sorted_items.front()->item_widget()->GetNativeWindow());
+
+  // And stack the `cannot_snap_widget_` above the window of the topmost item.
+  if (cannot_snap_widget_) {
+    DCHECK_EQ(group_item_widget_window_parent,
+              cannot_snap_widget_->GetNativeWindow()->parent());
+    group_item_widget_window_parent->StackChildAbove(
+        cannot_snap_widget_->GetNativeWindow(),
+        sorted_items.back()->GetWindow());
   }
 }
-
-void OverviewGroupItem::Restack() {}
 
 void OverviewGroupItem::StartDrag() {
   for (const auto& item : overview_items_) {
@@ -349,17 +435,26 @@ void OverviewGroupItem::StartDrag() {
   }
 }
 
-void OverviewGroupItem::OnOverviewItemDragStarted(OverviewItemBase* item) {}
+void OverviewGroupItem::OnOverviewItemDragStarted() {
+  for (const auto& item : overview_items_) {
+    item->OnOverviewItemDragStarted();
+  }
+}
 
 void OverviewGroupItem::OnOverviewItemDragEnded(bool snap) {
+  for (const auto& item : overview_items_) {
+    item->OnOverviewItemDragEnded(snap);
+  }
+
+  // Refreshes the stacking order of `this` so that the `item_widget_` window of
+  // the group is stacked below the two windows allowing the `OverviewItemView`
+  // to receive the events.
+  Restack();
 }
 
 void OverviewGroupItem::OnOverviewItemContinuousScroll(
     const gfx::Transform& target_transform,
     float scroll_ratio) {}
-
-void OverviewGroupItem::SetVisibleDuringItemDragging(bool visible,
-                                                     bool animate) {}
 
 void OverviewGroupItem::UpdateCannotSnapWarningVisibility(bool animate) {}
 
@@ -373,29 +468,37 @@ void OverviewGroupItem::OnMovingItemToAnotherDesk() {
   }
 }
 
-void OverviewGroupItem::UpdateMirrorsForDragging(bool is_touch_dragging) {}
-
-void OverviewGroupItem::DestroyMirrorsForDragging() {}
-
-void OverviewGroupItem::Shutdown() {}
-
-void OverviewGroupItem::AnimateAndCloseItem(bool up) {}
-
-void OverviewGroupItem::StopWidgetAnimation() {}
-
-OverviewGridWindowFillMode OverviewGroupItem::GetWindowDimensionsType() const {
-  // This return value assumes that the snap group represented by `this` will
-  // occupy the entire work space. So it's mostly likely that the window
-  // dimension type will be normal.
-  // TODO(michelefan): Consider the corner cases when the work space has
-  // abnormal dimension ratios.
-  return OverviewGridWindowFillMode::kNormal;
+void OverviewGroupItem::Shutdown() {
+  for (const auto& overview_item : overview_items_) {
+    overview_item->Shutdown();
+  }
 }
 
-void OverviewGroupItem::UpdateWindowDimensionsType() {}
+void OverviewGroupItem::AnimateAndCloseItem(bool up) {
+  animating_to_close_ = true;
 
-gfx::Point OverviewGroupItem::GetMagnifierFocusPointInScreen() const {
-  return overview_group_container_view_->GetBoundsInScreen().CenterPoint();
+  for (const auto& overview_item : overview_items_) {
+    overview_item->AnimateAndCloseItem(up);
+  }
+}
+
+void OverviewGroupItem::StopWidgetAnimation() {
+  for (const auto& overview_item : overview_items_) {
+    overview_item->StopWidgetAnimation();
+  }
+
+  item_widget_->GetNativeWindow()->layer()->GetAnimator()->StopAnimating();
+}
+
+OverviewItemFillMode OverviewGroupItem::GetOverviewItemFillMode() const {
+  return ash::GetOverviewItemFillMode(
+      gfx::ToRoundedSize(target_bounds_.size()));
+}
+
+void OverviewGroupItem::UpdateOverviewItemFillMode() {
+  for (const auto& overview_item : overview_items_) {
+    overview_item->UpdateOverviewItemFillMode();
+  }
 }
 
 const gfx::RoundedCornersF OverviewGroupItem::GetRoundedCorners() const {
@@ -459,7 +562,7 @@ void OverviewGroupItem::CreateItemWidget() {
   item_widget_->set_focus_on_creation(false);
   item_widget_->Init(CreateOverviewItemWidgetParams(
       desks_util::GetActiveDeskContainerForRoot(overview_grid_->root_window()),
-      "OverviewGroupItemWidget", /*accept_events=*/true));
+      "OverviewGroupItemWidget", /*accept_events=*/false));
 
   CreateShadow();
 

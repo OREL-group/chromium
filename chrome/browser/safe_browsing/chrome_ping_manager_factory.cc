@@ -13,7 +13,6 @@
 #include "chrome/browser/safe_browsing/chrome_v4_protocol_config_provider.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
-#include "chrome/browser/ui/hats/hats_service_factory.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/content/browser/web_ui/safe_browsing_ui.h"
 #include "components/safe_browsing/core/browser/ping_manager.h"
@@ -47,14 +46,10 @@ ChromePingManagerFactory::ChromePingManagerFactory()
           "ChromeSafeBrowsingPingManager",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kOriginalOnly)
-              // TODO(crbug.com/1418376): Check if this service is needed in
-              // Guest mode.
-              .WithGuest(ProfileSelection::kOriginalOnly)
+              // Telemetry report should not be sent in guest mode.
+              .WithGuest(ProfileSelection::kNone)
               .Build()) {
   DependsOn(IdentityManagerFactory::GetInstance());
-#if BUILDFLAG(FULL_SAFE_BROWSING)
-  DependsOn(HatsServiceFactory::GetInstance());
-#endif
 }
 
 ChromePingManagerFactory::~ChromePingManagerFactory() = default;
@@ -65,8 +60,7 @@ ChromePingManagerFactory::BuildServiceInstanceForBrowserContext(
   Profile* profile = Profile::FromBrowserContext(context);
   std::unique_ptr<ChromeSafeBrowsingHatsDelegate> hats_delegate = nullptr;
 #if BUILDFLAG(FULL_SAFE_BROWSING)
-  hats_delegate = std::make_unique<ChromeSafeBrowsingHatsDelegate>(
-      HatsServiceFactory::GetForProfile(profile, /*create_if_necessary=*/true));
+  hats_delegate = std::make_unique<ChromeSafeBrowsingHatsDelegate>(profile);
 #endif
   return PingManager::Create(
       GetV4ProtocolConfig(),
@@ -97,14 +91,12 @@ bool ChromePingManagerFactory::ShouldFetchAccessTokenForReport(
 // static
 bool ChromePingManagerFactory::ShouldSendPersistedReport(Profile* profile) {
   return !profile->IsOffTheRecord() &&
-         IsExtendedReportingEnabled(*profile->GetPrefs()) &&
-         base::FeatureList::IsEnabled(kDownloadReportWithoutUserDecision);
+         IsExtendedReportingEnabled(*profile->GetPrefs());
 }
 
 bool ChromePingManagerFactory::ServiceIsCreatedWithBrowserContext() const {
-  // When kDownloadReportWithoutUserDecision is enabled, PingManager is created
-  // at startup to send persisted reports.
-  return base::FeatureList::IsEnabled(kDownloadReportWithoutUserDecision);
+  // PingManager is created at startup to send persisted reports.
+  return true;
 }
 
 bool ChromePingManagerFactory::ServiceIsNULLWhileTesting() const {

@@ -270,7 +270,7 @@ void ChromePluginPlaceholder::ShowContextMenu(
   if (plugin() && plugin()->Container())
     point = plugin()->Container()->LocalToRootFramePoint(point);
 
-  // TODO(crbug.com/1093904): This essentially is a floor of the coordinates.
+  // TODO(crbug.com/40699157): This essentially is a floor of the coordinates.
   // Determine if rounding is more appropriate.
   gfx::Rect position_in_dips =
       render_frame()
@@ -303,7 +303,7 @@ void ChromePluginPlaceholder::CustomContextMenuAction(uint32_t action) {
       break;
     }
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 }
 

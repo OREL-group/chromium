@@ -22,9 +22,10 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "base/threading/thread_checker.h"
+#include "base/sequence_checker.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "components/viz/common/frame_sinks/begin_frame_args.h"
 #include "components/viz/common/surfaces/frame_sink_id.h"
 #include "components/viz/common/surfaces/surface_id.h"
 #include "components/viz/service/surfaces/surface_observer.h"
@@ -46,9 +47,6 @@ class SurfaceAllocationGroup;
 class SurfaceClient;
 class SurfaceManagerDelegate;
 class SurfaceRange;
-struct BeginFrameAck;
-struct BeginFrameArgs;
-struct BeginFrameId;
 
 class VIZ_SERVICE_EXPORT SurfaceManager {
  public:
@@ -88,7 +86,8 @@ class VIZ_SERVICE_EXPORT SurfaceManager {
   // dependencies are satisfied, and it is not reachable from the root surface.
   // A temporary reference will be added to the new Surface.
   Surface* CreateSurface(base::WeakPtr<SurfaceClient> surface_client,
-                         const SurfaceInfo& surface_info);
+                         const SurfaceInfo& surface_info,
+                         const SurfaceId& pending_copy_surface_id);
 
   // Marks |surface_id| for destruction. The surface will get destroyed when
   // it's not reachable from the root or any other surface that is not marked
@@ -133,15 +132,6 @@ class VIZ_SERVICE_EXPORT SurfaceManager {
   // Invalidate a frame_sink_id that might still have associated sequences,
   // possibly because a renderer process has crashed.
   void InvalidateFrameSinkId(const FrameSinkId& frame_sink_id);
-
-  // Register a relationship between two namespaces.  This relationship means
-  // that surfaces from the child namespace will be displayed in the parent.
-  // Children are allowed to use any begin frame source that their parent can
-  // use.
-  void RegisterFrameSinkHierarchy(const FrameSinkId& parent_frame_sink_id,
-                                  const FrameSinkId& child_frame_sink_id);
-  void UnregisterFrameSinkHierarchy(const FrameSinkId& parent_frame_sink_id,
-                                    const FrameSinkId& child_frame_sink_id);
 
   // Returns the top level root SurfaceId. Surfaces that are not reachable
   // from the top level root may be garbage collected. It will not be a valid
@@ -227,7 +217,7 @@ class VIZ_SERVICE_EXPORT SurfaceManager {
                                       const CommitPredicate& predicate);
 
  private:
-  friend class CompositorFrameSinkSupportTest;
+  friend class CompositorFrameSinkSupportTestBase;
   friend class FrameSinkManagerTest;
   friend class HitTestAggregatorTest;
   friend class SurfaceSynchronizationTest;
@@ -244,6 +234,7 @@ class VIZ_SERVICE_EXPORT SurfaceManager {
     DROPPED = 1,   // The surface won't be embedded so it was dropped.
     SKIPPED = 2,   // A newer surface was embedded and the surface was skipped.
     EXPIRED = 4,   // The surface was never embedded and expired.
+    COPIED = 5,    // The surface was copied.
     COUNT
   };
 
@@ -296,6 +287,11 @@ class VIZ_SERVICE_EXPORT SurfaceManager {
   // ready for destruction.
   void MaybeGarbageCollectAllocationGroups();
 
+  // This returns true if early-acks for frame activation during interaction is
+  // enabled and if the number of frames since ack and the last interactive
+  // frame is below the cooldown threshold.
+  bool ShouldAckInteractiveFrame(const BeginFrameAck& ack) const;
+
   // Can be nullptr.
   const raw_ptr<SurfaceManagerDelegate> delegate_;
 
@@ -310,7 +306,7 @@ class VIZ_SERVICE_EXPORT SurfaceManager {
       frame_sink_id_to_allocation_groups_;
   base::flat_map<SurfaceId, std::unique_ptr<Surface>> surface_map_;
   base::ObserverList<SurfaceObserver>::Unchecked observer_list_;
-  base::ThreadChecker thread_checker_;
+  SEQUENCE_CHECKER(sequence_checker_);
 
   base::flat_map<SurfaceId, base::TimeTicks> surfaces_to_destroy_;
 
@@ -354,6 +350,8 @@ class VIZ_SERVICE_EXPORT SurfaceManager {
   std::unordered_map<FrameSinkId, std::vector<LocalSurfaceId>, FrameSinkIdHash>
       temporary_reference_ranges_;
 
+  std::optional<BeginFrameId> last_interactive_frame_;
+
   // Timer to remove old temporary references that aren't removed after an
   // interval of time. The timer will started/stopped so it only runs if there
   // are temporary references. Also the timer isn't used with Android WebView.
@@ -365,7 +363,8 @@ class VIZ_SERVICE_EXPORT SurfaceManager {
   // automatically.
   const size_t max_uncommitted_frames_;
 
-  base::WeakPtrFactory<SurfaceManager> weak_factory_{this};
+  std::optional<uint64_t>
+      cooldown_frames_for_ack_on_activation_during_interaction_;
 };
 
 }  // namespace viz

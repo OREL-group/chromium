@@ -29,7 +29,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_PATH_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_PATH_H_
 
-#include "base/memory/raw_ptr.h"
+#include "base/memory/raw_span.h"
 #include "third_party/blink/renderer/platform/geometry/float_rounded_rect.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_types.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
@@ -37,7 +37,6 @@
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/ref_counted.h"
 #include "third_party/skia/include/core/SkPath.h"
-#include "third_party/skia/include/core/SkPathBuilder.h"
 #include "third_party/skia/include/core/SkPathMeasure.h"
 #include "ui/gfx/geometry/transform.h"
 
@@ -66,7 +65,7 @@ enum PathElementType {
 // returns two tangent points and the endpoint.
 struct PathElement {
   PathElementType type;
-  raw_ptr<gfx::PointF, AllowPtrArithmetic> points;
+  base::raw_span<gfx::PointF> points;
 };
 
 // Result structure from Path::PointAndNormalAtLength() (and similar).
@@ -75,7 +74,7 @@ struct PointAndTangent {
   float tangent_in_degrees = 0;
 };
 
-typedef void (*PathApplierFunction)(void* info, const PathElement*);
+typedef void (*PathApplierFunction)(void* info, const PathElement&);
 
 class PLATFORM_EXPORT Path {
   USING_FAST_MALLOC(Path);

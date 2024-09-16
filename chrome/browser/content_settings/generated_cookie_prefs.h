@@ -15,7 +15,6 @@
 
 namespace content_settings {
 
-extern const char kCookieSessionOnly[];
 extern const char kCookiePrimarySetting[];
 extern const char kCookieDefaultContentSetting[];
 
@@ -25,7 +24,8 @@ enum class CookiePrimarySetting {
   ALLOW_ALL,
   BLOCK_THIRD_PARTY_INCOGNITO,
   BLOCK_THIRD_PARTY,
-  BLOCK_ALL
+  BLOCK_ALL,
+  LIMIT_THIRD_PARTY
 };
 
 // The base class for generated preferences which support WebUI cookie controls
@@ -71,15 +71,6 @@ class GeneratedCookiePrimarySettingPref : public GeneratedCookiePrefBase {
       Profile* profile);
 };
 
-class GeneratedCookieSessionOnlyPref : public GeneratedCookiePrefBase {
- public:
-  explicit GeneratedCookieSessionOnlyPref(Profile* profile);
-
-  // Generated Preference Interface.
-  extensions::settings_private::SetPrefResult SetPref(
-      const base::Value* value) override;
-  extensions::api::settings_private::PrefObject GetPrefObject() const override;
-};
 
 // A generated preference that represents cookies content setting and supports
 // three states: allow, session only and block.

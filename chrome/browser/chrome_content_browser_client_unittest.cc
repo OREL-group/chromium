@@ -7,6 +7,7 @@
 #include <list>
 #include <map>
 #include <memory>
+#include <string_view>
 
 #include "ash/webui/camera_app_ui/url_constants.h"
 #include "base/command_line.h"
@@ -34,7 +35,9 @@
 #include "chrome/browser/captive_portal/captive_portal_service_factory.h"
 #include "chrome/browser/enterprise/reporting/prefs.h"
 #include "chrome/browser/media/prefs/capture_device_ranking.h"
+#include "chrome/browser/search/search.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/web_applications/web_app_helpers.h"
 #include "chrome/browser/webauthn/webauthn_pref_names.h"
 #include "chrome/common/chrome_features.h"
@@ -70,6 +73,7 @@
 #include "content/public/test/browser_task_environment.h"
 #include "content/public/test/mock_render_process_host.h"
 #include "content/public/test/navigation_simulator.h"
+#include "crypto/crypto_buildflags.h"
 #include "media/media_buildflags.h"
 #include "net/base/url_util.h"
 #include "net/ssl/ssl_info.h"
@@ -88,6 +92,10 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/web_applications/test/web_app_install_test_utils.h"
+#include "chrome/browser/web_applications/test/web_app_test_utils.h"
+#include "chrome/browser/web_applications/web_app_provider.h"
+#include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/search_test_utils.h"
@@ -95,8 +103,10 @@
 // the (conditional) dependency path exists, adding `nogncheck`:
 #include "components/media_effects/media_effects_service.h"  // nogncheck
 #include "components/password_manager/core/common/password_manager_features.h"
-// Ditto:
+// `gn check` is failing on Android for this particular include even though
+// the (conditional) dependency path exists, adding `nogncheck`:
 #include "services/video_effects/test/fake_video_effects_service.h"  // nogncheck
+#include "third_party/blink/public/mojom/installedapp/related_application.mojom.h"
 #include "ui/base/page_transition_types.h"
 #else
 #include "base/system/sys_info.h"
@@ -107,9 +117,13 @@
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
+#include "ash/constants/ash_features.h"
 #include "ash/webui/help_app_ui/url_constants.h"
 #include "ash/webui/media_app_ui/url_constants.h"
+#include "ash/webui/print_management/url_constants.h"
+#include "ash/webui/recorder_app_ui/url_constants.h"
 #include "ash/webui/scanning/url_constants.h"
+#include "ash/webui/shortcut_customization_ui/url_constants.h"
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/ash/system_web_apps/apps/help_app/help_app_untrusted_ui_config.h"
 #include "chrome/browser/ash/system_web_apps/apps/media_app/media_app_guest_ui_config.h"
@@ -117,7 +131,6 @@
 #include "chrome/browser/ash/system_web_apps/test_support/test_system_web_app_manager.h"
 #include "chrome/browser/policy/networking/policy_cert_service.h"
 #include "chrome/browser/policy/networking/policy_cert_service_factory.h"
-#include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chromeos/ash/components/browser_context_helper/browser_context_types.h"
 #include "components/user_manager/scoped_user_manager.h"
@@ -233,7 +246,8 @@ TEST_F(ChromeContentBrowserClientWindowTest, OpenURL) {
   EXPECT_EQ(previous_count + 2, browser()->tab_strip_model()->count());
 }
 
-// TODO(crbug.com/566091): Remove the need for ShouldStayInParentProcessForNTP()
+// TODO(crbug.com/40447789): Remove the need for
+// ShouldStayInParentProcessForNTP()
 //    and associated test.
 TEST_F(ChromeContentBrowserClientWindowTest, ShouldStayInParentProcessForNTP) {
   ChromeContentBrowserClient client;
@@ -352,6 +366,66 @@ TEST_F(ChromeContentBrowserClientWindowTest,
 }
 
 #endif  // BUILDFLAG(IS_CHROMEOS)
+
+#if !BUILDFLAG(IS_ANDROID)
+TEST_F(ChromeContentBrowserClientWindowTest,
+       QueryInstalledWebAppsByManifestIdFrameUrlInScope) {
+  ChromeContentBrowserClient client;
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+  web_app::test::ScopedSkipMainProfileCheck skip_main_profile_check;
+#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
+  web_app::test::AwaitStartWebAppProviderAndSubsystems(browser()->profile());
+
+  const GURL app_url("http://foo.com");
+  const GURL frame_url("http://foo.com");
+
+  auto app_id = web_app::test::InstallDummyWebApp(browser()->profile(),
+                                                  "dummyapp", app_url);
+  base::test::TestFuture<std::optional<blink::mojom::RelatedApplication>>
+      future;
+
+  client.QueryInstalledWebAppsByManifestId(
+      frame_url, app_url, browser()->profile(), future.GetCallback());
+
+  ASSERT_TRUE(future.Wait());
+  const auto& result = future.Get();
+  EXPECT_TRUE(result.has_value());
+
+  web_app::WebAppProvider* const web_app_provider =
+      web_app::WebAppProvider::GetForLocalAppsUnchecked(browser()->profile());
+  const web_app::WebAppRegistrar& registrar =
+      web_app_provider->registrar_unsafe();
+
+  EXPECT_EQ(result->platform, "webapp");
+  EXPECT_FALSE(result->url.has_value());
+  EXPECT_FALSE(result->version.has_value());
+  EXPECT_EQ(result->id, registrar.GetAppManifestId(app_id));
+}
+
+TEST_F(ChromeContentBrowserClientWindowTest,
+       QueryInstalledWebAppsByManifestIdFrameUrlOutOfScope) {
+  ChromeContentBrowserClient client;
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+  web_app::test::ScopedSkipMainProfileCheck skip_main_profile_check;
+#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
+  web_app::test::AwaitStartWebAppProviderAndSubsystems(browser()->profile());
+
+  const GURL app_url("http://foo.com");
+  const GURL out_of_scope_frame_url("http://foo-out.com");
+
+  auto app_id = web_app::test::InstallDummyWebApp(browser()->profile(),
+                                                  "dummyapp", app_url);
+  base::test::TestFuture<std::optional<blink::mojom::RelatedApplication>>
+      future;
+
+  client.QueryInstalledWebAppsByManifestId(/*frame_url=*/out_of_scope_frame_url,
+                                           app_url, browser()->profile(),
+                                           future.GetCallback());
+
+  ASSERT_TRUE(future.Wait());
+  EXPECT_FALSE(future.Get().has_value());
+}
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 // NOTE: Any updates to the expectations in these tests should also be done in
 // the browser test WebRtcDisableEncryptionFlagBrowserTest.
@@ -614,10 +688,10 @@ TEST_F(ChromeContentBrowserClientTest, HandleWebUIReverse) {
   GURL chrome_settings(chrome::kChromeUISettingsURL);
   EXPECT_TRUE(test_content_browser_client.HandleWebUIReverse(&chrome_settings,
                                                              &profile_));
-#if !BUILDFLAG(IS_ANDROID)
-  GURL chrome_passwords_in_settings(chrome::kChromeUIPasswordManagerURL);
+#if BUILDFLAG(CHROME_ROOT_STORE_CERT_MANAGEMENT_UI)
+  GURL chrome_certificate_manager(chrome::kChromeUICertificateManagerDialogURL);
   EXPECT_TRUE(test_content_browser_client.HandleWebUIReverse(
-      &chrome_passwords_in_settings, &profile_));
+      &chrome_certificate_manager, &profile_));
 #endif
 }
 
@@ -703,6 +777,34 @@ TEST_F(ChromeContentBrowserClientTest, PreferenceRankVideoDeviceInfos) {
       &profile_with_prefs, infos);
   EXPECT_EQ(infos, expected_infos);
 }
+
+#if BUILDFLAG(CHROME_ROOT_STORE_CERT_MANAGEMENT_UI)
+
+#if BUILDFLAG(USE_NSS_CERTS)
+TEST_F(ChromeContentBrowserClientTest, RedirectCertManagerFeatureOff) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndDisableFeature(
+      features::kEnableCertManagementUIV2);
+  TestChromeContentBrowserClient test_content_browser_client;
+  GURL settings_cert_url(chrome::kChromeUICertificateRedirectURL);
+  test_content_browser_client.HandleWebUI(&settings_cert_url, &profile_);
+  // No redirection, feature is off.
+  EXPECT_EQ(GURL(chrome::kChromeUICertificateRedirectURL), settings_cert_url);
+}
+#endif  // BUILDFLAG(USE_NSS_CERTS)
+
+TEST_F(ChromeContentBrowserClientTest, RedirectCertManagerFeatureOn) {
+  base::test::ScopedFeatureList scoped_feature_list(
+      features::kEnableCertManagementUIV2);
+
+  TestChromeContentBrowserClient test_content_browser_client;
+  GURL settings_cert_url(chrome::kChromeUICertificateRedirectURL);
+  test_content_browser_client.HandleWebUI(&settings_cert_url, &profile_);
+  EXPECT_EQ(GURL(chrome::kChromeUICertificateManagerDialogURL),
+            settings_cert_url);
+}
+
+#endif  // BUILDFLAG(CHROME_ROOT_STORE_CERT_MANAGEMENT_UI)
 
 #if BUILDFLAG(IS_CHROMEOS)
 class ChromeContentSettingsRedirectTest
@@ -826,6 +928,42 @@ TEST_F(ChromeContentSettingsRedirectTest, RedirectTerminalURL) {
   EXPECT_EQ(GURL(chrome::kChromeUIAppDisabledURL), dest_url);
 }
 
+TEST_F(ChromeContentSettingsRedirectTest, RedirectPrintJobsURL) {
+  TestChromeContentBrowserClient test_content_browser_client;
+
+  const GURL print_jobs_url(ash::kChromeUIPrintManagementAppUrl);
+  GURL dest_url = print_jobs_url;
+  test_content_browser_client.HandleWebUI(&dest_url, &profile_);
+  EXPECT_EQ(print_jobs_url, dest_url);
+
+  testing_local_state_.Get()->SetUserPref(
+      policy::policy_prefs::kSystemFeaturesDisableList,
+      base::Value::List().Append(
+          static_cast<int>(policy::SystemFeature::kPrintJobs)));
+
+  dest_url = print_jobs_url;
+  test_content_browser_client.HandleWebUI(&dest_url, &profile_);
+  EXPECT_EQ(GURL(chrome::kChromeUIAppDisabledURL), dest_url);
+}
+
+TEST_F(ChromeContentSettingsRedirectTest, RedirectKeyShortcutsURL) {
+  TestChromeContentBrowserClient test_content_browser_client;
+
+  const GURL key_shortcuts_url(ash::kChromeUIShortcutCustomizationAppURL);
+  GURL dest_url = key_shortcuts_url;
+  test_content_browser_client.HandleWebUI(&dest_url, &profile_);
+  EXPECT_EQ(key_shortcuts_url, dest_url);
+
+  testing_local_state_.Get()->SetUserPref(
+      policy::policy_prefs::kSystemFeaturesDisableList,
+      base::Value::List().Append(
+          static_cast<int>(policy::SystemFeature::kKeyShortcuts)));
+
+  dest_url = key_shortcuts_url;
+  test_content_browser_client.HandleWebUI(&dest_url, &profile_);
+  EXPECT_EQ(GURL(chrome::kChromeUIAppDisabledURL), dest_url);
+}
+
 TEST_F(ChromeContentSettingsRedirectTest, RedirectOSSettingsURL) {
   TestChromeContentBrowserClient test_content_browser_client;
   const GURL os_settings_url(chrome::kChromeUIOSSettingsURL);
@@ -847,6 +985,26 @@ TEST_F(ChromeContentSettingsRedirectTest, RedirectOSSettingsURL) {
   dest_url = os_settings_pwa_url;
   test_content_browser_client.HandleWebUI(&dest_url, &profile_);
   EXPECT_EQ(os_settings_pwa_url, dest_url);
+}
+
+TEST_F(ChromeContentSettingsRedirectTest, RedirectRecorderURL) {
+  TestChromeContentBrowserClient test_content_browser_client;
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(ash::features::kConch);
+
+  const GURL recorder_url(ash::kChromeUIRecorderAppURL);
+  GURL dest_url = recorder_url;
+  test_content_browser_client.HandleWebUI(&dest_url, &profile_);
+  EXPECT_EQ(recorder_url, dest_url);
+
+  testing_local_state_.Get()->SetUserPref(
+      policy::policy_prefs::kSystemFeaturesDisableList,
+      base::Value::List().Append(
+          static_cast<int>(policy::SystemFeature::kRecorder)));
+
+  dest_url = recorder_url;
+  test_content_browser_client.HandleWebUI(&dest_url, &profile_);
+  EXPECT_EQ(GURL(chrome::kChromeUIAppDisabledURL), dest_url);
 }
 
 TEST_F(ChromeContentSettingsRedirectTest, RedirectScanningAppURL) {
@@ -1061,7 +1219,7 @@ TEST_F(ChromeContentBrowserClientCaptivePortalBrowserTest,
       web_contents(), CaptivePortalServiceFactory::GetForProfile(profile()),
       base::NullCallback());
   captive_portal::CaptivePortalTabHelper::FromWebContents(web_contents())
-      ->set_is_captive_portal_window();
+      ->set_window_type(captive_portal::CaptivePortalWindowType::kPopup);
   NavigateAndCommit(GURL("https://www.google.com"), ui::PAGE_TRANSITION_LINK);
   EXPECT_TRUE(network_context->WaitAndGetInvokedURLLoaderFactory());
 }
@@ -1244,7 +1402,7 @@ class ChromeContentBrowserClientSwitchTest
       : testing_local_state_(TestingBrowserProcess::GetGlobal()) {}
 
  protected:
-  void AppendSwitchInCurrentProcess(const base::StringPiece& switch_string) {
+  void AppendSwitchInCurrentProcess(std::string_view switch_string) {
     base::CommandLine::ForCurrentProcess()->AppendSwitch(switch_string);
   }
 
@@ -1406,4 +1564,41 @@ TEST_F(DisableWebAuthnWithBrokenCertsTest, IgnoreCertificateErrorsFlag) {
   simulator->Commit();
   EXPECT_TRUE(client.IsSecurityLevelAcceptableForWebAuthn(
       main_rfh(), url::Origin::Create(url)));
+}
+
+TEST_F(ChromeContentBrowserClientTest, ShouldUseSpareRenderProcessHost) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndDisableFeature(
+      features::kTopChromeWebUIUsesSpareRenderer);
+  using SpareProcessRefusedByEmbedderReason =
+      content::ContentBrowserClient::SpareProcessRefusedByEmbedderReason;
+  ChromeContentBrowserClient browser_client;
+
+  // Standard web URL
+  EXPECT_FALSE(browser_client.ShouldUseSpareRenderProcessHost(
+      &profile_, GURL("https://www.example.com")));
+
+  // No profile
+  EXPECT_EQ(SpareProcessRefusedByEmbedderReason::NoProfile,
+            browser_client.ShouldUseSpareRenderProcessHost(
+                nullptr, GURL("https://www.example.com")));
+
+  // Chrome top UI URL
+  EXPECT_EQ(SpareProcessRefusedByEmbedderReason::TopFrameChromeWebUI,
+            browser_client.ShouldUseSpareRenderProcessHost(
+                &profile_, GURL("chrome://test.top-chrome")));
+
+#if !BUILDFLAG(IS_ANDROID)
+  // Chrome-search URL
+  EXPECT_EQ(SpareProcessRefusedByEmbedderReason::InstantRendererForNewTabPage,
+            browser_client.ShouldUseSpareRenderProcessHost(
+                &profile_, GURL("chrome-search://test")));
+#endif
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+  // Extension URL
+  EXPECT_EQ(SpareProcessRefusedByEmbedderReason::ExtensionProcess,
+            browser_client.ShouldUseSpareRenderProcessHost(
+                &profile_, GURL("chrome-extension://test-extension/")));
+#endif
 }

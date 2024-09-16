@@ -47,13 +47,12 @@ bool SupportsH264() {
 
 bool InitializeVP9() {
 #if BUILDFLAG(IS_MAC)
-  // TODO(crbug.com/1449877): Enable VP9 on iOS.
-  if (__builtin_available(macOS 11.0, *)) {
-    VTRegisterSupplementalVideoDecoderIfAvailable(kCMVideoCodecType_VP9);
-    return VTIsHardwareDecodeSupported(kCMVideoCodecType_VP9);
-  }
-#endif
+  VTRegisterSupplementalVideoDecoderIfAvailable(kCMVideoCodecType_VP9);
+  return VTIsHardwareDecodeSupported(kCMVideoCodecType_VP9);
+#else
+  // TODO(crbug.com/40269929): Enable VP9 on iOS.
   return false;
+#endif
 }
 
 bool SupportsVP9() {
@@ -67,14 +66,7 @@ bool SupportsAV1() {
 
 #if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
 bool SupportsHEVC() {
-  // HEVC should be supported with 10.13+, but per crbug.com/1300444#c9 it is
-  // only reliable on Intel hardware with 11+.
-  if (base::FeatureList::IsEnabled(media::kPlatformHEVCDecoderSupport)) {
-    if (__builtin_available(macOS 11.0, *)) {
-      return true;
-    }
-  }
-  return false;
+  return base::FeatureList::IsEnabled(media::kPlatformHEVCDecoderSupport);
 }
 #endif  // BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
 
@@ -139,11 +131,11 @@ void VideoToolboxVideoDecoder::Initialize(const VideoDecoderConfig& config,
     return;
   }
 
-  // TODO(crbug.com/1331597): Distinguish unsupported profile from unsupported
+  // TODO(crbug.com/40227557): Distinguish unsupported profile from unsupported
   // codec.
-  // TODO(crbug.com/1331597): Make sure that config.profile() matches
+  // TODO(crbug.com/40227557): Make sure that config.profile() matches
   // config.codec().
-  // TODO(crbug.com/1331597): Check that the size is supported.
+  // TODO(crbug.com/40227557): Check that the size is supported.
   bool profile_supported = false;
   for (const auto& supported_config :
        GetSupportedVideoDecoderConfigs(gpu_workarounds_)) {
@@ -396,7 +388,7 @@ void VideoToolboxVideoDecoder::OnVideoToolboxOutput(
   }
 
   // Check if the frame was dropped.
-  // TODO(crbug.com/1331597): Notify the output queue of dropped frames.
+  // TODO(crbug.com/40227557): Notify the output queue of dropped frames.
   if (!image) {
     ReleaseDecodeCallbacks();
     return;
@@ -461,9 +453,9 @@ VideoToolboxVideoDecoder::GetSupportedVideoDecoderConfigs(
     const gpu::GpuDriverBugWorkarounds& gpu_workarounds) {
   std::vector<SupportedVideoDecoderConfig> supported;
 
-  // TODO(crbug.com/1331597): Test support for other H.264 profiles.
-  // TODO(crbug.com/1331597): Exclude resolutions that are not accelerated.
-  // TODO(crbug.com/1331597): Check if higher resolutions are supported.
+  // TODO(crbug.com/40227557): Test support for other H.264 profiles.
+  // TODO(crbug.com/40227557): Exclude resolutions that are not accelerated.
+  // TODO(crbug.com/40227557): Check if higher resolutions are supported.
   if (!gpu_workarounds.disable_accelerated_h264_decode && SupportsH264()) {
     supported.emplace_back(
         /*profile_min=*/H264PROFILE_BASELINE,
@@ -493,8 +485,7 @@ VideoToolboxVideoDecoder::GetSupportedVideoDecoderConfigs(
     }
   }
 
-  if (base::FeatureList::IsEnabled(kVideoToolboxAv1Decoding) &&
-      !gpu_workarounds.disable_accelerated_av1_decode && SupportsAV1()) {
+  if (!gpu_workarounds.disable_accelerated_av1_decode && SupportsAV1()) {
     supported.emplace_back(
         /*profile_min=*/AV1PROFILE_PROFILE_MAIN,
         /*profile_max=*/AV1PROFILE_PROFILE_MAIN,

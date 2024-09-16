@@ -85,7 +85,7 @@ std::optional<std::vector<uint8_t>> ECSigningKey::SignSlowly(
 
 #if BUILDFLAG(IS_MAC)
 SecKeyRef ECSigningKey::GetSecKeyRef() const {
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return nullptr;
 }
 #endif  // BUILDFLAG(IS_MAC)
@@ -125,7 +125,7 @@ ECSigningKeyProvider::FromWrappedSigningKeySlowly(
   return std::make_unique<ECSigningKey>(wrapped_key);
 }
 
-bool ECSigningKeyProvider::DeleteSigningKey(
+bool ECSigningKeyProvider::DeleteSigningKeySlowly(
     base::span<const uint8_t> wrapped_key) {
   // Software keys are stateless.
   return true;

@@ -12,10 +12,10 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/task/single_thread_task_runner.h"
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/mojom/devtools/console_message.mojom-blink.h"
 #include "third_party/blink/public/mojom/permissions_policy/permissions_policy.mojom-blink.h"
 #include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom-blink.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/bindings/core/v8/native_value_traits_impl.h"
@@ -569,15 +569,6 @@ void ValidateAndConvertPaymentDetailsBase(const PaymentDetailsBase* input,
         input->modifiers(), *output->modifiers, execution_context,
         exception_state);
   }
-
-  output->payment_handler_minimal_header_ux_enabled =
-      RuntimeEnabledFeatures::PaymentHandlerMinimalHeaderUXEnabled(
-          &execution_context);
-
-  if (output->payment_handler_minimal_header_ux_enabled) {
-    UseCounter::Count(&execution_context,
-                      WebFeature::kPaymentHandlerMinimalHeaderUX);
-  }
 }
 
 PaymentItemPtr CreateTotalPlaceHolderForAppStoreBilling(
@@ -814,21 +805,6 @@ void WarnIgnoringQueryQuotaForCanMakePayment(
       mojom::ConsoleMessageLevel::kWarning, error));
 }
 
-// Returns whether a Show() call may be allowed without a user activation,
-// based on the request method and feature state.
-bool ActivationlessShowEnabled(ExecutionContext* execution_context,
-                               const HashSet<String>& method_names) {
-  if (method_names.size() == 1 &&
-      method_names.Contains(kSecurePaymentConfirmationMethod)) {
-    return RuntimeEnabledFeatures::
-        SecurePaymentConfirmationAllowOneActivationlessShowEnabled(
-            execution_context);
-  } else {
-    return RuntimeEnabledFeatures::
-        PaymentRequestAllowOneActivationlessShowEnabled(execution_context);
-  }
-}
-
 // Records metrics for an activationless Show() call based on the request
 // method.
 void RecordActivationlessShow(ExecutionContext* execution_context,
@@ -882,20 +858,20 @@ ScriptPromise<PaymentResponse> PaymentRequest::show(
       !LocalDOMWindow::From(script_state)->GetFrame()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kAbortError,
                                       "Cannot show the payment request");
-    return ScriptPromise<PaymentResponse>();
+    return EmptyPromise();
   }
 
   if (!not_supported_for_invalid_origin_or_ssl_error_.empty()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNotSupportedError,
         not_supported_for_invalid_origin_or_ssl_error_);
-    return ScriptPromise<PaymentResponse>();
+    return EmptyPromise();
   }
 
   if (!payment_provider_.is_bound() || accept_resolver_) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "Already called show() once");
-    return ScriptPromise<PaymentResponse>();
+    return EmptyPromise();
   }
 
   LocalFrame* local_frame = DomWindow()->GetFrame();
@@ -916,31 +892,15 @@ ScriptPromise<PaymentResponse> PaymentRequest::show(
     }
   }
 
-  bool activationless_payment_request =
-      ActivationlessShowEnabled(GetExecutionContext(), method_names_) &&
-      !has_activation;
-
-  if (activationless_payment_request) {
+  // The user activation requirement is enforced in the browser side
+  // PaymentRequest::Show in order to track the state of activationless show
+  // across navigations.
+  if (!has_activation) {
     RecordActivationlessShow(GetExecutionContext(), method_names_);
   }
 
-  bool payment_request_allowed =
-      has_activation || activationless_payment_request;
   DomWindow()->ConsumePaymentRequestToken();
-
-  if (payment_request_allowed) {
-    LocalFrame::ConsumeTransientUserActivation(local_frame);
-  } else {
-    String message =
-        "PaymentRequest.show() requires either transient user activation or "
-        "delegated payment request capability";
-    GetExecutionContext()->AddConsoleMessage(
-        MakeGarbageCollected<ConsoleMessage>(
-            mojom::blink::ConsoleMessageSource::kJavaScript,
-            mojom::blink::ConsoleMessageLevel::kWarning, message));
-    exception_state.ThrowSecurityError(message);
-    return ScriptPromise<PaymentResponse>();
-  }
+  LocalFrame::ConsumeTransientUserActivation(local_frame);
 
   VLOG(2) << "Renderer: PaymentRequest (" << id_.Utf8() << "): show()";
 
@@ -976,21 +936,21 @@ ScriptPromise<IDLUndefined> PaymentRequest::abort(
   if (!script_state->ContextIsValid()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "Cannot abort payment");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   if (abort_resolver_) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "Cannot abort() again until the previous "
                                       "abort() has resolved or rejected");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   if (!GetPendingAcceptPromiseResolver()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
         "No show() or retry() in progress, so nothing to abort");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   VLOG(2) << "Renderer: PaymentRequest (" << id_.Utf8() << "): abort()";
@@ -1012,7 +972,7 @@ ScriptPromise<IDLBoolean> PaymentRequest::canMakePayment(
       can_make_payment_resolver_ || !script_state->ContextIsValid()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "Cannot query payment request");
-    return ScriptPromise<IDLBoolean>();
+    return EmptyPromise();
   }
 
   VLOG(2) << "Renderer: PaymentRequest (" << id_.Utf8()
@@ -1037,7 +997,7 @@ ScriptPromise<IDLBoolean> PaymentRequest::hasEnrolledInstrument(
       has_enrolled_instrument_resolver_ || !script_state->ContextIsValid()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "Cannot query payment request");
-    return ScriptPromise<IDLBoolean>();
+    return EmptyPromise();
   }
 
   VLOG(2) << "Renderer: PaymentRequest (" << id_.Utf8()
@@ -1073,34 +1033,34 @@ ScriptPromise<IDLUndefined> PaymentRequest::Retry(
       !LocalDOMWindow::From(script_state)->GetFrame()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kAbortError,
                                       "Cannot retry the payment request");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   if (complete_resolver_) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
         "Cannot call retry() because already called complete()");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   if (retry_resolver_) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "Cannot call retry() again until "
                                       "the previous retry() is finished");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   if (!payment_provider_.is_bound()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "Payment request terminated");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   String error_message;
   if (!PaymentsValidators::IsValidPaymentValidationErrorsFormat(
           errors, &error_message)) {
     exception_state.ThrowTypeError(error_message);
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   if (!options_->requestPayerName() && errors->hasPayer() &&
@@ -1161,34 +1121,34 @@ ScriptPromise<IDLUndefined> PaymentRequest::Complete(
   if (!script_state->ContextIsValid()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "Cannot complete payment");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   if (complete_resolver_) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "Already called complete() once");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   if (retry_resolver_) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
         "Cannot call complete() before retry() is finished");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   if (!complete_timer_.IsActive()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
         "Timed out after 60 seconds, complete() called too late");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   // User has cancelled the transaction while the website was processing it.
   if (!payment_provider_.is_bound()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kAbortError,
                                       "Request cancelled");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   UseCounter::Count(GetExecutionContext(), WebFeature::kPaymentRequestComplete);
@@ -1215,13 +1175,15 @@ void PaymentRequest::OnUpdatePaymentDetails(
   update_payment_details_timer_.Stop();
 
   v8::Isolate* isolate = resolver->GetScriptState()->GetIsolate();
-  ExceptionState exception_state(
-      isolate, ExceptionContextType::kConstructorOperationInvoke,
-      "PaymentDetailsUpdate");
+  ExceptionState exception_state(isolate, v8::ExceptionContext::kConstructor,
+                                 "PaymentDetailsUpdate");
   PaymentDetailsUpdate* details =
       NativeValueTraits<PaymentDetailsUpdate>::NativeValue(
           isolate, details_script_value.V8Value(), exception_state);
   if (exception_state.HadException()) {
+    ApplyContextToException(resolver->GetScriptState(),
+                            exception_state.GetException(),
+                            exception_state.GetContext());
     resolver->Reject(exception_state.GetException());
     ClearResolversAndCloseMojoConnection();
     return;
@@ -1233,6 +1195,9 @@ void PaymentRequest::OnUpdatePaymentDetails(
       details, options_, validated_details, shipping_option_, ignore_total_,
       *GetExecutionContext(), exception_state);
   if (exception_state.HadException()) {
+    ApplyContextToException(resolver->GetScriptState(),
+                            exception_state.GetException(),
+                            exception_state.GetContext());
     resolver->Reject(exception_state.GetException());
     ClearResolversAndCloseMojoConnection();
     return;
@@ -1453,10 +1418,9 @@ void PaymentRequest::OnPaymentMethodChange(const String& method_name,
   init->setMethodName(method_name);
 
   if (!stringified_details.empty()) {
-    ExceptionState exception_state(
-        script_state->GetIsolate(),
-        ExceptionContextType::kConstructorOperationInvoke,
-        "PaymentMethodChangeEvent");
+    ExceptionState exception_state(script_state->GetIsolate(),
+                                   v8::ExceptionContext::kConstructor,
+                                   "PaymentMethodChangeEvent");
     v8::Local<v8::Value> parsed_value =
         FromJSONString(script_state->GetIsolate(), script_state->GetContext(),
                        stringified_details, exception_state);

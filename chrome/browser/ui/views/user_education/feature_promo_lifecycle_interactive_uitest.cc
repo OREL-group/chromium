@@ -7,11 +7,13 @@
 #include <sstream>
 #include <utility>
 
+#include "build/build_config.h"
 #include "base/containers/contains.h"
 #include "base/feature_list.h"
 #include "base/functional/callback_helpers.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/bind.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/time/time.h"
 #include "chrome/browser/feature_engagement/tracker_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -27,6 +29,7 @@
 #include "components/keyed_service/content/browser_context_keyed_service_factory.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/user_education/common/feature_promo_controller.h"
+#include "components/user_education/common/feature_promo_data.h"
 #include "components/user_education/common/feature_promo_result.h"
 #include "components/user_education/common/feature_promo_specification.h"
 #include "components/user_education/common/feature_promo_storage_service.h"
@@ -35,8 +38,12 @@
 #include "components/user_education/views/help_bubble_view.h"
 #include "components/webapps/common/web_app_id.h"
 #include "content/public/test/browser_test.h"
+#include "net/dns/mock_host_resolver.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/events/event_modifiers.h"
+#include "ui/events/keycodes/keyboard_codes.h"
+#include "ui/views/interaction/widget_focus_observer.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
 
@@ -65,6 +72,7 @@ BASE_FEATURE(kFeaturePromoLifecycleTestAlert2,
 }  // namespace
 
 using TestBase = InteractiveFeaturePromoTestT<web_app::WebAppBrowserTestBase>;
+using user_education::FeaturePromoClosedReason;
 using user_education::FeaturePromoResult;
 
 class FeaturePromoLifecycleUiTest : public TestBase {
@@ -124,34 +132,34 @@ class FeaturePromoLifecycleUiTest : public TestBase {
 
   auto CheckSnoozePrefs(bool is_dismissed, int show_count, int snooze_count) {
     return std::move(
-        CheckBrowser(base::BindLambdaForTesting([this, is_dismissed, show_count,
-                                                 snooze_count](
-                                                    Browser* browser) {
-          auto data = GetStorageService(browser)->ReadPromoData(
-              kFeaturePromoLifecycleTestPromo);
+        CheckBrowser(
+            base::BindLambdaForTesting([this, is_dismissed, show_count,
+                                        snooze_count](Browser* browser) {
+              auto data = GetStorageService(browser)->ReadPromoData(
+                  kFeaturePromoLifecycleTestPromo);
 
-          if (!data.has_value()) {
-            return false;
-          }
+              if (!data.has_value()) {
+                return false;
+              }
 
-          EXPECT_EQ(data->is_dismissed, is_dismissed);
-          EXPECT_EQ(data->show_count, show_count);
-          EXPECT_EQ(data->snooze_count, snooze_count);
+              EXPECT_EQ(data->is_dismissed, is_dismissed);
+              EXPECT_EQ(data->show_count, show_count);
+              EXPECT_EQ(data->snooze_count, snooze_count);
 
-          // last_show_time is only meaningful if a show has occurred.
-          if (data->show_count > 0) {
-            EXPECT_GE(data->last_show_time, last_show_time_.first);
-            EXPECT_LE(data->last_show_time, last_show_time_.second);
-          }
+              // last_show_time is only meaningful if a show has occurred.
+              if (data->show_count > 0) {
+                EXPECT_GE(data->last_show_time, last_show_time_.first);
+                EXPECT_LE(data->last_show_time, last_show_time_.second);
+              }
 
-          // last_snooze_time is only meaningful if a snooze has occurred.
-          if (data->snooze_count > 0) {
-            EXPECT_GE(data->last_snooze_time, last_snooze_time_.first);
-            EXPECT_LE(data->last_snooze_time, last_snooze_time_.second);
-          }
+              // last_snooze_time is only meaningful if a snooze has occurred.
+              if (data->snooze_count > 0) {
+                EXPECT_GE(data->last_snooze_time, last_snooze_time_.first);
+                EXPECT_LE(data->last_snooze_time, last_snooze_time_.second);
+              }
 
-          return !testing::Test::HasNonfatalFailure();
-        }))
+              return !testing::Test::HasNonfatalFailure();
+            }))
             .SetDescription(base::StringPrintf("CheckSnoozePrefs(%s, %d, %d)",
                                                is_dismissed ? "true" : "false",
                                                show_count, snooze_count)));
@@ -166,14 +174,12 @@ class FeaturePromoLifecycleUiTest : public TestBase {
 
   auto SnoozeIPH() {
     auto steps = Steps(
-        Do(base::BindLambdaForTesting(
-            [this]() { last_snooze_time_.first = base::Time::Now(); })),
+        Do([this]() { last_snooze_time_.first = base::Time::Now(); }),
         PressButton(
             user_education::HelpBubbleView::kFirstNonDefaultButtonIdForTesting),
         WaitForHide(
             user_education::HelpBubbleView::kHelpBubbleElementIdForTesting),
-        Do(base::BindLambdaForTesting(
-            [this]() { last_snooze_time_.second = base::Time::Now(); })));
+        Do([this]() { last_snooze_time_.second = base::Time::Now(); }));
     AddDescription(steps, "SnoozeIPH(%s)");
     return steps;
   }
@@ -183,7 +189,7 @@ class FeaturePromoLifecycleUiTest : public TestBase {
         PressButton(user_education::HelpBubbleView::kCloseButtonIdForTesting),
         WaitForHide(
             user_education::HelpBubbleView::kHelpBubbleElementIdForTesting),
-        FlushEvents(), CheckBrowser(base::BindOnce([](Browser* browser) {
+        CheckBrowser(base::BindOnce([](Browser* browser) {
           auto* const promo = GetPromoController(browser)->current_promo_.get();
           return !promo || (!promo->is_promo_active() && !promo->help_bubble());
         })));
@@ -222,6 +228,19 @@ class FeaturePromoLifecycleUiTest : public TestBase {
         })).SetDescription(desc.str()));
   }
 
+  auto CheckMessageActionHistogram(const base::Feature& feature,
+                                   FeaturePromoClosedReason bucket,
+                                   int expected_count = 1) {
+    const std::string name =
+        base::StrCat({"UserEducation.MessageAction.", feature.name});
+    return std::move(Do([this, name, bucket, expected_count]() {
+                       histogram_tester_.ExpectBucketCount(name, bucket,
+                                                           expected_count);
+                     })
+                         .SetDescription(base::StringPrintf(
+                             "CheckHistogram(%s)", name.c_str())));
+  }
+
   static BrowserFeaturePromoController* GetPromoController(Browser* browser) {
     return static_cast<BrowserFeaturePromoController*>(
         browser->window()->GetFeaturePromoController());
@@ -235,6 +254,7 @@ class FeaturePromoLifecycleUiTest : public TestBase {
  private:
   std::pair<base::Time, base::Time> last_show_time_;
   std::pair<base::Time, base::Time> last_snooze_time_;
+  base::HistogramTester histogram_tester_;
 };
 
 IN_PROC_BROWSER_TEST_F(FeaturePromoLifecycleUiTest, DismissDoesNotSnooze) {
@@ -341,8 +361,23 @@ IN_PROC_BROWSER_TEST_F(FeaturePromoLifecycleUiTest, WidgetCloseSetsPrefs) {
       WithView(user_education::HelpBubbleView::kHelpBubbleElementIdForTesting,
                base::BindOnce([](user_education::HelpBubbleView* bubble) {
                  bubble->GetWidget()->CloseWithReason(
-                     views::Widget::ClosedReason::kEscKeyPressed);
+                     views::Widget::ClosedReason::kUnspecified);
                })),
+      WaitForHide(
+          user_education::HelpBubbleView::kHelpBubbleElementIdForTesting),
+      CheckSnoozePrefs(/* is_dismiss */ false,
+                       /* show_count */ 1,
+                       /* snooze_count */ 0));
+}
+
+IN_PROC_BROWSER_TEST_F(FeaturePromoLifecycleUiTest, AnchorViewHiddenSetsPrefs) {
+  RunTestSequence(
+      ShowPromoRecordingTime(kFeaturePromoLifecycleTestPromo),
+      WithView(user_education::HelpBubbleView::kHelpBubbleElementIdForTesting,
+               [](user_education::HelpBubbleView* bubble) {
+                 // This should yank the bubble out from under us.
+                 bubble->GetAnchorView()->SetVisible(false);
+               }),
       WaitForHide(
           user_education::HelpBubbleView::kHelpBubbleElementIdForTesting),
       CheckSnoozePrefs(/* is_dismiss */ false,
@@ -378,18 +413,146 @@ IN_PROC_BROWSER_TEST_F(FeaturePromoLifecycleUiTest, WorkWithoutNonClickerData) {
                   MaybeShowPromo(kFeaturePromoLifecycleTestPromo));
 }
 
+IN_PROC_BROWSER_TEST_F(FeaturePromoLifecycleUiTest,
+                       AbortPromoRecordsHistogram) {
+  RunTestSequence(
+      ShowPromoRecordingTime(kFeaturePromoLifecycleTestPromo),
+      AbortPromo(kFeaturePromoLifecycleTestPromo),
+      CheckMessageActionHistogram(kFeaturePromoLifecycleTestPromo,
+                                  FeaturePromoClosedReason::kAbortedByFeature));
+}
+
+IN_PROC_BROWSER_TEST_F(FeaturePromoLifecycleUiTest,
+                       SnoozePromoRecordsHistogram) {
+  RunTestSequence(
+      ShowPromoRecordingTime(kFeaturePromoLifecycleTestPromo), SnoozeIPH(),
+      CheckMessageActionHistogram(kFeaturePromoLifecycleTestPromo,
+                                  FeaturePromoClosedReason::kSnooze));
+}
+
+IN_PROC_BROWSER_TEST_F(FeaturePromoLifecycleUiTest,
+                       CancelPromoRecordsHistogram) {
+  RunTestSequence(
+      ShowPromoRecordingTime(kFeaturePromoLifecycleTestPromo), DismissIPH(),
+      CheckMessageActionHistogram(kFeaturePromoLifecycleTestPromo,
+                                  FeaturePromoClosedReason::kCancel));
+}
+
+IN_PROC_BROWSER_TEST_F(FeaturePromoLifecycleUiTest,
+                       PressingEscRecordsHistogram) {
+  const ui::Accelerator kEsc(ui::VKEY_ESCAPE, ui::MODIFIER_NONE);
+  views::Widget* bubble_widget = nullptr;
+  RunTestSequence(
+      ObserveState(views::test::kCurrentWidgetFocus),
+      ShowPromoRecordingTime(kFeaturePromoLifecycleTestPromo),
+      // Ensure that the bubble is active before trying to send an accelerator;
+      // widgets cannot accept accelerators before they become active.
+      // TODO(dfried): need to create a common WaitForActivation() verb.
+      WithView(user_education::HelpBubbleView::kHelpBubbleElementIdForTesting,
+               [&bubble_widget](views::View* view) {
+                 bubble_widget = view->GetWidget();
+               }),
+      If([&bubble_widget]() { return !bubble_widget->IsActive(); },
+         WaitForState(
+             views::test::kCurrentWidgetFocus,
+             [&bubble_widget]() { return bubble_widget->GetNativeView(); })),
+      SendAccelerator(
+          user_education::HelpBubbleView::kHelpBubbleElementIdForTesting, kEsc),
+      WaitForHide(
+          user_education::HelpBubbleView::kHelpBubbleElementIdForTesting),
+      CheckMessageActionHistogram(kFeaturePromoLifecycleTestPromo,
+                                  FeaturePromoClosedReason::kCancel));
+}
+
+IN_PROC_BROWSER_TEST_F(FeaturePromoLifecycleUiTest,
+                       DismissPromoRecordsHistogram) {
+  RunTestSequence(
+      ShowPromoRecordingTime(kFeaturePromoLifecycleTestPromo),
+      PressDefaultPromoButton(),
+      CheckMessageActionHistogram(kFeaturePromoLifecycleTestPromo,
+                                  FeaturePromoClosedReason::kDismiss));
+}
+
+IN_PROC_BROWSER_TEST_F(FeaturePromoLifecycleUiTest, EndPromoRecordsHistogram) {
+  RunTestSequence(
+      ShowPromoRecordingTime(kFeaturePromoLifecycleTestPromo),
+      InBrowser(base::BindOnce([](Browser* browser) {
+        GetPromoController(browser)->EndPromo(
+            kFeaturePromoLifecycleTestPromo,
+            user_education::EndFeaturePromoReason::kFeatureEngaged);
+      })),
+      WaitForHide(
+          user_education::HelpBubbleView::kHelpBubbleElementIdForTesting),
+      CheckMessageActionHistogram(kFeaturePromoLifecycleTestPromo,
+                                  FeaturePromoClosedReason::kFeatureEngaged));
+}
+
+IN_PROC_BROWSER_TEST_F(FeaturePromoLifecycleUiTest,
+                       WidgetClosedRecordsHistogram) {
+  RunTestSequence(
+      ShowPromoRecordingTime(kFeaturePromoLifecycleTestPromo),
+      WithView(user_education::HelpBubbleView::kHelpBubbleElementIdForTesting,
+               [](user_education::HelpBubbleView* bubble) {
+                 bubble->GetWidget()->CloseWithReason(
+                     views::Widget::ClosedReason::kUnspecified);
+               }),
+      WaitForHide(
+          user_education::HelpBubbleView::kHelpBubbleElementIdForTesting),
+
+      CheckMessageActionHistogram(
+          kFeaturePromoLifecycleTestPromo,
+          FeaturePromoClosedReason::kAbortedByBubbleDestroyed));
+}
+
+IN_PROC_BROWSER_TEST_F(FeaturePromoLifecycleUiTest,
+                       AnchorHideRecordsHistogram) {
+  RunTestSequence(
+      ShowPromoRecordingTime(kFeaturePromoLifecycleTestPromo),
+      WithView(user_education::HelpBubbleView::kHelpBubbleElementIdForTesting,
+               [](user_education::HelpBubbleView* bubble) {
+                 // This should yank the bubble out from under us.
+                 bubble->GetAnchorView()->SetVisible(false);
+               }),
+      WaitForHide(
+          user_education::HelpBubbleView::kHelpBubbleElementIdForTesting),
+      CheckMessageActionHistogram(
+          kFeaturePromoLifecycleTestPromo,
+          FeaturePromoClosedReason::kAbortedByAnchorHidden));
+}
+
+IN_PROC_BROWSER_TEST_F(FeaturePromoLifecycleUiTest,
+                       DismissInRegionRecordsHistogram) {
+  RunTestSequence(
+      ShowPromoRecordingTime(kFeaturePromoLifecycleTestPromo),
+      WithView(user_education::HelpBubbleView::kHelpBubbleElementIdForTesting,
+               [](user_education::HelpBubbleView* bubble) {
+                 BrowserFeaturePromoController::GetForView(bubble)
+                     ->DismissNonCriticalBubbleInRegion(
+                         bubble->GetBoundsInScreen());
+               }),
+      WaitForHide(
+          user_education::HelpBubbleView::kHelpBubbleElementIdForTesting),
+      CheckMessageActionHistogram(
+          kFeaturePromoLifecycleTestPromo,
+          FeaturePromoClosedReason::kOverrideForUIRegionConflict));
+}
+
 class FeaturePromoLifecycleAppUiTest : public FeaturePromoLifecycleUiTest {
  public:
   FeaturePromoLifecycleAppUiTest() = default;
   ~FeaturePromoLifecycleAppUiTest() override = default;
 
-  static constexpr char kApp1Url[] = "http://example.org/";
-  static constexpr char kApp2Url[] = "http://foo.com/";
+  static constexpr char kApp1Host[] = "example.org";
+  static constexpr char kApp2Host[] = "foo.com";
+  static constexpr char kAppPath[] = "/web_apps/no_manifest.html";
 
   void SetUpOnMainThread() override {
     FeaturePromoLifecycleUiTest::SetUpOnMainThread();
-    app1_id_ = InstallPWA(GURL(kApp1Url));
-    app2_id_ = InstallPWA(GURL(kApp2Url));
+    CHECK(embedded_test_server()->Start());
+    host_resolver()->AddRule("*", "127.0.0.1");
+    app1_id_ = InstallPWA(embedded_test_server()->GetURL(kApp1Host, kAppPath));
+    app2_id_ = InstallPWA(embedded_test_server()->GetURL(kApp2Host, kAppPath));
+    EXPECT_NE(app1_id_, app2_id_);
   }
 
   auto CheckShownForApp() {
@@ -435,7 +598,7 @@ IN_PROC_BROWSER_TEST_F(FeaturePromoLifecycleAppUiTest, ShowForAppThenBlocked) {
       app_browser->window()->GetElementContext(),
       WaitForShow(kToolbarAppMenuButtonElementId),
       MaybeShowPromo({kFeaturePromoLifecycleTestPromo, app1_id_}), DismissIPH(),
-      FlushEvents(),
+
       MaybeShowPromo({kFeaturePromoLifecycleTestPromo, app1_id_},
                      FeaturePromoResult::kPermanentlyDismissed));
 }
@@ -455,7 +618,7 @@ IN_PROC_BROWSER_TEST_F(FeaturePromoLifecycleAppUiTest, ShowForTwoApps) {
   RunTestSequenceInContext(
       app_browser->window()->GetElementContext(),
       MaybeShowPromo({kFeaturePromoLifecycleTestPromo, app1_id_}),
-      WaitForShow(kToolbarAppMenuButtonElementId), DismissIPH(), FlushEvents(),
+      WaitForShow(kToolbarAppMenuButtonElementId), DismissIPH(),
       InContext(
           app_browser2->window()->GetElementContext(),
           Steps(WaitForShow(kToolbarAppMenuButtonElementId),
@@ -535,7 +698,7 @@ IN_PROC_BROWSER_TEST_F(FeaturePromoLifecycleCriticalUiTest, ShowCriticalPromo) {
 IN_PROC_BROWSER_TEST_F(FeaturePromoLifecycleCriticalUiTest,
                        CannotRepeatDismissedPromo) {
   RunTestSequence(MaybeShowPromo(kFeaturePromoLifecycleTestPromo), DismissIPH(),
-                  FlushEvents(),
+
                   MaybeShowPromo(kFeaturePromoLifecycleTestPromo,
                                  FeaturePromoResult::kPermanentlyDismissed));
 }
@@ -596,7 +759,11 @@ IN_PROC_BROWSER_TEST_F(FeaturePromoLifecycleCriticalUiTest,
   RunTestSequence(MaybeShowPromo(kFeaturePromoLifecycleTestPromo3),
                   MaybeShowPromo(kFeaturePromoLifecycleTestPromo), DismissIPH(),
                   CheckDismissed(true, &kFeaturePromoLifecycleTestPromo),
-                  CheckDismissed(false, &kFeaturePromoLifecycleTestPromo3));
+                  CheckDismissed(false, &kFeaturePromoLifecycleTestPromo3),
+
+                  CheckMessageActionHistogram(
+                      kFeaturePromoLifecycleTestPromo3,
+                      FeaturePromoClosedReason::kOverrideForPrecedence));
 }
 
 IN_PROC_BROWSER_TEST_F(FeaturePromoLifecycleCriticalUiTest,
@@ -604,5 +771,9 @@ IN_PROC_BROWSER_TEST_F(FeaturePromoLifecycleCriticalUiTest,
   RunTestSequence(MaybeShowPromo(kFeaturePromoLifecycleTestPromo3),
                   MaybeShowPromo(kFeaturePromoLifecycleTestAlert), DismissIPH(),
                   CheckDismissed(true, &kFeaturePromoLifecycleTestAlert),
-                  CheckDismissed(false, &kFeaturePromoLifecycleTestPromo3));
+                  CheckDismissed(false, &kFeaturePromoLifecycleTestPromo3),
+
+                  CheckMessageActionHistogram(
+                      kFeaturePromoLifecycleTestPromo3,
+                      FeaturePromoClosedReason::kOverrideForPrecedence));
 }

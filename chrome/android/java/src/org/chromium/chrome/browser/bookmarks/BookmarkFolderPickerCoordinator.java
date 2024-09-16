@@ -19,7 +19,6 @@ import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.bookmarks.BookmarkListEntry.ViewType;
 import org.chromium.chrome.browser.bookmarks.BookmarkUiPrefs.BookmarkRowDisplayPref;
-import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
 import org.chromium.components.bookmarks.BookmarkId;
 import org.chromium.components.browser_ui.widget.FadingShadow;
 import org.chromium.components.browser_ui.widget.FadingShadowView;
@@ -87,14 +86,14 @@ public class BookmarkFolderPickerCoordinator implements BackPressHandler {
                         bookmarkModel,
                         bookmarkIds,
                         finishRunnable,
-                        new BookmarkUiPrefs(ChromeSharedPreferences.getInstance()),
+                        bookmarkUiPrefs,
                         model,
                         mModelList,
                         addNewFolderCoordinator,
                         improvedBookmarkRowCoordinator,
                         shoppingService);
 
-        FadingShadowView shadow = (FadingShadowView) mView.findViewById(R.id.shadow);
+        FadingShadowView shadow = mView.findViewById(R.id.shadow);
         shadow.init(mContext.getColor(R.color.toolbar_shadow_color), FadingShadow.POSITION_TOP);
         mRecyclerView.setOnScrollListener(
                 new RecyclerView.OnScrollListener() {
@@ -129,7 +128,7 @@ public class BookmarkFolderPickerCoordinator implements BackPressHandler {
 
     /** Returns the {@link Toolbar} for the folder picker. */
     public Toolbar getToolbar() {
-        return (Toolbar) mView.findViewById(R.id.toolbar);
+        return mView.findViewById(R.id.toolbar);
     }
 
     public void updateToolbarButtons() {

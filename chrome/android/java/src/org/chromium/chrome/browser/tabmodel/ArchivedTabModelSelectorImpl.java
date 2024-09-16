@@ -86,7 +86,24 @@ public class ArchivedTabModelSelectorImpl extends TabModelSelectorBase implement
                         mNextTabPolicySupplier,
                         mAsyncTabParamsManager,
                         this,
-                        /* supportUndo= */ true);
+                        /* supportUndo= */ true,
+                        /* isArchivedTabModel= */ true) {
+                    @Override
+                    public int index() {
+                        // Intentional noop.
+                        return INVALID_TAB_INDEX;
+                    }
+
+                    @Override
+                    public void setIndex(int i, final @TabSelectionType int type) {
+                        // Intentional noop.
+                    }
+
+                    @Override
+                    public Tab getNextTabIfClosed(int id, boolean uponExit) {
+                        return null;
+                    }
+                };
         ((ArchivedTabCreator) tabCreator).setTabModel(normalModel);
 
         onNativeLibraryReadyInternal(

@@ -80,7 +80,7 @@ std::unique_ptr<content::CdmInfo> CreateWidevineCdmInfo(
 // directory and create a CdmInfo. If that is successful, return the CdmInfo. If
 // not, return nullptr.
 // Copied from chrome_content_client.cc
-// TODO(crbug.com/1174571): move the functions to a common file.
+// TODO(crbug.com/40746872): move the functions to a common file.
 std::unique_ptr<content::CdmInfo> CreateCdmInfoFromWidevineDirectory(
     const base::FilePath& cdm_base_path) {
   // Library should be inside a platform specific directory.
@@ -212,28 +212,6 @@ void CastContentClient::AddContentDecryptionModules(
     cdm::AddAndroidWidevineCdm(cdms);
 #endif  // BUILDFLAG(ENABLE_WIDEVINE)
 
-#if BUILDFLAG(ENABLE_PLAYREADY)
-    // PlayReady may be supported on the devices. Register it anyway without
-    // any capabilities so that it will be checked the first time it is used.
-    // CdmInfo needs a CdmType, but on Android it is not used as the key system
-    // is supported by MediaDrm. Using a random value as something needs to be
-    // specified, and it must be different than other CdmTypes specified.
-    // (On Android the key system is identified by UUID, and that mapping is
-    // maintained by MediaDrmBridge.)
-    const ::media::CdmType kPlayReadyCdmType{0x86eb6b54497627b0ull,
-                                             0xdd48f67486daf152ull};
-    // TODO(jrummell): Move kChromecastPlayreadyKeySystem from
-    // chromecast/media/base/key_systems_common.h to someplace more accessible.
-    const char kChromecastPlayreadyKeySystem[] = "com.chromecast.playready";
-    cdms->push_back(
-        content::CdmInfo(kChromecastPlayreadyKeySystem,
-                         content::CdmInfo::Robustness::kSoftwareSecure,
-                         std::nullopt, kPlayReadyCdmType));
-    cdms->push_back(
-        content::CdmInfo(kChromecastPlayreadyKeySystem,
-                         content::CdmInfo::Robustness::kHardwareSecure,
-                         std::nullopt, kPlayReadyCdmType));
-#endif  // BUILDFLAG(ENABLE_PLAYREADY)
 #endif  // BUILDFLAG(BUNDLE_WIDEVINE_CDM) && BUILDFLAG(IS_LINUX)
   }
 }

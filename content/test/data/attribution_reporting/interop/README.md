@@ -5,7 +5,7 @@ implemented matches the intended behavior of the Attribution Reporting API.
 
 See https://wicg.github.io/attribution-reporting-api/ for the draft specification.
 
-See //content/browser/attribution_reporting/attribution_interop_unittest.cc
+See //content/browser/attribution_reporting/interop/interop_unittest.cc
 for the tests.
 
 These tests are purposefully not implemented as web platform tests, so that
@@ -52,7 +52,12 @@ and triggers.
           // A structured dictionary indicating which registrations the
           // responses are eligible for.
           // https://github.com/WICG/attribution-reporting-api/blob/main/EVENT.md#registration-requests
-          "Attribution-Reporting-Eligible": "navigation-source"
+          "Attribution-Reporting-Eligible": "navigation-source",
+
+          // Whether the request originated from a fenced frame.
+          // Defaults to false.
+          // https://github.com/WICG/attribution-reporting-api/blob/main/EVENT.md#verbose-debugging-reports
+          "fenced": false
         },
 
         // List of URLs and the corresponding responses.

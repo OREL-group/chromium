@@ -9,8 +9,10 @@
 #import "components/feature_engagement/public/tracker.h"
 #import "components/reading_list/core/reading_list_model.h"
 #import "components/reading_list/ios/reading_list_model_bridge_observer.h"
+#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_actions_delegate.h"
 #import "ios/chrome/browser/shared/public/commands/application_commands.h"
 #import "ios/chrome/browser/shared/public/commands/browser_coordinator_commands.h"
+#import "ios/chrome/browser/shared/public/commands/whats_new_commands.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/signin/model/authentication_service.h"
 #import "ios/chrome/browser/signin/model/authentication_service_factory.h"
@@ -23,7 +25,6 @@
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_constants.h"
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_consumer.h"
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_metrics_recorder.h"
-#import "ios/chrome/browser/ui/ntp/new_tab_page_metrics_delegate.h"
 #import "ios/chrome/browser/ui/whats_new/whats_new_util.h"
 
 @interface ShortcutsConsumerList : CRBProtocolObservers <ShortcutsConsumer>
@@ -66,10 +67,8 @@
     _shortcutsConfig.shortcutItems = [self shortcutItems];
     _shortcutsConfig.consumerSource = self;
     _shortcutsConfig.commandHandler = self;
-    if (IsIOSMagicStackCollectionViewEnabled()) {
-      _consumers = [ShortcutsConsumerList
-          observersWithProtocol:@protocol(ShortcutsConsumer)];
-    }
+    _consumers = [ShortcutsConsumerList
+        observersWithProtocol:@protocol(ShortcutsConsumer)];
   }
   return self;
 }
@@ -103,7 +102,6 @@
 #pragma mark - ShortcutsConsumerSource
 
 - (void)addConsumer:(id<ShortcutsConsumer>)consumer {
-  DCHECK(IsIOSMagicStackCollectionViewEnabled());
   [_consumers addObserver:consumer];
 }
 
@@ -125,9 +123,9 @@
   if (shortcutsItem.disabled) {
     return;
   }
-  [self.NTPMetricsDelegate shortcutTileOpened];
-    [self.delegate logMagicStackEngagementForType:ContentSuggestionsModuleType::
-                                                      kShortcuts];
+  [self.NTPActionsDelegate shortcutTileOpened];
+  [self.delegate
+      logMagicStackEngagementForType:ContentSuggestionsModuleType::kShortcuts];
   [self.contentSuggestionsMetricsRecorder
       recordShortcutTileTapped:shortcutsItem.collectionShortcutType];
   switch (shortcutsItem.collectionShortcutType) {
@@ -147,7 +145,7 @@
       [self.dispatcher showWhatsNew];
       break;
     case NTPCollectionShortcutTypeCount:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
   }
   return;
@@ -161,11 +159,7 @@
   _readingListModelIsLoaded = model->loaded();
   if (_readingListItem) {
     _shortcutsConfig.shortcutItems = [self shortcutItems];
-    if (IsIOSMagicStackCollectionViewEnabled()) {
-      [_consumers shortcutsItemConfigDidChange:_readingListItem];
-    } else {
-      [self.consumer setShortcutTilesConfig:_shortcutsConfig];
-    }
+    [_consumers shortcutsItemConfigDidChange:_readingListItem];
   }
 }
 
@@ -175,7 +169,7 @@
     return NO;
   }
 
-  // TODO(crbug.com/1510484): The FET is not ready upon app launch in the NTP.
+  // TODO(crbug.com/41483080): The FET is not ready upon app launch in the NTP.
   // Consequently, we must load a URL first and then load the NTP where the FET
   // becomes ready.
   DCHECK(_tracker);

@@ -14,7 +14,8 @@ To facilitate a code review please:
 
 * For each new or modified `unsafe` block, function, `impl`, etc.,
   add an unresolved "TODO: `unsafe` review" comment in Gerrit.
-    - TODO(https://crbug.com/328789397): Automate this via Tricium or AyeAye.
+  You can consider using `tools/crates/create_draft_comments.py` to streamline
+  creating such comments.
 
 Note that changes _anywhere_ in a crate that uses `unsafe` blocks may violate
 the internal invariants on which those `unsafe` blocks rely. It is unrealistic
@@ -26,7 +27,8 @@ could affect invariants on which `unsafe` blocks rely.
 ## `cargo vet` Policy {#cargo-vet-policy}
 
 All third-party Rust code in Chromium needs to be covered by `cargo vet` audits.
-In other words, `tools/crates/run_cargo_vet.py check` should always succeed.
+In other words, `tools/crates/run_cargo_vet.py check` should always succeed
+(this is enforced by `//third_party/rust/PRESUBMIT.py`).
 
 Audit criteria required for a given crate depend on how the crate is used.  The
 criteria are written to
@@ -44,14 +46,18 @@ Additional notes:
   others will require specialists from the `unsafe-rust-in-chrome@google.com`
   group (see the ["Code Review Policy" above](#code-review-policy).  More
   details about audit criteria and the required expertise are explained in the
-  [auditing_standards.md](https://github.com/google/rust-crate-audits/blob/main/auditing_standards.md).
+  [auditing_standards.md](https://github.com/google/rust-crate-audits/blob/main/auditing_standards.md),
+  which also provides guidance for conducting delta audits.
 * See
   [Cargo Vet documentation](https://mozilla.github.io/cargo-vet/recording-audits.html)
   for how to record the audit in `audits.toml`.
+  The `tools/crates/run_cargo_vet.py` may be used to invoke Chromium's copy of
+  `cargo-vet`.
 * Chromium uses both our own audits
   (stored in `third_party/rust/chromium_crates_io/supply-chain/audits.toml`)
   as well as audits imported from other parts of Google
   (e.g. Android, Fuchsia, etc.).  This means that adding a new crate does not
   necessarily require a new audit if the crate has already been audited by
-  other projects.
+  other projects (in this case, `cargo vet` will record the imported audit
+  in the `third_party/rust/chromium_crates_io/supply-chain/imports.lock` file).
 

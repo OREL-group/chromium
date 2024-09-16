@@ -71,10 +71,12 @@ enum class LaunchSource {
   kFromInstaller = 37,        // Installation UI
   kFromFirstRun = 38,         // First Run.
   kFromWelcomeTour = 39,      // Welcome Tour.
+  kFromFocusMode = 40,        // Focus Mode panel.
+  kFromSparky = 41,           // From Sparky feature.
 
   // Add any new values above this one, and update kMaxValue to the highest
   // enumerator value.
-  kMaxValue = kFromWelcomeTour,
+  kMaxValue = kFromSparky,
 };
 
 // Don't remove items or change the order of this enum.  It's used in

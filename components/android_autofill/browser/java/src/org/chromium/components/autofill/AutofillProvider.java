@@ -160,14 +160,17 @@ public class AutofillProvider {
         // We should have one of them available here, we start with AutofillRequest as it should be
         // available only if we started a session.
         FormData form;
+        short focusFieldIndex = -1;
         if (mRequest != null) {
             form = mRequest.getForm();
+            focusFieldIndex =
+                    mRequest.getFocusField() != null ? mRequest.getFocusField().fieldIndex : -1;
             mAutofillUMA.onVirtualStructureProvided();
         } else {
             form = mPrefillRequest.getForm();
             mStructureProvidedForPrefillRequest = true;
         }
-        form.fillViewStructure(structure);
+        form.fillViewStructure(structure, focusFieldIndex);
         if (AutofillManagerWrapper.isLoggable()) {
             AutofillManagerWrapper.log(
                     "onProvideAutoFillVirtualStructure fields:" + structure.getChildCount());
@@ -259,14 +262,15 @@ public class AutofillProvider {
             float width,
             float height,
             boolean hasServerPrediction) {
+        Rect absBound = transformToWindowBounds(new RectF(x, y, x + width, y + height));
+        if (mRequest != null) notifyViewExitBeforeDestroyRequest();
+
         // Check focusField inside short value? Autofill Manager might have session that wasn't
         // started by AutofillProvider, we just always cancel existing session here.
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
             mAutofillManager.cancel();
         }
 
-        Rect absBound = transformToWindowBounds(new RectF(x, y, x + width, y + height));
-        if (mRequest != null) notifyViewExitBeforeDestroyRequest();
         transformFormFieldToContainViewCoordinates(formData);
         mAutofillUMA.onSessionStarted(mAutofillManager.isDisabled());
         mRequest =
@@ -513,7 +517,7 @@ public class AutofillProvider {
             float width,
             float height,
             boolean causedByValueChange) {
-        // Check focusField inside short value? FocusNoLongerOnForm is called after form
+        // Check focusField inside short value? FocusOnNonFormField is called after form
         // submitted.
         if (mRequest == null) return;
         FocusField prev = mRequest.getFocusField();
@@ -573,7 +577,7 @@ public class AutofillProvider {
                             .setLabel(datalistValues[i])
                             .setSubLabel(datalistLabels[i])
                             .setItemTag("")
-                            .setPopupItemId(PopupItemId.DATALIST_ENTRY)
+                            .setSuggestionType(SuggestionType.DATALIST_ENTRY)
                             .setFeatureForIPH("")
                             .build();
         }

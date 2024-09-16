@@ -9,7 +9,6 @@
 #include "base/android/jni_android.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/functional/bind.h"
-#include "components/favicon/android/jni_headers/LargeIconBridge_jni.h"
 #include "components/favicon/content/large_icon_service_getter.h"
 #include "components/favicon/core/large_icon_service.h"
 #include "components/favicon_base/fallback_icon_style.h"
@@ -22,6 +21,9 @@
 #include "ui/gfx/codec/png_codec.h"
 #include "url/android/gurl_android.h"
 #include "url/gurl.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "components/favicon/android/jni_headers/LargeIconBridge_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::JavaParamRef;
@@ -104,7 +106,6 @@ void LargeIconBridge::
         JNIEnv* env,
         const base::android::JavaParamRef<jobject>& j_browser_context,
         const base::android::JavaParamRef<jobject>& j_page_url,
-        jboolean may_page_url_be_private,
         jboolean should_trim_page_url_path,
         jint j_network_annotation_hash_code,
         const base::android::JavaParamRef<jobject>& j_callback) {
@@ -126,7 +127,7 @@ void LargeIconBridge::
                      ScopedJavaGlobalRef<jobject>(env, j_callback));
   large_icon_service
       ->GetLargeIconOrFallbackStyleFromGoogleServerSkippingLocalCache(
-          page_url, may_page_url_be_private, should_trim_page_url_path,
+          page_url, should_trim_page_url_path,
           net::NetworkTrafficAnnotationTag::FromJavaAnnotation(
               j_network_annotation_hash_code),
           std::move(callback));

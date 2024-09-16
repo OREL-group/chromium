@@ -337,7 +337,7 @@ std::string ToString(DisplayManager::MultiDisplayMode mode) {
     case DisplayManager::MultiDisplayMode::UNIFIED:
       return "unified";
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 // Uses a piecewise linear function to map a brightness percent to sdr luminance
@@ -368,8 +368,17 @@ float GetSdrLumForScreenBrightness(float percent, float hdr_max_lum) {
 gfx::DisplayColorSpaces UpdateMaxLuminanceValue(
     const gfx::DisplayColorSpaces display_color_spaces,
     float brightness) {
-  // Ignore luminance changes for SDR-only color spaces
-  if (!display_color_spaces.SupportsHDR()) {
+  // On lid close or error state, do not alter the brightness settings of the
+  // external display.
+  if (brightness <= 0.f || brightness > 100.f) {
+    return display_color_spaces;
+  }
+
+  // Only change the HDR headroom if the output space is affected by the SDR
+  // brightness level.
+  auto hdr_space = display_color_spaces.GetOutputColorSpace(
+      gfx::ContentColorUsage::kHDR, false);
+  if (!hdr_space.IsAffectedBySDRWhiteLevel()) {
     return display_color_spaces;
   }
 
@@ -489,13 +498,23 @@ bool DisplayManager::InitFromCommandLine() {
   if (!command_line->HasSwitch(::switches::kHostWindowBounds)) {
     return false;
   }
-  const std::string size_str =
+  const std::string specs =
       command_line->GetSwitchValueASCII(::switches::kHostWindowBounds);
+
+  // If the origin is not specified, put the host window next to the previous.
+  int next_x = 0;
   for (const std::string& part : base::SplitString(
-           size_str, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL)) {
+           specs, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL)) {
     info_list.push_back(ManagedDisplayInfo::CreateFromSpec(part));
     info_list.back().set_native(true);
     info_list.back().set_from_native_platform(true);
+    auto bounds_in_native = info_list.back().bounds_in_native();
+    if (bounds_in_native.origin().IsOrigin()) {
+      gfx::Rect bounds(bounds_in_native.size());
+      bounds.set_x(next_x);
+      info_list.back().SetBounds(bounds);
+    }
+    next_x = bounds_in_native.right();
   }
   MaybeInitInternalDisplay(&info_list[0]);
   OnNativeDisplaysChanged(info_list);
@@ -591,7 +610,7 @@ void DisplayManager::SetLayoutForCurrentDisplays(
 
   layout_store_->RegisterLayoutForDisplayIdList(list, std::move(layout));
   if (delegate_) {
-    delegate_->PreDisplayConfigurationChange(false);
+    NotifyWillApplyDisplayChanges(false);
   }
 
   // TODO(oshima): Call UpdateDisplays instead.
@@ -610,7 +629,7 @@ void DisplayManager::SetLayoutForCurrentDisplays(
   }
 
   if (delegate_) {
-    delegate_->PostDisplayConfigurationChange();
+    NotifyDidApplyDisplayChanges();
   }
 }
 
@@ -906,12 +925,12 @@ void DisplayManager::RegisterDisplayRotationProperties(
     bool rotation_lock,
     Display::Rotation rotation) {
   if (delegate_) {
-    delegate_->PreDisplayConfigurationChange(false);
+    NotifyWillApplyDisplayChanges(false);
   }
   registered_internal_display_rotation_lock_ = rotation_lock;
   registered_internal_display_rotation_ = rotation;
   if (delegate_) {
-    delegate_->PostDisplayConfigurationChange();
+    NotifyDidApplyDisplayChanges();
   }
 }
 
@@ -1109,6 +1128,9 @@ void DisplayManager::UpdateDisplays() {
 
 void DisplayManager::UpdateDisplaysWith(
     const DisplayInfoList& updated_display_info_list) {
+  base::AutoReset<bool> is_updating_displays_resetter(&is_updating_displays_,
+                                                      true);
+
   BeginEndNotifier notifier(this);
 
   DisplayInfoList new_display_info_list = updated_display_info_list;
@@ -1297,7 +1319,7 @@ void DisplayManager::UpdateDisplaysWith(
       !removed_displays.empty() &&
       !(removed_displays.size() == 1 && added_display_indices.size() == 1);
   if (delegate_) {
-    delegate_->PreDisplayConfigurationChange(clear_focus);
+    NotifyWillApplyDisplayChanges(clear_focus);
   }
 
   std::vector<size_t> updated_indices;
@@ -1347,24 +1369,15 @@ void DisplayManager::UpdateDisplaysWith(
     }
   }
 
-  for (const auto& display : removed_displays) {
-    NotifyDisplayRemoved(display);
+  active_display_list_.resize(active_display_list_size);
+  is_updating_display_list_ = false;
+
+  if (!removed_displays.empty()) {
+    NotifyDisplaysRemoved(removed_displays);
   }
 
   for (size_t index : added_display_indices) {
     NotifyDisplayAdded(active_display_list_[index]);
-  }
-
-  active_display_list_.resize(active_display_list_size);
-  is_updating_display_list_ = false;
-
-  // OnDidRemoveDisplays is called after the displays have been removed,
-  // in comparison to NotifyDisplayRemoved/OnDisplayRemoved which on Ash
-  // is called before.
-  if (!removed_displays.empty()) {
-    for (auto& display_observer : display_observers_) {
-      display_observer.OnDisplaysRemoved(removed_displays);
-    }
   }
 
   UpdatePrimaryDisplayIdIfNecessary();
@@ -1414,7 +1427,10 @@ void DisplayManager::UpdateDisplaysWith(
 
     const auto primary_index_it = std::find(
         active_display_list_.begin(), active_display_list_.end(), primary);
-    CHECK(primary_index_it != active_display_list_.end());
+    CHECK_EQ(primary.id(), screen_->GetPrimaryDisplay().id())
+        << "Primary changed during displays update.";
+    CHECK(primary_index_it != active_display_list_.end())
+        << "Primary display not in display list.";
     const size_t primary_index =
         std::distance(active_display_list_.begin(), primary_index_it);
     display_changes[primary_index] |= primary_metrics;
@@ -1423,7 +1439,7 @@ void DisplayManager::UpdateDisplaysWith(
   UpdateInfoForRestoringMirrorMode();
 
   if (delegate_) {
-    delegate_->PostDisplayConfigurationChange();
+    NotifyDidApplyDisplayChanges();
   }
 
   // Populate the pending change structure.
@@ -1611,7 +1627,7 @@ Display DisplayManager::GetMirroringDisplayForUnifiedDesktop(
     }
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return Display();
 }
 
@@ -1728,7 +1744,7 @@ void DisplayManager::SetMirrorMode(
     MultipleDisplayState new_state =
         enabled ? MULTIPLE_DISPLAY_STATE_MULTI_MIRROR
                 : MULTIPLE_DISPLAY_STATE_MULTI_EXTENDED;
-    display_configurator_->SetDisplayMode(new_state);
+    display_configurator_->SetMultipleDisplayState(new_state);
     return;
   }
   multi_display_mode_ =
@@ -1808,7 +1824,8 @@ void DisplayManager::SetTouchCalibrationData(
     int64_t display_id,
     const TouchCalibrationData::CalibrationPointPairQuad& point_pair_quad,
     const gfx::Size& display_bounds,
-    const ui::TouchscreenDevice& touchdevice) {
+    const ui::TouchscreenDevice& touchdevice,
+    bool apply_spatial_calibration) {
   // We do not proceed with setting the calibration and association if the
   // touch device identified by |touch_device_identifier| is an internal touch
   // device.
@@ -1825,9 +1842,13 @@ void DisplayManager::SetTouchCalibrationData(
   bool update_add_support = false;
   bool update_remove_support = false;
 
-  TouchCalibrationData calibration_data(point_pair_quad, display_bounds);
-  touch_device_manager_->AddTouchCalibrationData(touchdevice, display_id,
-                                                 calibration_data);
+  if (apply_spatial_calibration) {
+    TouchCalibrationData calibration_data(point_pair_quad, display_bounds);
+    touch_device_manager_->AddTouchCalibrationData(touchdevice, display_id,
+                                                   calibration_data);
+  } else {
+    touch_device_manager_->AddTouchAssociation(touchdevice, display_id);
+  }
 
   DisplayInfoList display_info_list;
   for (const auto& display : active_display_list_) {
@@ -2599,15 +2620,22 @@ void DisplayManager::NotifyDisplayAdded(const Display& display) {
     display_observer.OnDisplayAdded(display);
   }
 }
+
 void DisplayManager::NotifyWillRemoveDisplays(const Displays& displays) {
   for (auto& display_observer : display_observers_) {
     display_observer.OnWillRemoveDisplays(displays);
   }
 }
 
-void DisplayManager::NotifyDisplayRemoved(const Display& display) {
+void DisplayManager::NotifyDisplaysRemoved(const Displays& displays) {
   for (auto& display_observer : display_observers_) {
-    display_observer.OnDisplayRemoved(display);
+    display_observer.OnDisplaysRemoved(displays);
+  }
+}
+
+void DisplayManager::NotifyDisplaysInitialized() {
+  for (auto& manager_observer : manager_observers_) {
+    manager_observer.OnDisplaysInitialized();
   }
 }
 
@@ -2629,19 +2657,35 @@ void DisplayManager::NotifyDidProcessDisplayChanges(
   }
 }
 
-void DisplayManager::AddObserver(DisplayObserver* display_observer) {
+void DisplayManager::NotifyWillApplyDisplayChanges(bool clear_focus) {
+  delegate_->PreDisplayConfigurationChange(clear_focus);
+  for (auto& manager_observer : manager_observers_) {
+    manager_observer.OnWillApplyDisplayChanges();
+  }
+}
+
+void DisplayManager::NotifyDidApplyDisplayChanges() {
+  delegate_->PostDisplayConfigurationChange();
+  for (auto& manager_observer : manager_observers_) {
+    manager_observer.OnDidApplyDisplayChanges();
+  }
+}
+
+void DisplayManager::AddDisplayObserver(DisplayObserver* display_observer) {
   display_observers_.AddObserver(display_observer);
 }
 
-void DisplayManager::RemoveObserver(DisplayObserver* display_observer) {
+void DisplayManager::RemoveDisplayObserver(DisplayObserver* display_observer) {
   display_observers_.RemoveObserver(display_observer);
 }
 
-void DisplayManager::AddObserver(DisplayManagerObserver* manager_observer) {
+void DisplayManager::AddDisplayManagerObserver(
+    DisplayManagerObserver* manager_observer) {
   manager_observers_.AddObserver(manager_observer);
 }
 
-void DisplayManager::RemoveObserver(DisplayManagerObserver* manager_observer) {
+void DisplayManager::RemoveDisplayManagerObserver(
+    DisplayManagerObserver* manager_observer) {
   manager_observers_.RemoveObserver(manager_observer);
 }
 

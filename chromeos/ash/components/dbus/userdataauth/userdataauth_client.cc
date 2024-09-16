@@ -109,6 +109,16 @@ class UserDataAuthClientImpl : public UserDataAuthClient {
     progress_observer_list_.RemoveObserver(observer);
   }
 
+  void AddAuthFactorStatusUpdateObserver(
+      AuthFactorStatusUpdateObserver* observer) override {
+    auth_factor_status_observer_list_.AddObserver(observer);
+  }
+
+  void RemoveAuthFactorStatusUpdateObserver(
+      AuthFactorStatusUpdateObserver* observer) override {
+    auth_factor_status_observer_list_.RemoveObserver(observer);
+  }
+
   void WaitForServiceToBeAvailable(
       chromeos::WaitForServiceToBeAvailableCallback callback) override {
     proxy_->WaitForServiceToBeAvailable(std::move(callback));
@@ -117,6 +127,14 @@ class UserDataAuthClientImpl : public UserDataAuthClient {
   void IsMounted(const ::user_data_auth::IsMountedRequest& request,
                  IsMountedCallback callback) override {
     CallProtoMethod(::user_data_auth::kIsMounted,
+                    ::user_data_auth::kUserDataAuthInterface, request,
+                    std::move(callback));
+  }
+
+  void GetVaultProperties(
+      const ::user_data_auth::GetVaultPropertiesRequest& request,
+      GetVaultPropertiesCallback callback) override {
+    CallProtoMethod(::user_data_auth::kGetVaultProperties,
                     ::user_data_auth::kUserDataAuthInterface, request,
                     std::move(callback));
   }
@@ -199,14 +217,6 @@ class UserDataAuthClientImpl : public UserDataAuthClient {
                     std::move(callback));
   }
 
-  void RestoreDeviceKey(
-      const ::user_data_auth::RestoreDeviceKeyRequest& request,
-      RestoreDeviceKeyCallback callback) override {
-    CallProtoMethod(::user_data_auth::kRestoreDeviceKey,
-                    ::user_data_auth::kUserDataAuthInterface, request,
-                    std::move(callback));
-  }
-
   void PreparePersistentVault(
       const ::user_data_auth::PreparePersistentVaultRequest& request,
       PreparePersistentVaultCallback callback) override {
@@ -270,6 +280,14 @@ class UserDataAuthClientImpl : public UserDataAuthClient {
                     std::move(callback));
   }
 
+  void ReplaceAuthFactor(
+      const ::user_data_auth::ReplaceAuthFactorRequest& request,
+      ReplaceAuthFactorCallback callback) override {
+    CallProtoMethod(::user_data_auth::kReplaceAuthFactor,
+                    ::user_data_auth::kUserDataAuthInterface, request,
+                    std::move(callback));
+  }
+
   void RemoveAuthFactor(
       const ::user_data_auth::RemoveAuthFactorRequest& request,
       RemoveAuthFactorCallback callback) override {
@@ -289,14 +307,6 @@ class UserDataAuthClientImpl : public UserDataAuthClient {
       const ::user_data_auth::GetAuthFactorExtendedInfoRequest& request,
       GetAuthFactorExtendedInfoCallback callback) override {
     CallProtoMethod(::user_data_auth::kGetAuthFactorExtendedInfo,
-                    ::user_data_auth::kUserDataAuthInterface, request,
-                    std::move(callback));
-  }
-
-  void GetRecoveryRequest(
-      const ::user_data_auth::GetRecoveryRequestRequest& request,
-      GetRecoveryRequestCallback callback) override {
-    CallProtoMethod(::user_data_auth::kGetRecoveryRequest,
                     ::user_data_auth::kUserDataAuthInterface, request,
                     std::move(callback));
   }
@@ -337,6 +347,14 @@ class UserDataAuthClientImpl : public UserDataAuthClient {
       const ::user_data_auth::GetRecoverableKeyStoresRequest& request,
       GetRecoverableKeyStoresCallback callback) override {
     CallProtoMethod(::user_data_auth::kGetRecoverableKeyStores,
+                    ::user_data_auth::kUserDataAuthInterface, request,
+                    std::move(callback));
+  }
+
+  void SetUserDataStorageWriteEnabled(
+      const ::user_data_auth::SetUserDataStorageWriteEnabledRequest& request,
+      SetUserDataStorageWriteEnabledCallback callback) override {
+    CallProtoMethod(::user_data_auth::kSetUserDataStorageWriteEnabled,
                     ::user_data_auth::kUserDataAuthInterface, request,
                     std::move(callback));
   }
@@ -425,25 +443,12 @@ class UserDataAuthClientImpl : public UserDataAuthClient {
     }
   }
 
-  void OnAuthScanResult(dbus::Signal* signal) {
-    dbus::MessageReader reader(signal);
-    ::user_data_auth::AuthScanResult proto;
-    if (!reader.PopArrayOfBytesAsProto(&proto)) {
-      LOG(ERROR)
-          << "Failed to parse AuthScanResult protobuf from UserDataAuth signal";
-      return;
-    }
-    for (auto& observer : fp_observer_list_) {
-      observer.OnFingerprintScan(proto.fingerprint_result());
-    }
-  }
-
   void OnAuthEnrollmentProgress(dbus::Signal* signal) {
     dbus::MessageReader reader(signal);
     ::user_data_auth::AuthEnrollmentProgress proto;
     if (!reader.PopArrayOfBytesAsProto(&proto)) {
-      LOG(ERROR)
-          << "Failed to parse AuthScanResult protobuf from UserDataAuth signal";
+      LOG(ERROR) << "Failed to parse AuthEnrollmentProgress protobuf from "
+                    "UserDataAuth signal";
       return;
     }
     for (auto& observer : fp_observer_list_) {
@@ -476,9 +481,32 @@ class UserDataAuthClientImpl : public UserDataAuthClient {
         observer.OnFingerprintAuthScan(
             proto.auth_progress().biometrics_progress());
       }
+    } else if (proto.purpose() ==
+                   ::user_data_auth::PURPOSE_AUTHENTICATE_AUTH_FACTOR &&
+               proto.auth_progress().auth_factor_type() ==
+                   ::user_data_auth::AUTH_FACTOR_TYPE_LEGACY_FINGERPRINT) {
+      for (auto& observer : fp_observer_list_) {
+        observer.OnFingerprintScan(proto.auth_progress()
+                                       .biometrics_progress()
+                                       .scan_result()
+                                       .fingerprint_result());
+      }
     } else {
       LOG(ERROR) << "Received a unrecognized PrepareAuthFactorProgress signal";
       return;
+    }
+  }
+
+  void OnAuthFactorStatusUpdate(dbus::Signal* signal) {
+    dbus::MessageReader reader(signal);
+    ::user_data_auth::AuthFactorStatusUpdate proto;
+    if (!reader.PopArrayOfBytesAsProto(&proto)) {
+      LOG(ERROR) << "Failed to parse AuthFactorStatusUpdate protobuf from "
+                    "UserDataAuth signal";
+      return;
+    }
+    for (auto& observer : auth_factor_status_observer_list_) {
+      observer.OnAuthFactorStatusUpdate(proto);
     }
   }
 
@@ -499,12 +527,6 @@ class UserDataAuthClientImpl : public UserDataAuthClient {
         base::BindOnce(&OnSignalConnected));
     proxy_->ConnectToSignal(
         ::user_data_auth::kUserDataAuthInterface,
-        ::user_data_auth::kAuthScanResultSignal,
-        base::BindRepeating(&UserDataAuthClientImpl::OnAuthScanResult,
-                            weak_factory_.GetWeakPtr()),
-        base::BindOnce(&OnSignalConnected));
-    proxy_->ConnectToSignal(
-        ::user_data_auth::kUserDataAuthInterface,
         ::user_data_auth::kAuthEnrollmentProgressSignal,
         base::BindRepeating(&UserDataAuthClientImpl::OnAuthEnrollmentProgress,
                             weak_factory_.GetWeakPtr()),
@@ -515,6 +537,12 @@ class UserDataAuthClientImpl : public UserDataAuthClient {
         base::BindRepeating(
             &UserDataAuthClientImpl::OnPrepareAuthFactorProgress,
             weak_factory_.GetWeakPtr()),
+        base::BindOnce(&OnSignalConnected));
+    proxy_->ConnectToSignal(
+        ::user_data_auth::kUserDataAuthInterface,
+        ::user_data_auth::kAuthFactorStatusUpdate,
+        base::BindRepeating(&UserDataAuthClientImpl::OnAuthFactorStatusUpdate,
+                            weak_factory_.GetWeakPtr()),
         base::BindOnce(&OnSignalConnected));
   }
 
@@ -529,6 +557,10 @@ class UserDataAuthClientImpl : public UserDataAuthClient {
 
   // List of observers for dbus signals related to fingerprint.
   base::ObserverList<PrepareAuthFactorProgressObserver> progress_observer_list_;
+
+  // List of observers for dbus signal AuthFactorStatusUpdate.
+  base::ObserverList<AuthFactorStatusUpdateObserver>
+      auth_factor_status_observer_list_;
 
   base::WeakPtrFactory<UserDataAuthClientImpl> weak_factory_{this};
 };

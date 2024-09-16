@@ -7,12 +7,12 @@
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "chrome/browser/ash/nearby/nearby_process_manager_factory.h"
-#include "chrome/browser/nearby_sharing/nearby_connections_manager_impl.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chromeos/ash/components/browser_context_helper/browser_context_helper.h"
 #include "chromeos/ash/components/browser_context_helper/browser_context_types.h"
 #include "chromeos/ash/components/data_migration/constants.h"
 #include "chromeos/ash/components/data_migration/data_migration.h"
+#include "chromeos/ash/components/nearby/common/connections_manager/nearby_connections_manager_impl.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "components/user_manager/user_manager.h"
 
@@ -29,6 +29,9 @@ DataMigrationFactory::DataMigrationFactory()
           "DataMigration",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kOriginalOnly)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kOriginalOnly)
               .Build()) {
   DependsOn(ash::nearby::NearbyProcessManagerFactory::GetInstance());
 }

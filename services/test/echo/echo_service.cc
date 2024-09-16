@@ -4,9 +4,14 @@
 
 #include "services/test/echo/echo_service.h"
 
+#include <optional>
+#include <string>
+
+#include "base/check.h"
 #include "base/immediate_crash.h"
 #include "base/memory/shared_memory_mapping.h"
 #include "build/build_config.h"
+#include "components/os_crypt/sync/os_crypt.h"
 
 #if BUILDFLAG(IS_WIN)
 #include <windows.h>
@@ -34,7 +39,7 @@ void EchoService::EchoStringToSharedMemory(
     const std::string& input,
     base::UnsafeSharedMemoryRegion region) {
   base::WritableSharedMemoryMapping mapping = region.Map();
-  memcpy(mapping.memory(), input.data(), input.size());
+  base::span(mapping).copy_prefix_from(base::as_byte_span(input));
 }
 
 void EchoService::Quit() {
@@ -87,5 +92,26 @@ void EchoService::LoadNativeLibrary(const ::base::FilePath& library,
   std::move(callback).Run(LoadStatus::kSuccess, ERROR_SUCCESS);
 }
 #endif  // BUILDFLAG(IS_WIN)
+
+void EchoService::DecryptEncrypt(os_crypt_async::Encryptor encryptor,
+                                 const std::vector<uint8_t>& input,
+                                 DecryptEncryptCallback callback) {
+  // OSCrypt sync services are not available because they are not initialized in
+  // a child process.
+  CHECK(!OSCrypt::IsEncryptionAvailable());
+
+  CHECK(encryptor.IsDecryptionAvailable());
+  // Take the input, which was encrypted in the caller process, and decrypt it.
+  const auto plaintext = encryptor.DecryptData(input);
+  if (!plaintext.has_value()) {
+    std::move(callback).Run(std::nullopt);
+    return;
+  }
+
+  CHECK(encryptor.IsEncryptionAvailable());
+  // Encrypt it again using the key inside this process, and return the
+  // encrypted ciphertext to the caller.
+  std::move(callback).Run(encryptor.EncryptString(*plaintext));
+}
 
 }  // namespace echo

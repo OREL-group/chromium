@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/printing/pdf_to_emf_converter.h"
 
 #include <windows.h>
@@ -68,7 +73,7 @@ void GetPageCallbackImpl(base::OnceClosure quit_closure,
 // `page_number` is 0-based. Returned result has 1-based page number.
 std::string GetFileNameForPageNumber(const std::string& name, int page_number) {
   std::string ret = name;
-  ret += std::to_string(page_number + 1);
+  ret += base::NumberToString(page_number + 1);
   ret += ".emf";
   return ret;
 }
@@ -88,7 +93,7 @@ std::unique_ptr<ENHMETAHEADER> GetEmfHeader(const std::string& emf_data) {
 
 void CompareEmfHeaders(const ENHMETAHEADER& expected_header,
                        const ENHMETAHEADER& actual_header) {
-  // TODO(crbug.com/781403): once the EMF generation is fixed, also compare:
+  // TODO(crbug.com/40548087): once the EMF generation is fixed, also compare:
   //  rclBounds, rclFrame, szlDevice, szlMillimeters and szlMicrometers.
   EXPECT_EQ(expected_header.iType, actual_header.iType);
   EXPECT_EQ(expected_header.nSize, actual_header.nSize);
@@ -108,7 +113,7 @@ void CompareEmfHeaders(const ENHMETAHEADER& expected_header,
 
 std::string HashData(const char* data, size_t len) {
   auto span = base::make_span(reinterpret_cast<const uint8_t*>(data), len);
-  return base::HexEncode(base::SHA1HashSpan(span));
+  return base::HexEncode(base::SHA1Hash(span));
 }
 
 class PdfToEmfConverterBrowserTest
@@ -191,7 +196,7 @@ class PdfToEmfConverterBrowserTest
   }
 
   void ComparePageEmfHeader() {
-    // TODO(crbug.com/781403): the generated data can differ visually. Until
+    // TODO(crbug.com/40548087): the generated data can differ visually. Until
     // this is fixed only checking the output size and parts of the EMF header.
     ASSERT_EQ(expected_current_emf_data_.size(),
               actual_current_emf_data_.size());
@@ -259,7 +264,8 @@ IN_PROC_BROWSER_TEST_P(PdfToEmfConverterBrowserTest, FailureNoTempFile) {
 
 IN_PROC_BROWSER_TEST_P(PdfToEmfConverterBrowserTest, FailureBadPdf) {
   scoped_refptr<base::RefCountedStaticMemory> bad_pdf_data =
-      base::MakeRefCounted<base::RefCountedStaticMemory>("0123456789", 10);
+      base::MakeRefCounted<base::RefCountedStaticMemory>(
+          base::byte_span_from_cstring("0123456789"));
 
   base::RunLoop run_loop;
   uint32_t page_count = kInvalidPageCount;

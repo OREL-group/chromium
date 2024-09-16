@@ -28,6 +28,7 @@
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
+#include "third_party/blink/renderer/core/layout/pagination_utils.h"
 #include "third_party/blink/renderer/core/layout/physical_box_fragment.h"
 #include "third_party/blink/renderer/core/layout/physical_fragment_link.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
@@ -65,32 +66,26 @@ wtf_size_t PrintContext::PageCount() const {
   if (!IsFrameValid()) {
     return 0;
   }
-  if (!use_printing_layout_) {
+  if (!use_paginated_layout_) {
     return 1;
   }
 
-  auto* view = frame_->GetDocument()->GetLayoutView();
-  const auto& fragments = view->GetPhysicalFragment(0)->Children();
-  return ClampTo<wtf_size_t>(fragments.size());
+  return ::blink::PageCount(*frame_->GetDocument()->GetLayoutView());
 }
 
-gfx::Rect PrintContext::PageRect(wtf_size_t page_number) const {
+gfx::Rect PrintContext::PageRect(wtf_size_t page_index) const {
   CHECK(IsFrameValid());
   DCHECK(is_printing_);
-  DCHECK_LT(page_number, PageCount());
+  DCHECK_LT(page_index, PageCount());
   const LayoutView& layout_view = *frame_->GetDocument()->GetLayoutView();
 
-  if (!use_printing_layout_) {
-    // Remote frames end up here.
+  if (!use_paginated_layout_) {
+    // Remote frames (and the special per-page headers+footers document) end up
+    // here.
     return ToPixelSnappedRect(layout_view.DocumentRect());
   }
 
-  const auto& fragments = layout_view.GetPhysicalFragment(0)->Children();
-  CHECK_GE(fragments.size(), 1u);
-  DCHECK(fragments[0]->IsFragmentainerBox());
-
-  const PhysicalFragmentLink& page = fragments[page_number];
-  PhysicalRect physical_rect(page.offset, page->Size());
+  PhysicalRect physical_rect = StitchedPageContentRect(layout_view, page_index);
   gfx::Rect page_rect = ToEnclosingRect(physical_rect);
 
   // There's code to avoid fractional page sizes, so we shouldn't have to worry
@@ -110,14 +105,14 @@ void PrintContext::BeginPrintMode(const WebPrintParams& print_params) {
   // without going back to screen mode.
   is_printing_ = true;
 
-  use_printing_layout_ = print_params.use_printing_layout;
+  use_paginated_layout_ = print_params.use_paginated_layout;
 
   const Settings* settings = frame_->GetSettings();
   DCHECK(settings);
   float maximum_shink_factor = settings->GetPrintingMaximumShrinkFactor();
 
   LayoutView& layout_view = *frame_->GetDocument()->GetLayoutView();
-  layout_view.SetPageScaleFactor(1.0f / print_params.scale_factor);
+  layout_view.SetPaginationScaleFactor(1.0f / print_params.scale_factor);
 
   // This changes layout, so callers need to make sure that they don't paint to
   // screen while in printing mode.
@@ -203,8 +198,14 @@ void PrintContext::OutputLinkedDestinations(
     if (!layout_object || !layout_object->GetFrameView())
       continue;
     gfx::Point anchor_point = layout_object->AbsoluteBoundingBoxRect().origin();
-    if (page_rect.Contains(anchor_point))
-      context.SetURLDestinationLocation(entry.key, anchor_point);
+    if (page_rect.Contains(anchor_point)) {
+      // The linked destination location is relative to the current page (in
+      // fact just like everything else that's painted, but the linked
+      // destination code is tacked on the outside of the paint code, so extra
+      // awareness is required).
+      context.SetURLDestinationLocation(
+          entry.key, anchor_point - page_rect.OffsetFromOrigin());
+    }
   }
 }
 
@@ -226,10 +227,6 @@ bool PrintContext::IsFrameValid() const {
 void PrintContext::Trace(Visitor* visitor) const {
   visitor->Trace(frame_);
   visitor->Trace(linked_destinations_);
-}
-
-bool PrintContext::use_printing_layout() const {
-  return use_printing_layout_;
 }
 
 ScopedPrintContext::ScopedPrintContext(LocalFrame* frame)

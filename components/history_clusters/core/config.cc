@@ -9,7 +9,6 @@
 #include "base/feature_list.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/no_destructor.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
 #include "build/build_config.h"
 #include "components/history_clusters/core/features.h"
@@ -69,21 +68,6 @@ Config::Config() {
         base::GetFieldTrialParamByFeatureAsBool(
             internal::kJourneys, "JourneysSortClustersWithinBatchForQuery",
             sort_clusters_within_batch_for_query);
-  }
-
-  // The `kJourneysLabels` feature and child params.
-  {
-    labels_from_hostnames = GetFieldTrialParamByFeatureAsBool(
-        internal::kJourneysLabels, "labels_from_hostnames",
-        labels_from_hostnames);
-
-    labels_from_entities = GetFieldTrialParamByFeatureAsBool(
-        internal::kJourneysLabels, "labels_from_entities",
-        labels_from_entities);
-
-    labels_from_search_visit_entities = GetFieldTrialParamByFeatureAsBool(
-        internal::kJourneysLabels, "labels_from_search_visit_entities",
-        labels_from_search_visit_entities);
   }
 
   // The `kJourneysImages` feature.
@@ -290,19 +274,6 @@ Config::Config() {
         base::FeatureList::IsEnabled(internal::kJourneysZeroStateFiltering);
   }
 
-  // The `kNtpChromeCartInHistoryClusterModule` child params.
-  {
-    use_ntp_specific_intracluster_ranking = GetFieldTrialParamByFeatureAsBool(
-        ntp_features::kNtpChromeCartInHistoryClusterModule,
-        "use_ntp_specific_intracluster_ranking",
-        use_ntp_specific_intracluster_ranking);
-
-    ntp_visit_duration_ranking_weight = GetFieldTrialParamByFeatureAsDouble(
-        ntp_features::kNtpChromeCartInHistoryClusterModule,
-        "ntp_visit_duration_ranking_weight", ntp_visit_duration_ranking_weight);
-    DCHECK_GE(ntp_visit_duration_ranking_weight, 0.0f);
-  }
-
   // Lonely features without child params.
   {
     non_user_visible_debug =
@@ -326,9 +297,6 @@ Config::Config() {
     should_show_all_clusters_unconditionally_on_prominent_ui_surfaces =
         base::CommandLine::ForCurrentProcess()->HasSwitch(
             switches::kShouldShowAllClustersOnProminentUiSurfaces);
-
-    include_synced_visits =
-        base::FeatureList::IsEnabled(internal::kJourneysIncludeSyncedVisits);
 
     persist_caches_to_prefs =
         base::FeatureList::IsEnabled(internal::kJourneysPersistCachesToPrefs);

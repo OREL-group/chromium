@@ -3,11 +3,10 @@
 // found in the LICENSE file.
 
 #import "ios/chrome/browser/ui/settings/password/passwords_mediator.h"
-#import "ios/chrome/browser/ui/settings/password/passwords_mediator+Testing.h"
 
 #import "base/apple/foundation_util.h"
+#import "base/location.h"
 #import "base/memory/raw_ptr.h"
-#import "base/strings/string_piece.h"
 #import "base/strings/string_util.h"
 #import "base/strings/utf_string_conversions.h"
 #import "base/test/bind.h"
@@ -29,12 +28,13 @@
 #import "ios/chrome/browser/passwords/model/ios_chrome_profile_password_store_factory.h"
 #import "ios/chrome/browser/passwords/model/password_check_observer_bridge.h"
 #import "ios/chrome/browser/shared/model/browser/test/test_browser.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
-#import "ios/chrome/browser/shared/model/browser_state/test_chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
+#import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/chrome/browser/shared/ui/table_view/legacy_chrome_table_view_controller_test.h"
 #import "ios/chrome/browser/sync/model/sync_observer_bridge.h"
 #import "ios/chrome/browser/sync/model/sync_service_factory.h"
 #import "ios/chrome/browser/ui/settings/password/passwords_consumer.h"
+#import "ios/chrome/browser/ui/settings/password/passwords_mediator+Testing.h"
 #import "ios/chrome/browser/ui/settings/utils/password_auto_fill_status_observer.h"
 #import "ios/web/public/test/web_task_environment.h"
 #import "testing/gmock/include/gmock/gmock.h"
@@ -66,7 +66,7 @@ std::unique_ptr<KeyedService> BuildFeatureEngagementMockTracker(
 }  // namespace
 
 @interface FakePasswordsConsumer : NSObject <PasswordsConsumer> {
-  std::vector<password_manager::CredentialUIEntry> _passwords;
+  std::vector<password_manager::CredentialUIEntry> _credentials;
   std::vector<password_manager::CredentialUIEntry> _blockedSites;
   std::vector<password_manager::AffiliatedGroup> _affiliatedGroups;
 }
@@ -88,10 +88,11 @@ std::unique_ptr<KeyedService> BuildFeatureEngagementMockTracker(
          insecurePasswordsCount:(NSInteger)insecureCount {
 }
 
-- (void)setPasswords:(std::vector<password_manager::CredentialUIEntry>)passwords
-        blockedSites:
-            (std::vector<password_manager::CredentialUIEntry>)blockedSites {
-  _passwords = passwords;
+- (void)setCredentials:
+            (std::vector<password_manager::CredentialUIEntry>)credentials
+          blockedSites:
+              (std::vector<password_manager::CredentialUIEntry>)blockedSites {
+  _credentials = credentials;
   _blockedSites = blockedSites;
 }
 
@@ -140,7 +141,7 @@ class PasswordsMediatorTest : public BlockCleanupTest {
     builder.AddTestingFactory(
         feature_engagement::TrackerFactory::GetInstance(),
         base::BindRepeating(&BuildFeatureEngagementMockTracker));
-    browser_state_ = builder.Build();
+    browser_state_ = std::move(builder).Build();
 
     store_ =
         base::WrapRefCounted(static_cast<password_manager::TestPasswordStore*>(
@@ -202,7 +203,7 @@ TEST_F(PasswordsMediatorTest, NotifiesConsumerOnPasswordChange) {
   EXPECT_THAT(affiliatedGroups[0].GetCredentials(),
               testing::ElementsAre(credential));
   // Remove form from the store.
-  store()->RemoveLogin(form);
+  store()->RemoveLogin(FROM_HERE, form);
   RunUntilIdle();
   affiliatedGroups = [consumer() affiliatedGroups];
   EXPECT_THAT(affiliatedGroups, testing::IsEmpty());

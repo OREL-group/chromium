@@ -8,16 +8,19 @@
 #import "components/search_engines/search_engines_switches.h"
 #import "components/strings/grit/components_strings.h"
 #import "components/sync/base/features.h"
-#import "ios/chrome/browser/bookmarks/model/bookmark_model_type.h"
+#import "components/sync/base/user_selectable_type.h"
+#import "ios/chrome/browser/bookmarks/model/bookmark_storage_type.h"
+#import "ios/chrome/browser/bookmarks/ui_bundled/bookmark_earl_grey.h"
+#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_feature.h"
 #import "ios/chrome/browser/policy/model/policy_app_interface.h"
 #import "ios/chrome/browser/policy/model/policy_earl_grey_utils.h"
 #import "ios/chrome/browser/policy/model/policy_util.h"
 #import "ios/chrome/browser/signin/model/fake_system_identity.h"
 #import "ios/chrome/browser/ui/authentication/signin_earl_grey.h"
+#import "ios/chrome/browser/ui/authentication/signin_earl_grey_app_interface.h"
 #import "ios/chrome/browser/ui/authentication/signin_earl_grey_ui_test_util.h"
 #import "ios/chrome/browser/ui/authentication/signin_matchers.h"
 #import "ios/chrome/browser/ui/authentication/views/views_constants.h"
-#import "ios/chrome/browser/ui/bookmarks/bookmark_earl_grey.h"
 #import "ios/chrome/browser/ui/reading_list/reading_list_egtest_utils.h"
 #import "ios/chrome/browser/ui/settings/google_services/bulk_upload/bulk_upload_constants.h"
 #import "ios/chrome/browser/ui/settings/google_services/features.h"
@@ -47,7 +50,7 @@ namespace {
 NSString* const kPassphrase = @"hello";
 
 void SignInWithPromoFromAccountSettings(FakeSystemIdentity* fake_identity,
-                                        BOOL expect_history_sync) {
+                                        BOOL expect_history_sync_ui) {
   // Sign in with fake identity using the settings sign-in promo.
   [ChromeEarlGreyUI
       tapSettingsMenuButton:chrome_test_util::SettingsSignInRowMatcher()];
@@ -66,7 +69,7 @@ void SignInWithPromoFromAccountSettings(FakeSystemIdentity* fake_identity,
                       IDS_IOS_FIRST_RUN_SIGNIN_CONTINUE_AS,
                       base::SysNSStringToUTF16(fake_identity.userGivenName))),
               grey_sufficientlyVisible(), nil)] performAction:grey_tap()];
-  if (expect_history_sync) {
+  if (expect_history_sync_ui) {
     [[EarlGrey selectElementWithMatcher:
                    chrome_test_util::SigninScreenPromoPrimaryButtonMatcher()]
         performAction:grey_tap()];
@@ -111,9 +114,9 @@ void DismissSignOutSnackbar() {
 // Adds a bookmark. The storage type is determined based on if the user is
 // signed in or not.
 void SaveBookmark(NSString* title, NSString* url) {
-  BookmarkModelType storageType = BookmarkModelType::kAccount;
+  BookmarkStorageType storageType = BookmarkStorageType::kAccount;
   if ([SigninEarlGrey isSignedOut]) {
-    storageType = BookmarkModelType::kLocalOrSyncable;
+    storageType = BookmarkStorageType::kLocalOrSyncable;
   }
   [BookmarkEarlGrey addBookmarkWithTitle:title URL:url inStorage:storageType];
 }
@@ -158,17 +161,19 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 
 - (AppLaunchConfiguration)appConfigurationForTestCase {
   AppLaunchConfiguration config;
-  if ([self
-          isRunningTest:@selector(testRememberCustomPassphraseAfterSignout)]) {
-    config.features_enabled.push_back(
-        syncer::kSyncRememberCustomPassphraseAfterSignout);
-  }
   if ([self isRunningTest:@selector
             (testPersonalizeGoogleServicesSettingsDismissedOnSignOut)]) {
     config.additional_args.push_back(
         std::string("--") + switches::kSearchEngineChoiceCountry + "=BE");
     config.features_enabled.push_back(kLinkedServicesSettingIos);
   }
+  if ([self isRunningTest:@selector(testSignOutFromManageAccountsSettings)]) {
+    // Once kIdentityDiscAccountMenu is launched, the sign out button in
+    // ManageAccountsSettings will be removed. It will be safe to remove this
+    // test at that point.
+    config.features_disabled.push_back(kIdentityDiscAccountMenu);
+  }
+
   return config;
 }
 
@@ -198,7 +203,8 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
   [ChromeEarlGreyUI openSettingsMenu];
 
   // Sign in with fake identity using the settings sign-in promo.
-  SignInWithPromoFromAccountSettings(fakeIdentity, /*expect_history_sync=*/YES);
+  SignInWithPromoFromAccountSettings(fakeIdentity,
+                                     /*expect_history_sync_ui=*/YES);
 
   // Verify the Sync settings row is not showing.
   [SigninEarlGrey verifySyncUIIsHidden];
@@ -270,7 +276,7 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 
   // Verify the "manage accounts" view is popped.
   [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
-                                          kSettingsAccountsTableViewId)]
+                                          kSettingsLegacyAccountsTableViewId)]
       assertWithMatcher:grey_notVisible()];
 
   // Verify the "manage sync" view is popped.
@@ -284,10 +290,11 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
       assertWithMatcher:grey_notVisible()];
 }
 
+// TODO(crbug.com/352725030): This test is flaky.
 // Tests the unsynced data dialog shows when there are unsynced passwords. Also
 // verifies that the user is still signed in when the dialog Cancel button is
 // tapped.
-- (void)testUnsyncedDataDialogShowsInCaseOfUnsyncedPasswords {
+- (void)FLAKY_testUnsyncedDataDialogShowsInCaseOfUnsyncedPasswords {
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
   [SigninEarlGrey addFakeIdentity:fakeIdentity];
 
@@ -319,11 +326,12 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
   [ChromeEarlGrey connectFakeSyncServerNetwork];
 }
 
+// TODO(crbug.com/355133719): Remove FLAKY_ from this test.
 // Tests the unsynced data dialog shows when there are unsynced readinglist
 // entries. Also verifies that the user is still signed in when the dialog
 // Cancel button is tapped.
-- (void)testUnsyncedDataDialogShowsInCaseOfUnsyncedReadingListEntry {
-  // TODO(crbug.com/1521690): Test fails on iPhone device and simulator.
+- (void)FLAKY_testUnsyncedDataDialogShowsInCaseOfUnsyncedReadingListEntry {
+  // TODO(crbug.com/41494658): Test fails on iPhone device and simulator.
   if (![ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_DISABLED(@"Fails on iPhone.");
   }
@@ -334,7 +342,8 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 
   [ChromeEarlGrey disconnectFakeSyncServerNetwork];
 
-  reading_list_test_utils::AddURLToReadingList(GURL("https://example.com"));
+  reading_list_test_utils::AddURLToReadingListWithSnackbarDismiss(
+      GURL("https://example.com"), fakeIdentity.userEmail);
 
   [ChromeEarlGreyUI openSettingsMenu];
   [ChromeEarlGreyUI tapSettingsMenuButton:SettingsAccountButton()];
@@ -446,9 +455,10 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
   [SigninEarlGrey verifySignedOut];
 
   // Sign back in with the same identity using the settings sign-in promo.
-  // The history sync opt-in was accepted in the first sign-in earlier in this
+  // The history sync opt-in was declined in the first sign-in earlier in this
   // test.
-  SignInWithPromoFromAccountSettings(fakeIdentity, /*expect_history_sync=*/NO);
+  SignInWithPromoFromAccountSettings(fakeIdentity,
+                                     /*expect_history_sync_ui=*/YES);
 
   // Verify the account settings row is showing in the settings menu.
   [[EarlGrey selectElementWithMatcher:SettingsAccountButton()]
@@ -676,7 +686,8 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
   [SigninEarlGrey addFakeIdentity:fakeIdentity];
 
   [ChromeEarlGreyUI openSettingsMenu];
-  SignInWithPromoFromAccountSettings(fakeIdentity, /*expect_history_sync=*/NO);
+  SignInWithPromoFromAccountSettings(fakeIdentity,
+                                     /*expect_history_sync_ui=*/NO);
   [ChromeEarlGreyUI tapSettingsMenuButton:SettingsAccountButton()];
 
   // Scroll to the bottom to view all section.
@@ -767,7 +778,7 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 // Tests the account settings is with a user actionable error; enter
 // passphrase error.
 - (void)testAccountSettingsWithError {
-  [ChromeEarlGrey addBookmarkWithSyncPassphrase:kPassphrase];
+  [ChromeEarlGrey addSyncPassphrase:kPassphrase];
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
   [SigninEarlGrey addFakeIdentity:fakeIdentity];
 
@@ -815,7 +826,8 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
   [SigninEarlGrey addFakeIdentity:fakeIdentity];
 
   [ChromeEarlGreyUI openSettingsMenu];
-  SignInWithPromoFromAccountSettings(fakeIdentity, /*expect_history_sync=*/NO);
+  SignInWithPromoFromAccountSettings(fakeIdentity,
+                                     /*expect_history_sync_ui=*/NO);
   [ChromeEarlGreyUI tapSettingsMenuButton:SettingsAccountButton()];
 
   // Verify that for "History and Tabs" an "Off" button is shown instead of a
@@ -837,7 +849,8 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
   [SigninEarlGrey addFakeIdentity:fakeIdentity];
 
   [ChromeEarlGreyUI openSettingsMenu];
-  SignInWithPromoFromAccountSettings(fakeIdentity, /*expect_history_sync=*/NO);
+  SignInWithPromoFromAccountSettings(fakeIdentity,
+                                     /*expect_history_sync_ui=*/NO);
   [ChromeEarlGreyUI tapSettingsMenuButton:SettingsAccountButton()];
 
   // Verify that for "History and Tabs" a toggle shows.
@@ -859,7 +872,8 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
   [SigninEarlGrey addFakeIdentity:fakeIdentity];
 
   [ChromeEarlGreyUI openSettingsMenu];
-  SignInWithPromoFromAccountSettings(fakeIdentity, /*expect_history_sync=*/NO);
+  SignInWithPromoFromAccountSettings(fakeIdentity,
+                                     /*expect_history_sync_ui=*/NO);
   [ChromeEarlGreyUI tapSettingsMenuButton:SettingsAccountButton()];
 
   // Verify that for "History and Tabs" a toggle shows.
@@ -904,7 +918,8 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 
   [ChromeEarlGreyUI openSettingsMenu];
   // Sign in with fake identity using the settings sign-in promo.
-  SignInWithPromoFromAccountSettings(fakeIdentity, /*expect_history_sync=*/YES);
+  SignInWithPromoFromAccountSettings(fakeIdentity,
+                                     /*expect_history_sync_ui=*/YES);
 
   // Open the "manage sync" view.
   [ChromeEarlGreyUI tapSettingsMenuButton:SettingsAccountButton()];
@@ -927,7 +942,8 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 
   [ChromeEarlGreyUI openSettingsMenu];
   // Sign in with fake identity using the settings sign-in promo.
-  SignInWithPromoFromAccountSettings(fakeIdentity, /*expect_history_sync=*/YES);
+  SignInWithPromoFromAccountSettings(fakeIdentity,
+                                     /*expect_history_sync_ui=*/YES);
 
   // Open the "manage sync" view.
   [ChromeEarlGreyUI tapSettingsMenuButton:SettingsAccountButton()];
@@ -942,14 +958,16 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 // contains the correct string for reading list.
 - (void)testBulkUploadDescriptionTextForReadingList {
   // Add local data.
-  reading_list_test_utils::AddURLToReadingList(GURL("https://example.com"));
+  reading_list_test_utils::AddURLToReadingListWithSnackbarDismiss(
+      GURL("https://example.com"), nil);
 
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
   [SigninEarlGrey addFakeIdentity:fakeIdentity];
 
   [ChromeEarlGreyUI openSettingsMenu];
   // Sign in with fake identity using the settings sign-in promo.
-  SignInWithPromoFromAccountSettings(fakeIdentity, /*expect_history_sync=*/YES);
+  SignInWithPromoFromAccountSettings(fakeIdentity,
+                                     /*expect_history_sync_ui=*/YES);
 
   // Open the "manage sync" view.
   [ChromeEarlGreyUI tapSettingsMenuButton:SettingsAccountButton()];
@@ -966,7 +984,8 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
   // Add local data.
   password_manager_test_utils::SavePasswordFormToProfileStore(
       @"password", @"user", @"https://example.com");
-  reading_list_test_utils::AddURLToReadingList(GURL("https://example.com"));
+  reading_list_test_utils::AddURLToReadingListWithSnackbarDismiss(
+      GURL("https://example.com"), nil);
   SaveBookmark(@"foo", @"https://www.foo.com");
 
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
@@ -974,7 +993,8 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 
   [ChromeEarlGreyUI openSettingsMenu];
   // Sign in with fake identity using the settings sign-in promo.
-  SignInWithPromoFromAccountSettings(fakeIdentity, /*expect_history_sync=*/YES);
+  SignInWithPromoFromAccountSettings(fakeIdentity,
+                                     /*expect_history_sync_ui=*/YES);
 
   // Open the "manage sync" view.
   [ChromeEarlGreyUI tapSettingsMenuButton:SettingsAccountButton()];
@@ -993,7 +1013,8 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
   // Add local data.
   password_manager_test_utils::SavePasswordFormToProfileStore(
       @"password", @"user", @"https://example.com");
-  reading_list_test_utils::AddURLToReadingList(GURL("https://example.com"));
+  reading_list_test_utils::AddURLToReadingListWithSnackbarDismiss(
+      GURL("https://example.com"), nil);
   SaveBookmark(@"foo", @"https://www.foo.com");
 
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
@@ -1001,7 +1022,8 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 
   [ChromeEarlGreyUI openSettingsMenu];
   // Sign in with fake identity using the settings sign-in promo.
-  SignInWithPromoFromAccountSettings(fakeIdentity, /*expect_history_sync=*/YES);
+  SignInWithPromoFromAccountSettings(fakeIdentity,
+                                     /*expect_history_sync_ui=*/YES);
 
   // Open the "manage sync" view.
   [ChromeEarlGreyUI tapSettingsMenuButton:SettingsAccountButton()];
@@ -1048,7 +1070,8 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 
   [ChromeEarlGreyUI openSettingsMenu];
   // Sign in with fake identity using the settings sign-in promo.
-  SignInWithPromoFromAccountSettings(fakeIdentity, /*expect_history_sync=*/YES);
+  SignInWithPromoFromAccountSettings(fakeIdentity,
+                                     /*expect_history_sync_ui=*/YES);
 
   // Open the "manage sync" view.
   [ChromeEarlGreyUI tapSettingsMenuButton:SettingsAccountButton()];
@@ -1097,7 +1120,8 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 
   [ChromeEarlGreyUI openSettingsMenu];
   // Sign in with fake identity using the settings sign-in promo.
-  SignInWithPromoFromAccountSettings(fakeIdentity, /*expect_history_sync=*/YES);
+  SignInWithPromoFromAccountSettings(fakeIdentity,
+                                     /*expect_history_sync_ui=*/YES);
 
   // Open the "manage sync" view.
   [ChromeEarlGreyUI tapSettingsMenuButton:SettingsAccountButton()];
@@ -1138,7 +1162,8 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
   // Add local data.
   password_manager_test_utils::SavePasswordFormToProfileStore(
       @"password", @"user", @"https://example.com");
-  reading_list_test_utils::AddURLToReadingList(GURL("https://example.com"));
+  reading_list_test_utils::AddURLToReadingListWithSnackbarDismiss(
+      GURL("https://example.com"), nil);
   SaveBookmark(@"foo", @"https://www.foo.com");
 
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
@@ -1146,7 +1171,8 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 
   [ChromeEarlGreyUI openSettingsMenu];
   // Sign in with fake identity using the settings sign-in promo.
-  SignInWithPromoFromAccountSettings(fakeIdentity, /*expect_history_sync=*/YES);
+  SignInWithPromoFromAccountSettings(fakeIdentity,
+                                     /*expect_history_sync_ui=*/YES);
 
   // Open the "manage sync" view.
   [ChromeEarlGreyUI tapSettingsMenuButton:SettingsAccountButton()];
@@ -1187,8 +1213,7 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
                                     ReauthenticationResult::kSuccess];
   // Delay the auth result to be able to validate that the passwords are not
   // visible until the result is emitted.
-  [PasswordSettingsAppInterface
-      mockReauthenticationModuleShouldReturnSynchronously:NO];
+  [PasswordSettingsAppInterface mockReauthenticationModuleShouldSkipReAuth:NO];
 
   // Tap on the save button.
   [[EarlGrey
@@ -1217,7 +1242,7 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
       IDS_IOS_GOOGLE_ACCOUNT_SETTINGS_BATCH_UPLOAD_ITEMS_ITEM, 2,
       fakeIdentity.userEmail);
 
-  // TODO(crbug.com/1482823): Test that items were actually moved.
+  // TODO(crbug.com/40072328): Test that items were actually moved.
 }
 
 // Tests that bulk upload moves the following data types to account:
@@ -1227,7 +1252,8 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
   // Add local data.
   password_manager_test_utils::SavePasswordFormToProfileStore(
       @"password", @"user", @"https://example.com");
-  reading_list_test_utils::AddURLToReadingList(GURL("https://example.com"));
+  reading_list_test_utils::AddURLToReadingListWithSnackbarDismiss(
+      GURL("https://example.com"), nil);
   SaveBookmark(@"foo", @"https://www.foo.com");
 
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
@@ -1235,7 +1261,8 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 
   [ChromeEarlGreyUI openSettingsMenu];
   // Sign in with fake identity using the settings sign-in promo.
-  SignInWithPromoFromAccountSettings(fakeIdentity, /*expect_history_sync=*/YES);
+  SignInWithPromoFromAccountSettings(fakeIdentity,
+                                     /*expect_history_sync_ui=*/YES);
 
   // Open the "manage sync" view.
   [ChromeEarlGreyUI tapSettingsMenuButton:SettingsAccountButton()];
@@ -1290,7 +1317,7 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
       IDS_IOS_GOOGLE_ACCOUNT_SETTINGS_BATCH_UPLOAD_PASSWORDS_ITEM, 1,
       fakeIdentity.userEmail);
 
-  // TODO(crbug.com/1482823): Test that items were actually moved.
+  // TODO(crbug.com/40072328): Test that items were actually moved.
 }
 
 // Tests that bulk upload moves the following data types to account:
@@ -1301,7 +1328,8 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
   // Add local data.
   password_manager_test_utils::SavePasswordFormToProfileStore(
       @"password", @"user", @"https://example.com");
-  reading_list_test_utils::AddURLToReadingList(GURL("https://example.com"));
+  reading_list_test_utils::AddURLToReadingListWithSnackbarDismiss(
+      GURL("https://example.com"), nil);
   SaveBookmark(@"foo", @"https://www.foo.com");
 
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
@@ -1309,7 +1337,8 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 
   [ChromeEarlGreyUI openSettingsMenu];
   // Sign in with fake identity using the settings sign-in promo.
-  SignInWithPromoFromAccountSettings(fakeIdentity, /*expect_history_sync=*/YES);
+  SignInWithPromoFromAccountSettings(fakeIdentity,
+                                     /*expect_history_sync_ui=*/YES);
 
   // Open the "manage sync" view.
   [ChromeEarlGreyUI tapSettingsMenuButton:SettingsAccountButton()];
@@ -1349,8 +1378,7 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
                                     ReauthenticationResult::kSuccess];
   // Delay the auth result to be able to validate that the passwords are not
   // visible until the result is emitted.
-  [PasswordSettingsAppInterface
-      mockReauthenticationModuleShouldReturnSynchronously:NO];
+  [PasswordSettingsAppInterface mockReauthenticationModuleShouldSkipReAuth:NO];
 
   // Tap on the save button.
   [[EarlGrey
@@ -1394,7 +1422,27 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
                                    grey_minimumVisiblePercent(0.05), nil)]
       assertWithMatcher:grey_nil()];
 
-  // TODO(crbug.com/1482823): Test that items were actually moved.
+  // TODO(crbug.com/40072328): Test that items were actually moved.
+}
+
+// Tests that the batch upload card in account settings can be displayed without
+// crashing when the passwords data type is disabled. Regression test for
+// crbug.com/360304897.
+- (void)testBulkUploadCardWhenPasswordsDisabled {
+  SaveBookmark(@"foo", @"https://www.foo.com");
+  SaveBookmark(@"bar", @"https://www.bar.com");
+  FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
+  [SigninEarlGrey signinWithFakeIdentity:[FakeSystemIdentity fakeIdentity1]];
+  [SigninEarlGreyAppInterface
+      setSelectedType:syncer::UserSelectableType::kPasswords
+              enabled:NO];
+
+  [ChromeEarlGreyUI openSettingsMenu];
+  [ChromeEarlGreyUI tapSettingsMenuButton:SettingsAccountButton()];
+
+  ExpectBatchUploadRecommendationItem(
+      IDS_IOS_GOOGLE_ACCOUNT_SETTINGS_BATCH_UPLOAD_ITEMS_ITEM, 2,
+      fakeIdentity.userEmail);
 }
 
 // Before crbug.com/40265120, the autofill and payments toggles used to be
@@ -1423,7 +1471,7 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 // Tests the account settings and the user actionable error view are dismissed
 // on account removal.
 - (void)testAccountSettingsWithErrorDismissed {
-  [ChromeEarlGrey addBookmarkWithSyncPassphrase:kPassphrase];
+  [ChromeEarlGrey addSyncPassphrase:kPassphrase];
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
   [SigninEarlGrey addFakeIdentity:fakeIdentity];
 
@@ -1456,7 +1504,7 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 
 // Tests the passphrase error view is dismissed when "Cancel" button is pressed.
 - (void)testErrorViewFromAccountSettingsDismissed {
-  [ChromeEarlGrey addBookmarkWithSyncPassphrase:kPassphrase];
+  [ChromeEarlGrey addSyncPassphrase:kPassphrase];
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
   [SigninEarlGrey addFakeIdentity:fakeIdentity];
 
@@ -1530,7 +1578,7 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 // and cleared when account is removed from device.
 - (void)testRememberCustomPassphraseAfterSignout {
   // Enable custom passphrase.
-  [ChromeEarlGrey addBookmarkWithSyncPassphrase:kPassphrase];
+  [ChromeEarlGrey addSyncPassphrase:kPassphrase];
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
   [SigninEarlGrey addFakeIdentity:fakeIdentity];
 
@@ -1572,9 +1620,10 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
   [SigninEarlGrey verifySignedOut];
 
   // Sign back in with the same identity using the settings sign-in promo.
-  // The history sync opt-in was accepted in the first sign-in earlier in this
+  // The history sync opt-in was declined in the first sign-in earlier in this
   // test.
-  SignInWithPromoFromAccountSettings(fakeIdentity, /*expect_history_sync=*/NO);
+  SignInWithPromoFromAccountSettings(fakeIdentity,
+                                     /*expect_history_sync_ui=*/YES);
 
   // Verify the account settings row is showing in the settings menu.
   [[EarlGrey selectElementWithMatcher:SettingsAccountButton()]

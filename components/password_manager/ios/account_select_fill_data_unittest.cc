@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO: crbug.com/352295124 - Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/password_manager/ios/account_select_fill_data.h"
 
 #include "base/strings/utf_string_conversions.h"
@@ -173,10 +178,6 @@ TEST_F(AccountSelectFillDataTest, IsSuggestionsAvailable_EmptyUsernames) {
 // Sign-in uff should only target single username forms.
 TEST_F(AccountSelectFillDataTest,
        IsSuggestionsAvailable_EmptyUsernames_WhenSigninUffEnabled) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      password_manager::features::kIOSPasswordSignInUff);
-
   PasswordFormFillData form_data = FormDataWithEmptyUsernamesOnly();
 
   AccountSelectFillData account_select_fill_data;
@@ -189,10 +190,6 @@ TEST_F(AccountSelectFillDataTest,
 
 TEST_F(AccountSelectFillDataTest,
        IsSuggestionsAvailable_OnSingleUsernameForm_WhenEligible) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      password_manager::features::kIOSPasswordSignInUff);
-
   PasswordFormFillData form_data = EligibleSingleUsernameFormData();
 
   AccountSelectFillData account_select_fill_data;
@@ -205,10 +202,6 @@ TEST_F(AccountSelectFillDataTest,
 
 TEST_F(AccountSelectFillDataTest,
        IsSuggestionsAvailable_OnSingleUsernameForm_WhenIneligible) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      password_manager::features::kIOSPasswordSignInUff);
-
   PasswordFormFillData form_data = IneligibleSingleUsernameFormData();
 
   AccountSelectFillData account_select_fill_data;
@@ -289,10 +282,6 @@ TEST_F(AccountSelectFillDataTest, RetrieveSuggestions_EmptyUsernames) {
 // sign-in uff disabled. Sign-in uff should only target single username forms.
 TEST_F(AccountSelectFillDataTest,
        RetrieveSuggestions_EmptyUsernames_WhenSigninUffEnabled) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      password_manager::features::kIOSPasswordSignInUff);
-
   PasswordFormFillData form_data = FormDataWithEmptyUsernamesOnly();
 
   AccountSelectFillData account_select_fill_data;
@@ -306,10 +295,6 @@ TEST_F(AccountSelectFillDataTest,
 
 TEST_F(AccountSelectFillDataTest,
        RetrieveSuggestions_OnSingleUsernameForm_WhenEligible) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      password_manager::features::kIOSPasswordSignInUff);
-
   PasswordFormFillData form_data = EligibleSingleUsernameFormData();
 
   AccountSelectFillData account_select_fill_data;
@@ -323,10 +308,6 @@ TEST_F(AccountSelectFillDataTest,
 
 TEST_F(AccountSelectFillDataTest,
        RetrieveSuggestions_OnSingleUsernameForm_WhenIneligible) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      password_manager::features::kIOSPasswordSignInUff);
-
   PasswordFormFillData form_data = IneligibleSingleUsernameFormData();
 
   AccountSelectFillData account_select_fill_data;

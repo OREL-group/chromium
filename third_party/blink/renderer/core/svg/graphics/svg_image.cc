@@ -47,8 +47,10 @@
 #include "third_party/blink/renderer/core/svg/svg_animated_preserve_aspect_ratio.h"
 #include "third_party/blink/renderer/core/svg/svg_document_extensions.h"
 #include "third_party/blink/renderer/core/svg/svg_fe_image_element.h"
+#include "third_party/blink/renderer/core/svg/svg_foreign_object_element.h"
 #include "third_party/blink/renderer/core/svg/svg_image_element.h"
 #include "third_party/blink/renderer/core/svg/svg_svg_element.h"
+#include "third_party/blink/renderer/core/svg/svg_view_spec.h"
 #include "third_party/blink/renderer/platform/bindings/script_forbidden_scope.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
 #include "third_party/blink/renderer/platform/graphics/image_observer.h"
@@ -77,22 +79,13 @@ bool HasSmilAnimations(const Document& document) {
 
 }  // namespace
 
+void SVGImageViewInfo::Trace(Visitor* visitor) const {
+  visitor->Trace(view_spec_);
+  visitor->Trace(target_);
+}
+
 SVGImage::SVGImage(ImageObserver* observer, bool is_multipart)
     : Image(observer, is_multipart),
-      // TODO(chikamune): use an existing AgentGroupScheduler
-      // SVG will be shared via MemoryCache (which is renderer process
-      // global cache) across multiple AgentSchedulingGroups. That's
-      // why we can't use an existing AgentSchedulingGroup for now. If
-      // we incorrectly use the existing ASG/AGS and if we freeze task
-      // queues on a AGS, it will affect SVGs on other AGS. To
-      // mitigate this problem, we need to split the MemoryCache into
-      // smaller granularity. There is an active effort to mitigate
-      // this which is called "Memory Cache Per Context"
-      // (https://crbug.com/1127971).
-      agent_group_scheduler_(Thread::MainThread()
-                                 ->Scheduler()
-                                 ->ToMainThreadScheduler()
-                                 ->CreateAgentGroupScheduler()),
       has_pending_timeline_rewind_(false) {}
 
 SVGImage::~SVGImage() {
@@ -114,7 +107,7 @@ bool SVGImage::IsInSVGImage(const Node* node) {
   if (!page)
     return false;
 
-  return page->GetChromeClient().IsSVGImageChromeClient();
+  return page->GetChromeClient().IsIsolatedSVGChromeClient();
 }
 
 LocalFrame* SVGImage::GetFrame() const {
@@ -126,7 +119,7 @@ SVGSVGElement* SVGImage::RootElement() const {
   if (!document_host_) {
     return nullptr;
   }
-  return DynamicTo<SVGSVGElement>(GetFrame()->GetDocument()->documentElement());
+  return document_host_->RootElement();
 }
 
 LayoutSVGRoot* SVGImage::LayoutRoot() const {
@@ -181,17 +174,46 @@ gfx::Size SVGImage::SizeWithConfig(SizeConfig) const {
   return ToRoundedSize(intrinsic_size_);
 }
 
-bool SVGImage::HasIntrinsicSizingInfo() const {
-  return LayoutRoot();
+const SVGImageViewInfo* SVGImage::CreateViewInfo(const String& fragment) const {
+  if (fragment.empty()) {
+    return nullptr;
+  }
+  const SVGSVGElement* root_element = RootElement();
+  if (!root_element) {
+    return nullptr;
+  }
+  String decoded_fragment =
+      DecodeURLEscapeSequences(fragment, DecodeURLMode::kUTF8);
+  Element* target = DynamicTo<Element>(
+      root_element->GetDocument().FindAnchor(decoded_fragment));
+  const SVGViewSpec* view_spec =
+      root_element->ParseViewSpec(decoded_fragment, target);
+  if (!view_spec && !target) {
+    return nullptr;
+  }
+  return MakeGarbageCollected<SVGImageViewInfo>(view_spec, target);
+}
+
+void SVGImage::ApplyViewInfo(const SVGImageViewInfo* viewinfo) {
+  SVGSVGElement* root_element = RootElement();
+  if (!root_element) {
+    return;
+  }
+  Element* target = viewinfo ? viewinfo->Target() : nullptr;
+  root_element->GetDocument().SetCSSTarget(target);
+  const SVGViewSpec* viewspec = viewinfo ? viewinfo->ViewSpec() : nullptr;
+  root_element->SetViewSpec(viewspec);
 }
 
 bool SVGImage::GetIntrinsicSizingInfo(
+    const SVGViewSpec* override_viewspec,
     IntrinsicSizingInfo& intrinsic_sizing_info) const {
   const LayoutSVGRoot* layout_root = LayoutRoot();
   if (!layout_root)
     return false;
-  layout_root->UnscaledIntrinsicSizingInfo(intrinsic_sizing_info,
-                                           /*use_correct_viewbox=*/false);
+  layout_root->UnscaledIntrinsicSizingInfo(
+      override_viewspec ? override_viewspec->ViewBox() : nullptr,
+      intrinsic_sizing_info);
 
   if (!intrinsic_sizing_info.has_width || !intrinsic_sizing_info.has_height) {
     // We're not using an intrinsic aspect ratio to resolve a missing
@@ -210,23 +232,14 @@ bool SVGImage::GetIntrinsicSizingInfo(
   return true;
 }
 
-gfx::SizeF SVGImage::ConcreteObjectSize(
-    const gfx::SizeF& default_object_size) const {
-  IntrinsicSizingInfo intrinsic_sizing_info;
-  if (!GetIntrinsicSizingInfo(intrinsic_sizing_info)) {
-    return gfx::SizeF();
-  }
-  return blink::ConcreteObjectSize(intrinsic_sizing_info, default_object_size);
-}
-
 SVGImage::DrawInfo::DrawInfo(const gfx::SizeF& container_size,
                              float zoom,
-                             const KURL& url,
+                             const SVGImageViewInfo* viewinfo,
                              bool is_dark_mode_enabled)
     : container_size_(container_size),
       rounded_container_size_(gfx::ToRoundedSize(container_size)),
       zoom_(zoom),
-      url_(url),
+      viewinfo_(viewinfo),
       is_dark_mode_enabled_(is_dark_mode_enabled) {}
 
 gfx::SizeF SVGImage::DrawInfo::CalculateResidualScale() const {
@@ -252,7 +265,7 @@ void SVGImage::DrawForContainer(const DrawInfo& draw_info,
 }
 
 PaintImage SVGImage::PaintImageForCurrentFrame() {
-  const DrawInfo draw_info(gfx::SizeF(intrinsic_size_), 1, NullURL(), false);
+  const DrawInfo draw_info(gfx::SizeF(intrinsic_size_), 1, nullptr, false);
   auto builder = CreatePaintImageBuilder();
   PopulatePaintRecordForCurrentFrameForContainer(draw_info, builder);
   return builder.TakePaintImage();
@@ -358,7 +371,7 @@ bool SVGImage::ApplyShader(cc::PaintFlags& flags,
                            const SkMatrix& local_matrix,
                            const gfx::RectF& src_rect,
                            const ImageDrawOptions& draw_options) {
-  const DrawInfo draw_info(gfx::SizeF(intrinsic_size_), 1, NullURL(),
+  const DrawInfo draw_info(gfx::SizeF(intrinsic_size_), 1, nullptr,
                            draw_options.apply_dark_mode);
   return ApplyShaderInternal(draw_info, flags, src_rect, local_matrix);
 }
@@ -390,7 +403,7 @@ void SVGImage::Draw(cc::PaintCanvas* canvas,
                     const gfx::RectF& dst_rect,
                     const gfx::RectF& src_rect,
                     const ImageDrawOptions& draw_options) {
-  const DrawInfo draw_info(gfx::SizeF(intrinsic_size_), 1, NullURL(),
+  const DrawInfo draw_info(gfx::SizeF(intrinsic_size_), 1, nullptr,
                            draw_options.apply_dark_mode);
   DrawInternal(draw_info, canvas, flags, dst_rect, src_rect);
 }
@@ -415,9 +428,9 @@ std::optional<PaintRecord> SVGImage::PaintRecordForCurrentFrame(
   view->Resize(rounded_container_size);
   frame->GetPage()->GetVisualViewport().SetSize(rounded_container_size);
 
-  // Always call processUrlFragment, even if the url is empty, because
-  // there may have been a previous url/fragment that needs to be reset.
-  view->ProcessUrlFragment(draw_info.Url(), /*same_document_navigation=*/false);
+  // Always call ApplyViewInfo, even if there's no view specification, because
+  // there may have been a previous view info that needs to be reset.
+  ApplyViewInfo(draw_info.View());
 
   // If the image was reset, we need to rewind the timeline back to 0. This
   // needs to be done before painting, or else we wouldn't get the correct
@@ -615,6 +628,15 @@ void SVGImage::UpdateUseCounters(const Document& document) const {
   }
 }
 
+void SVGImage::MaybeRecordSvgImageProcessingTime(const Document& document) {
+  if (data_change_count_ > 0) {
+    document.MaybeRecordSvgImageProcessingTime(data_change_count_,
+                                               data_change_elapsed_time_);
+    data_change_count_ = 0;
+    data_change_elapsed_time_ = base::TimeDelta();
+  }
+}
+
 Element* SVGImage::GetResourceElement(const AtomicString& id) const {
   if (!document_host_) {
     return nullptr;
@@ -628,7 +650,7 @@ void SVGImage::NotifyAsyncLoadCompleted() {
 }
 
 Image::SizeAvailability SVGImage::DataChanged(bool all_data_received) {
-  TRACE_EVENT0("blink", "SVGImage::dataChanged");
+  TRACE_EVENT("blink", "SVGImage::DataChanged");
 
   // Don't do anything if is an empty image.
   if (!DataSize())
@@ -638,10 +660,7 @@ Image::SizeAvailability SVGImage::DataChanged(bool all_data_received) {
     return document_host_ ? kSizeAvailable : kSizeUnavailable;
 
   SCOPED_BLINK_UMA_HISTOGRAM_TIMER_HIGHRES("Blink.SVGImage.DataChanged");
-
-  CHECK(!document_host_);
-
-  chrome_client_ = MakeGarbageCollected<SVGImageChromeClient>(this);
+  base::ElapsedTimer elapsed_timer;
 
   // Because an SVGImage has no relation to a normal Page, it can't get default
   // font settings from the embedder. Copy settings for fonts and other things
@@ -657,8 +676,12 @@ Image::SizeAvailability SVGImage::DataChanged(bool all_data_received) {
   // This will become an issue when SVGImage will be able to load other
   // SVGImage objects, but we're safe now, because SVGImage can only be
   // loaded by a top-level document.
-  document_host_ = MakeGarbageCollected<IsolatedSVGDocumentHost>(
-      *chrome_client_, *agent_group_scheduler_, Data(),
+  CHECK(!document_host_);
+  std::tie(chrome_client_, document_host_) =
+      IsolatedSVGDocumentHostInitializer::Get()->GetOrCreate();
+  chrome_client_->SetImage(this);
+  document_host_->InstallDocument(
+      Data(),
       WTF::BindOnce(&SVGImage::NotifyAsyncLoadCompleted,
                     weak_ptr_factory_.GetWeakPtr()),
       settings_to_use, IsolatedSVGDocumentHost::ProcessingMode::kAnimated);
@@ -667,8 +690,17 @@ Image::SizeAvailability SVGImage::DataChanged(bool all_data_received) {
     return kSizeUnavailable;
 
   // Set the concrete object size before a container size is available.
-  intrinsic_size_ = PhysicalSize::FromSizeFFloor(ConcreteObjectSize(gfx::SizeF(
-      LayoutReplaced::kDefaultWidth, LayoutReplaced::kDefaultHeight)));
+  // TODO(fs): Make this just set/copy width and height directly. See
+  // crbug.com/789511.
+  IntrinsicSizingInfo sizing_info;
+  if (GetIntrinsicSizingInfo(nullptr, sizing_info)) {
+    intrinsic_size_ = PhysicalSize::FromSizeFFloor(blink::ConcreteObjectSize(
+        sizing_info, gfx::SizeF(LayoutReplaced::kDefaultWidth,
+                                LayoutReplaced::kDefaultHeight)));
+  }
+
+  ++data_change_count_;
+  data_change_elapsed_time_ += elapsed_timer.Elapsed();
 
   if (!document_host_->IsLoaded()) {
     return kSizeAvailableAndLoadingAsynchronously;

@@ -18,6 +18,7 @@
 #include "base/test/test_future.h"
 #include "chrome/browser/ui/web_applications/web_app_dialog_utils.h"
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom.h"
+#include "chrome/browser/web_applications/proto/web_app_install_state.pb.h"
 #include "chrome/browser/web_applications/test/fake_web_app_provider.h"
 #include "chrome/browser/web_applications/test/fake_web_app_ui_manager.h"
 #include "chrome/browser/web_applications/test/fake_web_contents_manager.h"
@@ -32,6 +33,7 @@
 #include "chrome/browser/web_applications/web_app_icon_manager.h"
 #include "chrome/browser/web_applications/web_app_install_info.h"
 #include "chrome/browser/web_applications/web_app_install_params.h"
+#include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/browser/web_applications/web_app_utils.h"
 #include "chrome/browser/web_applications/web_contents/web_app_data_retriever.h"
 #include "chrome/common/chrome_features.h"
@@ -56,6 +58,7 @@
 #include "ui/color/color_provider_utils.h"
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/geometry/size.h"
+#include "ui/gfx/test/sk_gmock_support.h"
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 #include "ash/components/arc/mojom/intent_helper.mojom.h"
@@ -70,54 +73,6 @@
 
 namespace web_app {
 namespace {
-
-MATCHER_P(EqualsBitmap, expected_bmp, "") {
-  // Number of pixels with an error
-  int error_pixels_count = 0;
-
-  gfx::Rect error_bounding_rect = gfx::Rect();
-
-  // Check that bitmaps have identical dimensions.
-  if (arg.width() != expected_bmp.width()) {
-    *result_listener << "where widths do not match, actual: " << arg.width()
-                     << ", expected: " << expected_bmp.width();
-    return false;
-  }
-  if (arg.height() != expected_bmp.height()) {
-    *result_listener << "where heights do not match, actual: " << arg.height()
-                     << ", expected: " << expected_bmp.height();
-    return false;
-  }
-
-  for (int x = 0; x < arg.width(); ++x) {
-    for (int y = 0; y < arg.height(); ++y) {
-      SkColor actual_color = arg.getColor(x, y);
-      SkColor expected_color = expected_bmp.getColor(x, y);
-      if (actual_color != expected_color) {
-        ++error_pixels_count;
-        error_bounding_rect.Union(gfx::Rect(x, y, 1, 1));
-      }
-    }
-  }
-
-  if (error_pixels_count != 0) {
-    *result_listener << "Number of pixel with an error: " << error_pixels_count
-                     << "\nError Bounding Box : "
-                     << error_bounding_rect.ToString() << "\n";
-    int sample_x = expected_bmp.width() / 2;
-    int sample_y = expected_bmp.height() / 2;
-    std::string expected_color = color_utils::SkColorToRgbaString(
-        expected_bmp.getColor(sample_x, sample_y));
-    std::string actual_color =
-        color_utils::SkColorToRgbaString(arg.getColor(sample_x, sample_y));
-    *result_listener << "Sample pixel comparison at " << sample_x << "x"
-                     << sample_y << ": Expected " << expected_color
-                     << ", actual " << actual_color;
-    return false;
-  }
-
-  return true;
-}
 
 class FetchManifestAndInstallCommandTest : public WebAppTest {
  public:
@@ -280,7 +235,9 @@ TEST_F(FetchManifestAndInstallCommandTest, SuccessWithManifest) {
                                true, mojom::UserDisplayMode::kStandalone)),
             webapps::InstallResultCode::kSuccessNewInstall);
   auto& registrar = provider()->registrar_unsafe();
-  EXPECT_TRUE(registrar.IsLocallyInstalled(kWebAppId));
+  EXPECT_TRUE(registrar.IsInstallState(kWebAppId,
+                                       {proto::INSTALLED_WITHOUT_OS_INTEGRATION,
+                                        proto::INSTALLED_WITH_OS_INTEGRATION}));
   EXPECT_EQ(1, fake_ui_manager().num_reparent_tab_calls());
 }
 
@@ -296,7 +253,9 @@ TEST_F(FetchManifestAndInstallCommandTest,
                 CreateDialogCallback(true, mojom::UserDisplayMode::kStandalone),
                 FallbackBehavior::kAllowFallbackDataAlways),
             webapps::InstallResultCode::kSuccessNewInstall);
-  EXPECT_TRUE(provider()->registrar_unsafe().IsLocallyInstalled(kWebAppId));
+  EXPECT_TRUE(provider()->registrar_unsafe().IsInstallState(
+      kWebAppId, {proto::INSTALLED_WITHOUT_OS_INTEGRATION,
+                  proto::INSTALLED_WITH_OS_INTEGRATION}));
   EXPECT_EQ(provider()->registrar_unsafe().GetAppShortName(kWebAppId), "foo");
   EXPECT_EQ(1, fake_ui_manager().num_reparent_tab_calls());
 }
@@ -314,7 +273,9 @@ TEST_F(FetchManifestAndInstallCommandTest,
                 CreateDialogCallback(true, mojom::UserDisplayMode::kStandalone),
                 FallbackBehavior::kAllowFallbackDataAlways),
             webapps::InstallResultCode::kSuccessNewInstall);
-  EXPECT_TRUE(provider()->registrar_unsafe().IsLocallyInstalled(kWebAppId));
+  EXPECT_TRUE(provider()->registrar_unsafe().IsInstallState(
+      kWebAppId, {proto::INSTALLED_WITHOUT_OS_INTEGRATION,
+                  proto::INSTALLED_WITH_OS_INTEGRATION}));
   EXPECT_EQ(provider()->registrar_unsafe().GetAppShortName(kWebAppId),
             "test app");
   EXPECT_EQ(1, fake_ui_manager().num_reparent_tab_calls());
@@ -329,7 +290,9 @@ TEST_F(FetchManifestAndInstallCommandTest,
                 CreateDialogCallback(true, mojom::UserDisplayMode::kStandalone),
                 FallbackBehavior::kAllowFallbackDataAlways),
             webapps::InstallResultCode::kGetWebAppInstallInfoFailed);
-  EXPECT_FALSE(provider()->registrar_unsafe().IsLocallyInstalled(kWebAppId));
+  EXPECT_FALSE(provider()->registrar_unsafe().IsInstallState(
+      kWebAppId, {proto::INSTALLED_WITHOUT_OS_INTEGRATION,
+                  proto::INSTALLED_WITH_OS_INTEGRATION}));
   EXPECT_EQ(0, fake_ui_manager().num_reparent_tab_calls());
 }
 
@@ -348,7 +311,9 @@ TEST_F(FetchManifestAndInstallCommandTest, UserInstallDeclined) {
                            CreateDialogCallback(
                                false, mojom::UserDisplayMode::kStandalone)),
             webapps::InstallResultCode::kUserInstallDeclined);
-  EXPECT_FALSE(provider()->registrar_unsafe().IsLocallyInstalled(kWebAppId));
+  EXPECT_FALSE(provider()->registrar_unsafe().IsInstallState(
+      kWebAppId, {proto::INSTALLED_WITHOUT_OS_INTEGRATION,
+                  proto::INSTALLED_WITH_OS_INTEGRATION}));
   EXPECT_EQ(0, fake_ui_manager().num_reparent_tab_calls());
 }
 
@@ -765,7 +730,9 @@ TEST_F(FetchManifestAndInstallCommandTest, WebContentsNavigates) {
   ASSERT_TRUE(install_future.Wait());
   EXPECT_EQ(install_future.Get<webapps::InstallResultCode>(),
             webapps::InstallResultCode::kCancelledDueToMainFrameNavigation);
-  EXPECT_FALSE(provider()->registrar_unsafe().IsLocallyInstalled(kWebAppId));
+  EXPECT_FALSE(provider()->registrar_unsafe().IsInstallState(
+      kWebAppId, {proto::INSTALLED_WITHOUT_OS_INTEGRATION,
+                  proto::INSTALLED_WITH_OS_INTEGRATION}));
 }
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
@@ -1044,7 +1011,7 @@ TEST_P(UniversalInstallComboTest, InstallStateValid) {
   ASSERT_TRUE(icons_future.Wait());
   std::map<SquareSizePx, SkBitmap> bitmaps = icons_future.Get();
   EXPECT_THAT(bitmaps[icon_size::k256],
-              EqualsBitmap(GenerateExpected256Icon()));
+              gfx::test::EqualsBitmap(GenerateExpected256Icon()));
 
   EXPECT_EQ(IsDiyApp(), provider()->registrar_unsafe().IsDiyApp(app_id));
 

@@ -151,7 +151,7 @@ std::optional<MirroringActivity::MirroringType> GetMirroringType(
   }
 
   if (!source.url().is_valid()) {
-    NOTREACHED() << "Invalid source: " << source;
+    NOTREACHED_IN_MIGRATION() << "Invalid source: " << source;
     return std::nullopt;
   }
 
@@ -162,14 +162,14 @@ std::optional<MirroringActivity::MirroringType> GetMirroringType(
       // StreamingApp. We should return Tab Mirroring here.
       return MirroringActivity::MirroringType::kTab;
     } else {
-      NOTREACHED() << "Non-mirroring Cast app: " << source;
+      NOTREACHED_IN_MIGRATION() << "Non-mirroring Cast app: " << source;
       return std::nullopt;
     }
   } else if (source.url().SchemeIsHTTPOrHTTPS()) {
     return MirroringActivity::MirroringType::kOffscreenTab;
   }
 
-  NOTREACHED() << "Invalid source: " << source;
+  NOTREACHED_IN_MIGRATION() << "Invalid source: " << source;
   return std::nullopt;
 }
 
@@ -179,7 +179,7 @@ bool ShouldForceLetterboxing(std::string_view model_name) {
           "disable-cast-letterboxing")) {
     return false;
   }
-  return model_name.find("Nest Hub") != base::StringPiece::npos;
+  return model_name.find("Nest Hub") != std::string_view::npos;
 }
 
 std::optional<int> GetExceededPlayoutDelayPacketPercent(
@@ -355,7 +355,7 @@ MirroringActivity::MirroringActivity(
     const std::string& app_id,
     cast_channel::CastMessageHandler* message_handler,
     CastSessionTracker* session_tracker,
-    int frame_tree_node_id,
+    content::FrameTreeNodeId frame_tree_node_id,
     const CastSinkExtraData& cast_data,
     OnStopCallback callback,
     OnSourceChangedCallback source_changed_callback)
@@ -579,7 +579,8 @@ void MirroringActivity::OnSourceChanged() {
     return;
   }
 
-  std::optional<int> frame_tree_node_id = host_->GetTabSourceId();
+  std::optional<content::FrameTreeNodeId> frame_tree_node_id =
+      host_->GetTabSourceId();
   if (!source_changed_callback_ || !frame_tree_node_id ||
       frame_tree_node_id == frame_tree_node_id_) {
     return;
@@ -620,7 +621,7 @@ void MirroringActivity::OnMessage(mirroring::mojom::CastMessagePtr message) {
 }
 
 void MirroringActivity::OnAppMessage(
-    const cast::channel::CastMessage& message) {
+    const openscreen::cast::proto::CastMessage& message) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(io_sequence_checker_);
   if (!route_.is_local()) {
     return;
@@ -657,7 +658,7 @@ void MirroringActivity::OnAppMessage(
   DVLOG(2) << "Relaying app message from receiver: " << message.DebugString();
   DCHECK(message.has_payload_utf8());
   DCHECK_EQ(message.protocol_version(),
-            cast::channel::CastMessage_ProtocolVersion_CASTV2_1_0);
+            openscreen::cast::proto::CastMessage_ProtocolVersion_CASTV2_1_0);
   if (message.namespace_() == mirroring::mojom::kWebRtcNamespace) {
     logger_->LogInfo(media_router::mojom::LogCategory::kMirroring,
                      kLoggerComponent,
@@ -735,7 +736,7 @@ void MirroringActivity::HandleParseJsonResult(
   }
 
   if (!result.has_value() || !result.value().is_dict()) {
-    // TODO(crbug.com/905002): Record UMA metric for parse result.
+    // TODO(crbug.com/41426190): Record UMA metric for parse result.
     logger_->LogError(
         media_router::mojom::LogCategory::kMirroring, kLoggerComponent,
         base::StrCat({"Failed to parse Cast client message:", result.error()}),
@@ -755,9 +756,10 @@ void MirroringActivity::HandleParseJsonResult(
         route().presentation_id());
   }
 
-  cast::channel::CastMessage cast_message = cast_channel::CreateCastMessage(
-      message_namespace, std::move(*result), message_handler_->source_id(),
-      session->destination_id());
+  openscreen::cast::proto::CastMessage cast_message =
+      cast_channel::CreateCastMessage(message_namespace, std::move(*result),
+                                      message_handler_->source_id(),
+                                      session->destination_id());
   if (message_handler_->SendCastMessage(cast_data_.cast_channel_id,
                                         cast_message) == Result::kFailed) {
     logger_->LogError(

@@ -33,8 +33,9 @@ std::vector<url_pattern_index::UrlPatternIndexMatcher> GetMatchers(
 
   std::vector<url_pattern_index::UrlPatternIndexMatcher> matchers;
   matchers.reserve(flat::IndexType_count);
-  for (const flat_rule::UrlPatternIndex* index : *index_list)
+  for (const flat_rule::UrlPatternIndex* index : *index_list) {
     matchers.emplace_back(index);
+  }
   return matchers;
 }
 
@@ -49,8 +50,9 @@ bool IsExtraHeadersMatcherInternal(
 size_t GetRulesCountInternal(
     const std::vector<url_pattern_index::UrlPatternIndexMatcher>& matchers) {
   size_t rules_count = 0;
-  for (const auto& matcher : matchers)
+  for (const auto& matcher : matchers) {
     rules_count += matcher.GetRulesCount();
+  }
 
   return rules_count;
 }
@@ -104,12 +106,15 @@ size_t ExtensionUrlPatternIndexMatcher::GetHeadersReceivedRulesCount() const {
 
 std::optional<RequestAction>
 ExtensionUrlPatternIndexMatcher::GetAllowAllRequestsAction(
-    const RequestParams& params) const {
+    const RequestParams& params,
+    RulesetMatchingStage stage) const {
   const flat_rule::UrlRule* rule = GetMatchingRule(
-      params, before_request_matchers_, flat::IndexType_allow_all_requests,
+      params, GetMatchersForStage(stage), flat::IndexType_allow_all_requests,
       FindRuleStrategy::kHighestPriority);
-  if (!rule)
+  ;
+  if (!rule) {
     return std::nullopt;
+  }
 
   return CreateAllowAllRequestsAction(params, *rule);
 }
@@ -117,11 +122,12 @@ ExtensionUrlPatternIndexMatcher::GetAllowAllRequestsAction(
 std::vector<RequestAction>
 ExtensionUrlPatternIndexMatcher::GetModifyHeadersActions(
     const RequestParams& params,
+    RulesetMatchingStage stage,
     std::optional<uint64_t> min_priority) const {
-  // TODO(crbug.com/1083178): Plumb |min_priority| into UrlPatternIndexMatcher
+  // TODO(crbug.com/40131283): Plumb |min_priority| into UrlPatternIndexMatcher
   // to prune more rules before matching on url filters.
   std::vector<const flat_rule::UrlRule*> rules = GetAllMatchingRules(
-      params, before_request_matchers_, flat::IndexType_modify_headers);
+      params, GetMatchersForStage(stage), flat::IndexType_modify_headers);
 
   if (min_priority) {
     std::erase_if(rules, [&min_priority](const flat_rule::UrlRule* rule) {
@@ -136,19 +142,9 @@ std::optional<RequestAction>
 ExtensionUrlPatternIndexMatcher::GetActionIgnoringAncestors(
     const RequestParams& params,
     RulesetMatchingStage stage) const {
-  switch (stage) {
-    case RulesetMatchingStage::kOnBeforeRequest:
-      return GetMaxPriorityAction(
-          GetActionHelper(params, before_request_matchers_),
-          GetAllowAllRequestsAction(params));
-    case RulesetMatchingStage::kOnHeadersReceived:
-      // TODO(crbug.com/1141166): Investigate how matching allowAllRequests
-      // rules from other request stages may affect which action to return.
-      return GetActionHelper(params, headers_received_matchers_);
-  }
-
-  NOTREACHED();
-  return std::nullopt;
+  return GetMaxPriorityAction(
+      GetActionHelper(params, GetMatchersForStage(stage)),
+      GetAllowAllRequestsAction(params, stage));
 }
 
 std::optional<RequestAction> ExtensionUrlPatternIndexMatcher::GetActionHelper(
@@ -158,8 +154,9 @@ std::optional<RequestAction> ExtensionUrlPatternIndexMatcher::GetActionHelper(
       GetMatchingRule(params, matchers,
                       flat::IndexType_before_request_except_allow_all_requests,
                       FindRuleStrategy::kHighestPriority);
-  if (!rule)
+  if (!rule) {
     return std::nullopt;
+  }
 
   const flat::UrlRuleMetadata* metadata =
       metadata_list_->LookupByKey(rule->id());
@@ -177,7 +174,7 @@ std::optional<RequestAction> ExtensionUrlPatternIndexMatcher::GetActionHelper(
     case flat::ActionType_allow_all_requests:
     case flat::ActionType_modify_headers:
     case flat::ActionType_count:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 
   return std::nullopt;
@@ -221,6 +218,20 @@ ExtensionUrlPatternIndexMatcher::GetAllMatchingRules(
       flat_rule::ActivationType_NONE, params.method, params.is_third_party,
       kDisableGenericRules, params.embedder_conditions_matcher,
       disabled_rule_ids_);
+}
+
+const std::vector<url_pattern_index::UrlPatternIndexMatcher>&
+ExtensionUrlPatternIndexMatcher::GetMatchersForStage(
+    RulesetMatchingStage stage) const {
+  switch (stage) {
+    case RulesetMatchingStage::kOnBeforeRequest:
+      return before_request_matchers_;
+    case RulesetMatchingStage::kOnHeadersReceived:
+      return headers_received_matchers_;
+  }
+
+  NOTREACHED_IN_MIGRATION();
+  return before_request_matchers_;
 }
 
 void ExtensionUrlPatternIndexMatcher::SetDisabledRuleIds(

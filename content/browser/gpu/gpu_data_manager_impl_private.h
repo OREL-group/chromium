@@ -48,7 +48,6 @@ class CONTENT_EXPORT GpuDataManagerImplPrivate {
   virtual ~GpuDataManagerImplPrivate();
 
   void StartUmaTimer();
-  void BlocklistWebGLForTesting();
   gpu::GPUInfo GetGPUInfo() const;
   gpu::GPUInfo GetGPUInfoForHardwareGpu() const;
   std::vector<std::string> GetDawnInfoList() const;
@@ -129,8 +128,6 @@ class CONTENT_EXPORT GpuDataManagerImplPrivate {
   bool Are3DAPIsBlocked(const GURL& top_origin_url,
                         ThreeDAPIType requester);
 
-  void DisableDomainBlockingFor3DAPIsForTesting();
-
   void Notify3DAPIBlocked(const GURL& top_origin_url,
                           int render_process_id,
                           int render_frame_id,
@@ -146,7 +143,7 @@ class CONTENT_EXPORT GpuDataManagerImplPrivate {
   void SetApplicationVisible(bool is_visible);
 
   void OnDisplayAdded(const display::Display& new_display);
-  void OnDisplayRemoved(const display::Display& old_display);
+  void OnDisplaysRemoved(const display::Displays& removed_displays);
   void OnDisplayMetricsChanged(const display::Display& display,
                                uint32_t changed_metrics);
 
@@ -154,6 +151,10 @@ class CONTENT_EXPORT GpuDataManagerImplPrivate {
   bool IsGpuMemoryBufferNV12Supported();
   void SetGpuMemoryBufferNV12Supported(bool supported);
 #endif  // BUILDFLAG(IS_LINUX)
+
+  void DisableDomainBlockingFor3DAPIsForTesting();
+  void BlocklistWebGLForTesting();
+  void SetSkiaGraphiteEnabledForTesting(bool enabled);
 
  private:
   friend class GpuDataManagerImplPrivateTest;

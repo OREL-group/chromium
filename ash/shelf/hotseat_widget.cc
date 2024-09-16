@@ -22,15 +22,13 @@
 #include "ash/shell.h"
 #include "ash/style/system_shadow.h"
 #include "ash/system/status_area_widget.h"
-#include "ash/utility/forest_util.h"
 #include "ash/wm/overview/overview_controller.h"
 #include "ash/wm/overview/overview_observer.h"
-#include "base/functional/bind.h"
-#include "base/functional/callback_helpers.h"
 #include "base/i18n/rtl.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "chromeos/constants/chromeos_features.h"
+#include "third_party/abseil-cpp/absl/cleanup/cleanup.h"
 #include "ui/aura/scoped_window_targeter.h"
 #include "ui/aura/window_targeter.h"
 #include "ui/chromeos/styles/cros_tokens_color_mappings.h"
@@ -504,7 +502,7 @@ class HotseatWidget::DelegateView : public HotseatTransitionAnimator::Observer,
   // TODO(sammiequon): This is temporary while the secret key exists. After the
   // secret key is removed, entering/exiting overview should never need to
   // remove/readd blur.
-  bool was_forest_on_overview_enter_ = false;
+  std::optional<bool> was_forest_on_overview_enter_;
 };
 
 HotseatWidget::DelegateView::~DelegateView() {
@@ -522,7 +520,8 @@ void HotseatWidget::DelegateView::Init(
   OverviewController* overview_controller = Shell::Get()->overview_controller();
   if (overview_controller) {
     overview_controller->AddObserver(this);
-    if (overview_controller->InOverviewSession() && !IsForestFeatureEnabled()) {
+    if (overview_controller->InOverviewSession() &&
+        !features::IsForestFeatureEnabled()) {
       ++blur_lock_;
     }
   }
@@ -554,9 +553,10 @@ void HotseatWidget::DelegateView::Init(
 
 void HotseatWidget::DelegateView::UpdateTranslucentBackground() {
   // Update highlight border after updating the visibility of shadow.
-  base::ScopedClosureRunner update_highlight_border(
-      base::BindOnce(&DelegateView::UpdateHighlightBorder,
-                     base::Unretained(this), /*update_corner_radius=*/false));
+  absl::Cleanup update_highlight_border = [this] {
+    UpdateHighlightBorder(
+        /*update_corner_radius=*/false);
+  };
 
   if (!HotseatWidget::ShouldShowHotseatBackground()) {
     translucent_background_->SetVisible(false);
@@ -609,7 +609,7 @@ SkColor HotseatWidget::DelegateView::GetBackgroundColor() {
   CHECK(widget);
   aura::Window* window = widget->GetNativeWindow();
   // A forest session uses system-on-base.
-  if (IsForestFeatureEnabled() &&
+  if (features::IsForestFeatureEnabled() &&
       OverviewController::Get()->InOverviewSession() &&
       !SplitViewController::Get(window)->InSplitViewMode()) {
     return widget->GetColorProvider()->GetColor(
@@ -722,8 +722,8 @@ bool HotseatWidget::DelegateView::CanActivate() const {
 
 void HotseatWidget::DelegateView::OnOverviewModeWillStart() {
   // Forest uses background blur in overview.
-  was_forest_on_overview_enter_ = IsForestFeatureEnabled();
-  if (was_forest_on_overview_enter_) {
+  was_forest_on_overview_enter_ = features::IsForestFeatureEnabled();
+  if (*was_forest_on_overview_enter_) {
     return;
   }
   DCHECK_LE(blur_lock_, 2);
@@ -735,8 +735,8 @@ void HotseatWidget::DelegateView::OnOverviewModeWillStart() {
 void HotseatWidget::DelegateView::OnOverviewModeEndingAnimationComplete(
     bool canceled) {
   // Forest uses background blur in overview.
-  if (was_forest_on_overview_enter_) {
-    was_forest_on_overview_enter_ = false;
+  if (was_forest_on_overview_enter_.value_or(true)) {
+    was_forest_on_overview_enter_.reset();
     return;
   }
   DCHECK_GT(blur_lock_, 0);
@@ -793,11 +793,11 @@ void HotseatWidget::Initialize(aura::Window* container, Shelf* shelf) {
   DCHECK(shelf);
   shelf_ = shelf;
   views::Widget::InitParams params(
+      views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET,
       views::Widget::InitParams::TYPE_WINDOW_FRAMELESS);
   params.name = "HotseatWidget";
   params.delegate = delegate_view_.get();
   params.opacity = views::Widget::InitParams::WindowOpacity::kTranslucent;
-  params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.parent = container;
   params.layer_type = ui::LAYER_NOT_DRAWN;
   Init(std::move(params));
@@ -823,14 +823,16 @@ void HotseatWidget::OnHotseatTransitionAnimatorCreated(
 }
 
 void HotseatWidget::OnMouseEvent(ui::MouseEvent* event) {
-  if (event->type() == ui::ET_MOUSE_PRESSED)
+  if (event->type() == ui::EventType::kMousePressed) {
     keyboard::KeyboardUIController::Get()->HideKeyboardImplicitlyByUser();
+  }
   views::Widget::OnMouseEvent(event);
 }
 
 void HotseatWidget::OnGestureEvent(ui::GestureEvent* event) {
-  if (event->type() == ui::ET_GESTURE_TAP_DOWN)
+  if (event->type() == ui::EventType::kGestureTapDown) {
     keyboard::KeyboardUIController::Get()->HideKeyboardImplicitlyByUser();
+  }
 
   // Context menus for shelf app button forward gesture events to hotseat
   // widget, so the shelf app button can continue handling drag even after the
@@ -849,8 +851,9 @@ void HotseatWidget::OnGestureEvent(ui::GestureEvent* event) {
 
   // Ensure that the app button's drag state gets cleared on gesture end even if
   // the event doesn't get delivered to the app button.
-  if (item_with_context_menu && event->type() == ui::ET_GESTURE_END)
+  if (item_with_context_menu && event->type() == ui::EventType::kGestureEnd) {
     item_with_context_menu->ClearDragStateOnGestureEnd();
+  }
 }
 
 bool HotseatWidget::OnNativeWidgetActivationChanged(bool active) {

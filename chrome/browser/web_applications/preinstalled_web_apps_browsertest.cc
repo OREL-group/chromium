@@ -17,6 +17,7 @@
 #include "chrome/browser/web_applications/test/with_crosapi_param.h"
 #include "chrome/browser/web_applications/web_app_id_constants.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
+#include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "content/public/test/browser_test.h"
@@ -39,11 +40,6 @@ class PreinstalledWebAppsBrowserTest : public WebAppBrowserTestBase,
             PreinstalledWebAppManager::SkipStartupForTesting()) {
     // Ignore any default app configs on disk.
     SetPreinstalledWebAppConfigDirForTesting(&empty_path_);
-    WebAppProvider::SetOsIntegrationManagerFactoryForTesting(
-        [](Profile* profile) -> std::unique_ptr<OsIntegrationManager> {
-          return std::make_unique<FakeOsIntegrationManager>(profile, nullptr,
-                                                            nullptr, nullptr);
-        });
   }
 
   ~PreinstalledWebAppsBrowserTest() override {
@@ -63,7 +59,7 @@ class PreinstalledWebAppsBrowserTest : public WebAppBrowserTestBase,
     if (browser() == nullptr) {
       // Create a new Ash browser window so test code using browser() can work
       // even when Lacros is the only browser.
-      // TODO(crbug.com/1450158): Remove uses of browser() from such tests.
+      // TODO(crbug.com/40270051): Remove uses of browser() from such tests.
       chrome::NewEmptyWindow(ProfileManager::GetActiveUserProfile());
       SelectFirstBrowser();
     }
@@ -166,7 +162,7 @@ IN_PROC_BROWSER_TEST_P(PreinstalledWebAppsBrowserTest, CheckInstalledFields) {
       base::BindLambdaForTesting(
           [&](std::map<GURL, ExternallyManagedAppManager::InstallResult>
                   install_results,
-              std::map<GURL, bool> uninstall_results) {
+              std::map<GURL, webapps::UninstallResultCode> uninstall_results) {
             if (GetParam() == test::CrosapiParam::kDisabled) {
               EXPECT_EQ(install_results.size(),
                         kOfflineOnlyExpectedCount + kOnlineOnlyExpectedCount);

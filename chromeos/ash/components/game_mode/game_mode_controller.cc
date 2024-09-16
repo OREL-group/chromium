@@ -85,6 +85,12 @@ GameModeController::WindowTracker::WindowTracker(
   window_state_observer_.Observe(window_state);
   window_observer_.Observe(window);
 
+  // If maintaining game mode state, update the window reference on the reused
+  // enabler. Must occur after observers are setup.
+  if (game_mode_enabler_) {
+    game_mode_enabler_->SetWindowState(window_state);
+  }
+
   // This possibly turns OFF as well as turns on game mode.
   UpdateGameModeStatus(window_state);
 }
@@ -100,9 +106,9 @@ void GameModeController::WindowTracker::OnPostWindowStateTypeChange(
 void GameModeController::WindowTracker::UpdateGameModeStatus(
     ash::WindowState* window_state) {
   auto* window = window_state->window();
+  CHECK(ash::borealis::IsBorealisWindow(window));
 
-  if (!window_state->IsFullscreen() ||
-      !ash::borealis::IsBorealisWindow(window)) {
+  if (!window_state->IsFullscreen()) {
     game_mode_enabler_.reset();
     return;
   }
@@ -166,6 +172,16 @@ GameModeController::GameModeEnabler::~GameModeEnabler() {
   }
 }
 
+void GameModeController::GameModeEnabler::SetWindowState(
+    ash::WindowState* window_state) {
+  if (window_state_ == window_state) {
+    return;
+  }
+
+  window_state_ = window_state;
+  notify_set_game_mode_callback_.Run(GameMode::BOREALIS, window_state_);
+}
+
 void GameModeController::GameModeEnabler::RefreshGameMode() {
   if (ash::ResourcedClient::Get()) {
     ash::ResourcedClient::Get()->SetGameModeWithTimeout(
@@ -191,18 +207,10 @@ void GameModeController::GameModeEnabler::OnSetGameMode(
   }
 }
 
-void GameModeController::AddObserver(Observer* obs) {
-  observers_.AddObserver(obs);
-}
-
-void GameModeController::RemoveObserver(Observer* obs) {
-  observers_.RemoveObserver(obs);
-}
-
 void GameModeController::NotifySetGameMode(GameMode game_mode,
                                            ash::WindowState* window_state) {
-  for (auto& obs : observers_) {
-    obs.OnSetGameMode(game_mode, window_state);
+  if (!callback_.is_null()) {
+    callback_.Run(window_state->window(), game_mode);
   }
 }
 

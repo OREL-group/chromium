@@ -6,12 +6,16 @@
 
 #include <string>
 
-std::u16string AuthenticatorRequestSheetModel::GetAdditionalDescription()
-    const {
-  return std::u16string();
+std::vector<std::u16string>
+AuthenticatorRequestSheetModel::GetAdditionalDescriptions() const {
+  return {};
 }
 
 std::u16string AuthenticatorRequestSheetModel::GetError() const {
+  return std::u16string();
+}
+
+std::u16string AuthenticatorRequestSheetModel::GetHint() const {
   return std::u16string();
 }
 
@@ -38,7 +42,7 @@ std::u16string AuthenticatorRequestSheetModel::GetOtherMechanismButtonLabel()
 
 void AuthenticatorRequestSheetModel::OnManageDevices() {}
 
-void AuthenticatorRequestSheetModel::OnForgotGPMPin() {}
+void AuthenticatorRequestSheetModel::OnForgotGPMPin() const {}
 
 void AuthenticatorRequestSheetModel::OnGPMPinOptionChosen(
     bool is_arbitrary) const {}

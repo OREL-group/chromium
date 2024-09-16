@@ -64,7 +64,7 @@ bool EraseValue(HostIndexedContentSettings::HostToContentSettings& index,
 const RuleEntry* FindContentSetting(const GURL& primary_url,
                                     const GURL& secondary_url,
                                     const Rules& settings,
-                                    base::Clock* clock) {
+                                    const base::Clock* clock) {
   const auto it = base::ranges::find_if(settings, [&](const auto& entry) {
     return entry.first.primary_pattern.Matches(primary_url) &&
            entry.first.secondary_pattern.Matches(secondary_url) &&
@@ -81,7 +81,7 @@ const RuleEntry* FindInHostToContentSettings(
     const HostIndexedContentSettings::HostToContentSettings&
         indexed_content_setting,
     std::string_view host,
-    base::Clock* clock) {
+    const base::Clock* clock) {
   if (host.empty() || indexed_content_setting.empty()) {
     return nullptr;
   }
@@ -119,21 +119,6 @@ const RuleEntry* FindInHostToContentSettings(
 }
 
 }  // namespace
-
-const ContentSettingPatternSource* FindContentSetting(
-    const GURL& primary_url,
-    const GURL& secondary_url,
-    std::reference_wrapper<const ContentSettingsForOneType> settings) {
-  const auto& entry = base::ranges::find_if(
-      settings.get(), [&](const ContentSettingPatternSource& entry) {
-        return entry.primary_pattern.Matches(primary_url) &&
-               entry.secondary_pattern.Matches(secondary_url) &&
-               (base::FeatureList::IsEnabled(
-                    content_settings::features::kActiveContentSettingExpiry) ||
-                !entry.IsExpired());
-      });
-  return entry == settings.get().end() ? nullptr : &*entry;
-}
 
 HostIndexedContentSettings::Iterator::Iterator(
     const HostIndexedContentSettings& index,
@@ -197,7 +182,7 @@ HostIndexedContentSettings::Iterator::operator++() {
         // We have reached the end.
         break;
       case Stage::kInvalid:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
     }
   }
   return *this;
@@ -244,21 +229,21 @@ void HostIndexedContentSettings::Iterator::SetStage(Stage stage) {
       current_end_ = index_->wildcard_settings_.end();
       break;
     case Stage::kInvalid:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 }
 
 HostIndexedContentSettings::HostIndexedContentSettings()
     : HostIndexedContentSettings(base::DefaultClock::GetInstance()) {}
 
-HostIndexedContentSettings::HostIndexedContentSettings(base::Clock* clock)
+HostIndexedContentSettings::HostIndexedContentSettings(const base::Clock* clock)
     : clock_(clock) {
   DCHECK(clock);
 }
 
-HostIndexedContentSettings::HostIndexedContentSettings(std::string source,
+HostIndexedContentSettings::HostIndexedContentSettings(ProviderType source,
                                                        bool off_the_record)
-    : source_(std::move(source)),
+    : source_(source),
       off_the_record_(off_the_record),
       clock_(base::DefaultClock::GetInstance()) {}
 
@@ -378,7 +363,7 @@ bool HostIndexedContentSettings::empty() const {
          wildcard_settings_.empty();
 }
 
-void HostIndexedContentSettings::SetClockForTesting(base::Clock* clock) {
+void HostIndexedContentSettings::SetClockForTesting(const base::Clock* clock) {
   clock_ = clock;
 }
 

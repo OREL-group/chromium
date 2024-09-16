@@ -143,6 +143,12 @@ class ExtensionsToolbarContainer : public ToolbarIconContainerView,
   void ShowWidgetForExtension(views::Widget* widget,
                               const std::string& extension_id);
 
+  // Check if the extensions menu is showing.
+  // TODO(crbug.com/40811196): This method will be removed once extensions menu
+  // under kExtensionsMenuAccessControl feature is fully rolled out and we can
+  // call directly into the menu coordinator.
+  bool IsExtensionsMenuShowing() const;
+
   // Event handler for when the extensions menu is opened.
   void OnMenuOpening();
 
@@ -202,7 +208,6 @@ class ExtensionsToolbarContainer : public ToolbarIconContainerView,
       std::unique_ptr<ToolbarActionsBarBubbleDelegate> bubble) override;
   void ToggleExtensionsMenu() override;
   bool HasAnyExtensions() const override;
-  bool HasBlockingSecurityUI() const override;
   void UpdateToolbarActionHoverCard(
       ToolbarActionView* action_view,
       ToolbarActionHoverCardUpdateType update_type) override;
@@ -234,14 +239,8 @@ class ExtensionsToolbarContainer : public ToolbarIconContainerView,
     std::string extension_id;
   };
 
-  // Check if the extensions menu is showing.
-  // TODO(crbug.com/1279986): This method will be removed once extensions menu
-  // under kExtensionsMenuAccessControl feature is fully rolled out and we can
-  // call directly into the menu coordinator.
-  bool IsExtensionsMenuShowing() const;
-
   // Hides the currently-showing extensions menu, if it exists.
-  // TODO(crbug.com/1279986): This method will be removed once extensions menu
+  // TODO(crbug.com/40811196): This method will be removed once extensions menu
   // under kExtensionsMenuAccessControl feature is fully rolled out and we can
   // call directly into the menu coordinator.
   void HideExtensionsMenu();
@@ -344,7 +343,7 @@ class ExtensionsToolbarContainer : public ToolbarIconContainerView,
   raw_ptr<ToolbarButton> close_side_panel_button_ = nullptr;
   // Used to ensure the button remains highlighted while active.
   std::optional<views::Button::ScopedAnchorHighlight>
-      close_side_panel_button_anchor_higlight_;
+      close_side_panel_button_anchor_highlight_;
 
   // The widgets currently popped out and, for each, the extension it is
   // associated with. See AnchoredWidget.

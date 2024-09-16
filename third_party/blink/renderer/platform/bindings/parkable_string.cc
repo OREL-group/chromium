@@ -2,12 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/platform/bindings/parkable_string.h"
 
 #include <array>
+#include <string_view>
 
-#include "base/allocator/partition_allocator/src/partition_alloc/oom.h"
-#include "base/allocator/partition_allocator/src/partition_alloc/partition_alloc.h"
 #include "base/check_op.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
@@ -22,6 +26,8 @@
 #include "base/time/time.h"
 #include "base/timer/elapsed_timer.h"
 #include "base/trace_event/typed_macros.h"
+#include "partition_alloc/oom.h"
+#include "partition_alloc/partition_alloc.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/platform/bindings/buildflags.h"
@@ -633,11 +639,11 @@ String ParkableStringImpl::UnparkInternal() {
   }
 
   TRACE_EVENT("blink", "ParkableStringImpl::Decompress");
-  base::StringPiece compressed_string_piece(
+  std::string_view compressed_string_piece(
       reinterpret_cast<const char*>(metadata_->compressed_->data()),
       metadata_->compressed_->size() * sizeof(uint8_t));
   String uncompressed;
-  base::StringPiece uncompressed_string_piece;
+  std::string_view uncompressed_string_piece;
   size_t size = CharactersSizeInBytes();
   char* char_data;
   if (is_8bit()) {
@@ -649,7 +655,7 @@ String ParkableStringImpl::UnparkInternal() {
     uncompressed = String::CreateUninitialized(length(), data);
     char_data = reinterpret_cast<char*>(data);
   }
-  uncompressed_string_piece = base::StringPiece(char_data, size);
+  uncompressed_string_piece = std::string_view(char_data, size);
 
   switch (GetCompressionAlgorithm()) {
     case CompressionAlgorithm::kZlib: {
@@ -759,8 +765,8 @@ void ParkableStringImpl::CompressInBackground(
   // Compression touches the string.
   AsanUnpoisonString(params->string->string_);
   bool ok;
-  base::StringPiece data(reinterpret_cast<const char*>(params->data.get()),
-                         params->size);
+  std::string_view data(reinterpret_cast<const char*>(params->data.get()),
+                        params->size);
   std::unique_ptr<Vector<uint8_t>> compressed;
 
   // This runs in background, making CPU starvation likely, and not an issue.
@@ -839,8 +845,7 @@ void ParkableStringImpl::CompressInBackground(
       compressed = std::make_unique<Vector<uint8_t>>();
       // Not using realloc() as we want the compressed data to be a regular
       // WTF::Vector.
-      compressed->Append(reinterpret_cast<const uint8_t*>(buffer.data()),
-                         base::checked_cast<wtf_size_t>(compressed_size));
+      compressed->AppendSpan(base::as_byte_span(buffer).first(compressed_size));
     }
   }
   base::TimeDelta thread_elapsed = thread_timer.Elapsed();

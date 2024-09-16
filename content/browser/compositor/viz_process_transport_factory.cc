@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "content/browser/compositor/viz_process_transport_factory.h"
 
 #include <utility>
@@ -121,6 +126,12 @@ class HostDisplayClient : public viz::HostDisplayClient {
     gpu_process_host->gpu_host()->AddChildWindow(widget(), child_window);
   }
 #endif
+
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  void SetPreferredRefreshRate(float refresh_rate) override {
+    compositor_->OnSetPreferredRefreshRate(refresh_rate);
+  }
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
  private:
   [[maybe_unused]] const raw_ptr<ui::Compositor> compositor_;
@@ -410,9 +421,6 @@ void VizProcessTransportFactory::OnEstablishedGpuChannel(
     root_params->disable_frame_rate_limit = true;
 
 #if BUILDFLAG(IS_WIN)
-  root_params->set_present_duration_allowed =
-      features::ShouldUseSetPresentDuration();
-
   const bool using_direct_composition = GpuDataManagerImpl::GetInstance()
                                             ->GetGPUInfo()
                                             .overlay_info.direct_composition;
@@ -484,21 +492,22 @@ VizProcessTransportFactory::TryCreateContextsForGpuCompositing(
     scoped_refptr<gpu::GpuChannelHost> gpu_channel_host) {
   DCHECK(!is_gpu_compositing_disabled_);
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  if (!gpu_channel_host) {
-    // Chrome OS can't fallback to software compositing so retry up to 10
-    // seconds to initialize the GPU channel.
-    constexpr auto kRetryTimeout = base::Seconds(10);
-    base::TimeTicks begin = base::TimeTicks::Now();
-    while (base::TimeTicks::Now() - begin < kRetryTimeout &&
-           !gpu_channel_host) {
-      gpu_channel_host =
-          gpu_channel_establish_factory_->EstablishGpuChannelSync();
+  if (!gpu_channel_host && base::FeatureList::IsEnabled(
+                               features::kShutdownForFailedChannelCreation)) {
+    // If passed in `gpu_channel_host` is null, the previous EstablishGpuChannel
+    // have failed. It means the gpu process have died but the browser UI thread
+    // have not received child process disconnect signal. Manually remove it
+    // before EstablishGpuChannel again. More in crbug.com/322909915.
+    auto* gpu_process_host = GpuProcessHost::Get();
+    if (gpu_process_host) {
+      gpu_process_host->GpuProcessHost::ForceShutdown();
     }
+
+    gpu_channel_host =
+        gpu_channel_establish_factory_->EstablishGpuChannelSync();
     UMA_HISTOGRAM_BOOLEAN("GPU.EstablishGpuChannelSyncRetry",
                           !!gpu_channel_host);
   }
-#endif
 
   if (!gpu_channel_host) {
     // Fallback to software compositing if there is no IPC channel.

@@ -100,7 +100,6 @@ class Internals final : public ScriptWrappable {
   static void ResetToConsistentState(Page*);
 
   explicit Internals(ExecutionContext*);
-  ~Internals() override;
 
   String elementLayoutTreeAsText(Element*, ExceptionState&);
 
@@ -365,9 +364,7 @@ class Internals final : public ScriptWrappable {
   String layerTreeAsText(Document*, unsigned flags, ExceptionState&) const;
   String layerTreeAsText(Document*, ExceptionState&) const;
 
-  String scrollingStateTreeAsText(Document*) const;
   String mainThreadScrollingReasons(Document*, ExceptionState&) const;
-  DOMRectList* nonFastScrollableRects(Document*, ExceptionState&) const;
 
   void evictAllResources() const;
 
@@ -394,7 +391,7 @@ class Internals final : public ScriptWrappable {
                                 float max_scale_factor,
                                 ExceptionState&);
 
-  float pageZoomFactor(ExceptionState&);
+  float layoutZoomFactor(ExceptionState&);
 
   void setIsCursorVisible(Document*, bool, ExceptionState&);
   void setMaxNumberOfFramesToTen(bool);
@@ -470,6 +467,7 @@ class Internals final : public ScriptWrappable {
   void forceCompositingUpdate(Document*, ExceptionState&);
 
   void setDarkPreferredColorScheme(Document* document);
+  void setDarkPreferredRootScrollbarColorScheme(Document* document);
   void setForcedColorsAndDarkPreferredColorScheme(Document* document);
 
   void setShouldRevealPassword(Element*, bool, ExceptionState&);
@@ -526,6 +524,7 @@ class Internals final : public ScriptWrappable {
   // Return true if the given use counter exists for the given document.
   // |feature| must be one of the values from the WebFeature enum.
   bool isUseCounted(Document*, uint32_t feature);
+  bool isWebDXFeatureUseCounted(Document*, uint32_t feature);
   bool isCSSPropertyUseCounted(Document*, const String&);
   bool isAnimatedCSSPropertyUseCounted(Document*, const String&);
   void clearUseCounter(Document*, uint32_t feature);
@@ -626,6 +625,8 @@ class Internals final : public ScriptWrappable {
 
   void setAllowPerChunkTransferring(ReadableStream* stream);
   void setBackForwardCacheRestorationBufferSize(unsigned int maxSize);
+  void setEventTimingBufferSize(unsigned int maxSize);
+  void stopResponsivenessMetricsUkmSampling();
 
   InternalsUkmRecorder* initializeUKMRecorder();
 

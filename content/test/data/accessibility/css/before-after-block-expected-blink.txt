@@ -1,12 +1,12 @@
 rootWebArea htmlTag='#document'
-++genericContainer ignored htmlTag='html'
-++++genericContainer ignored htmlTag='body'
+++genericContainer ignored
+++++genericContainer ignored
 ++++++genericContainer htmlTag='div'
 ++++++++staticText name='A'
-++++++++++inlineTextBox
-++++++++genericContainer ignored htmlTag='b'
+++++++++++inlineTextBox name='A'
+++++++++genericContainer ignored
 ++++++++++genericContainer htmlTag='::before'
 ++++++++++staticText name='bold'
-++++++++++++inlineTextBox
+++++++++++++inlineTextBox name='bold'
 ++++++++staticText name=' element'
-++++++++++inlineTextBox
+++++++++++inlineTextBox name=' element'

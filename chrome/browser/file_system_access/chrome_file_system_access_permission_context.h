@@ -31,7 +31,6 @@
 #endif
 
 #if BUILDFLAG(ENTERPRISE_CLOUD_CONTENT_ANALYSIS)
-#include "chrome/browser/enterprise/connectors/analysis/content_analysis_delegate.h"
 #include "components/enterprise/common/files_scan_data.h"
 #endif
 
@@ -113,7 +112,7 @@ class ChromeFileSystemAccessPermissionContext
 
   // These values are persisted to logs. Entries should not be renumbered and
   // numeric values should never be reused.
-  // TODO(crbug.com/1011533): Currently, the `kIgnored` outcome is not user-
+  // TODO(crbug.com/40101962): Currently, the `kIgnored` outcome is not user-
   // detectable, and no metrics are expected to be recorded for this case.
   // Consider removing this value from the `RestorePermissionPromptOutcome`
   // enum when updating the corresponding logic in the permission context code.
@@ -155,6 +154,9 @@ class ChromeFileSystemAccessPermissionContext
 
   // WebAppInstallManagerObserver:
   void OnWebAppInstalled(const webapps::AppId& app_id) override;
+  // TODO(crbug.com/340952100): Remove after the InstallState is saved in the
+  // database & available from OnWebAppInstalled.
+  void OnWebAppInstalledWithOsHooks(const webapps::AppId& app_id) override;
   void OnWebAppInstallManagerDestroyed() override;
   void OnWebAppWillBeUninstalled(const webapps::AppId& app_id) override;
 #endif
@@ -243,7 +245,7 @@ class ChromeFileSystemAccessPermissionContext
                                        const base::FilePath& path,
                                        HandleType handle_type,
                                        GrantType grant_type) {
-    // TODO(crbug/1011533): Clean up this usage in test.
+    // TODO(crbug.com/40101962): Clean up this usage in test.
     return CanAutoGrantViaPersistentPermission(origin, path, handle_type,
                                                grant_type);
   }
@@ -330,6 +332,9 @@ class ChromeFileSystemAccessPermissionContext
   // site_settings_helper, which displays File System Access permissions on the
   // chrome://settings/content/filesystem UI.
   static constexpr char kPermissionPathKey[] = "path";
+
+  // KeyedService:
+  void Shutdown() override;
 
  protected:
   SEQUENCE_CHECKER(sequence_checker_);

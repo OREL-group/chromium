@@ -39,6 +39,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/not_fatal_until.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/ranges/algorithm.h"
 #include "base/time/time.h"
@@ -144,7 +145,6 @@
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
 #include "third_party/blink/renderer/platform/loader/fetch/unique_identifier.h"
 #include "third_party/blink/renderer/platform/network/content_security_policy_response_headers.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/weborigin/security_policy.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
@@ -179,7 +179,7 @@ ServiceWorkerEventQueue::AbortCallback CreateAbortCallback(MapType* map,
       [](MapType* map, Args&&... args, int event_id,
          mojom::blink::ServiceWorkerEventStatus status) {
         auto iter = map->find(event_id);
-        DCHECK(iter != map->end());
+        CHECK(iter != map->end(), base::NotFatalUntil::M130);
         std::move(iter->value).Run(status, std::forward<Args>(args)...);
         map->erase(iter);
       },
@@ -370,6 +370,11 @@ void ServiceWorkerGlobalScope::FetchAndRunModuleScript(
       installed_scripts_manager_
           ? ModuleScriptCustomFetchType::kInstalledServiceWorker
           : ModuleScriptCustomFetchType::kWorkerConstructor;
+
+  // Count instantiation of a service worker using a module script as a proxy %
+  // of page loads use a service worker with a module script.
+  CountWebDXFeature(WebDXFeature::kJsModulesServiceWorkers);
+
   FetchModuleScript(module_url_record, outside_settings_object,
                     outside_resource_timing_notifier,
                     mojom::blink::RequestContextType::SERVICE_WORKER,
@@ -600,7 +605,7 @@ ScriptPromise<IDLUndefined> ServiceWorkerGlobalScope::skipWaiting(
   // FIXME: short-term fix, see details at:
   // https://codereview.chromium.org/535193002/.
   if (!execution_context)
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
 
   auto* resolver =
       MakeGarbageCollected<ScriptPromiseResolver<IDLUndefined>>(script_state);
@@ -642,7 +647,7 @@ void ServiceWorkerGlobalScope::OnNavigationPreloadResponse(
     mojo::ScopedDataPipeConsumerHandle data_pipe) {
   DCHECK(IsContextThread());
   auto it = pending_preload_fetch_events_.find(fetch_event_id);
-  DCHECK(it != pending_preload_fetch_events_.end());
+  CHECK(it != pending_preload_fetch_events_.end(), base::NotFatalUntil::M130);
   FetchEvent* fetch_event = it->value.Get();
   DCHECK(fetch_event);
   fetch_event->OnNavigationPreloadResponse(ScriptController()->GetScriptState(),
@@ -804,6 +809,7 @@ void ServiceWorkerGlobalScope::Trace(Visitor* visitor) const {
   visitor->Trace(payment_response_callbacks_);
   visitor->Trace(fetch_response_callbacks_);
   visitor->Trace(pending_preload_fetch_events_);
+  visitor->Trace(pending_streaming_upload_fetch_events_);
   visitor->Trace(controller_receivers_);
   visitor->Trace(remote_associated_interfaces_);
   visitor->Trace(associated_interfaces_receiver_);
@@ -998,6 +1004,7 @@ void ServiceWorkerGlobalScope::DidHandleExtendableMessageEvent(
 
 void ServiceWorkerGlobalScope::RespondToFetchEventWithNoResponse(
     int fetch_event_id,
+    FetchEvent* fetch_event,
     const KURL& request_url,
     bool range_request,
     std::optional<network::DataElementChunkedDataPipe> request_body,
@@ -1023,7 +1030,14 @@ void ServiceWorkerGlobalScope::RespondToFetchEventWithNoResponse(
 
   NoteRespondedToFetchEvent(request_url, range_request);
 
+  if (request_body) {
+    pending_streaming_upload_fetch_events_.insert(fetch_event_id, fetch_event);
+  }
+
   response_callback->OnFallback(std::move(request_body), std::move(timing));
+}
+void ServiceWorkerGlobalScope::OnStreamingUploadCompletion(int fetch_event_id) {
+  pending_streaming_upload_fetch_events_.erase(fetch_event_id);
 }
 
 void ServiceWorkerGlobalScope::RespondToFetchEvent(
@@ -1779,7 +1793,7 @@ void ServiceWorkerGlobalScope::AbortInstallEvent(
     mojom::blink::ServiceWorkerEventStatus status) {
   DCHECK(IsContextThread());
   auto iter = install_event_callbacks_.find(event_id);
-  DCHECK(iter != install_event_callbacks_.end());
+  CHECK(iter != install_event_callbacks_.end(), base::NotFatalUntil::M130);
   GlobalFetch::ScopedFetcher* fetcher = GlobalFetch::ScopedFetcher::From(*this);
   std::move(iter->value).Run(status, fetcher->FetchCount());
   install_event_callbacks_.erase(iter);

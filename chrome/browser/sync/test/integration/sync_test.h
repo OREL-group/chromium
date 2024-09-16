@@ -22,7 +22,8 @@
 #include "chrome/browser/profiles/profile_observer.h"
 #include "chrome/browser/sync/test/integration/invalidations/fake_server_sync_invalidation_sender.h"
 #include "chrome/common/buildflags.h"
-#include "components/sync/base/model_type.h"
+#include "chrome/test/base/platform_browser_test.h"
+#include "components/sync/base/data_type.h"
 #include "components/sync/base/user_selectable_type.h"
 #include "components/sync/test/fake_server.h"
 #include "net/base/net_errors.h"
@@ -34,11 +35,9 @@
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 #if BUILDFLAG(IS_ANDROID)
-#include "chrome/test/base/android/android_browser_test.h"
 #include "components/gcm_driver/instance_id/scoped_use_fake_instance_id_android.h"
 #else
 #include "chrome/browser/extensions/install_verifier.h"
-#include "chrome/test/base/in_process_browser_test.h"
 #endif
 
 // The E2E tests are designed to run against real backend servers. To identify
@@ -253,14 +252,14 @@ class SyncTest : public PlatformBrowserTest, public ProfileObserver {
   // Triggers a migration for one or more datatypes, and waits
   // for the server to complete it.  This operation is available
   // only if ServerSupportsErrorTriggering() returned true.
-  void TriggerMigrationDoneError(syncer::ModelTypeSet model_types);
+  void TriggerMigrationDoneError(syncer::DataTypeSet data_types);
 
   // Returns the FakeServer being used for the test or null if FakeServer is
   // not being used.
   fake_server::FakeServer* GetFakeServer() const;
 
-  // Triggers a sync for the given |model_types| for the Profile at |index|.
-  void TriggerSyncForModelTypes(int index, syncer::ModelTypeSet model_types);
+  // Triggers a sync for the given |data_types| for the Profile at |index|.
+  void TriggerSyncForDataTypes(int index, syncer::DataTypeSet data_types);
 
   arc::SyncArcPackageHelper* sync_arc_helper();
 
@@ -288,10 +287,6 @@ class SyncTest : public PlatformBrowserTest, public ProfileObserver {
   void DisableNotificationsImpl();
   void EnableNotificationsImpl();
 
-  // Helper to ProfileManager::CreateProfileAsync that creates a new profile
-  // used for UI Signin. Blocks until profile is created.
-  static Profile* MakeProfileForUISignin(base::FilePath profile_path);
-
   // Sets up fake responses for kClientLoginUrl, kIssueAuthTokenUrl,
   // kGetUserInfoUrl and kSearchDomainCheckUrl in order to mock out calls to
   // GAIA servers.
@@ -299,7 +294,7 @@ class SyncTest : public PlatformBrowserTest, public ProfileObserver {
 
   // Exclude data types from end of test checks in CheckForDataTypeFailures().
   // Note that this replaces the list of excluded types (if set earlier).
-  void ExcludeDataTypesFromCheckForDataTypeFailures(syncer::ModelTypeSet types);
+  void ExcludeDataTypesFromCheckForDataTypeFailures(syncer::DataTypeSet types);
 
   // The FakeServer used in tests with server type IN_PROCESS_FAKE_SERVER.
   std::unique_ptr<fake_server::FakeServer> fake_server_;
@@ -349,8 +344,6 @@ class SyncTest : public PlatformBrowserTest, public ProfileObserver {
 
   // Internal routine for setting up sync.
   void SetupSyncInternal(SetupSyncMode setup_mode);
-
-  void ClearProfiles();
 
   // Used to determine whether ARC_PACKAGE data type needs to be enabled. This
   // is applicable on ChromeOS-Ash platform only.
@@ -440,7 +433,7 @@ class SyncTest : public PlatformBrowserTest, public ProfileObserver {
   // Only used for external server tests with two clients.
   bool use_new_user_data_dir_ = false;
 
-  syncer::ModelTypeSet excluded_types_from_check_for_data_type_failures_;
+  syncer::DataTypeSet excluded_types_from_check_for_data_type_failures_;
 
   // The feature list to override features for all sync tests.
   base::test::ScopedFeatureList feature_list_;
@@ -465,6 +458,6 @@ class SyncTest : public PlatformBrowserTest, public ProfileObserver {
       fake_server_sync_invalidation_sender_;
 };
 
-syncer::ModelTypeSet AllowedTypesInStandaloneTransportMode();
+syncer::DataTypeSet AllowedTypesInStandaloneTransportMode();
 
 #endif  // CHROME_BROWSER_SYNC_TEST_INTEGRATION_SYNC_TEST_H_

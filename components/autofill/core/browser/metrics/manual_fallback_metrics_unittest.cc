@@ -7,6 +7,7 @@
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
+#include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/metrics/autofill_metrics_test_base.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/form_data.h"
@@ -35,31 +36,35 @@ class ManualFallbackEventLoggerTest
       const FormData& form,
       AutofillSuggestionTriggerSource fallback_trigger_source) {
     autofill_manager().OnAskForValuesToFillTest(
-        form, form.fields[0], /*bounding_box=*/{}, fallback_trigger_source);
+        form, form.fields()[0].global_id(), fallback_trigger_source);
     DidShowAutofillSuggestions(
         form, /*field_index=*/0,
         fallback_trigger_source ==
                 AutofillSuggestionTriggerSource::kManualFallbackAddress
-            ? PopupItemId::kAddressEntry
-            : PopupItemId::kCreditCardEntry);
+            ? SuggestionType::kAddressEntry
+            : SuggestionType::kCreditCardEntry);
   }
 
   // Fills the first field in the form by calling `FillOrPreviewField()`. Uses a
-  // hardcoded value to be filled but makes the `popup_item_id` passed to the
-  // filling function depend on whether the `manual_fallback_option` param
+  // hardcoded value to be filled but makes the `type` passed to
+  // the filling function depend on whether the `manual_fallback_option` param
   // attribute is `AutofillSuggestionTriggerSource::kManualFallbackAddress` or
   // `AutofillSuggestionTriggerSource::kManualFallbackPayments`. Using
-  // `PopupItemId::kAddressFieldByFieldFilling` for the former and
-  // `PopupItemId::kCreditCardFieldByFieldFilling` for the latter.
+  // `SuggestionType::kAddressFieldByFieldFilling` for the former and
+  // `SuggestionType::kCreditCardFieldByFieldFilling` for the latter.
   void FillFirstFormField(const FormData& form) {
     const ManualFallbackTestParams& params = GetParam();
     autofill_manager().FillOrPreviewField(
         mojom::ActionPersistence::kFill, mojom::FieldActionType::kReplaceAll,
-        form, form.fields[0], u"value to fill",
+        form, form.fields()[0], u"value to fill",
         params.manual_fallback_option ==
                 AutofillSuggestionTriggerSource::kManualFallbackAddress
-            ? PopupItemId::kAddressFieldByFieldFilling
-            : PopupItemId::kCreditCardFieldByFieldFilling);
+            ? SuggestionType::kAddressFieldByFieldFilling
+            : SuggestionType::kCreditCardFieldByFieldFilling,
+        params.manual_fallback_option ==
+                AutofillSuggestionTriggerSource::kManualFallbackAddress
+            ? NAME_FULL
+            : CREDIT_CARD_NAME_FULL);
   }
 
   std::string ExpectedBucketNameForManualFallbackOption() const {

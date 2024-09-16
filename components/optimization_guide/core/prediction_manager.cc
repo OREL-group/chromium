@@ -17,6 +17,7 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/histogram_macros_local.h"
+#include "base/not_fatal_until.h"
 #include "base/observer_list.h"
 #include "base/path_service.h"
 #include "base/sequence_checker.h"
@@ -45,6 +46,7 @@
 #include "components/optimization_guide/optimization_guide_internals/webui/optimization_guide_internals.mojom.h"
 #include "components/optimization_guide/proto/models.pb.h"
 #include "components/prefs/pref_service.h"
+#include "google_apis/google_api_keys.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 
@@ -111,9 +113,13 @@ void RecordLifecycleState(proto::OptimizationTarget optimization_target,
 
 // Returns whether models should be fetched from the
 // remote Optimization Guide Service.
-bool ShouldFetchModels(bool off_the_record, bool component_updates_enabled) {
+bool ShouldFetchModels(bool off_the_record,
+                       bool component_updates_enabled,
+                       bool should_check_google_api_key_configuration) {
   return features::IsRemoteFetchingEnabled() && !off_the_record &&
-         features::IsModelDownloadingEnabled() && component_updates_enabled;
+         features::IsModelDownloadingEnabled() && component_updates_enabled &&
+         (!should_check_google_api_key_configuration ||
+          google_apis::HasAPIKeyConfigured());
 }
 
 // Returns whether the model metadata proto is on the server allowlist.
@@ -148,7 +154,11 @@ bool IsModelMetadataTypeOnServerAllowlist(const proto::Any& model_metadata) {
          model_metadata.type_url() ==
              "type.googleapis.com/"
              "google.internal.chrome.optimizationguide.v1."
-             "HistoryClustersModuleRankingModelMetadata";
+             "OnDeviceBaseModelMetadata" ||
+         model_metadata.type_url() ==
+             "type.googleapis.com/"
+             "google.internal.chrome.optimizationguide.v1."
+             "AutofillFieldClassificationModelMetadata";
 }
 
 void RecordModelAvailableAtRegistration(
@@ -193,14 +203,17 @@ PredictionManager::PredictionManager(
       off_the_record_(off_the_record),
       application_locale_(application_locale),
       model_cache_key_(GetModelCacheKey(application_locale_)),
-      models_dir_path_(models_dir_path) {
+      models_dir_path_(models_dir_path),
+      should_check_google_api_key_configuration_(
+          !switches::ShouldSkipGoogleApiKeyConfigurationCheck()) {
   DCHECK(prediction_model_store_);
   Initialize(std::move(background_download_service_provider));
 }
 
 PredictionManager::~PredictionManager() {
-  if (prediction_model_download_manager_)
+  if (prediction_model_download_manager_) {
     prediction_model_download_manager_->RemoveObserver(this);
+  }
 }
 
 void PredictionManager::Initialize(
@@ -287,7 +300,8 @@ void PredictionManager::AddObserverForOptimizationTargetModel(
   }
 
   if (ShouldFetchModels(off_the_record_,
-                        component_updates_enabled_provider_.Run())) {
+                        component_updates_enabled_provider_.Run(),
+                        should_check_google_api_key_configuration_)) {
     prediction_model_fetch_timer_.ScheduleFetchOnModelRegistration();
   }
 
@@ -301,7 +315,8 @@ void PredictionManager::RemoveObserverForOptimizationTargetModel(
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   auto registration_info =
       model_registration_info_map_.find(optimization_target);
-  DCHECK(registration_info != model_registration_info_map_.end());
+  CHECK(registration_info != model_registration_info_map_.end(),
+        base::NotFatalUntil::M130);
 
   auto& observers = registration_info->second.model_observers;
   DCHECK(observers.HasObserver(observer));
@@ -344,7 +359,7 @@ void PredictionManager::FetchModels() {
   proto::ModelInfo base_model_info;
   // There should only be one supported model engine version at a time.
   base_model_info.add_supported_model_engine_versions(
-      proto::MODEL_ENGINE_VERSION_TFLITE_2_16);
+      proto::MODEL_ENGINE_VERSION_TFLITE_2_18);
   // This histogram is used for integration tests. Do not remove.
   // Update this to be 10000 if/when we exceed 100 model engine versions.
   LOCAL_HISTOGRAM_COUNTS_100(
@@ -352,11 +367,9 @@ void PredictionManager::FetchModels() {
       static_cast<int>(
           *base_model_info.supported_model_engine_versions().begin()));
 
-  if (switches::IsModelOverridePresent())
-    return;
-
   if (!ShouldFetchModels(off_the_record_,
-                         component_updates_enabled_provider_.Run())) {
+                         component_updates_enabled_provider_.Run(),
+                         should_check_google_api_key_configuration_)) {
     return;
   }
 
@@ -395,21 +408,16 @@ void PredictionManager::FetchModels() {
     prediction_model_download_manager_->CancelAllPendingDownloads();
   }
 
-  // NOTE: ALL PRECONDITIONS FOR THIS FUNCTION MUST BE CHECKED ABOVE THIS LINE.
-  // It is assumed that if we proceed past here, that a fetch will at least be
-  // attempted.
-
-  if (!prediction_model_fetcher_) {
-    prediction_model_fetcher_ = std::make_unique<PredictionModelFetcherImpl>(
-        url_loader_factory_,
-        features::GetOptimizationGuideServiceGetModelsURL());
-  }
-
   std::vector<proto::ModelInfo> models_info = std::vector<proto::ModelInfo>();
   models_info.reserve(model_registration_info_map_.size());
 
   // For now, we will fetch for all registered optimization targets.
   for (const auto& registration_info : model_registration_info_map_) {
+    if (GetModelOverrideForOptimizationTarget(registration_info.first)) {
+      // Do not download models that were overriden.
+      continue;
+    }
+
     proto::ModelInfo model_info(base_model_info);
     model_info.set_optimization_target(registration_info.first);
     if (registration_info.second.metadata) {
@@ -418,8 +426,9 @@ void PredictionManager::FetchModels() {
 
     auto model_it =
         optimization_target_model_info_map_.find(registration_info.first);
-    if (model_it != optimization_target_model_info_map_.end())
+    if (model_it != optimization_target_model_info_map_.end()) {
       model_info.set_version(model_it->second.get()->GetVersion());
+    }
 
     models_info.push_back(model_info);
     if (optimization_guide_logger_->ShouldEnableDebugLogs()) {
@@ -431,6 +440,19 @@ void PredictionManager::FetchModels() {
     }
     RecordLifecycleState(registration_info.first,
                          ModelDeliveryEvent::kGetModelsRequest);
+  }
+  if (models_info.empty()) {
+    return;
+  }
+
+  // NOTE: ALL PRECONDITIONS FOR THIS FUNCTION MUST BE CHECKED ABOVE THIS LINE.
+  // It is assumed that if we proceed past here, that a fetch will at least be
+  // attempted.
+
+  if (!prediction_model_fetcher_) {
+    prediction_model_fetcher_ = std::make_unique<PredictionModelFetcherImpl>(
+        url_loader_factory_,
+        features::GetOptimizationGuideServiceGetModelsURL());
   }
 
   bool fetch_initiated =
@@ -623,11 +645,14 @@ void PredictionManager::UpdatePredictionModels(
 void PredictionManager::OnModelReady(const base::FilePath& base_model_dir,
                                      const proto::PredictionModel& model) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (switches::IsModelOverridePresent())
-    return;
-
   DCHECK(model.model_info().has_version() &&
          model.model_info().has_optimization_target());
+
+  if (GetModelOverrideForOptimizationTarget(
+          model.model_info().optimization_target())) {
+    // Skip updating the model if override is present.
+    return;
+  }
 
   RecordModelUpdateVersion(model.model_info());
   RecordLifecycleState(model.model_info().optimization_target(),
@@ -752,7 +777,8 @@ void PredictionManager::MaybeInitializeModelDownloads(
   // Only load models if there are optimization targets registered.
   if (!model_registration_info_map_.empty() &&
       ShouldFetchModels(off_the_record_,
-                        component_updates_enabled_provider_.Run())) {
+                        component_updates_enabled_provider_.Run(),
+                        should_check_google_api_key_configuration_)) {
     prediction_model_fetch_timer_.MaybeScheduleFirstModelFetch();
   }
 }
@@ -760,11 +786,11 @@ void PredictionManager::MaybeInitializeModelDownloads(
 void PredictionManager::OnPredictionModelOverrideLoaded(
     proto::OptimizationTarget optimization_target,
     std::unique_ptr<proto::PredictionModel> prediction_model) {
+  const bool is_available = prediction_model != nullptr;
   OnLoadPredictionModel(optimization_target,
                         /*record_availability_metrics=*/false,
                         std::move(prediction_model));
-  RecordModelAvailableAtRegistration(optimization_target,
-                                     prediction_model != nullptr);
+  RecordModelAvailableAtRegistration(optimization_target, is_available);
 }
 
 void PredictionManager::LoadPredictionModels(
@@ -812,8 +838,9 @@ void PredictionManager::OnLoadPredictionModel(
   }
   bool success = ProcessAndStoreLoadedModel(*model);
   DCHECK_EQ(optimization_target, model->model_info().optimization_target());
-  if (record_availability_metrics)
+  if (record_availability_metrics) {
     RecordModelAvailableAtRegistration(optimization_target, success);
+  }
   OnProcessLoadedModel(*model, success);
 }
 
@@ -848,12 +875,15 @@ void PredictionManager::RemoveModelFromStore(
 bool PredictionManager::ProcessAndStoreLoadedModel(
     const proto::PredictionModel& model) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (!model.model_info().has_optimization_target())
+  if (!model.model_info().has_optimization_target()) {
     return false;
-  if (!model.model_info().has_version())
+  }
+  if (!model.model_info().has_version()) {
     return false;
-  if (!model.has_model())
+  }
+  if (!model.has_model()) {
     return false;
+  }
   if (!model_registration_info_map_.contains(
           model.model_info().optimization_target())) {
     return false;
@@ -891,8 +921,9 @@ bool PredictionManager::ShouldUpdateStoredModelForTarget(
 
   auto model_meta_it =
       optimization_target_model_info_map_.find(optimization_target);
-  if (model_meta_it != optimization_target_model_info_map_.end())
+  if (model_meta_it != optimization_target_model_info_map_.end()) {
     return model_meta_it->second->GetVersion() != new_version;
+  }
 
   return true;
 }

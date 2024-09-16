@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/modules/compute_pressure/pressure_observer.h"
 
 #include "base/ranges/algorithm.h"
@@ -43,7 +48,7 @@ PressureObserver* PressureObserver::Create(V8PressureUpdateCallback* callback) {
 }
 
 // static
-Vector<V8PressureSource> PressureObserver::supportedSources() {
+Vector<V8PressureSource> PressureObserver::knownSources() {
   return Vector<V8PressureSource>(
       {V8PressureSource(V8PressureSource::Enum::kCpu)});
 }
@@ -53,17 +58,11 @@ ScriptPromise<IDLUndefined> PressureObserver::observe(
     V8PressureSource source,
     PressureObserverOptions* options,
     ExceptionState& exception_state) {
-  if (!base::FeatureList::IsEnabled(blink::features::kComputePressure)) {
-    exception_state.ThrowDOMException(DOMExceptionCode::kNotSupportedError,
-                                      "Compute Pressure API is not available.");
-    return ScriptPromise<IDLUndefined>();
-  }
-
   ExecutionContext* execution_context = ExecutionContext::From(script_state);
   if (execution_context->IsContextDestroyed()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kNotSupportedError,
                                       "Execution context is detached.");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   // Checks whether the document is allowed by Permissions Policy to call
@@ -73,7 +72,7 @@ ScriptPromise<IDLUndefined> PressureObserver::observe(
           ReportOptions::kReportOnFailure)) {
     exception_state.ThrowDOMException(DOMExceptionCode::kNotAllowedError,
                                       kFeaturePolicyBlocked);
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   sample_interval_ = options->sampleInterval();
@@ -99,6 +98,7 @@ void PressureObserver::unobserve(V8PressureSource source) {
   manager_->RemoveObserver(source.AsEnum(), this);
   last_record_map_[source_index].Clear();
   after_penalty_records_[source_index].Clear();
+  pending_delayed_report_to_callback_[source_index].Cancel();
   // Reject all pending promises for `source`.
   RejectPendingResolvers(source.AsEnum(), DOMExceptionCode::kAbortError,
                          "Called unobserve method.");
@@ -122,8 +122,13 @@ void PressureObserver::disconnect() {
   for (auto& after_penalty_record : after_penalty_records_) {
     after_penalty_record.Clear();
   }
+
+  for (auto& pending_callback : pending_delayed_report_to_callback_) {
+    pending_callback.Cancel();
+  }
+
   // Reject all pending promises.
-  for (const auto& source : supportedSources()) {
+  for (const auto& source : knownSources()) {
     RejectPendingResolvers(source.AsEnum(), DOMExceptionCode::kAbortError,
                            "Called disconnect method.");
   }
@@ -238,7 +243,7 @@ void PressureObserver::OnBindingFailed(V8PressureSource::Enum source,
 }
 
 void PressureObserver::OnConnectionError() {
-  for (const auto& source : supportedSources()) {
+  for (const auto& source : knownSources()) {
     RejectPendingResolvers(source.AsEnum(),
                            DOMExceptionCode::kNotSupportedError,
                            "Connection error.");

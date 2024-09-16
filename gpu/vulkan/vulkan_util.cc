@@ -2,11 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "gpu/vulkan/vulkan_util.h"
 
 #include <string_view>
 
-#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/ranges/algorithm.h"
@@ -20,6 +24,7 @@
 #include "gpu/config/gpu_info.h"  //nogncheck
 #include "gpu/config/vulkan_info.h"
 #include "gpu/vulkan/vulkan_function_pointers.h"
+#include "third_party/abseil-cpp/absl/cleanup/cleanup.h"
 #include "ui/gl/gl_switches.h"
 
 #if BUILDFLAG(IS_ANDROID)
@@ -63,7 +68,7 @@ int GetEMUIVersion() {
   const auto* build_info = base::android::BuildInfo::GetInstance();
   std::string_view manufacturer(build_info->manufacturer());
 
-  // TODO(crbug.com/1096222): check Honor devices as well.
+  // TODO(crbug.com/40136096): check Honor devices as well.
   if (manufacturer != "HUAWEI")
     return -1;
 
@@ -407,14 +412,12 @@ VkResult CreateGraphicsPipelinesHook(
     const VkGraphicsPipelineCreateInfo* pCreateInfos,
     const VkAllocationCallbacks* pAllocator,
     VkPipeline* pPipelines) {
-  base::ScopedClosureRunner uma_runner(base::BindOnce(
-      [](base::Time time) {
-        UMA_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES(
-            "GPU.Vulkan.PipelineCache.vkCreateGraphicsPipelines",
-            base::Time::Now() - time, base::Microseconds(100),
-            base::Microseconds(50000), 50);
-      },
-      base::Time::Now()));
+  absl::Cleanup uma_runner = [start_time = base::TimeTicks::Now()] {
+    UMA_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES(
+        "GPU.Vulkan.PipelineCache.vkCreateGraphicsPipelines",
+        base::TimeTicks::Now() - start_time, base::Microseconds(100),
+        base::Microseconds(50000), 50);
+  };
   TRACE_EVENT0("gpu", "VulkanCreateGraphicsPipelines");
   return vkCreateGraphicsPipelines(device, pipelineCache, createInfoCount,
                                    pCreateInfos, pAllocator, pPipelines);
@@ -483,7 +486,7 @@ bool CheckVulkanCompatibilities(
 
   if (device_properties.vendor_id == kVendorARM) {
     int emui_version = GetEMUIVersion();
-    // TODO(crbug.com/1096222) Display problem with Huawei EMUI < 11 and Honor
+    // TODO(crbug.com/40136096) Display problem with Huawei EMUI < 11 and Honor
     // devices with Mali GPU. The Mali driver version is < 19.0.0.
     if (device_properties.driver_version < VK_MAKE_VERSION(19, 0, 0) &&
         emui_version < 11) {
@@ -564,7 +567,7 @@ VkImageLayout GLImageLayoutToVkImageLayout(uint32_t layout) {
     default:
       break;
   }
-  NOTREACHED() << "Invalid image layout " << layout;
+  NOTREACHED_IN_MIGRATION() << "Invalid image layout " << layout;
   return VK_IMAGE_LAYOUT_UNDEFINED;
 }
 
@@ -591,7 +594,7 @@ uint32_t VkImageLayoutToGLImageLayout(VkImageLayout layout) {
     case VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL_KHR:
       return GL_LAYOUT_DEPTH_ATTACHMENT_STENCIL_READ_ONLY_EXT;
     default:
-      NOTREACHED() << "Invalid image layout " << layout;
+      NOTREACHED_IN_MIGRATION() << "Invalid image layout " << layout;
       return GL_NONE;
   }
 }

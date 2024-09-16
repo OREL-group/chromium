@@ -49,6 +49,7 @@
 #include "components/policy/policy_constants.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/isolated_world_ids.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_navigation_observer.h"
@@ -168,10 +169,7 @@ std::string GetPageTextContent(content::WebContents* web_contents) {
 }
 
 std::string GetCertFingerprint1(const net::X509Certificate& cert) {
-  uint8_t hash[base::kSHA1Length];
-  base::SHA1HashBytes(CRYPTO_BUFFER_data(cert.cert_buffer()),
-                      CRYPTO_BUFFER_len(cert.cert_buffer()), hash);
-  return base::ToLowerASCII(base::HexEncode(hash));
+  return base::ToLowerASCII(base::HexEncode(base::SHA1Hash(cert.cert_span())));
 }
 
 // Generates a gtest failure whenever extension JS reports failure.
@@ -423,7 +421,8 @@ class CertificateProviderApiMockedExtensionTest
 
     base::test::TestFuture<base::Value> exec_js_future;
     GetExtensionMainFrame()->ExecuteJavaScriptForTests(
-        u"signatureRequestData;", exec_js_future.GetCallback());
+        u"signatureRequestData;", exec_js_future.GetCallback(),
+        content::ISOLATED_WORLD_ID_GLOBAL);
     std::vector<uint8_t> request_data(exec_js_future.Get().GetBlob());
 
     // Load the private key.

@@ -29,6 +29,39 @@ struct CheckFilePrefixes {
   std::vector<llvm::StringRef> opt_in;
 };
 
+// Sort the prefixes and remove duplicates.
+void NormalizePrefixList(std::vector<llvm::StringRef>& prefixes) {
+  if (prefixes.empty()) {
+    return;
+  }
+
+  // TODO(danakj): Use std::ranges::sort when Clang is build with C++20.
+  std::sort(prefixes.begin(), prefixes.end());
+
+  // Remove ~duplicate in a general sense, where a prefix is a prefix of another
+  // prefix. This is useful when two unrelated patches are merged/reverted
+  // around the same time and the prefixes overlap. This avoids one to hide the
+  // other when searching them via std::upper_bound.
+  //
+  // Note that we could use std::unique here, but its behavior is not
+  // guaranteed by the standard when the predicate is not an equivalence
+  // relation.
+  {
+    auto it = prefixes.begin();
+    for (auto next = std::next(it); next != prefixes.end(); ++next) {
+      if (next->starts_with(*it)) {
+        continue;  // Skip the prefix.
+      }
+      ++it;
+      // Fill in the gap in between the two iterators.
+      if (it != next) {
+        *it = std::move(*next);
+      }
+    }
+    prefixes.erase(std::next(it), prefixes.end());
+  }
+}
+
 class UnsafeBuffersDiagnosticConsumer : public clang::DiagnosticConsumer {
  public:
   UnsafeBuffersDiagnosticConsumer(clang::DiagnosticsEngine* engine,
@@ -168,6 +201,19 @@ class UnsafeBuffersDiagnosticConsumer : public clang::DiagnosticConsumer {
   // cause it to generate a warning.
   bool FileHasSafeBuffersWarnings(const clang::SourceManager& sm,
                                   clang::SourceLocation loc) {
+    // ClassifySourceLocation() does not report kMacro as the location unless it
+    // happens to be inside a scratch buffer, which not all macro use does. For
+    // the unsafe-buffers warning, we want the SourceLocation where the macro is
+    // expanded to always be the decider about whether to fire a warning or not.
+    //
+    // The reason we do this is that the expansion site should be wrapped in
+    // UNSAFE_BUFFERS() if the unsafety is warranted. It can be done inside the
+    // macro itself too (in which case the warning will not fire), but the
+    // finest control is always at each expansion site.
+    while (loc.isMacroID()) {
+      loc = sm.getExpansionLoc(loc);
+    }
+
     // TODO(crbug.com/40284755): Expand this diagnostic to more code. It should
     // include everything except kSystem eventually.
     LocationClassification loc_class =
@@ -186,8 +232,7 @@ class UnsafeBuffersDiagnosticConsumer : public clang::DiagnosticConsumer {
       case LocationClassification::kBlink:
         break;
       case LocationClassification::kMacro:
-        // Try again where the macro is being called.
-        return FileHasSafeBuffersWarnings(sm, sm.getExpansionLoc(loc));
+        break;
     }
 
     // We default to everything opting into checks (except categories that early
@@ -195,7 +240,8 @@ class UnsafeBuffersDiagnosticConsumer : public clang::DiagnosticConsumer {
 
     // TODO(danakj): It would be an optimization to find a way to avoid creating
     // a std::string here.
-    std::string filename = GetFilename(sm, loc, FilenamesFollowPresumed::kNo);
+    std::string filename = GetFilename(sm, loc, FilenameLocationType::kExactLoc,
+                                       FilenamesFollowPresumed::kNo);
 
     // Avoid searching `check_file_prefixes_` more than once for a file.
     auto cache_it = g_checked_files_cache.find(filename);
@@ -203,8 +249,20 @@ class UnsafeBuffersDiagnosticConsumer : public clang::DiagnosticConsumer {
       return cache_it->second;
     }
 
-    // Drop the ../ prefixes.
     llvm::StringRef cmp_filename = filename;
+
+    // If the path is absolute, drop the prefix up to the current working
+    // directory. Some mac machines are passing absolute paths to source files,
+    // but it's the absolute path to the build directory (the current working
+    // directory here) then a relative path from there.
+    llvm::SmallVector<char> cwd;
+    if (llvm::sys::fs::current_path(cwd).value() == 0) {
+      if (cmp_filename.consume_front(llvm::StringRef(cwd.data(), cwd.size()))) {
+        cmp_filename.consume_front("/");
+      }
+    }
+
+    // Drop the ../ prefixes.
     while (cmp_filename.consume_front("./") ||
            cmp_filename.consume_front("../"))
       ;
@@ -277,6 +335,13 @@ class UnsafeBuffersASTConsumer : public clang::ASTConsumer {
     engine.setSeverityForGroup(clang::diag::Flavor::WarningOrError,
                                "unsafe-buffer-usage",
                                clang::diag::Severity::Remark);
+
+    // TODO(https://crbug.com/364707242): directly ignore this diagnostic in
+    // HandleDiagnostic above after rolling clang with
+    // -Wunsafe-buffer-usage-in-libc-call.
+    engine.setSeverityForGroup(clang::diag::Flavor::WarningOrError,
+                               "unsafe-buffer-usage-in-libc-call",
+                               clang::diag::Severity::Ignored);
   }
 
   ~UnsafeBuffersASTConsumer() {
@@ -396,11 +461,9 @@ class UnsafeBuffersASTAction : public clang::PluginASTAction {
       }
     }
 
-    // TODO(danakj): Use std::ranges::sort when Clang is build with C++20.
-    std::sort(check_file_prefixes_.opt_in.begin(),
-              check_file_prefixes_.opt_in.end());
-    std::sort(check_file_prefixes_.opt_out.begin(),
-              check_file_prefixes_.opt_out.end());
+    NormalizePrefixList(check_file_prefixes_.opt_in);
+    NormalizePrefixList(check_file_prefixes_.opt_out);
+
     return true;
   }
 
@@ -421,7 +484,8 @@ class AllowUnsafeBuffersPragmaHandler : public clang::PragmaHandler {
     // TODO(danakj): It would be an optimization to find a way to avoid creating
     // a std::string here.
     std::string filename =
-        GetFilename(preprocessor.getSourceManager(), introducer.Loc);
+        GetFilename(preprocessor.getSourceManager(), introducer.Loc,
+                    FilenameLocationType::kExpansionLoc);
     // The pragma opts the file out of checks.
     g_checked_files_cache.insert({filename, false});
   }
@@ -439,7 +503,8 @@ class CheckUnsafeBuffersPragmaHandler : public clang::PragmaHandler {
     // TODO(danakj): It would be an optimization to find a way to avoid creating
     // a std::string here.
     std::string filename =
-        GetFilename(preprocessor.getSourceManager(), introducer.Loc);
+        GetFilename(preprocessor.getSourceManager(), introducer.Loc,
+                    FilenameLocationType::kExpansionLoc);
     // The pragma opts the file into checks.
     g_checked_files_cache.insert({filename, true});
   }

@@ -163,7 +163,7 @@ TEST_F(LabelButtonTest, Init) {
   EXPECT_EQ(text, button()->GetText());
 
   ui::AXNodeData accessible_node_data;
-  button()->GetAccessibleNodeData(&accessible_node_data);
+  button()->GetViewAccessibility().GetAccessibleNodeData(&accessible_node_data);
   EXPECT_EQ(ax::mojom::Role::kButton, accessible_node_data.role);
   EXPECT_EQ(text, accessible_node_data.GetString16Attribute(
                       ax::mojom::StringAttribute::kName));
@@ -350,12 +350,12 @@ TEST_F(
   EXPECT_TRUE(button()->GetText().empty());
 }
 
-// Test behavior of View::GetAccessibleNodeData() for buttons when setting a
-// label.
+// Test behavior of ViewAccessibility::GetAccessibleNodeData() for buttons when
+// setting a label.
 TEST_F(LabelButtonTest, AccessibleState) {
   ui::AXNodeData accessible_node_data;
 
-  button()->GetAccessibleNodeData(&accessible_node_data);
+  button()->GetViewAccessibility().GetAccessibleNodeData(&accessible_node_data);
   EXPECT_EQ(ax::mojom::Role::kButton, accessible_node_data.role);
   EXPECT_EQ(std::u16string(), accessible_node_data.GetString16Attribute(
                                   ax::mojom::StringAttribute::kName));
@@ -364,7 +364,7 @@ TEST_F(LabelButtonTest, AccessibleState) {
   // be set from the tooltip.
   const std::u16string tooltip_text = u"abc";
   button()->SetTooltipText(tooltip_text);
-  button()->GetAccessibleNodeData(&accessible_node_data);
+  button()->GetViewAccessibility().GetAccessibleNodeData(&accessible_node_data);
   EXPECT_EQ(tooltip_text, accessible_node_data.GetString16Attribute(
                               ax::mojom::StringAttribute::kName));
   EXPECT_EQ(std::u16string(), button()->GetText());
@@ -372,14 +372,14 @@ TEST_F(LabelButtonTest, AccessibleState) {
   // Setting a label overrides the tooltip text.
   const std::u16string label_text = u"def";
   button()->SetText(label_text);
-  button()->GetAccessibleNodeData(&accessible_node_data);
+  button()->GetViewAccessibility().GetAccessibleNodeData(&accessible_node_data);
   EXPECT_EQ(label_text, accessible_node_data.GetString16Attribute(
                             ax::mojom::StringAttribute::kName));
   EXPECT_EQ(label_text, button()->GetText());
   EXPECT_EQ(tooltip_text, button()->GetTooltipText(gfx::Point()));
 }
 
-// Test View::GetAccessibleNodeData() for default buttons.
+// Test ViewAccessibility::GetAccessibleNodeData() for default buttons.
 TEST_F(LabelButtonTest, AccessibleDefaultState) {
   {
     // If SetIsDefault() is not called, the ax default state should not be set.
@@ -549,22 +549,26 @@ TEST_F(LabelButtonTest, LabelWrapAndImageAlignment) {
   const int image_size = font_list.GetHeight();
   const gfx::ImageSkia image = gfx::test::CreateImageSkia(image_size);
   ASSERT_EQ(font_list.GetHeight(), image.width());
+  gfx::Insets button_insets = button()->GetInsets();
+  const int unclamped_size_without_label =
+      image.width() + image_spacing + button_insets.width();
 
   button()->SetImageModel(Button::STATE_NORMAL,
                           ui::ImageModel::FromImageSkia(image));
   button()->SetImageCentered(false);
   button()->SetMaxSize(
-      gfx::Size(image.width() + image_spacing + text_wrap_width, 0));
+      gfx::Size(unclamped_size_without_label + text_wrap_width, 0));
 
-  gfx::Insets button_insets = button()->GetInsets();
   gfx::Size preferred_size = button()->GetPreferredSize({});
   preferred_size.set_height(
       button()->GetHeightForWidth(preferred_size.width()));
   button()->SetSize(preferred_size);
   views::test::RunScheduledLayout(button());
 
+  gfx::Size label_width = button()->label()->GetPreferredSize(
+      views::SizeBounds(text_wrap_width, {}));
   EXPECT_EQ(preferred_size.width(),
-            image.width() + image_spacing + text_wrap_width);
+            unclamped_size_without_label + label_width.width());
   EXPECT_EQ(preferred_size.height(),
             font_list.GetHeight() * 2 + button_insets.height());
 
@@ -833,6 +837,21 @@ TEST_F(LabelButtonTest, UpdateImageAfterSettingImageModel) {
   EXPECT_TRUE(is_showing_image(normal_image));
 }
 
+TEST_F(LabelButtonTest, AccessibiltyDefaultState) {
+  ui::AXNodeData node_data = ui::AXNodeData();
+  /// Initially, kDefault should be set to false.
+  EXPECT_FALSE(node_data.HasState(ax::mojom::State::kDefault));
+
+  button()->SetIsDefault(true);
+  button()->GetViewAccessibility().GetAccessibleNodeData(&node_data);
+  EXPECT_TRUE(node_data.HasState(ax::mojom::State::kDefault));
+
+  node_data = ui::AXNodeData();  // Reset the node data.
+  button()->SetIsDefault(false);
+  button()->GetViewAccessibility().GetAccessibleNodeData(&node_data);
+  EXPECT_FALSE(node_data.HasState(ax::mojom::State::kDefault));
+}
+
 // Test fixture for a LabelButton that has an ink drop configured.
 class InkDropLabelButtonTest : public ViewsTestBase {
  public:
@@ -848,8 +867,8 @@ class InkDropLabelButtonTest : public ViewsTestBase {
     // Create a widget so that the Button can query the hover state
     // correctly.
     widget_ = std::make_unique<Widget>();
-    Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_POPUP);
-    params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+    Widget::InitParams params = CreateParams(
+        Widget::InitParams::CLIENT_OWNS_WIDGET, Widget::InitParams::TYPE_POPUP);
     params.bounds = gfx::Rect(0, 0, 20, 20);
     widget_->Init(std::move(params));
     widget_->Show();
@@ -935,9 +954,9 @@ class LabelButtonVisualStateTest : public test::WidgetTest {
  protected:
   std::unique_ptr<Widget> CreateActivatableChildWidget(Widget* parent) {
     auto child = std::make_unique<Widget>();
-    Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_POPUP);
+    Widget::InitParams params = CreateParams(
+        Widget::InitParams::CLIENT_OWNS_WIDGET, Widget::InitParams::TYPE_POPUP);
     params.parent = parent->GetNativeView();
-    params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
     params.activatable = Widget::InitParams::Activatable::kYes;
     child->Init(std::move(params));
     child->SetContentsView(std::make_unique<View>());

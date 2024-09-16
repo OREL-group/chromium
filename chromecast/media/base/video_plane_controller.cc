@@ -60,7 +60,6 @@ chromecast::media::VideoPlane::Transform ConvertTransform(
       return chromecast::media::VideoPlane::ROTATE_270;
     default:
       NOTREACHED();
-      return chromecast::media::VideoPlane::TRANSFORM_NONE;
   }
 }
 
@@ -82,7 +81,6 @@ chromecast::media::VideoPlane::Transform ConvertTransform(
   }
 
   NOTREACHED();
-  return chromecast::media::VideoPlane::TRANSFORM_NONE;
 }
 
 }  // namespace

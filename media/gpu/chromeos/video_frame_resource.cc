@@ -71,17 +71,9 @@ int VideoFrameResource::GetDmabufFd(size_t i) const {
   return frame_->GetDmabufFd(i);
 }
 
-scoped_refptr<gfx::NativePixmapDmaBuf>
-VideoFrameResource::CreateNativePixmapDmaBuf() const {
-  return media::CreateNativePixmapDmaBuf(frame_.get());
-}
-
-const scoped_refptr<const gfx::NativePixmapDmaBuf>&
+scoped_refptr<const gfx::NativePixmapDmaBuf>
 VideoFrameResource::GetNativePixmapDmaBuf() const {
-  // |invalid_dmabuf| is stored as static so we can return a reference to it.
-  static const scoped_refptr<const gfx::NativePixmapDmaBuf> invalid_dmabuf;
-
-  return invalid_dmabuf;
+  return media::CreateNativePixmapDmaBuf(frame_.get());
 }
 
 gfx::GpuMemoryBufferHandle VideoFrameResource::CreateGpuMemoryBufferHandle()
@@ -89,8 +81,9 @@ gfx::GpuMemoryBufferHandle VideoFrameResource::CreateGpuMemoryBufferHandle()
   return media::CreateGpuMemoryBufferHandle(frame_.get());
 }
 
-gfx::GpuMemoryBuffer* VideoFrameResource::GetGpuMemoryBuffer() const {
-  return frame_->GetGpuMemoryBuffer();
+std::unique_ptr<VideoFrame::ScopedMapping>
+VideoFrameResource::MapGMBOrSharedImage() const {
+  return frame_->MapGMBOrSharedImage();
 }
 
 gfx::GenericSharedMemoryId VideoFrameResource::GetSharedMemoryId() const {
@@ -191,6 +184,11 @@ scoped_refptr<FrameResource> VideoFrameResource::CreateWrappingFrame(
 
 std::string VideoFrameResource::AsHumanReadableString() const {
   return frame_->AsHumanReadableString();
+}
+
+gfx::GpuMemoryBufferHandle
+VideoFrameResource::GetGpuMemoryBufferHandleForTesting() const {
+  return frame_->GetGpuMemoryBufferHandle();
 }
 
 scoped_refptr<VideoFrame> VideoFrameResource::GetMutableVideoFrame() {

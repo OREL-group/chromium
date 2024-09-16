@@ -7,7 +7,6 @@ include_rules = [
   "+components/history/core/test",
   "+components/keyed_service/core",
   "+components/leveldb_proto/public",
-  "+components/omnibox/browser",
   "+components/omnibox/common",
   "+components/optimization_guide",
   "+components/optimization_guide/core",
@@ -17,6 +16,7 @@ include_rules = [
   "+net/base",
   "+services/metrics/public",
   "+third_party/omnibox_proto",
+  "+third_party/tensorflow_models/src",
   "+third_party/tflite_support",
   "+ui/base/l10n",
 ]

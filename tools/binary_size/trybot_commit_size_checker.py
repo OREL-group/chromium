@@ -45,6 +45,7 @@ import native_disassembly
 
 _RESOURCE_SIZES_LOG = 'resource_sizes_log'
 _RESOURCE_SIZES_64_LOG = 'resource_sizes_64_log'
+_MAIN_LOG_NAMES = (_RESOURCE_SIZES_LOG, _RESOURCE_SIZES_64_LOG)
 _BASE_RESOURCE_SIZES_LOG = 'base_resource_sizes_log'
 _MUTABLE_CONSTANTS_LOG = 'mutable_contstants_log'
 _FOR_TESTING_LOG = 'for_test_log'
@@ -99,7 +100,7 @@ class _SizeDelta(collections.namedtuple(
 
 # See https://crbug.com/1426694
 def _MaxSizeIncrease(author, subject):
-  if 'AFDO' in subject or 'PGO Profile':
+  if 'AFDO' in subject or 'PGO Profile' in subject:
     return 1024 * 1024
   if 'Update V8' in subject:
     return 100 * 1024
@@ -142,8 +143,8 @@ def _CreateMethodCountDelta(symbols, max_increase):
   symbols = symbols.WhereIsOnDemand(False)
   method_symbols = symbols.WhereInSection(models.SECTION_DEX_METHOD)
   method_lines, net_method_added = _SymbolDiffHelper('Methods', method_symbols)
-  class_symbols = symbols.WhereInSection(
-      models.SECTION_DEX).WhereNameMatches('#').Inverted()
+  class_symbols = symbols.WhereInSection(models.SECTION_DEX).Filter(
+      lambda s: not s.IsStringLiteral() and '#' not in s.name)
   class_lines, _ = _SymbolDiffHelper('Classes', class_symbols)
   lines = []
   if class_lines:
@@ -293,7 +294,7 @@ def _GenerateBinarySizePluginDetails(metrics):
         'large_improvement': delta.IsLargeImprovement(),
     }
     # Always show the Normalized APK Size.
-    if log_name == _RESOURCE_SIZES_LOG or delta.actual != 0:
+    if log_name in _MAIN_LOG_NAMES or delta.actual != 0:
       binary_size_listings.append(listing)
   binary_size_listings.sort(key=lambda x: x['name'])
 
@@ -315,7 +316,7 @@ def _FormatNumber(number):
   return '{:+,}'.format(number)
 
 
-# TODO(https://crbug.com/1414410): If missing and file is x32y, return xy; else
+# TODO(crbug.com/40256106): If missing and file is x32y, return xy; else
 # return original filename. Basically allows comparing x_32 targets with x
 # targets built under 32bit target_cpu without failing the script due to
 # different file names. Remove once migration is complete.

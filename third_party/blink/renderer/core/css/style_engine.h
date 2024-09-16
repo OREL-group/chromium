@@ -57,7 +57,7 @@
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/layout/geometry/axis.h"
-#include "third_party/blink/renderer/core/style/position_try_options.h"
+#include "third_party/blink/renderer/core/style/position_try_fallbacks.h"
 #include "third_party/blink/renderer/platform/bindings/name_client.h"
 #include "third_party/blink/renderer/platform/fonts/font_selector_client.h"
 #include "third_party/blink/renderer/platform/graphics/color.h"
@@ -243,7 +243,9 @@ class CORE_EXPORT StyleEngine final : public GarbageCollected<StyleEngine>,
   void DocumentRulesSelectorsChanged();
   void InitialStyleChanged();
   void ColorSchemeChanged();
-  void SetOwnerColorScheme(mojom::blink::ColorScheme);
+  void SetOwnerColorScheme(
+      mojom::blink::ColorScheme color_scheme,
+      mojom::blink::PreferredColorScheme preferred_color_scheme);
   mojom::blink::ColorScheme GetOwnerColorScheme() const {
     return owner_color_scheme_;
   }
@@ -307,13 +309,17 @@ class CORE_EXPORT StyleEngine final : public GarbageCollected<StyleEngine>,
   }
 
   unsigned MaxDirectAdjacentSelectors() const {
-    return GetRuleFeatureSet().MaxDirectAdjacentSelectors();
+    return GetRuleFeatureSet()
+        .GetRuleInvalidationData()
+        .MaxDirectAdjacentSelectors();
   }
   bool UsesFirstLineRules() const {
-    return GetRuleFeatureSet().UsesFirstLineRules();
+    return GetRuleFeatureSet().GetRuleInvalidationData().UsesFirstLineRules();
   }
   bool UsesWindowInactiveSelector() const {
-    return GetRuleFeatureSet().UsesWindowInactiveSelector();
+    return GetRuleFeatureSet()
+        .GetRuleInvalidationData()
+        .UsesWindowInactiveSelector();
   }
 
   // Set when we recalc the style of any element that depends on layout.
@@ -346,6 +352,12 @@ class CORE_EXPORT StyleEngine final : public GarbageCollected<StyleEngine>,
                                    const ComputedStyle* new_root_style);
 
   void ResetCSSFeatureFlags(const RuleFeatureSet&);
+
+  bool CountersChanged() const { return counters_changed_; }
+  void MarkCountersDirty() { counters_changed_ = true; }
+  void MarkCountersClean() { counters_changed_ = false; }
+  // Traverse all elements and recalculate counters values.
+  void UpdateCounters();
 
   void ShadowRootInsertedToDocument(ShadowRoot&);
   void ShadowRootRemovedFromDocument(ShadowRoot*);
@@ -566,12 +578,17 @@ class CORE_EXPORT StyleEngine final : public GarbageCollected<StyleEngine>,
   void MarkCounterStylesNeedUpdate();
   void UpdateCounterStyles();
 
-  // Set a flag to invalidate elements using position-try-options on next
+  // Set a flag to invalidate elements using position-try-fallbacks on next
   // lifecycle update when @position-try rules are added or removed.
-  void MarkPositionTryStylesDirty();
+  void MarkPositionTryStylesDirty(
+      const HeapHashSet<Member<RuleSet>>& changed_rule_sets);
 
   // Mark elements affected by @position-try rules for style and layout update.
   void InvalidatePositionTryStyles();
+
+  void MarkLastSuccessfulPositionFallbackDirtyForElement(Element& element) {
+    last_successful_option_dirty_set_.insert(&element);
+  }
 
   StyleRuleKeyframes* KeyframeStylesForAnimation(
       const AtomicString& animation_name);
@@ -592,7 +609,7 @@ class CORE_EXPORT StyleEngine final : public GarbageCollected<StyleEngine>,
 
   DocumentStyleEnvironmentVariables& EnsureEnvironmentVariables();
 
-  scoped_refptr<StyleInitialData> MaybeCreateAndGetInitialData();
+  StyleInitialData* MaybeCreateAndGetInitialData();
 
   bool NeedsStyleInvalidation() const {
     return style_invalidation_root_.GetRootNode();
@@ -637,12 +654,24 @@ class CORE_EXPORT StyleEngine final : public GarbageCollected<StyleEngine>,
   bool InPositionTryStyleRecalc() const {
     return in_position_try_style_recalc_;
   }
-  // If we are in a container query style recalc, return the container element,
-  // otherwise return nullptr.
-  Element* GetContainerForContainerStyleRecalc() const {
-    // The To<Element>() should not fail because the style_recalc_root_ is set
-    // to the container element when doing a container query style recalc.
-    if (InContainerQueryStyleRecalc()) {
+  void SetInScrollMarkersAttachment(bool in_scroll_markers_attachment) {
+    DCHECK(!in_scroll_markers_attachment_ || !in_scroll_markers_attachment);
+    in_scroll_markers_attachment_ = in_scroll_markers_attachment;
+  }
+  bool InScrollMarkersAttachment() const {
+    return in_scroll_markers_attachment_;
+  }
+  // Get the root element of an interleaving recalc, if any. This function will
+  // return nullptr if the interleaving root is a PseudoElement, because such
+  // elements can't be recalc roots.
+  //
+  // See StyleEngine::UpdateStyleAndLayoutTreeForContainer.
+  // See StyleEngine::UpdateStyleForOutOfFlow.
+  Element* GetInterleavingRecalcRoot() const {
+    if (InContainerQueryStyleRecalc() || InPositionTryStyleRecalc()) {
+      // During interleaved style recalc, the recalc root is either set
+      // to the interleaving root (always an Element), or nullptr (if it's
+      // a PseudoElement).
       return To<Element>(style_recalc_root_.GetRootNode());
     }
     return nullptr;
@@ -708,7 +737,17 @@ class CORE_EXPORT StyleEngine final : public GarbageCollected<StyleEngine>,
     return viewport_size_;
   }
 
+  // Returns true if marked dirty for layout
+  bool UpdateLastSuccessfulPositionFallbacks();
+
+  void RevisitActiveStyleSheetsForInspector();
+
  private:
+  void UpdateCounters(const Element& element,
+                      CountersAttachmentContext& context);
+  void UpdateLayoutCounters(const Element& element,
+                            const LayoutObject& layout_object,
+                            CountersAttachmentContext& context);
   // FontSelectorClient implementation.
   void FontsNeedUpdate(FontSelector*, FontInvalidationReason) override;
 
@@ -732,6 +771,10 @@ class CORE_EXPORT StyleEngine final : public GarbageCollected<StyleEngine>,
   void MarkUserStyleDirty();
 
   Document& GetDocument() const { return *document_; }
+
+  void RevisitStyleRulesForInspector(
+      const RuleFeatureSet& features,
+      const HeapVector<Member<StyleRuleBase>>& rules);
 
   typedef HeapHashSet<Member<TreeScope>> UnorderedTreeScopeSet;
 
@@ -783,7 +826,8 @@ class CORE_EXPORT StyleEngine final : public GarbageCollected<StyleEngine>,
       const HeapHashSet<Member<RuleSet>>& rule_sets,
       unsigned changed_rule_flags,
       bool is_shadow_host);
-  void InvalidateSlottedElements(HTMLSlotElement&);
+  void InvalidateSlottedElements(HTMLSlotElement&,
+                                 const StyleChangeReasonForTracing&);
   void InvalidateForRuleSetChanges(
       TreeScope& tree_scope,
       const HeapHashSet<Member<RuleSet>>& changed_rule_sets,
@@ -918,6 +962,10 @@ class CORE_EXPORT StyleEngine final : public GarbageCollected<StyleEngine>,
 
   String preferred_stylesheet_set_name_;
 
+  // Flag to track counter changes in the document, indicating
+  // the need to call UpdateCounters.
+  bool counters_changed_{false};
+
   bool uses_root_font_relative_units_{false};
   bool uses_glyph_relative_units_{false};
   bool uses_line_height_units_{false};
@@ -937,6 +985,7 @@ class CORE_EXPORT StyleEngine final : public GarbageCollected<StyleEngine>,
   bool in_layout_tree_rebuild_{false};
   bool in_container_query_style_recalc_{false};
   bool in_position_try_style_recalc_{false};
+  bool in_scroll_markers_attachment_{false};
   bool in_dom_removal_{false};
   bool in_detach_scope_{false};
   bool in_apply_animation_update_{false};
@@ -1005,22 +1054,33 @@ class CORE_EXPORT StyleEngine final : public GarbageCollected<StyleEngine>,
 
   Member<CascadeLayerMap> user_cascade_layer_map_;
 
-  scoped_refptr<DocumentStyleEnvironmentVariables> environment_variables_;
+  Member<DocumentStyleEnvironmentVariables> environment_variables_;
 
-  scoped_refptr<StyleInitialData> initial_data_;
+  Member<StyleInitialData> initial_data_;
 
   // Page color schemes set by the viewport meta tag. E.g.
   // <meta name="color-scheme" content="light dark">.
   ColorSchemeFlags page_color_schemes_ =
       static_cast<ColorSchemeFlags>(ColorSchemeFlag::kNormal);
 
-  // The preferred color scheme is set in settings, but may be overridden by the
-  // ForceDarkMode setting where the preferred_color_scheme_ will be set to
-  // kLight to avoid dark styling to be applied before auto darkening.
+  // The preferred color-scheme is set from Settings for the main frame
+  // document and from the owner_preferred_color_scheme_ for iframes, but may be
+  // overridden by the ForceDarkMode setting where the preferred_color_scheme_
+  // will be set to kLight to avoid dark styling to be applied before auto
+  // darkening.
   //
   // This data member should be initialized in the constructor in order to avoid
   // including full mojom headers from this header.
   mojom::blink::PreferredColorScheme preferred_color_scheme_;
+
+  // The preferred color-scheme to be used for this document if it is an iframe.
+  // It is inferred from the used color-scheme of the FrameOwner element, the
+  // FrameOwner element's page's supported color-schemes, and OS/Browser setting
+  // preferred color-scheme.
+  //
+  // This data member should be initialized in the constructor in order to avoid
+  // including full mojom headers from this header.
+  mojom::blink::PreferredColorScheme owner_preferred_color_scheme_;
 
   // We pass the used value of color-scheme from the iframe element in the
   // embedding document. If the color-scheme of the owner element and the root
@@ -1071,7 +1131,7 @@ class CORE_EXPORT StyleEngine final : public GarbageCollected<StyleEngine>,
   // A cache for CSSURIValue objects for SVG element presentation attributes for
   // fill and clip path. See SVGElement::CollectStyleForPresentationAttribute()
   // for more info.
-  HeapHashMap<AtomicString, Member<const CSSValue>>
+  HeapHashMap<AtomicString, WeakMember<const CSSValue>>
       fill_or_clip_path_uri_value_cache_;
 
   // Cached because it can be expensive to compute anew for each element.
@@ -1081,6 +1141,17 @@ class CORE_EXPORT StyleEngine final : public GarbageCollected<StyleEngine>,
   // Stores various "flip sets" used to implement <try-tactic> from
   // CSS Anchor Positioning.
   TryValueFlips try_value_flips_;
+
+  // Elements which had their computed position-try-fallbacks changed since last
+  // time resize observers were considered. May need to have their last
+  // successful option invalidated.
+  HeapHashSet<Member<Element>> last_successful_option_dirty_set_;
+
+  // Names of @position-try rules which were added, removed, or modified since
+  // last time resize observers were considered. Anchored elements with a last
+  // successful option with position-try-fallbacks referring any of these names
+  // will be invalidated.
+  HashSet<AtomicString> dirty_position_try_names_;
 };
 
 void PossiblyScheduleNthPseudoInvalidations(Node& node);

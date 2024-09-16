@@ -41,9 +41,10 @@ constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
         semantics {
           sender: "AuctionDownloader"
           description:
-            "Requests FLEDGE script or JSON file for running an ad auction."
+            "Requests Protected Audiences script or JSON file for running an "
+            "ad auction."
           trigger:
-            "Requested when running a FLEDGE auction."
+            "Requested when running a Protected Audiences auction."
           data: "URL associated with an interest group or seller."
           destination: WEBSITE
           user_data: {
@@ -59,18 +60,39 @@ constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
         policy {
           cookies_allowed: NO
           setting:
-            "These requests cannot be disabled."
-          policy_exception_justification:
-            "These requests triggered by a website."
+            "Users can disable this via Settings > Privacy and Security > Ads "
+            "privacy > Site-suggested ads."
+          chrome_policy {
+            PrivacySandboxSiteEnabledAdsEnabled {
+              PrivacySandboxSiteEnabledAdsEnabled: false
+            }
+          }
         })");
 
 const char kWebAssemblyMime[] = "application/wasm";
+const char kAdAuctionTrustedSignalsMime[] =
+    "message/ad-auction-trusted-signals-response";
+
+// If `url` is too long to reasonably use as part of an error message, returns a
+// truncated copy of it. Otherwise, returns the entire URL as a string.
+std::string TruncateUrlIfNeededForError(const GURL& url) {
+  if (url.spec().size() <= AuctionDownloader::kMaxErrorUrlLength) {
+    // This does duplicate the URL unnecessarily, but since this is only done on
+    // error, not a major concern.
+    return url.spec();
+  }
+
+  return url.spec().substr(0, AuctionDownloader::kMaxErrorUrlLength - 3) +
+         "...";
+}
 
 // Returns the MIME type string to send for the Accept header for `mime_type`.
 // These are the official IANA MIME type strings, though other MIME type strings
 // are allows in the response.
 std::string_view MimeTypeToString(AuctionDownloader::MimeType mime_type) {
   switch (mime_type) {
+    case AuctionDownloader::MimeType::kAdAuctionTrustedSignals:
+      return std::string_view(kAdAuctionTrustedSignalsMime);
     case AuctionDownloader::MimeType::kJavascript:
       return std::string_view("application/javascript");
     case AuctionDownloader::MimeType::kJson:
@@ -85,6 +107,8 @@ bool MimeTypeIsConsistent(
     AuctionDownloader::MimeType mime_type,
     const network::mojom::URLResponseHead& response_info) {
   switch (mime_type) {
+    case AuctionDownloader::MimeType::kAdAuctionTrustedSignals:
+      return response_info.mime_type == kAdAuctionTrustedSignalsMime;
     case AuctionDownloader::MimeType::kJavascript:
       // ResponseInfo's `mime_type` is always lowercase.
       return blink::IsSupportedJavascriptMimeType(response_info.mime_type);
@@ -163,6 +187,7 @@ AuctionDownloader::AuctionDownloader(
     DownloadMode download_mode,
     MimeType mime_type,
     std::optional<std::string> post_body,
+    std::optional<std::string> content_type,
     ResponseStartedCallback response_started_callback,
     AuctionDownloaderCallback auction_downloader_callback,
     std::unique_ptr<NetworkEventsDelegate> network_events_delegate)
@@ -195,7 +220,11 @@ AuctionDownloader::AuctionDownloader(
       std::move(resource_request), kTrafficAnnotation);
 
   if (post_body.has_value()) {
-    simple_url_loader_->AttachStringForUpload(std::move(post_body.value()));
+    // Although content type header is not required in POST request, but we
+    // should have one.
+    CHECK(content_type.has_value());
+    simple_url_loader_->AttachStringForUpload(std::move(post_body).value(),
+                                              std::move(content_type).value());
   }
 
   TRACE_EVENT_INSTANT_WITH_TIMESTAMP1(
@@ -261,7 +290,12 @@ void AuctionDownloader::OnBodyReceived(std::unique_ptr<std::string> body) {
   if (!body) {
     FailRequest(std::move(completion_status),
                 base::StringPrintf(
-                    "Failed to load %s error = %s.", source_url_.spec().c_str(),
+                    "Failed to load %s error = %s.",
+                    // Avoid large error messages. This is actually needed for a
+                    // browser test, since some tests output error messages to
+                    // the console, and tests are reported as failing on the
+                    // bots when they produce too much output.
+                    TruncateUrlIfNeededForError(source_url_).c_str(),
                     net::ErrorToString(simple_url_loader->NetError()).c_str()));
     return;
   }
@@ -288,7 +322,8 @@ void AuctionDownloader::OnBodyReceived(std::unique_ptr<std::string> body) {
              base::StringPrintf(
                  "Rejecting load of %s due to unexpected MIME type.",
                  source_url_.spec().c_str()));
-  } else if ((mime_type_ != MimeType::kWebAssembly) &&
+  } else if ((mime_type_ != MimeType::kWebAssembly &&
+              mime_type_ != MimeType::kAdAuctionTrustedSignals) &&
              !IsAllowedCharset(simple_url_loader->ResponseInfo()->charset,
                                *body)) {
     std::move(auction_downloader_callback_)

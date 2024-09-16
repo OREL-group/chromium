@@ -23,8 +23,8 @@ chromium-metrics-reviews@google.com.
 <histograms>
 
 <histogram name="UKM.AppVersionDifferentWhenPurging" enum="BooleanChanged"
-    expires_after="2024-09-01">
-  <owner>jwd@google.com</owner>
+    expires_after="2025-03-09">
+  <owner>rkaplow@google.com</owner>
   <owner>chrome-metrics-team@google.com</owner>
   <summary>
     Logged when doing a partial purges of unsent UKM logs. If the unsent log has
@@ -80,7 +80,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram name="UKM.Entries.Dropped.ByEntryHash" enum="UkmEventNameHash"
     expires_after="2025-05-01">
-  <owner>jwd@chromium.org</owner>
+  <owner>rkaplow@chromium.org</owner>
   <owner>chrome-metrics-team@google.com</owner>
   <summary>
     The hashed name of the UKM entry being dropped. The hash is the same hash
@@ -337,7 +337,7 @@ chromium-metrics-reviews@google.com.
   </summary>
 </histogram>
 
-<histogram name="UKM.WebFeatureSets.Dropped" enum="UkmDataDroppedReason"
+<histogram name="UKM.WebDXFeatureSets.Dropped" enum="UkmDataDroppedReason"
     expires_after="2025-05-01">
   <owner>yrsun@chromium.org</owner>
   <owner>lucnguyen@google.com</owner>
@@ -349,7 +349,7 @@ chromium-metrics-reviews@google.com.
   </summary>
 </histogram>
 
-<histogram name="UKM.WebFeatureSets.SerializedCount" units="web feature sets"
+<histogram name="UKM.WebDXFeatureSets.SerializedCount" units="web feature sets"
     expires_after="2025-05-01">
   <owner>yrsun@chromium.org</owner>
   <owner>lucnguyen@google.com</owner>

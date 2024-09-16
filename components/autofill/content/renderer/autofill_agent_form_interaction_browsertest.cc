@@ -24,7 +24,6 @@
 #include "ui/gfx/geometry/rect.h"
 
 namespace autofill {
-
 namespace {
 
 using ::testing::_;
@@ -36,21 +35,23 @@ using ::testing::MockFunction;
 using ::testing::Not;
 using ::testing::Property;
 
-// Returns a matcher that matches a `FormFieldData::id_attribute`.
-auto HasFieldIdAttribute(std::u16string id_attribute) {
-  return Field("id_attribute", &FormFieldData::id_attribute, id_attribute);
-}
-
 // Returns a matcher that matches a `FormFieldData::form_control_type`.
 auto HasType(FormControlType type) {
-  return Property(&FormFieldData::form_control_type, type);
+  return Property("FormFieldData::form_control_type",
+                  &FormFieldData::form_control_type, type);
 }
 
 auto IsContentEditable() {
   return HasType(FormControlType::kContentEditable);
 }
 
-// TODO(crbug.com/1496382): Clean up these functions once
+template <typename... Args>
+auto FieldsAre(Args&&... matchers) {
+  return Property("FormData::fields", &FormData::fields,
+                  ElementsAre(std::forward<Args>(matchers)...));
+}
+
+// TODO(crbug.com/40286775): Clean up these functions once
 // `kAutofillAndroidDisableSuggestionsOnJSFocus` is launched and Android and
 // Desktop behave identically.
 
@@ -91,22 +92,10 @@ int NumCallsToHidePopupOnFocusLoss() {
   return 1;  // Any dropdown should disappear on focus loss.
 }
 
-AutofillSuggestionTriggerSource TriggerSourceOnTextareaFocus() {
-  if constexpr (BUILDFLAG(IS_ANDROID)) {
-    return base::FeatureList::IsEnabled(
-               (features::kAutofillAndroidDisableSuggestionsOnJSFocus))
-               ? AutofillSuggestionTriggerSource::kTextareaFocusedWithoutClick
-               : AutofillSuggestionTriggerSource::kFormControlElementClicked;
-  }
-  return AutofillSuggestionTriggerSource::kTextareaFocusedWithoutClick;
-}
-
-}  // namespace
-
 class AutofillAgentFormInteractionTest : public test::AutofillRendererTest {
  public:
   void SetUp() override {
-    // TODO(crbug.com/63573): parameterize tests over AutofillAgent::Config.
+    // TODO(crbug.com/41268731): parameterize tests over AutofillAgent::Config.
     test::AutofillRendererTest::SetUp();
     web_view_->SetDefaultPageScaleLimits(1, 4);
 
@@ -127,6 +116,12 @@ class AutofillAgentFormInteractionTest : public test::AutofillRendererTest {
     // gesture has been processed since load.
     EXPECT_TRUE(SimulateElementClick("button"));
   }
+
+  FieldRendererId GetFieldRendererIdById(std::string_view id) {
+    return form_util::GetFieldRendererId(
+        GetMainFrame()->GetDocument().GetElementById(
+            blink::WebString::FromUTF8(id)));
+  }
 };
 
 // Tests that (repeatedly) clicking a text input field calls AskForValuesToFill
@@ -138,7 +133,7 @@ TEST_F(AutofillAgentFormInteractionTest, TextInputLeftClick) {
     EXPECT_CALL(
         autofill_driver(),
         AskForValuesToFill(
-            _, HasFieldIdAttribute(u"text"), _,
+            _, GetFieldRendererIdById("text"), _,
             AutofillSuggestionTriggerSource::kFormControlElementClicked))
         .Times(NumCallsToAskForValuesToFillOnInitialLeftClick());
     EXPECT_CALL(check, Call(1));
@@ -146,7 +141,7 @@ TEST_F(AutofillAgentFormInteractionTest, TextInputLeftClick) {
     EXPECT_CALL(
         autofill_driver(),
         AskForValuesToFill(
-            _, HasFieldIdAttribute(u"text"), _,
+            _, GetFieldRendererIdById("text"), _,
             AutofillSuggestionTriggerSource::kFormControlElementClicked));
     EXPECT_CALL(check, Call(2));
   }
@@ -167,7 +162,7 @@ TEST_F(AutofillAgentFormInteractionTest, TextInputLeftClick) {
 TEST_F(AutofillAgentFormInteractionTest, TextInputRightClick) {
   EXPECT_CALL(autofill_driver(),
               AskForValuesToFill(
-                  _, HasFieldIdAttribute(u"text"), _,
+                  _, GetFieldRendererIdById("text"), _,
                   AutofillSuggestionTriggerSource::kFormControlElementClicked))
       .Times(NumCallsToAskForValuesToFillOnTextfieldFocusWithoutLeftClick());
   EXPECT_TRUE(SimulateElementRightClick("text"));
@@ -182,7 +177,7 @@ TEST_F(AutofillAgentFormInteractionTest, TextInputFocusAndLeftClick) {
     EXPECT_CALL(
         autofill_driver(),
         AskForValuesToFill(
-            _, HasFieldIdAttribute(u"text"), _,
+            _, GetFieldRendererIdById("text"), _,
             AutofillSuggestionTriggerSource::kFormControlElementClicked))
         .Times(NumCallsToAskForValuesToFillOnTextfieldFocusWithoutLeftClick());
     InSequence s;
@@ -190,7 +185,7 @@ TEST_F(AutofillAgentFormInteractionTest, TextInputFocusAndLeftClick) {
     EXPECT_CALL(
         autofill_driver(),
         AskForValuesToFill(
-            _, HasFieldIdAttribute(u"text"), _,
+            _, GetFieldRendererIdById("text"), _,
             AutofillSuggestionTriggerSource::kFormControlElementClicked));
     EXPECT_CALL(check, Call(2));
   }
@@ -210,14 +205,14 @@ TEST_F(AutofillAgentFormInteractionTest, TextAreaLeftClick) {
     EXPECT_CALL(
         autofill_driver(),
         AskForValuesToFill(
-            _, HasFieldIdAttribute(u"textarea"), _,
+            _, GetFieldRendererIdById("textarea"), _,
             AutofillSuggestionTriggerSource::kFormControlElementClicked))
         .Times(NumCallsToAskForValuesToFillOnInitialLeftClick());
     EXPECT_CALL(check, Call(1));
     EXPECT_CALL(
         autofill_driver(),
         AskForValuesToFill(
-            _, HasFieldIdAttribute(u"textarea"), _,
+            _, GetFieldRendererIdById("textarea"), _,
             AutofillSuggestionTriggerSource::kFormControlElementClicked));
     EXPECT_CALL(check, Call(2));
   }
@@ -231,28 +226,30 @@ TEST_F(AutofillAgentFormInteractionTest, TextAreaLeftClick) {
   EXPECT_TRUE(SimulateElementClickAndWait("button"));
 }
 
-// Tests that focusing the text field without a click calls AskForValuesToFill
-// on all platforms, but potentially with different trigger source:
-// - On Desktop, the trigger source is `kTextareaFocusedWithoutClick`.
-// - On Android, the trigger source is `kTextareaFocusedWithoutClick` iff
-//   `kAutofillAndroidDisableSuggestionsOnJSFocus`. Otherwise it is treated as a
-//    normal left click and the trigger source is `kFormControlElementClicked`.
-//
-// A subsequent left click then triggers the normal call with
-// `kFormControlElementClicked` as a trigger source.
+// Tests that focusing a textarea without a click calls AskForValuesToFill with
+// trigger source `kTextareaFocusedWithoutClick` on Desktop.
 TEST_F(AutofillAgentFormInteractionTest, TextareaFocusAndLeftClick) {
+  base::test::ScopedFeatureList feature_list{
+      features::kAutofillAndroidDisableSuggestionsOnJSFocus};
   MockFunction<void(int)> check;
   {
     InSequence s;
-    EXPECT_CALL(autofill_driver(),
-                AskForValuesToFill(_, HasFieldIdAttribute(u"textarea"), _,
-                                   TriggerSourceOnTextareaFocus()));
+    using enum AutofillSuggestionTriggerSource;
+    if constexpr (!BUILDFLAG(IS_ANDROID)) {
+      EXPECT_CALL(autofill_driver(),
+                  AskForValuesToFill(_, GetFieldRendererIdById("textarea"), _,
+                                     kTextareaFocusedWithoutClick));
+    } else {
+      EXPECT_CALL(autofill_driver(),
+                  AskForValuesToFill(_, GetFieldRendererIdById("textarea"), _,
+                                     kFormControlElementClicked))
+          .Times(
+              NumCallsToAskForValuesToFillOnTextfieldFocusWithoutLeftClick());
+    }
     EXPECT_CALL(check, Call(1));
-    EXPECT_CALL(
-        autofill_driver(),
-        AskForValuesToFill(
-            _, HasFieldIdAttribute(u"textarea"), _,
-            AutofillSuggestionTriggerSource::kFormControlElementClicked));
+    EXPECT_CALL(autofill_driver(),
+                AskForValuesToFill(_, GetFieldRendererIdById("textarea"), _,
+                                   kFormControlElementClicked));
     EXPECT_CALL(check, Call(2));
   }
 
@@ -267,7 +264,7 @@ TEST_F(AutofillAgentFormInteractionTest, TextareaFocusAndLeftClick) {
 TEST_F(AutofillAgentFormInteractionTest, ScaledTextareaLeftClick) {
   EXPECT_CALL(autofill_driver(),
               AskForValuesToFill(
-                  _, HasFieldIdAttribute(u"textarea"), _,
+                  _, GetFieldRendererIdById("textarea"), _,
                   AutofillSuggestionTriggerSource::kFormControlElementClicked))
       .Times(NumCallsToAskForValuesToFillOnInitialLeftClick());
 
@@ -280,7 +277,7 @@ TEST_F(AutofillAgentFormInteractionTest, ScaledTextareaLeftClick) {
 TEST_F(AutofillAgentFormInteractionTest, ScaledTextareaTapped) {
   EXPECT_CALL(autofill_driver(),
               AskForValuesToFill(
-                  _, HasFieldIdAttribute(u"textarea"), _,
+                  _, GetFieldRendererIdById("textarea"), _,
                   AutofillSuggestionTriggerSource::kFormControlElementClicked))
       .Times(NumCallsToAskForValuesToFillOnInitialLeftClick());
 
@@ -351,7 +348,7 @@ TEST_F(AutofillAgentFormInteractionTest, ReadonlyTextareaFocusWithoutClick) {
 TEST_F(AutofillAgentFormInteractionTest, TapNearEdge) {
   EXPECT_CALL(autofill_driver(),
               AskForValuesToFill(
-                  _, HasFieldIdAttribute(u"text"), _,
+                  _, GetFieldRendererIdById("text"), _,
                   AutofillSuggestionTriggerSource::kFormControlElementClicked))
       .Times(NumCallsToAskForValuesToFillOnInitialLeftClick());
 
@@ -367,8 +364,7 @@ TEST_F(AutofillAgentContentEditableInteractionTest, LeftClick) {
   EXPECT_CALL(
       autofill_driver(),
       AskForValuesToFill(
-          Field(&FormData::fields, ElementsAre(IsContentEditable())),
-          IsContentEditable(), _,
+          FieldsAre(IsContentEditable()), _, _,
           mojom::AutofillSuggestionTriggerSource::kContentEditableClicked))
       .Times(NumCallsToAskForValuesToFillOnInitialLeftClick());
 
@@ -380,15 +376,14 @@ TEST_F(AutofillAgentContentEditableInteractionTest, LeftClick) {
 // Tests that unfocusing a contenteditable triggers a call to
 // `AutofillDriver::HidePopup()`.
 TEST_F(AutofillAgentContentEditableInteractionTest,
-       LossOfFocusOfContentEditableTriggersHideAutofillPopup) {
+       LossOfFocusOfContentEditableTriggersHideAutofillSuggestions) {
   MockFunction<void()> check;
   {
     InSequence s;
     EXPECT_CALL(
         autofill_driver(),
         AskForValuesToFill(
-            Field(&FormData::fields, ElementsAre(IsContentEditable())),
-            IsContentEditable(), _,
+            FieldsAre(IsContentEditable()), _, _,
             mojom::AutofillSuggestionTriggerSource::kContentEditableClicked))
         .Times(NumCallsToAskForValuesToFillOnInitialLeftClick());
     EXPECT_CALL(check, Call);
@@ -438,8 +433,9 @@ TEST_F(AutofillAgentContentEditableInteractionTest,
     InSequence s;
     EXPECT_CALL(autofill_driver(), FormsSeen);
     EXPECT_CALL(check, Call);
-    EXPECT_CALL(autofill_driver(),
-                AskForValuesToFill(_, Not(IsContentEditable()), _, _))
+    EXPECT_CALL(
+        autofill_driver(),
+        AskForValuesToFill(FieldsAre(Not(IsContentEditable())), _, _, _))
         .Times(NumCallsToAskForValuesToFillOnInitialLeftClick());
   }
 
@@ -449,4 +445,5 @@ TEST_F(AutofillAgentContentEditableInteractionTest,
   SimulateElementClickAndWait("ce");
 }
 
+}  // namespace
 }  // namespace autofill

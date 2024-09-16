@@ -111,16 +111,6 @@ class PasswordStoreAndroidBackendDispatcherBridge {
   // Ensure `password_manager_android_util::IsUpmBackendForAccountAvailable`
   // returns true before calling this method.
   static std::unique_ptr<PasswordStoreAndroidBackendDispatcherBridge> Create();
-
-  // Returns true if GMS Core supports new GetAffiliatedPasswords API.
-  // TODO(crbug.com/1507820): Remove from the bridge as this method doesn't call
-  // java.
-  static bool CanUseGetAffiliatedPasswordsAPI();
-
-  // Returns true if GMS Core supports new GetAllLoginsWithBrandingInfo API.
-  // TODO(crbug.com/1507820): Remove from the bridge as this method doesn't call
-  // java.
-  static bool CanUseGetAllLoginsWithBrandingInfoAPI();
 };
 
 }  // namespace password_manager

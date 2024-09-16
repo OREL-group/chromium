@@ -277,6 +277,7 @@ class GbmDeviceWrapper {
     // flag.
     constexpr auto kScanoutUsages = base::MakeFixedFlatSet<gfx::BufferUsage>(
         {gfx::BufferUsage::SCANOUT,
+         gfx::BufferUsage::PROTECTED_SCANOUT,
 #if !BUILDFLAG(USE_V4L2_CODEC)
          gfx::BufferUsage::PROTECTED_SCANOUT_VDA_WRITE,
 #endif
@@ -366,22 +367,21 @@ scoped_refptr<VideoFrame> CreateVideoFrameFromGpuMemoryBufferHandle(
   scoped_refptr<VideoFrame> frame;
   if (is_intel_media_compressed_buffer) {
     CHECK(pixel_format == PIXEL_FORMAT_NV12 ||
-          pixel_format == PIXEL_FORMAT_P016LE);
+          pixel_format == PIXEL_FORMAT_P010LE);
     frame = WrapChromeOSCompressedGpuMemoryBufferAsVideoFrame(
         visible_rect, natural_size, std::move(gpu_memory_buffer), timestamp);
   } else {
-    // The empty mailbox is ok because this VideoFrame is not rendered.
-    const gpu::MailboxHolder mailbox_holders[VideoFrame::kMaxPlanes] = {};
+    // It is not necessary to pass a SharedImage because this VideoFrame is not
+    // rendered.
     frame = VideoFrame::WrapExternalGpuMemoryBuffer(
-        visible_rect, natural_size, std::move(gpu_memory_buffer),
-        mailbox_holders, base::NullCallback(), timestamp);
+        visible_rect, natural_size, std::move(gpu_memory_buffer), timestamp);
   }
 
   if (!frame)
     return nullptr;
 
   // We only support importing non-DISJOINT multi-planar GbmBuffer right now.
-  // TODO(crbug.com/1258986): Add DISJOINT support.
+  // TODO(crbug.com/40201271): Add DISJOINT support.
   frame->metadata().is_webgpu_compatible = supports_zero_copy_webgpu_import;
 
   return frame;
@@ -443,7 +443,7 @@ gfx::GpuMemoryBufferHandle CreateGpuMemoryBufferHandle(
   gfx::GpuMemoryBufferHandle handle;
   switch (video_frame->storage_type()) {
     case VideoFrame::STORAGE_GPU_MEMORY_BUFFER:
-      handle = video_frame->GetGpuMemoryBuffer()->CloneHandle();
+      handle = video_frame->GetGpuMemoryBufferHandle();
       // TODO(crbug.com/1097956): handle a failure gracefully.
       CHECK_EQ(handle.type, gfx::NATIVE_PIXMAP)
           << "The cloned handle has an unexpected type: " << handle.type;
@@ -479,8 +479,8 @@ gfx::GpuMemoryBufferHandle CreateGpuMemoryBufferHandle(
       }
     } break;
     default:
-      NOTREACHED() << "Unsupported storage type: "
-                   << video_frame->storage_type();
+      NOTREACHED_IN_MIGRATION()
+          << "Unsupported storage type: " << video_frame->storage_type();
   }
   CHECK_EQ(handle.type, gfx::NATIVE_PIXMAP);
   if (video_frame->format() == PIXEL_FORMAT_MJPEG)
@@ -531,7 +531,7 @@ gfx::GenericSharedMemoryId GetSharedMemoryId(const VideoFrame& frame) {
   if (frame.HasDmaBufs()) {
     return gfx::GenericSharedMemoryId(frame.GetDmabufFd(0));
   }
-  NOTREACHED() << "The frame is not backed by shared memory";
+  NOTREACHED_IN_MIGRATION() << "The frame is not backed by shared memory";
   return gfx::GenericSharedMemoryId();  // Invalid
 }
 

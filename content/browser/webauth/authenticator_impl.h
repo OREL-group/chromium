@@ -52,6 +52,9 @@ class CONTENT_EXPORT AuthenticatorImpl
       MakeCredentialCallback callback) override;
   void GetAssertion(blink::mojom::PublicKeyCredentialRequestOptionsPtr options,
                     GetAssertionCallback callback) override;
+  void GetClientCapabilities(GetClientCapabilitiesCallback callback) override;
+  void Report(blink::mojom::PublicKeyCredentialReportOptionsPtr options,
+              ReportCallback callback) override;
   void IsUserVerifyingPlatformAuthenticatorAvailable(
       IsUserVerifyingPlatformAuthenticatorAvailableCallback callback) override;
   void IsConditionalMediationAvailable(

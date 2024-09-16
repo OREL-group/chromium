@@ -24,9 +24,11 @@
 #include "chrome/browser/extensions/mixin_based_extension_apitest.h"
 #include "chrome/browser/extensions/webstore_installer.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ssl/https_upgrades_util.h"
 #include "chrome/browser/supervised_user/supervised_user_extensions_delegate_impl.h"
 #include "chrome/browser/supervised_user/supervised_user_test_util.h"  // nogncheck
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/extensions/extension_install_ui.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/views/supervised_user/parent_permission_dialog_view.h"
 #include "chrome/common/buildflags.h"
@@ -45,9 +47,9 @@
 #include "extensions/browser/api_test_utils.h"
 #include "extensions/browser/extension_dialog_auto_confirm.h"
 #include "extensions/browser/extension_system.h"
-#include "extensions/browser/install/extension_install_ui.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/extension_features.h"
+#include "extensions/common/switches.h"
 #include "gpu/config/gpu_feature_type.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
@@ -97,8 +99,9 @@ class WebstoreInstallListener : public WebstorePrivateApi::Delegate {
   }
 
   void Wait() {
-    if (received_success_ || received_failure_)
+    if (received_success_ || received_failure_) {
       return;
+    }
 
     waiting_ = true;
     loop_.Run();
@@ -125,7 +128,7 @@ class WebstoreInstallListener : public WebstorePrivateApi::Delegate {
 // A base class for tests below.
 class ExtensionWebstorePrivateApiTest : public MixinBasedExtensionApiTest {
  public:
-  ExtensionWebstorePrivateApiTest() {}
+  ExtensionWebstorePrivateApiTest() = default;
 
   ExtensionWebstorePrivateApiTest(const ExtensionWebstorePrivateApiTest&) =
       delete;
@@ -136,9 +139,9 @@ class ExtensionWebstorePrivateApiTest : public MixinBasedExtensionApiTest {
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
     MixinBasedExtensionApiTest::SetUpCommandLine(command_line);
-    command_line->AppendSwitchASCII(
-        switches::kAppsGalleryURL,
-        "http://www.example.com/extensions/api_test");
+    command_line->AppendSwitchASCII(::switches::kAppsGalleryURL,
+                                    "http://www.example.com/");
+    command_line->AppendSwitch(switches::kExtensionTestApiOnWebPages);
   }
 
   void SetUpOnMainThread() override {
@@ -148,7 +151,8 @@ class ExtensionWebstorePrivateApiTest : public MixinBasedExtensionApiTest {
     // API functions.
     host_resolver()->AddRule("www.example.com", "127.0.0.1");
     ASSERT_TRUE(StartEmbeddedTestServer());
-    extensions::ExtensionInstallUI::set_disable_ui_for_tests();
+    base::AutoReset<bool> disable_ui =
+        ExtensionInstallUI::disable_ui_for_tests(true);
 
     auto_confirm_install_ = std::make_unique<ScopedTestDialogAutoConfirm>(
         ScopedTestDialogAutoConfirm::ACCEPT);
@@ -160,21 +164,9 @@ class ExtensionWebstorePrivateApiTest : public MixinBasedExtensionApiTest {
   }
 
  protected:
-  // Returns a test server URL, but with host 'www.example.com' so it matches
-  // the web store app's extent that we set up via command line flags.
-  GURL DoGetTestServerURL(const std::string& path) {
-    GURL url = embedded_test_server()->GetURL(path);
-
-    // Replace the host with 'www.example.com' so it matches the web store
-    // app's extent.
-    GURL::Replacements replace_host;
-    replace_host.SetHostStr("www.example.com");
-
-    return url.ReplaceComponents(replace_host);
-  }
-
   virtual GURL GetTestServerURL(const std::string& path) {
-    return DoGetTestServerURL(
+    return embedded_test_server()->GetURL(
+        "www.example.com",
         std::string("/extensions/api_test/webstore_private/") + path);
   }
 
@@ -220,8 +212,9 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebstorePrivateApiTest, MissingDownloadDir) {
   ASSERT_TRUE(RunInstallTest("accepted.html", "extension.crx"));
 
   // Cleanup.
-  if (base::DirectoryExists(missing_directory))
+  if (base::DirectoryExists(missing_directory)) {
     EXPECT_TRUE(base::DeletePathRecursively(missing_directory));
+  }
 }
 
 // Tests passing a localized name.
@@ -255,6 +248,10 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebstorePrivateApiTest, AppInstallBubble) {
 }
 
 IN_PROC_BROWSER_TEST_F(ExtensionWebstorePrivateApiTest, IsInIncognitoMode) {
+  // TODO(crbug.com/40937027): Convert test to use HTTPS and then remove.
+  ScopedAllowHttpForHostnamesForTesting allow_http({"www.example.com"},
+                                                   profile()->GetPrefs());
+
   GURL page_url = GetTestServerURL("incognito.html");
   ASSERT_TRUE(OpenTestURL(page_url, /*open_in_incognito=*/true));
 }
@@ -348,6 +345,7 @@ class SupervisedUserExtensionWebstorePrivateApiTest
             }) {
 
     std::vector<base::test::FeatureRef> enabled_features;
+    std::vector<base::test::FeatureRef> disabled_features;
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
     enabled_features.push_back(
         supervised_user::
@@ -358,8 +356,12 @@ class SupervisedUserExtensionWebstorePrivateApiTest
       enabled_features.push_back(
           supervised_user::
               kEnableSupervisedUserSkipParentApprovalToInstallExtensions);
+    } else {
+      disabled_features.push_back(
+          supervised_user::
+              kEnableSupervisedUserSkipParentApprovalToInstallExtensions);
     }
-    feature_list_.InitWithFeatures(enabled_features, /*disabled_features=*/{});
+    feature_list_.InitWithFeatures(enabled_features, disabled_features);
   }
 
   ~SupervisedUserExtensionWebstorePrivateApiTest() override {
@@ -376,7 +378,7 @@ class SupervisedUserExtensionWebstorePrivateApiTest
     // TODO (crbug.com/995575): figure out why this switch speeds up the test,
     // and fix the test setup so this is not required.
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-    command_line->AppendSwitch(switches::kShortMergeSessionTimeoutForTest);
+    command_line->AppendSwitch(::switches::kShortMergeSessionTimeoutForTest);
 #endif
   }
 
@@ -481,6 +483,7 @@ class SupervisedUserExtensionWebstorePrivateApiTest
 // Tests install for a child when parent permission is granted.
 IN_PROC_BROWSER_TEST_P(SupervisedUserExtensionWebstorePrivateApiTest,
                        ParentPermissionGranted) {
+  base::UserActionTester user_action_tester;
   WebstoreInstallListener listener;
   auto delegate_reset = WebstorePrivateApi::SetDelegateForTesting(&listener);
   set_next_dialog_action(NextDialogAction::kAccept);
@@ -495,13 +498,26 @@ IN_PROC_BROWSER_TEST_P(SupervisedUserExtensionWebstorePrivateApiTest,
           .SetID(kTestAppId)
           .SetVersion(kTestAppVersion)
           .Build();
-  ASSERT_TRUE(extensions_delegate_->IsExtensionAllowedByParent(*extension));
+  EXPECT_TRUE(extensions_delegate_->IsExtensionAllowedByParent(*extension));
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+  EXPECT_EQ(1, user_action_tester.GetActionCount(
+                   SupervisedUserExtensionsMetricsRecorder::
+                       kParentPermissionDialogOpenedActionName));
+  EXPECT_EQ(1, user_action_tester.GetActionCount(
+                   SupervisedUserExtensionsMetricsRecorder::
+                       kParentPermissionDialogParentApprovedActionName));
+  EXPECT_EQ(
+      1,
+      user_action_tester.GetActionCount(
+          SupervisedUserExtensionsMetricsRecorder::kApprovalGrantedActionName));
+#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
 }
 
 // Tests no install occurs for a child when the parent permission
 // dialog is canceled.
 IN_PROC_BROWSER_TEST_P(SupervisedUserExtensionWebstorePrivateApiTest,
                        ParentPermissionCanceled) {
+  base::UserActionTester user_action_tester;
   WebstoreInstallListener listener;
   set_next_dialog_action(NextDialogAction::kCancel);
   auto delegate_reset = WebstorePrivateApi::SetDelegateForTesting(&listener);
@@ -517,7 +533,20 @@ IN_PROC_BROWSER_TEST_P(SupervisedUserExtensionWebstorePrivateApiTest,
           .SetID(kTestAppId)
           .SetVersion(kTestAppVersion)
           .Build();
-  ASSERT_FALSE(extensions_delegate_->IsExtensionAllowedByParent(*extension));
+  EXPECT_FALSE(extensions_delegate_->IsExtensionAllowedByParent(*extension));
+// On the default configuration only the Parent approval dialog is used for
+// extension installations.
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+  EXPECT_EQ(1, user_action_tester.GetActionCount(
+                   SupervisedUserExtensionsMetricsRecorder::
+                       kParentPermissionDialogOpenedActionName));
+  EXPECT_EQ(1, user_action_tester.GetActionCount(
+                   SupervisedUserExtensionsMetricsRecorder::
+                       kParentPermissionDialogParentCanceledActionName));
+  EXPECT_EQ(0, user_action_tester.GetActionCount(
+                   SupervisedUserExtensionsMetricsRecorder::
+                       kExtensionInstallDialogChildCanceledActionName));
+#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
 }
 
 // Tests that no parent permission is required for a child to install a theme.
@@ -594,6 +623,7 @@ IN_PROC_BROWSER_TEST_P(SupervisedUserExtensionWebstorePrivateApiTest,
 // via the "Permissions" toggle, the parent approval is required.
 IN_PROC_BROWSER_TEST_P(SupervisedUserExtensionWebstorePrivateApiTest,
                        InstallSuccessfulWhenExtensionsToggleOn) {
+  base::UserActionTester user_action_tester;
   WebstoreInstallListener listener;
   auto delegate_reset = WebstorePrivateApi::SetDelegateForTesting(&listener);
 
@@ -614,7 +644,7 @@ IN_PROC_BROWSER_TEST_P(SupervisedUserExtensionWebstorePrivateApiTest,
   ASSERT_TRUE(listener.received_success());
   ASSERT_EQ(kTestAppId, listener.id());
 
-  ASSERT_EQ(GetParam() == SupervisedUserExtensionManagedBySwitch::kPermissions,
+  EXPECT_EQ(GetParam() == SupervisedUserExtensionManagedBySwitch::kPermissions,
             parent_permission_dialog_appeared_);
 
   scoped_refptr<const Extension> extension =
@@ -622,7 +652,33 @@ IN_PROC_BROWSER_TEST_P(SupervisedUserExtensionWebstorePrivateApiTest,
           .SetID(kTestAppId)
           .SetVersion(kTestAppVersion)
           .Build();
-  ASSERT_TRUE(extensions_delegate_->IsExtensionAllowedByParent(*extension));
+  EXPECT_TRUE(extensions_delegate_->IsExtensionAllowedByParent(*extension));
+
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+  int parent_approval_dialog_count =
+      GetParam() == SupervisedUserExtensionManagedBySwitch::kExtensions ? 0 : 1;
+  // Parent Approval dialog metrics (when managed by Permissions toggle):
+  EXPECT_EQ(parent_approval_dialog_count,
+            user_action_tester.GetActionCount(
+                SupervisedUserExtensionsMetricsRecorder::
+                    kParentPermissionDialogOpenedActionName));
+  EXPECT_EQ(
+      parent_approval_dialog_count,
+      user_action_tester.GetActionCount(
+          SupervisedUserExtensionsMetricsRecorder::kApprovalGrantedActionName));
+#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+
+  // Extension Installation dialog metrics (when managed by Extensions toggle):
+  int extension_install_dialog_count =
+      GetParam() == SupervisedUserExtensionManagedBySwitch::kExtensions ? 1 : 0;
+  EXPECT_EQ(extension_install_dialog_count,
+            user_action_tester.GetActionCount(
+                SupervisedUserExtensionsMetricsRecorder::
+                    kExtensionInstallDialogOpenedActionName));
+  EXPECT_EQ(extension_install_dialog_count,
+            user_action_tester.GetActionCount(
+                SupervisedUserExtensionsMetricsRecorder::
+                    kApprovalGrantedByDefaultName));
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -641,8 +697,9 @@ class ExtensionWebstoreGetWebGLStatusTest : public InProcessBrowserTest {
  protected:
   void RunTest(bool webgl_allowed) {
     // If Gpu access is disallowed then WebGL will not be available.
-    if (!content::GpuDataManager::GetInstance()->GpuAccessAllowed(nullptr))
+    if (!content::GpuDataManager::GetInstance()->GpuAccessAllowed(nullptr)) {
       webgl_allowed = false;
+    }
 
     static const char kEmptyArgs[] = "[]";
     static const char kWebGLStatusAllowed[] = "webgl_allowed";
@@ -684,7 +741,7 @@ class ExtensionWebstorePrivateGetReferrerChainApiTest
     : public ExtensionWebstorePrivateApiTest {
  public:
   ExtensionWebstorePrivateGetReferrerChainApiTest() {
-    // TODO(crbug.com/1394910): Use HTTPS URLs in tests to avoid having to
+    // TODO(crbug.com/40248833): Use HTTPS URLs in tests to avoid having to
     // disable this feature.
     feature_list_.InitAndDisableFeature(features::kHttpsUpgrades);
   }

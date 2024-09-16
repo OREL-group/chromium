@@ -6,6 +6,7 @@
 
 #include "base/containers/contains.h"
 #include "base/no_destructor.h"
+#include "base/not_fatal_until.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_event.h"
 #include "ui/accessibility/ax_node.h"
@@ -133,7 +134,7 @@ AXEventGenerator::Iterator& AXEventGenerator::Iterator::operator++() {
   if (map_iter_ == map_end_iter_)
     return *this;
 
-  DCHECK(set_iter_ != map_iter_->second.end());
+  CHECK(set_iter_ != map_iter_->second.end(), base::NotFatalUntil::M130);
   set_iter_++;
 
   // The map pointed to by |map_end_iter_| may contain empty sets of events in
@@ -159,7 +160,7 @@ AXEventGenerator::Iterator AXEventGenerator::Iterator::operator++(int) {
 
 AXEventGenerator::TargetedEvent AXEventGenerator::Iterator::operator*() const {
   DCHECK(map_iter_ != map_end_iter_);
-  DCHECK(set_iter_ != map_iter_->second.end());
+  CHECK(set_iter_ != map_iter_->second.end(), base::NotFatalUntil::M130);
   return AXEventGenerator::TargetedEvent(map_iter_->first, *set_iter_);
 }
 
@@ -597,9 +598,6 @@ void AXEventGenerator::OnIntAttributeChanged(AXTree* tree,
     case ax::mojom::IntAttribute::kAriaCurrentState:
       AddEvent(node, Event::ARIA_CURRENT_CHANGED);
       break;
-    case ax::mojom::IntAttribute::kDropeffectDeprecated:
-      AddEvent(node, Event::DROPEFFECT_CHANGED);
-      break;
     case ax::mojom::IntAttribute::kHasPopup:
       AddEvent(node, Event::HASPOPUP_CHANGED);
       AddEvent(node, Event::WIN_IACCESSIBLE_STATE_CHANGED);
@@ -733,9 +731,6 @@ void AXEventGenerator::OnBoolAttributeChanged(AXTree* tree,
       // Fire an 'invalidated' event when aria-busy becomes false.
       if (!new_value)
         AddEvent(node, Event::LAYOUT_INVALIDATED);
-      break;
-    case ax::mojom::BoolAttribute::kGrabbedDeprecated:
-      AddEvent(node, Event::GRABBED_CHANGED);
       break;
     case ax::mojom::BoolAttribute::kLiveAtomic:
       AddEvent(node, Event::ATOMIC_CHANGED);
@@ -992,7 +987,7 @@ bool CanContributeToValueOfTextfield(AXNode* target_node) {
   }
 
   // Text and line breaks contribute.
-  if (ui::IsText(target_node->GetRole())) {
+  if (IsText(target_node->GetRole())) {
     return true;
   }
 
@@ -1346,9 +1341,7 @@ const char* ToString(AXEventGenerator::Event event) {
       return "documentSelectionChanged";
     case AXEventGenerator::Event::DOCUMENT_TITLE_CHANGED:
       return "documentTitleChanged";
-    case AXEventGenerator::Event::DROPEFFECT_CHANGED:
-      return "dropeffectChanged";
-    case ui::AXEventGenerator::Event::EDITABLE_TEXT_CHANGED:
+    case AXEventGenerator::Event::EDITABLE_TEXT_CHANGED:
       return "editableTextChanged";
     case AXEventGenerator::Event::ENABLED_CHANGED:
       return "enabledChanged";
@@ -1360,13 +1353,11 @@ const char* ToString(AXEventGenerator::Event event) {
       return "flowFromChanged";
     case AXEventGenerator::Event::FLOW_TO_CHANGED:
       return "flowToChanged";
-    case AXEventGenerator::Event::GRABBED_CHANGED:
-      return "grabbedChanged";
     case AXEventGenerator::Event::HASPOPUP_CHANGED:
       return "haspopupChanged";
     case AXEventGenerator::Event::HIERARCHICAL_LEVEL_CHANGED:
       return "hierarchicalLevelChanged";
-    case ui::AXEventGenerator::Event::IGNORED_CHANGED:
+    case AXEventGenerator::Event::IGNORED_CHANGED:
       return "ignoredChanged";
     case AXEventGenerator::Event::IMAGE_ANNOTATION_CHANGED:
       return "imageAnnotationChanged";
@@ -1392,9 +1383,9 @@ const char* ToString(AXEventGenerator::Event event) {
       return "liveStatusChanged";
     case AXEventGenerator::Event::MENU_ITEM_SELECTED:
       return "menuItemSelected";
-    case ui::AXEventGenerator::Event::MENU_POPUP_END:
+    case AXEventGenerator::Event::MENU_POPUP_END:
       return "menuPopupEnd";
-    case ui::AXEventGenerator::Event::MENU_POPUP_START:
+    case AXEventGenerator::Event::MENU_POPUP_START:
       return "menuPopupStart";
     case AXEventGenerator::Event::MULTILINE_STATE_CHANGED:
       return "multilineStateChanged";
@@ -1410,8 +1401,6 @@ const char* ToString(AXEventGenerator::Event event) {
       return "parentChanged";
     case AXEventGenerator::Event::PLACEHOLDER_CHANGED:
       return "placeholderChanged";
-    case AXEventGenerator::Event::PORTAL_ACTIVATED:
-      return "portalActivated";
     case AXEventGenerator::Event::POSITION_IN_SET_CHANGED:
       return "positionInSetChanged";
     case AXEventGenerator::Event::RANGE_VALUE_CHANGED:
@@ -1493,7 +1482,7 @@ AXEventGenerator::Event ParseGeneratedEvent(const char* attribute) {
     return event;
 
   LOG(ERROR) << "Could not parse: " << attribute;
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return AXEventGenerator::Event::NONE;
 }
 

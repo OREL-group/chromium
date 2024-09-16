@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/core/layout/inline/inline_node.h"
 
 #include "testing/gmock/include/gmock/gmock.h"
@@ -18,7 +23,7 @@
 #include "third_party/blink/renderer/core/layout/inline/inline_item_span.h"
 #include "third_party/blink/renderer/core/layout/inline/inline_layout_algorithm.h"
 #include "third_party/blink/renderer/core/layout/inline/physical_line_box_fragment.h"
-#include "third_party/blink/renderer/core/layout/layout_ng_block_flow.h"
+#include "third_party/blink/renderer/core/layout/layout_block_flow.h"
 #include "third_party/blink/renderer/core/layout/layout_result.h"
 #include "third_party/blink/renderer/core/layout/layout_text_combine.h"
 #include "third_party/blink/renderer/core/layout/physical_box_fragment.h"
@@ -94,7 +99,7 @@ class InlineNodeTest : public RenderingTest {
  protected:
   void SetupHtml(const char* id, String html) {
     SetBodyInnerHTML(html);
-    layout_block_flow_ = To<LayoutNGBlockFlow>(GetLayoutObjectByElementId(id));
+    layout_block_flow_ = To<LayoutBlockFlow>(GetLayoutObjectByElementId(id));
     layout_object_ = layout_block_flow_->FirstChild();
   }
 
@@ -106,7 +111,7 @@ class InlineNodeTest : public RenderingTest {
   }
 
   InlineNodeForTest CreateInlineNode(
-      LayoutNGBlockFlow* layout_block_flow = nullptr) {
+      LayoutBlockFlow* layout_block_flow = nullptr) {
     if (layout_block_flow)
       layout_block_flow_ = layout_block_flow;
     if (!layout_block_flow_)
@@ -176,7 +181,7 @@ class InlineNodeTest : public RenderingTest {
                      AtomicString("Google Sans"));
   }
 
-  Persistent<LayoutNGBlockFlow> layout_block_flow_;
+  Persistent<LayoutBlockFlow> layout_block_flow_;
   Persistent<LayoutObject> layout_object_;
   FontCachePurgePreventer purge_preventer_;
 };
@@ -266,7 +271,17 @@ TEST_F(InlineNodeTest, CollectInlinesUTF16) {
   SetupHtml("t", u"<div id=t>Hello \u3042</div>");
   InlineNodeForTest node = CreateInlineNode();
   node.CollectInlines();
-  // |CollectInlines()| sets |IsBidiEnabled()| for any UTF-16 strings.
+  EXPECT_FALSE(node.IsBidiEnabled());
+  node.SegmentText();
+  EXPECT_FALSE(node.IsBidiEnabled());
+}
+
+TEST_F(InlineNodeTest, CollectInlinesMaybeRtl) {
+  // U+10000 "LINEAR B SYLLABLE B008 A" is strong LTR.
+  SetupHtml("t", u"<div id=t>Hello \U00010000</div>");
+  InlineNodeForTest node = CreateInlineNode();
+  node.CollectInlines();
+  // |CollectInlines()| sets |IsBidiEnabled()| for any surrogate pairs.
   EXPECT_TRUE(node.IsBidiEnabled());
   // |SegmentText()| analyzes the string and resets |IsBidiEnabled()| if all
   // characters are LTR.
@@ -337,7 +352,7 @@ TEST_F(InlineNodeTest, CollectInlinesTextCombineBR) {
       "#t { text-combine-upright: all; writing-mode: vertical-rl; }");
   SetupHtml("t", u"<div id=t>a<br>z</div>");
   InlineNodeForTest node =
-      CreateInlineNode(To<LayoutNGBlockFlow>(layout_object_.Get()));
+      CreateInlineNode(To<LayoutBlockFlow>(layout_object_.Get()));
   node.CollectInlines();
   EXPECT_EQ("a z", node.Text());
   HeapVector<InlineItem>& items = node.Items();
@@ -373,7 +388,7 @@ TEST_F(InlineNodeTest, CollectInlinesTextCombineNewline) {
       "#t { text-combine-upright: all; writing-mode: vertical-rl; }");
   SetupHtml("t", u"<pre id=t>a\nz</pre>");
   InlineNodeForTest node =
-      CreateInlineNode(To<LayoutNGBlockFlow>(layout_object_.Get()));
+      CreateInlineNode(To<LayoutBlockFlow>(layout_object_.Get()));
   node.CollectInlines();
   EXPECT_EQ("a z", node.Text());
   HeapVector<InlineItem>& items = node.Items();
@@ -388,7 +403,7 @@ TEST_F(InlineNodeTest, CollectInlinesTextCombineWBR) {
       "#t { text-combine-upright: all; writing-mode: vertical-rl; }");
   SetupHtml("t", u"<div id=t>a<wbr>z</div>");
   InlineNodeForTest node =
-      CreateInlineNode(To<LayoutNGBlockFlow>(layout_object_.Get()));
+      CreateInlineNode(To<LayoutBlockFlow>(layout_object_.Get()));
   node.CollectInlines();
   EXPECT_EQ("a\u200Bz", node.Text());
   HeapVector<InlineItem>& items = node.Items();
@@ -520,10 +535,14 @@ struct MinMaxData {
     {"Hello <img>.", {50, 80}, "", "img { width: 1em; }"},
     {"Hello <img>.", {50, 120}, "", "img { width: 5em; }"},
     {"Hello <img>.", {60, 130}, "", "img { width: 6em; }"},
-    // `text-indent.
+    // `text-indent`.
     {"6 12345 12", {60, 150}, "text-indent: 5em"},
     {"6 1234567 12", {70, 170}, "text-indent: 5em"},
-    // Negative `text-indent.
+    // `text-indent` with hyphenations.
+    // The "hy-" with the indent should be longest.
+    {"hyphenation a", {60, 160}, "hyphens: auto; text-indent: 3em", "", "en"},
+    {"hhhhh a", {80, 100}, "hyphens: auto; text-indent: 3em", "", "en"},
+    // Negative `text-indent`.
     {"43210123 1234 12", {40, 110}, "text-indent: -5em"},
     {"4321012345 1234 12", {50, 130}, "text-indent: -5em"},
     {"432 012 1", {30, 40}, "text-indent: -5em"},
@@ -1214,7 +1233,7 @@ TEST_F(InlineNodeTest, ClearFirstInlineFragmentOnSplitFlow) {
   // but there are some clients (e.g., Scroll Anchor) who try to read
   // associated fragments.
   //
-  // NGPaintFragment is owned by LayoutNGBlockFlow. Because the original owner
+  // NGPaintFragment is owned by LayoutBlockFlow. Because the original owner
   // no longer has an inline formatting context, the NGPaintFragment subtree is
   // destroyed, and should not be accessible.
   GetDocument().UpdateStyleAndLayoutTree();
@@ -1513,7 +1532,7 @@ TEST_F(InlineNodeTest, ReuseFirstNonSafe) {
       <span>A</span>V
     </p>
   )HTML");
-  auto* block_flow = To<LayoutNGBlockFlow>(GetLayoutObjectByElementId("p"));
+  auto* block_flow = To<LayoutBlockFlow>(GetLayoutObjectByElementId("p"));
   const InlineNodeData* data = block_flow->GetInlineNodeData();
   ASSERT_TRUE(data);
   const auto& items = data->items;
@@ -1542,7 +1561,7 @@ TEST_F(InlineNodeTest, ReuseFirstNonSafeRtl) {
       <span>A</span>V
     </p>
   )HTML");
-  auto* block_flow = To<LayoutNGBlockFlow>(GetLayoutObjectByElementId("p"));
+  auto* block_flow = To<LayoutBlockFlow>(GetLayoutObjectByElementId("p"));
   const InlineNodeData* data = block_flow->GetInlineNodeData();
   ASSERT_TRUE(data);
   const auto& items = data->items;

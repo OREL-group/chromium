@@ -5,8 +5,8 @@
 #include "base/run_loop.h"
 #include "base/test/run_until.h"
 #include "chrome/browser/app_mode/test/accelerator_helpers.h"
+#include "chrome/browser/ash/app_mode/kiosk_controller.h"
 #include "chrome/browser/ash/app_mode/kiosk_system_session.h"
-#include "chrome/browser/ash/app_mode/web_app/web_kiosk_app_manager.h"
 #include "chrome/browser/ash/login/app_mode/test/ash_accelerator_helpers.h"
 #include "chrome/browser/ash/login/app_mode/test/web_kiosk_base_test.h"
 #include "chrome/browser/ui/browser_list.h"
@@ -51,14 +51,14 @@ IN_PROC_BROWSER_TEST_F(WebKioskAcceleratorTest, AcceleratorsDontCloseSession) {
   InitializeRegularOnlineKiosk();
   SelectFirstBrowser();
   ASSERT_EQ(BrowserList::GetInstance()->size(), 1u);
-  ASSERT_FALSE(chrome::PressCloseTabAccelerator(browser()));
-  ASSERT_FALSE(chrome::PressCloseWindowAccelerator(browser()));
+  ASSERT_FALSE(PressCloseTabAccelerator(browser()));
+  ASSERT_FALSE(PressCloseWindowAccelerator(browser()));
   ASSERT_FALSE(ash::PressSignOutAccelerator());
   base::RunLoop loop;
   loop.RunUntilIdle();
   ASSERT_EQ(BrowserList::GetInstance()->size(), 1u);
   ASSERT_FALSE(
-      WebKioskAppManager::Get()->kiosk_system_session()->is_shutting_down());
+      KioskController::Get().GetKioskSystemSession()->is_shutting_down());
 }
 
 IN_PROC_BROWSER_TEST_F(WebKioskAcceleratorTest, ZoomAccelerators) {
@@ -100,7 +100,7 @@ class NonKioskAcceleratorTest : public InProcessBrowserTest {};
 
 IN_PROC_BROWSER_TEST_F(NonKioskAcceleratorTest, CloseTabAccelerator) {
   ASSERT_EQ(BrowserList::GetInstance()->size(), 1u);
-  ASSERT_TRUE(chrome::PressCloseTabAccelerator(browser()));
+  ASSERT_TRUE(PressCloseTabAccelerator(browser()));
   TestBrowserClosedWaiter settings_browser_closed_waiter{browser()};
   ASSERT_TRUE(settings_browser_closed_waiter.WaitUntilClosed());
   ASSERT_EQ(BrowserList::GetInstance()->size(), 0u);
@@ -108,7 +108,7 @@ IN_PROC_BROWSER_TEST_F(NonKioskAcceleratorTest, CloseTabAccelerator) {
 
 IN_PROC_BROWSER_TEST_F(NonKioskAcceleratorTest, CloseWindowAccelerator) {
   ASSERT_EQ(BrowserList::GetInstance()->size(), 1u);
-  ASSERT_TRUE(chrome::PressCloseWindowAccelerator(browser()));
+  ASSERT_TRUE(PressCloseWindowAccelerator(browser()));
   TestBrowserClosedWaiter settings_browser_closed_waiter{browser()};
   ASSERT_TRUE(settings_browser_closed_waiter.WaitUntilClosed());
   ASSERT_EQ(BrowserList::GetInstance()->size(), 0u);

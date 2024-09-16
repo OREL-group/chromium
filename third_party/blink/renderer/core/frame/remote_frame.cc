@@ -10,6 +10,7 @@
 #include "third_party/blink/public/common/fenced_frame/fenced_frame_utils.h"
 #include "third_party/blink/public/common/frame/frame_owner_element_type.h"
 #include "third_party/blink/public/common/navigation/navigation_policy.h"
+#include "third_party/blink/public/common/page/page_zoom.h"
 #include "third_party/blink/public/mojom/frame/frame.mojom-blink.h"
 #include "third_party/blink/public/mojom/frame/frame_owner_properties.mojom-blink.h"
 #include "third_party/blink/public/mojom/frame/frame_replication_state.mojom-blink.h"
@@ -29,7 +30,6 @@
 #include "third_party/blink/renderer/core/accessibility/ax_object_cache.h"
 #include "third_party/blink/renderer/core/events/message_event.h"
 #include "third_party/blink/renderer/core/exported/web_view_impl.h"
-#include "third_party/blink/renderer/core/frame/child_frame_compositing_helper.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
@@ -126,14 +126,9 @@ RemoteFrame::RemoteFrame(
       task_runner_(page.GetPageScheduler()
                        ->GetAgentGroupScheduler()
                        .DefaultTaskRunner()) {
-  // TODO(crbug.com/1094850): Remove this check once the renderer is correctly
-  // handling errors during the creation of HTML portal elements, which would
-  // otherwise cause RemoteFrame() being created with empty frame tokens.
-  if (!frame_token.value().is_empty()) {
-    auto frame_tracking_result = GetRemoteFramesMap().insert(
-        RemoteFrameToken::Hasher()(frame_token), this);
-    CHECK(frame_tracking_result.stored_value) << "Inserting a duplicate item.";
-  }
+  auto frame_tracking_result = GetRemoteFramesMap().insert(
+      RemoteFrameToken::Hasher()(frame_token), this);
+  CHECK(frame_tracking_result.stored_value) << "Inserting a duplicate item.";
 
   dom_window_ = MakeGarbageCollected<RemoteDOMWindow>(*this);
 
@@ -240,11 +235,9 @@ void RemoteFrame::Navigate(FrameLoadRequest& frame_request,
     initiator_frame_is_ad = window->GetFrame()->IsAdFrame();
     is_ad_script_in_stack = window->GetFrame()->IsAdScriptInStack();
 
-    if (frame_request.ClientRedirectReason() != ClientNavigationReason::kNone) {
-      probe::FrameRequestedNavigation(window->GetFrame(), this, url,
-                                      frame_request.ClientRedirectReason(),
-                                      kNavigationPolicyCurrentTab);
-    }
+    probe::FrameRequestedNavigation(window->GetFrame(), this, url,
+                                    frame_request.GetClientNavigationReason(),
+                                    kNavigationPolicyCurrentTab);
 
     if (!initiator_frame_token) {
       initiator_frame_token = window->GetFrame()->GetLocalFrameToken();
@@ -296,6 +289,7 @@ void RemoteFrame::Navigate(FrameLoadRequest& frame_request,
     params->source_location->line = source_location->LineNumber();
     params->source_location->column = source_location->ColumnNumber();
   }
+  params->storage_access_api_status = window->GetStorageAccessApiStatus();
 
   params->impression = frame_request.Impression();
 
@@ -316,6 +310,8 @@ void RemoteFrame::Navigate(FrameLoadRequest& frame_request,
                                                   is_ad_script_in_stack);
 
   params->is_container_initiated = frame_request.IsContainerInitiated();
+  params->has_rel_opener = frame_request.GetWindowFeatures().explicit_opener;
+
   GetRemoteFrameHostRemote().OpenURL(std::move(params));
 }
 
@@ -478,16 +474,13 @@ void RemoteFrame::ForwardPostMessage(
   if (source_frame)
     source_token = source_frame->GetLocalFrameToken();
 
-  String source_origin = source_security_origin
-                             ? source_security_origin->ToString()
-                             : g_empty_string;
   String target_origin = target_security_origin
                              ? target_security_origin->ToString()
                              : g_empty_string;
 
-  GetRemoteFrameHostRemote().RouteMessageEvent(source_token, source_origin,
-                                               target_origin,
-                                               std::move(transferable_message));
+  GetRemoteFrameHostRemote().RouteMessageEvent(
+      source_token, source_security_origin, target_origin,
+      std::move(transferable_message));
 }
 
 bool RemoteFrame::IsRemoteFrameHostRemoteBound() {
@@ -677,7 +670,8 @@ void RemoteFrame::UpdateUserActivationState(
       break;
     case mojom::blink::UserActivationUpdateType::
         kNotifyActivationPendingBrowserVerification:
-      NOTREACHED() << "Unexpected UserActivationUpdateType from browser";
+      NOTREACHED_IN_MIGRATION()
+          << "Unexpected UserActivationUpdateType from browser";
       break;
   }
 }
@@ -861,7 +855,8 @@ viz::FrameSinkId RemoteFrame::GetFrameSinkId() {
   return frame_sink_id_;
 }
 
-void RemoteFrame::SetFrameSinkId(const viz::FrameSinkId& frame_sink_id) {
+void RemoteFrame::SetFrameSinkId(const viz::FrameSinkId& frame_sink_id,
+                                 bool allow_paint_holding) {
   remote_process_gone_ = false;
 
   // The same ParentLocalSurfaceIdAllocator cannot provide LocalSurfaceIds for
@@ -874,7 +869,10 @@ void RemoteFrame::SetFrameSinkId(const viz::FrameSinkId& frame_sink_id) {
 
   // Resend the FrameRects and allocate a new viz::LocalSurfaceId when the view
   // changes.
-  ResendVisualProperties();
+  ResendVisualPropertiesInternal(
+      allow_paint_holding
+          ? ChildFrameCompositingHelper::AllowPaintHolding::kYes
+          : ChildFrameCompositingHelper::AllowPaintHolding::kNo);
 }
 
 void RemoteFrame::ChildProcessGone() {
@@ -922,14 +920,18 @@ void RemoteFrame::ApplyReplicatedPermissionsPolicyHeader() {
       permissions_policy_header_, container_policy, parent_permissions_policy);
 }
 
-bool RemoteFrame::SynchronizeVisualProperties(bool propagate) {
+bool RemoteFrame::SynchronizeVisualProperties(
+    bool propagate,
+    ChildFrameCompositingHelper::AllowPaintHolding allow_paint_holding) {
   if (!GetFrameSinkId().is_valid() || remote_process_gone_)
     return false;
 
-  bool capture_sequence_number_changed =
-      sent_visual_properties_ &&
-      sent_visual_properties_->capture_sequence_number !=
-          pending_visual_properties_.capture_sequence_number;
+  auto capture_sequence_number_changed =
+      (sent_visual_properties_ &&
+       sent_visual_properties_->capture_sequence_number !=
+           pending_visual_properties_.capture_sequence_number)
+          ? ChildFrameCompositingHelper::CaptureSequenceNumberChanged::kYes
+          : ChildFrameCompositingHelper::CaptureSequenceNumberChanged::kNo;
 
   if (view_) {
     pending_visual_properties_.compositor_viewport =
@@ -954,6 +956,8 @@ bool RemoteFrame::SynchronizeVisualProperties(bool propagate) {
           pending_visual_properties_.screen_infos ||
       sent_visual_properties_->zoom_level !=
           pending_visual_properties_.zoom_level ||
+      sent_visual_properties_->css_zoom_factor !=
+          pending_visual_properties_.css_zoom_factor ||
       sent_visual_properties_->page_scale_factor !=
           pending_visual_properties_.page_scale_factor ||
       sent_visual_properties_->compositing_scale_factor !=
@@ -981,8 +985,8 @@ bool RemoteFrame::SynchronizeVisualProperties(bool propagate) {
   DCHECK(surface_id.is_valid());
   DCHECK(!remote_process_gone_);
 
-  compositing_helper_->SetSurfaceId(surface_id,
-                                    capture_sequence_number_changed);
+  compositing_helper_->SetSurfaceId(surface_id, capture_sequence_number_changed,
+                                    allow_paint_holding);
 
   bool rect_changed = !sent_visual_properties_ ||
                       sent_visual_properties_->rect_in_local_root !=
@@ -1011,8 +1015,14 @@ void RemoteFrame::RecordSentVisualProperties() {
 }
 
 void RemoteFrame::ResendVisualProperties() {
+  ResendVisualPropertiesInternal(
+      ChildFrameCompositingHelper::AllowPaintHolding::kNo);
+}
+
+void RemoteFrame::ResendVisualPropertiesInternal(
+    ChildFrameCompositingHelper::AllowPaintHolding allow_paint_holding) {
   sent_visual_properties_ = std::nullopt;
-  SynchronizeVisualProperties();
+  SynchronizeVisualProperties(/*propagate=*/true, allow_paint_holding);
 }
 
 void RemoteFrame::DidUpdateVisualProperties(
@@ -1049,8 +1059,22 @@ void RemoteFrame::DidChangeScreenInfos(
   SynchronizeVisualProperties();
 }
 
-void RemoteFrame::ZoomLevelChanged(double zoom_level) {
-  pending_visual_properties_.zoom_level = zoom_level;
+void RemoteFrame::ZoomFactorChanged(double zoom_factor) {
+  // zoom_factor includes device scale factor, browser zoom, and css zoom.
+  WebViewImpl* view = GetPage()->GetChromeClient().GetWebView();
+  double device_scale_factor = view->ZoomFactorForViewportLayout();
+  if (Owner() && Owner()->IsLocal()) {
+    DCHECK(ancestor_widget_);
+    double zoom_level = ancestor_widget_->GetZoomLevel();
+    pending_visual_properties_.zoom_level = zoom_level;
+    double browser_zoom_factor = view->ZoomLevelToZoomFactor(zoom_level);
+    pending_visual_properties_.css_zoom_factor =
+        zoom_factor / (device_scale_factor * browser_zoom_factor);
+  } else {
+    pending_visual_properties_.zoom_level =
+        ZoomFactorToZoomLevel(zoom_factor / device_scale_factor);
+    pending_visual_properties_.css_zoom_factor = 1.0;
+  }
   SynchronizeVisualProperties();
 }
 

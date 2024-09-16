@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/base/dragdrop/os_exchange_data_provider_win.h"
 
 #include <objbase.h>
@@ -17,6 +22,7 @@
 #include <iterator>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "base/check_op.h"
@@ -325,7 +331,7 @@ std::optional<url::Origin> OSExchangeDataProviderWin::GetRendererTaintedOrigin()
   if (data.size() == 0) {
     return url::Origin();
   }
-  return url::Origin::Create(GURL(base::StringPiece(data.data(), data.size())));
+  return url::Origin::Create(GURL(std::string_view(data.data(), data.size())));
 }
 
 void OSExchangeDataProviderWin::MarkAsFromPrivileged() {
@@ -807,7 +813,6 @@ gfx::ImageSkia OSExchangeDataProviderWin::GetDragImage() const {
   // situations where the drag image is later queried. In that case a different
   // OSExchangeDataProvider should be used.
   NOTREACHED();
-  return gfx::ImageSkia();
 }
 
 gfx::Vector2d OSExchangeDataProviderWin::GetDragImageOffset() const {
@@ -815,7 +820,6 @@ gfx::Vector2d OSExchangeDataProviderWin::GetDragImageOffset() const {
   // situations where the drag image is later queried. In that case a different
   // OSExchangeDataProvider should be used.
   NOTREACHED();
-  return gfx::Vector2d();
 }
 
 void OSExchangeDataProviderWin::SetSource(

@@ -18,6 +18,7 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
+#include "base/not_fatal_until.h"
 #include "base/ranges/algorithm.h"
 #include "base/strings/escape.h"
 #include "base/task/sequenced_task_runner.h"
@@ -50,6 +51,7 @@
 #include "chrome/common/url_constants.h"
 #include "components/infobars/content/content_infobar_manager.h"
 #include "components/infobars/core/infobar.h"
+#include "components/input/native_web_keyboard_event.h"
 #include "components/javascript_dialogs/app_modal_dialog_manager.h"
 #include "components/keep_alive_registry/keep_alive_types.h"
 #include "components/keep_alive_registry/scoped_keep_alive.h"
@@ -78,8 +80,10 @@
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_client.h"
-#include "content/public/common/input/native_web_keyboard_event.h"
+#include "content/public/common/content_features.h"
 #include "content/public/common/url_constants.h"
+#include "extensions/browser/view_type_utils.h"
+#include "extensions/common/constants.h"
 #include "net/cert/x509_certificate.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
@@ -175,10 +179,9 @@ class DevToolsToolboxDelegate
           navigation_handle_callback) override;
   content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
       content::WebContents* source,
-      const content::NativeWebKeyboardEvent& event) override;
-  bool HandleKeyboardEvent(
-      content::WebContents* source,
-      const content::NativeWebKeyboardEvent& event) override;
+      const input::NativeWebKeyboardEvent& event) override;
+  bool HandleKeyboardEvent(content::WebContents* source,
+                           const input::NativeWebKeyboardEvent& event) override;
   void WebContentsDestroyed() override;
 
  private:
@@ -217,7 +220,7 @@ content::WebContents* DevToolsToolboxDelegate::OpenURLFromTab(
 content::KeyboardEventProcessingResult
 DevToolsToolboxDelegate::PreHandleKeyboardEvent(
     content::WebContents* source,
-    const content::NativeWebKeyboardEvent& event) {
+    const input::NativeWebKeyboardEvent& event) {
   BrowserWindow* window = GetInspectedBrowserWindow();
   if (window)
     return window->PreHandleKeyboardEvent(event);
@@ -226,7 +229,7 @@ DevToolsToolboxDelegate::PreHandleKeyboardEvent(
 
 bool DevToolsToolboxDelegate::HandleKeyboardEvent(
     content::WebContents* source,
-    const content::NativeWebKeyboardEvent& event) {
+    const input::NativeWebKeyboardEvent& event) {
   if (event.windows_key_code == 0x08) {
     // Do not navigate back in history on Windows (http://crbug.com/74156).
     return false;
@@ -288,7 +291,7 @@ class DevToolsEventForwarder {
 
   // Forwards a keyboard event to the DevTools frontend if it is whitelisted.
   // Returns |true| if the event has been forwarded, |false| otherwise.
-  bool ForwardEvent(const content::NativeWebKeyboardEvent& event);
+  bool ForwardEvent(const input::NativeWebKeyboardEvent& event);
 
  private:
   static bool KeyWhitelistingAllowed(int key_code, int modifiers);
@@ -320,7 +323,7 @@ void DevToolsEventForwarder::SetWhitelistedShortcuts(
 }
 
 bool DevToolsEventForwarder::ForwardEvent(
-    const content::NativeWebKeyboardEvent& event) {
+    const input::NativeWebKeyboardEvent& event) {
   std::string event_type;
   switch (event.GetType()) {
     case WebInputEvent::Type::kKeyDown:
@@ -481,7 +484,7 @@ DevToolsWindow::~DevToolsWindow() {
 
   DevToolsWindows* instances = g_devtools_window_instances.Pointer();
   auto it = base::ranges::find(*instances, this);
-  DCHECK(it != instances->end());
+  CHECK(it != instances->end(), base::NotFatalUntil::M130);
   instances->erase(it);
 
   if (!close_callback_.is_null())
@@ -492,13 +495,6 @@ DevToolsWindow::~DevToolsWindow() {
   if (owned_main_web_contents_) {
     base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(
         FROM_HERE, std::move(owned_main_web_contents_));
-  }
-
-  // This should be run after we remove |this| from
-  // |g_devtools_window_instances| as |reattach_complete_callback| may try to
-  // access it.
-  if (reattach_complete_callback_) {
-    std::move(reattach_complete_callback_).Run();
   }
 
   // If window gets destroyed during a test run, need to stop the test.
@@ -514,6 +510,7 @@ void DevToolsWindow::RegisterProfilePrefs(
   registry->RegisterDictionaryPref(prefs::kDevToolsEditedFiles);
   registry->RegisterDictionaryPref(prefs::kDevToolsFileSystemPaths);
   registry->RegisterStringPref(prefs::kDevToolsAdbKey, std::string());
+  registry->RegisterInt64Pref(prefs::kDevToolsLastOpenTimestamp, 0L);
 
   registry->RegisterBooleanPref(prefs::kDevToolsDiscoverUsbDevicesEnabled,
                                 true);
@@ -954,23 +951,6 @@ DevToolsWindow::MaybeCreateNavigationThrottle(
   return std::make_unique<Throttle>(handle, window);
 }
 
-// TODO(caseq): this method should be removed once we switch to
-// using tab target, so we don't currently use tab target here.
-void DevToolsWindow::UpdateInspectedWebContents(
-    content::WebContents* new_web_contents,
-    base::OnceCallback<void()> callback) {
-  DCHECK(!reattach_complete_callback_);
-  reattach_complete_callback_ = std::move(callback);
-
-  Observe(new_web_contents);
-  bindings_->AttachTo(
-      content::DevToolsAgentHost::GetOrCreateFor(new_web_contents));
-  bindings_->CallClientMethod(
-      "DevToolsAPI", "reattachMainTarget", {}, {}, {},
-      base::BindOnce(&DevToolsWindow::OnReattachMainTargetComplete,
-                     base::Unretained(this)));
-}
-
 void DevToolsWindow::ScheduleShow(const DevToolsToggleAction& action) {
   if (life_stage_ == kLoadCompleted) {
     Show(action);
@@ -1172,6 +1152,9 @@ DevToolsWindow::DevToolsWindow(FrontendType frontend_type,
     Observe(inspected_web_contents);
   }
 
+  extensions::SetViewType(main_web_contents_,
+                          extensions::mojom::ViewType::kDeveloperTools);
+
   // Initialize docked page to be of the right size.
   if (can_dock_ && inspected_web_contents) {
     content::RenderWidgetHostView* inspected_view =
@@ -1198,6 +1181,11 @@ DevToolsWindow::DevToolsWindow(FrontendType frontend_type,
       language::prefs::kAcceptLanguages,
       base::BindRepeating(&DevToolsWindow::OnLocaleChanged,
                           base::Unretained(this)));
+
+  int64_t now_timestamp =
+      base::Time::Now().ToDeltaSinceWindowsEpoch().InMilliseconds();
+  profile_->GetPrefs()->SetInt64(prefs::kDevToolsLastOpenTimestamp,
+                                 now_timestamp);
 }
 
 // static
@@ -1257,32 +1245,6 @@ DevToolsWindow* DevToolsWindow::Create(
                             inspected_web_contents, can_dock, opened_by);
 }
 
-std::string GetConsoleInsightsModelId() {
-  if (base::FeatureList::IsEnabled(
-          ::features::kDevToolsConsoleInsightsDogfood)) {
-    return features::kDevToolsConsoleInsightsDogfoodModelId.Get();
-  }
-  return features::kDevToolsConsoleInsightsModelId.Get();
-}
-
-std::string GetConsoleInsightsTemperature() {
-  if (base::FeatureList::IsEnabled(
-          ::features::kDevToolsConsoleInsightsDogfood)) {
-    return base::NumberToString(
-        features::kDevToolsConsoleInsightsDogfoodTemperature.Get());
-  }
-  return base::NumberToString(
-      features::kDevToolsConsoleInsightsTemperature.Get());
-}
-
-bool GetConsoleInsightsOptIn() {
-  if (base::FeatureList::IsEnabled(
-          ::features::kDevToolsConsoleInsightsDogfood)) {
-    return features::kDevToolsConsoleInsightsDogfoodOptIn.Get();
-  }
-  return features::kDevToolsConsoleInsightsOptIn.Get();
-}
-
 // static
 GURL DevToolsWindow::GetDevToolsURL(Profile* profile,
                                     FrontendType frontend_type,
@@ -1292,7 +1254,6 @@ GURL DevToolsWindow::GetDevToolsURL(Profile* profile,
                                     bool has_other_clients,
                                     bool browser_connection) {
   std::string url;
-  AidaClient::BlockedReason blocked_reason;
 
   std::string remote_base =
       "?remoteBase=" + DevToolsUI::GetRemoteBaseURL().spec();
@@ -1314,29 +1275,6 @@ GURL DevToolsWindow::GetDevToolsURL(Profile* profile,
         url += "&panel=" + panel;
       if (base::FeatureList::IsEnabled(::features::kDevToolsTabTarget)) {
         url += "&targetType=tab";
-      }
-      if (base::FeatureList::IsEnabled(::features::kDevToolsVeLogging)) {
-        url += "&veLogging=true";
-      }
-      blocked_reason = AidaClient::CanUseAida(profile);
-      if (!blocked_reason.blocked_by_feature_flag) {
-        url += "&enableAida=true&aidaModelId=" + GetConsoleInsightsModelId() +
-               "&aidaTemperature=" + GetConsoleInsightsTemperature();
-        if (GetConsoleInsightsOptIn()) {
-          url += "&ci_disabledByDefault=true";
-        }
-      }
-      if (blocked_reason.blocked_by_age) {
-        url += "&ci_blockedByAge=true";
-      }
-      if (blocked_reason.blocked_by_enterprise_policy) {
-        url += "&ci_blockedByEnterprisePolicy=true";
-      }
-      if (blocked_reason.blocked_by_geo) {
-        url += "&ci_blockedByGeo=true";
-      }
-      if (blocked_reason.blocked_by_rollout) {
-        url += "&ci_blockedByRollout=true";
       }
       break;
     case kFrontendWorker:
@@ -1361,6 +1299,11 @@ GURL DevToolsWindow::GetDevToolsURL(Profile* profile,
     url += "&hasOtherClients=true";
   if (browser_connection)
     url += "&browserConnection=true";
+
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kUnsafelyDisableDevToolsSelfXssWarnings)) {
+    url += "&disableSelfXssWarnings=true";
+  }
 
 #if BUILDFLAG(CHROME_FOR_TESTING)
   url += "&isChromeForTesting=true";
@@ -1441,7 +1384,7 @@ void DevToolsWindow::ActivateContents(WebContents* contents) {
   }
 }
 
-void DevToolsWindow::AddNewContents(
+WebContents* DevToolsWindow::AddNewContents(
     WebContents* source,
     std::unique_ptr<WebContents> new_contents,
     const GURL& target_url,
@@ -1462,7 +1405,7 @@ void DevToolsWindow::AddNewContents(
       toolbox_web_contents_->GetRenderWidgetHostView()->SetSize(size);
     }
     UpdateBrowserWindow();
-    return;
+    return nullptr;
   }
 
   WebContents* inspected_web_contents = GetInspectedWebContents();
@@ -1471,6 +1414,7 @@ void DevToolsWindow::AddNewContents(
         source, std::move(new_contents), target_url, disposition,
         window_features, user_gesture, was_blocked);
   }
+  return nullptr;
 }
 
 void DevToolsWindow::WebContentsCreated(WebContents* source_contents,
@@ -1500,10 +1444,10 @@ void DevToolsWindow::WebContentsCreated(WebContents* source_contents,
     // is resized when the frame is rendered. Force rendering of the toolbox at
     // all times, to make sure that a frame can be rendered even when the
     // inspected WebContents fully covers the toolbox. https://crbug.com/828307
-    capture_handle_ =
-        toolbox_web_contents_->IncrementCapturerCount(gfx::Size(),
-                                                      /*stay_hidden=*/false,
-                                                      /*stay_awake=*/false);
+    capture_handle_ = toolbox_web_contents_->IncrementCapturerCount(
+        gfx::Size(),
+        /*stay_hidden=*/false,
+        /*stay_awake=*/false, /*is_activity=*/true);
   }
 }
 
@@ -1550,7 +1494,7 @@ void DevToolsWindow::BeforeUnloadFired(WebContents* tab,
 
 content::KeyboardEventProcessingResult DevToolsWindow::PreHandleKeyboardEvent(
     WebContents* source,
-    const content::NativeWebKeyboardEvent& event) {
+    const input::NativeWebKeyboardEvent& event) {
   BrowserWindow* inspected_window = GetInspectedBrowserWindow();
   if (inspected_window) {
     return inspected_window->PreHandleKeyboardEvent(event);
@@ -1560,7 +1504,7 @@ content::KeyboardEventProcessingResult DevToolsWindow::PreHandleKeyboardEvent(
 
 bool DevToolsWindow::HandleKeyboardEvent(
     WebContents* source,
-    const content::NativeWebKeyboardEvent& event) {
+    const input::NativeWebKeyboardEvent& event) {
   if (event.windows_key_code == 0x08) {
     // Do not navigate back in history on Windows (http://crbug.com/74156).
     return true;
@@ -1678,7 +1622,7 @@ void DevToolsWindow::SetIsDocked(bool dock_requested) {
     // okay to just null the raw pointer here.
     browser_ = nullptr;
 
-    // TODO(crbug.com/1221967): WebContents should be removed with a reason
+    // TODO(crbug.com/40773744): WebContents should be removed with a reason
     // other than kInsertedIntoOtherTabStrip, it's not getting reinserted into
     // another tab strip.
     std::unique_ptr<tabs::TabModel> tab_model =
@@ -1705,7 +1649,7 @@ int DevToolsWindow::GetDockStateForLogging() {
   }
 
   gfx::Rect inspected_page_bounds = contents_resizing_strategy_.bounds();
-  if (inspected_page_bounds.x() >= 0) {
+  if (inspected_page_bounds.x() > 0) {
     return kLeft;
   }
   gfx::Rect devtools_bounds =
@@ -1951,7 +1895,7 @@ void DevToolsWindow::DoAction(const DevToolsToggleAction& action) {
       break;
     }
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
   }
 }
@@ -1990,7 +1934,7 @@ void DevToolsWindow::SetLoadCompletedCallback(base::OnceClosure closure) {
 }
 
 bool DevToolsWindow::ForwardKeyboardEvent(
-    const content::NativeWebKeyboardEvent& event) {
+    const input::NativeWebKeyboardEvent& event) {
   return event_forwarder_->ForwardEvent(event);
 }
 
@@ -2009,10 +1953,6 @@ void DevToolsWindow::RegisterModalDialogManager(Browser* browser) {
       main_web_contents_);
   web_modal::WebContentsModalDialogManager::FromWebContents(main_web_contents_)
       ->SetDelegate(browser);
-}
-
-void DevToolsWindow::OnReattachMainTargetComplete(base::Value) {
-  std::move(reattach_complete_callback_).Run();
 }
 
 void DevToolsWindow::OnLocaleChanged() {
@@ -2041,7 +1981,15 @@ void DevToolsWindow::MaybeShowSharedProcessInfobar() {
   checked_sharing_process_id_ = rph_id;
 
   if (!base::FeatureList::IsEnabled(
-          ::features::kDevToolsSharedProcessInfobar)) {
+          ::features::kDevToolsSharedProcessInfobar) ||
+      !base::FeatureList::IsEnabled(
+          ::features::kProcessPerSiteUpToMainFrameThreshold)) {
+    return;
+  }
+
+  content::SiteInstance* site_instance =
+      inspected_web_contents->GetPrimaryMainFrame()->GetSiteInstance();
+  if (site_instance->GetSiteURL().SchemeIs(extensions::kExtensionScheme)) {
     return;
   }
 

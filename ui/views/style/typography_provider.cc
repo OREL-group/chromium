@@ -143,9 +143,7 @@ ui::ResourceBundle::FontDetails TypographyProvider::GetFontDetailsImpl(
       details.weight = gfx::Font::Weight::BOLD;
       break;
     case style::CONTEXT_BUTTON_MD:
-      details.size_delta = features::IsChromeRefresh2023()
-                               ? gfx::PlatformFont::GetFontSizeDelta(13)
-                               : ui::kLabelFontSizeDelta;
+      details.size_delta = gfx::PlatformFont::GetFontSizeDelta(13);
       details.weight = MediumWeightForUI();
       break;
     case style::CONTEXT_DIALOG_TITLE:
@@ -191,6 +189,10 @@ ui::ResourceBundle::FontDetails TypographyProvider::GetFontDetailsImpl(
     case style::STYLE_HEADLINE_4:
       details.size_delta = gfx::PlatformFont::GetFontSizeDelta(16);
       details.weight = gfx::Font::Weight::MEDIUM;
+      break;
+    case style::STYLE_HEADLINE_4_BOLD:
+      details.size_delta = gfx::PlatformFont::GetFontSizeDelta(16);
+      details.weight = gfx::Font::Weight::BOLD;
       break;
     case style::STYLE_HEADLINE_5:
       details.size_delta = gfx::PlatformFont::GetFontSizeDelta(14);
@@ -256,6 +258,10 @@ ui::ResourceBundle::FontDetails TypographyProvider::GetFontDetailsImpl(
       details.size_delta = gfx::PlatformFont::GetFontSizeDelta(11);
       details.weight = gfx::Font::Weight::BOLD;
       break;
+    case style::STYLE_LINK_5:
+      details.size_delta = gfx::PlatformFont::GetFontSizeDelta(11);
+      details.weight = gfx::Font::Weight::NORMAL;
+      break;
     case style::STYLE_CAPTION:
       details.size_delta = gfx::PlatformFont::GetFontSizeDelta(9);
       details.weight = gfx::Font::Weight::NORMAL;
@@ -282,6 +288,7 @@ ui::ColorId TypographyProvider::GetColorIdImpl(int context, int style) const {
     case style::STYLE_DISABLED:
       return GetDisabledColorId(context);
     case style::STYLE_LINK:
+    case style::STYLE_LINK_5:
       return (context == style::CONTEXT_BUBBLE_FOOTER)
                  ? ui::kColorLinkForegroundOnBubbleFooter
                  : ui::kColorLinkForeground;
@@ -319,16 +326,17 @@ ui::ColorId TypographyProvider::GetColorIdImpl(int context, int style) const {
 
 int TypographyProvider::GetLineHeightImpl(int context, int style) const {
   static constexpr auto kLineHeights = base::MakeFixedFlatMap<int, int>({
-      {style::STYLE_HEADLINE_1, 32},    {style::STYLE_HEADLINE_2, 24},
-      {style::STYLE_HEADLINE_3, 24},    {style::STYLE_HEADLINE_4, 24},
-      {style::STYLE_HEADLINE_5, 20},    {style::STYLE_BODY_1, 24},
-      {style::STYLE_BODY_1_MEDIUM, 24}, {style::STYLE_BODY_1_BOLD, 24},
-      {style::STYLE_BODY_2, 20},        {style::STYLE_BODY_2_MEDIUM, 20},
-      {style::STYLE_BODY_2_BOLD, 20},   {style::STYLE_BODY_3, 20},
-      {style::STYLE_BODY_3_MEDIUM, 20}, {style::STYLE_BODY_3_BOLD, 20},
-      {style::STYLE_BODY_4, 16},        {style::STYLE_BODY_4_MEDIUM, 16},
-      {style::STYLE_BODY_4_BOLD, 16},   {style::STYLE_BODY_5, 16},
-      {style::STYLE_BODY_5_MEDIUM, 16}, {style::STYLE_BODY_5_BOLD, 16},
+      {style::STYLE_HEADLINE_1, 32},      {style::STYLE_HEADLINE_2, 24},
+      {style::STYLE_HEADLINE_3, 24},      {style::STYLE_HEADLINE_4, 24},
+      {style::STYLE_HEADLINE_4_BOLD, 24}, {style::STYLE_HEADLINE_5, 20},
+      {style::STYLE_BODY_1, 24},          {style::STYLE_BODY_1_MEDIUM, 24},
+      {style::STYLE_BODY_1_BOLD, 24},     {style::STYLE_BODY_2, 20},
+      {style::STYLE_BODY_2_MEDIUM, 20},   {style::STYLE_BODY_2_BOLD, 20},
+      {style::STYLE_BODY_3, 20},          {style::STYLE_BODY_3_MEDIUM, 20},
+      {style::STYLE_BODY_3_BOLD, 20},     {style::STYLE_BODY_4, 16},
+      {style::STYLE_BODY_4_MEDIUM, 16},   {style::STYLE_BODY_4_BOLD, 16},
+      {style::STYLE_BODY_5, 16},          {style::STYLE_BODY_5_MEDIUM, 16},
+      {style::STYLE_BODY_5_BOLD, 16},     {style::STYLE_LINK_5, 16},
       {style::STYLE_CAPTION, 12},
   });
   const auto it = kLineHeights.find(style);

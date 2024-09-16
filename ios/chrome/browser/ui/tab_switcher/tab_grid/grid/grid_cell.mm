@@ -198,14 +198,9 @@ void PositionView(UIView* view, CGPoint point) {
 }
 
 - (void)didMoveToWindow {
-  if (self.window) {
-    if (self.theme == GridThemeLight) {
-      UIUserInterfaceStyle previousStyle =
-          self.window.overrideUserInterfaceStyle;
-      self.window.overrideUserInterfaceStyle = UIUserInterfaceStyleUnspecified;
-      self.overrideUserInterfaceStyle =
-          self.window.traitCollection.userInterfaceStyle;
-      self.window.overrideUserInterfaceStyle = previousStyle;
+  if (self.theme == GridThemeLight) {
+    if (@available(iOS 17, *)) {
+      [self updateInterfaceStyleForWindow:self.window];
     }
   }
 }
@@ -226,6 +221,7 @@ void PositionView(UIView* view, CGPoint point) {
   self.selected = NO;
   self.priceCardView.hidden = YES;
   self.opacity = 1.0;
+  self.hidden = NO;
   [self hideActivityIndicator];
 }
 
@@ -260,19 +256,21 @@ void PositionView(UIView* view, CGPoint point) {
   if (_theme == theme)
     return;
 
-  self.overrideUserInterfaceStyle = (theme == GridThemeDark)
-                                        ? UIUserInterfaceStyleDark
-                                        : UIUserInterfaceStyleUnspecified;
-
   // The light and dark themes have different colored borders based on the
   // theme, regardless of dark mode, so `overrideUserInterfaceStyle` is not
   // enough here.
   switch (theme) {
     case GridThemeLight:
+      if (@available(iOS 17, *)) {
+        [self updateInterfaceStyleForWindow:self.window];
+      } else {
+        self.overrideUserInterfaceStyle = UIUserInterfaceStyleLight;
+      }
       self.border.layer.borderColor =
           [UIColor colorNamed:kStaticBlue400Color].CGColor;
       break;
     case GridThemeDark:
+      self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
       self.border.layer.borderColor = UIColor.whiteColor.CGColor;
       break;
   }
@@ -362,6 +360,7 @@ void PositionView(UIView* view, CGPoint point) {
 
 - (void)setAlpha:(CGFloat)alpha {
   // Make sure alpha is synchronized with opacity.
+  _opacity = alpha;
   super.alpha = _opacity;
 }
 
@@ -622,6 +621,31 @@ void PositionView(UIView* view, CGPoint point) {
              : kGridCellHeaderHeight;
 }
 
+// If window is not nil, register for updates to its interface style updates and
+// set the user interface style to be the same as the window.
+- (void)updateInterfaceStyleForWindow:(UIWindow*)window {
+  if (!window) {
+    return;
+  }
+  if (@available(iOS 17, *)) {
+    [self.window.windowScene
+        registerForTraitChanges:@[ UITraitUserInterfaceStyle.self ]
+                     withTarget:self
+                         action:@selector(interfaceStyleChangedForWindow:
+                                                         traitCollection:)];
+    self.overrideUserInterfaceStyle =
+        self.window.windowScene.traitCollection.userInterfaceStyle;
+  }
+}
+
+// Callback for the observation of the user interface style trait of the window
+// scene.
+- (void)interfaceStyleChangedForWindow:(UIView*)window
+                       traitCollection:(UITraitCollection*)traitCollection {
+  self.overrideUserInterfaceStyle =
+      self.window.windowScene.traitCollection.userInterfaceStyle;
+}
+
 @end
 
 @implementation GridTransitionCell {
@@ -650,7 +674,7 @@ void PositionView(UIView* view, CGPoint point) {
 
 - (void)setTopCellView:(UIView*)topCellView {
   // The top cell view is `topBar` and can't be changed.
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 - (UIView*)topCellView {
@@ -666,7 +690,7 @@ void PositionView(UIView* view, CGPoint point) {
 
 - (void)setMainCellView:(UIView*)mainCellView {
   // The main cell view is the snapshot view and can't be changed.
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 - (UIView*)mainCellView {

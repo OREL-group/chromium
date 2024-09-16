@@ -13,11 +13,9 @@
 #include "device/vr/openxr/openxr_util.h"
 #include "gpu/command_buffer/client/client_shared_image.h"
 #include "gpu/command_buffer/client/shared_image_interface.h"
-#include "gpu/command_buffer/common/gpu_memory_buffer_support.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
 #include "gpu/command_buffer/service/ahardwarebuffer_utils.h"
 #include "gpu/ipc/common/android/android_hardware_buffer_utils.h"
-#include "gpu/ipc/common/gpu_memory_buffer_impl_android_hardware_buffer.h"
 #include "third_party/openxr/src/include/openxr/openxr.h"
 #include "ui/gfx/buffer_types.h"
 #include "ui/gfx/color_space.h"
@@ -49,8 +47,8 @@ OpenXrGraphicsBindingOpenGLES::~OpenXrGraphicsBindingOpenGLES() {
     glDeleteFramebuffersEXT(1, &back_buffer_fbo_);
   }
 
-  if (overlay_texture_) {
-    glDeleteTextures(1, &overlay_texture_);
+  if (overlay_texture_.id) {
+    glDeleteTextures(1, &overlay_texture_.id);
   }
 }
 
@@ -79,7 +77,7 @@ bool OpenXrGraphicsBindingOpenGLES::Initialize(XrInstance instance,
   // None of the other runtimes support ANGLE, so we disable it too for now.
   // TODO(alcooper): Investigate if we can support ANGLE or if we'll run into
   // similar problems as cardboard.
-  gl::init::DisableANGLE();
+  gl::DisableANGLE();
 
   // Everything below is a hacky first pass at making a session and likely needs
   // to be re-written with proper context/surfaces/types.
@@ -237,11 +235,9 @@ void OpenXrGraphicsBindingOpenGLES::ResizeSharedBuffer(
   // The SharedImages created here will eventually be transferred to other
   // processes to have their contents written by WebGL and read via GL by
   // OpenXR.
-  uint32_t shared_image_usage =
+  gpu::SharedImageUsageSet shared_image_usage =
       gpu::SHARED_IMAGE_USAGE_SCANOUT | gpu::SHARED_IMAGE_USAGE_DISPLAY_READ |
       gpu::SHARED_IMAGE_USAGE_GLES2_READ | gpu::SHARED_IMAGE_USAGE_GLES2_WRITE;
-
-  glGenTextures(1, &swap_chain_info.shared_buffer_texture);
 
   swap_chain_info.scoped_ahb_handle =
       gpu::CreateScopedHardwareBufferHandle(transfer_size, format, usage);
@@ -267,7 +263,7 @@ void OpenXrGraphicsBindingOpenGLES::ResizeSharedBuffer(
       std::move(gmb_handle));
   CHECK(swap_chain_info.shared_image);
   swap_chain_info.sync_token = sii->GenVerifiedSyncToken();
-  DCHECK_EQ(swap_chain_info.shared_image->GetTextureTarget(format),
+  DCHECK_EQ(swap_chain_info.shared_image->GetTextureTarget(),
             static_cast<uint32_t>(GL_TEXTURE_2D));
 
   DVLOG(2) << ": CreateSharedImage, mailbox="
@@ -282,8 +278,13 @@ void OpenXrGraphicsBindingOpenGLES::ResizeSharedBuffer(
     return;
   }
 
-  glBindTexture(GL_TEXTURE_EXTERNAL_OES, swap_chain_info.shared_buffer_texture);
-  glEGLImageTargetTexture2DOES(GL_TEXTURE_EXTERNAL_OES, egl_image.get());
+  swap_chain_info.shared_buffer_texture.target =
+      XrImageTransportBase::SharedBufferTextureTarget();
+  glGenTextures(1, &swap_chain_info.shared_buffer_texture.id);
+  glBindTexture(swap_chain_info.shared_buffer_texture.target,
+                swap_chain_info.shared_buffer_texture.id);
+  glEGLImageTargetTexture2DOES(swap_chain_info.shared_buffer_texture.target,
+                               egl_image.get());
   swap_chain_info.local_eglimage = std::move(egl_image);
 }
 
@@ -360,12 +361,14 @@ bool OpenXrGraphicsBindingOpenGLES::Render(
       return false;
     }
 
-    if (!overlay_texture_) {
-      glGenTextures(1, &overlay_texture_);
+    if (!overlay_texture_.id) {
+      overlay_texture_.target =
+          XrImageTransportBase::SharedBufferTextureTarget();
+      glGenTextures(1, &overlay_texture_.id);
     }
 
-    glBindTexture(GL_TEXTURE_EXTERNAL_OES, overlay_texture_);
-    glEGLImageTargetTexture2DOES(GL_TEXTURE_EXTERNAL_OES, egl_image.get());
+    glBindTexture(overlay_texture_.target, overlay_texture_.id);
+    glEGLImageTargetTexture2DOES(overlay_texture_.target, egl_image.get());
     renderer_->Draw(overlay_texture_, transform_floats);
   }
 

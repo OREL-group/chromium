@@ -268,7 +268,8 @@ class BlockedSchemeNavigationBrowserTest
 
   // Adds an iframe to |rfh| pointing to |url|.
   void AddIFrame(RenderFrameHost* rfh, const GURL& url) {
-    content::DOMMessageQueue message_queue(rfh);
+    content::DOMMessageQueue message_queue(
+        WebContents::FromRenderFrameHost(rfh));
     const std::string javascript = base::StringPrintf(
         "f = document.createElement('iframe'); f.src = '%s';"
         "document.body.appendChild(f);",
@@ -401,7 +402,7 @@ class BlockedSchemeNavigationBrowserTest
         break;
 
       default:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
     }
   }
 
@@ -432,7 +433,7 @@ class BlockedSchemeNavigationBrowserTest
         break;
 
       default:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
     }
   }
 
@@ -804,7 +805,8 @@ IN_PROC_BROWSER_TEST_P(BlockedSchemeNavigationBrowserTest,
     // original page may clear all filesystem: URLs associated with that origin,
     // so we keep the origin around in the original shell.
     ShellAddedObserver new_shell_observer;
-    // TODO(crbug/811558): about:blank might commit without needing to wait.
+    // TODO(crbug.com/40090464): about:blank might commit without needing to
+    // wait.
     //                     Remove the wait.
     EXPECT_TRUE(ExecJs(shell()->web_contents(), "window.open('about:blank');"));
     Shell* new_shell = new_shell_observer.GetShell();
@@ -971,7 +973,7 @@ IN_PROC_BROWSER_TEST_F(BlockedSchemeNavigationBrowserTest,
 
 // Tests navigation of the main frame to a filesystem URL with a binary mimetype
 // from a subframe. Navigations to filesystem URLs never end up as downloads.
-// TODO(crbug.com/1503148): Enable the flaky test.
+// TODO(crbug.com/40943572): Enable the flaky test.
 #if BUILDFLAG(IS_FUCHSIA)
 #define MAYBE_FilesystemUrl_OctetStream_NavigationFromFrame \
   DISABLED_FilesystemUrl_OctetStream_NavigationFromFrame
@@ -1108,7 +1110,7 @@ IN_PROC_BROWSER_TEST_F(BlockedSchemeNavigationBrowserTest,
 // Test navigation of the main frame to a filesystem URL with an unknown
 // mimetype from a subframe. Navigations to filesystem URLs don't end up as
 // downloads.
-// TODO(crbug.com/1503148): Enable the flaky test.
+// TODO(crbug.com/40943572): Enable the flaky test.
 #if BUILDFLAG(IS_FUCHSIA)
 #define MAYBE_FilesystemUrl_UnknownMimeType_NavigationFromFrame \
   DISABLED_FilesystemUrl_UnknownMimeType_NavigationFromFrame

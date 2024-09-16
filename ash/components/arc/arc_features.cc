@@ -8,11 +8,43 @@
 
 namespace arc {
 
+// When enabled, the versions of ChromeOS and ARC are exchanged during
+// handshake. This feature reduces unnecessary inter-process communications.
+BASE_FEATURE(kArcExchangeVersionOnMojoHandshake,
+             "ArcExchangeVersionOnMojoHandshake",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 // Controls whether to always start ARC automatically, or wait for the user's
-// action to start it later in an on-demand manner.
-BASE_FEATURE(kArcOnDemandFeature,
-             "ArcOnDemand",
+// action to start it later in an on-demand manner. Already enabled by default
+// for managed users. In V2, it will be expand to more users such as unmanaged
+// users.
+BASE_FEATURE(kArcOnDemandV2,
+             "ArcOnDemandV2",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Controls whether ARC should be activated on any app launches. If set to
+// false, inactive_interval will be checked.
+const base::FeatureParam<bool> kArcOnDemandActivateOnAppLaunch{
+    &kArcOnDemandV2, "activate_on_app_launch", true};
+
+// Controls how long of invactivity are allowed before ARC on Demand is
+// triggered.
+const base::FeatureParam<base::TimeDelta> kArcOnDemandInactiveInterval{
+    &kArcOnDemandV2, "inactive_interval", base::Days(0)};
+
+// Controls whether to start ARC with the GKI kernel.
+BASE_FEATURE(kArcVmGki,
+             "ArcVmGki",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Controls block IO schedulers in ARCVM.
+BASE_FEATURE(kBlockIoScheduler,
+             "ArcBlockIoScheduler",
              base::FEATURE_ENABLED_BY_DEFAULT);
+
+// Controls whether to enable block IO scheduler for virtio-blk /data.
+const base::FeatureParam<bool> kEnableDataBlockIoScheduler{
+    &kBlockIoScheduler, "data_block_io_scheduler", true};
 
 // Controls ACTION_BOOT_COMPLETED broadcast for third party applications on ARC.
 // When disabled, third party apps will not receive this broadcast.
@@ -64,29 +96,27 @@ BASE_FEATURE(kDocumentsProviderUnknownSizeFeature,
              "ArcDocumentsProviderUnknownSize",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
+// Controls whether attestation will be used on ARCVM.
+BASE_FEATURE(kEnableArcAttestation,
+             "ArcAttestation",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 // Controls whether we automatically send ARCVM into Doze mode
 // when it is mostly idle - even if Chrome is still active.
 BASE_FEATURE(kEnableArcIdleManager,
              "ArcIdleManager",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // For test purposes, ignore battery status changes, allowing Doze mode to
 // kick in even if we do not receive powerd changes related to battery.
 const base::FeatureParam<bool> kEnableArcIdleManagerIgnoreBatteryForPLT{
-    &kEnableArcIdleManager, "ignore_battery_for_test", false};
+    &kEnableArcIdleManager, "ignore_battery_for_test", true};
 
 const base::FeatureParam<int> kEnableArcIdleManagerDelayMs{
-    &kEnableArcIdleManager, "delay_ms", 60 * 1000};
+    &kEnableArcIdleManager, "delay_ms", 360 * 1000};
 
 const base::FeatureParam<bool> kEnableArcIdleManagerPendingIdleReactivate{
     &kEnableArcIdleManager, "pending_idle_reactivate", false};
-
-// Controls whether files shared to ARC Nearby Share are shared through the
-// FuseBox filesystem, instead of the default method (through a temporary path
-// managed by file manager).
-BASE_FEATURE(kEnableArcNearbyShareFuseBox,
-             "ArcNearbyShareFuseBox",
-             base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Controls whether to enable support for s2idle in ARCVM.
 BASE_FEATURE(kEnableArcS2Idle, "ArcS2Idle", base::FEATURE_DISABLED_BY_DEFAULT);
@@ -97,6 +127,12 @@ BASE_FEATURE(kEnableArcS2Idle, "ArcS2Idle", base::FEATURE_DISABLED_BY_DEFAULT);
 BASE_FEATURE(kEnableArcVmDataMigration,
              "ArcVmDataMigration",
              base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Controls whether to enable friendlier error dialog (switching to notification
+// for certain types of ARC error dialogs).
+BASE_FEATURE(kEnableFriendlierErrorDialog,
+             "FriendlierErrorDialog",
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Controls whether WebView Zygote is lazily initialized in ARC.
 BASE_FEATURE(kEnableLazyWebViewInit,
@@ -146,6 +182,21 @@ BASE_FEATURE(kEnableVirtioBlkMultipleWorkers,
              "ArcEnableVirtioBlkMultipleWorkers",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
+// Controls whether to extend the input event ANR timeout time.
+BASE_FEATURE(kExtendInputAnrTimeout,
+             "ArcExtendInputAnrTimeout",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+// Controls whether to extend the broadcast of intent ANR timeout time.
+BASE_FEATURE(kExtendIntentAnrTimeout,
+             "ArcExtendIntentAnrTimeout",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Controls whether to extend the executing service ANR timeout time.
+BASE_FEATURE(kExtendServiceAnrTimeout,
+             "ArcExtendServiceAnrTimeout",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 // Controls whether to allow Android apps to access external storage devices
 // like USB flash drives and SD cards.
 BASE_FEATURE(kExternalStorageAccess,
@@ -177,34 +228,48 @@ BASE_FEATURE(kFilePickerExperimentFeature,
              "ArcFilePickerExperiment",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-// Controls whether the guest zram is enabled. This is only for ARCVM.
-BASE_FEATURE(kGuestZram, "ArcGuestZram", base::FEATURE_DISABLED_BY_DEFAULT);
+// Controls whether the guest swap is enabled. This is only for ARCVM.
+BASE_FEATURE(kGuestSwap, "ArcGuestZram", base::FEATURE_DISABLED_BY_DEFAULT);
 
-// Controls the size of the guest zram by an absolute value. Ignored if
+// Controls the size of the guest swap area by an absolute value. Ignored if
 // "size_percentage" is set.
-const base::FeatureParam<int> kGuestZramSize{&kGuestZram, "size", 0};
+const base::FeatureParam<int> kGuestSwapSize{&kGuestSwap, "size", 0};
 
-// Controls the size of the guest zram by a percentage of the VM memory size.
-const base::FeatureParam<int> kGuestZramSizePercentage{&kGuestZram,
+// Controls the size of the guest swap area by a percentage of the VM memory
+// size.
+const base::FeatureParam<int> kGuestZramSizePercentage{&kGuestSwap,
                                                        "size_percentage", 0};
 
 // Controls swappiness for the ARCVM guest.
-const base::FeatureParam<int> kGuestZramSwappiness{&kGuestZram, "swappiness",
+const base::FeatureParam<int> kGuestZramSwappiness{&kGuestSwap, "swappiness",
                                                    0};
 
 // Controls whether to do per-process reclaim from the ARCVM guest.
 const base::FeatureParam<bool> kGuestReclaimEnabled{
-    &kGuestZram, "guest_reclaim_enabled", false};
+    &kGuestSwap, "guest_reclaim_enabled", false};
 
 // Controls whether only anonymous pages are reclaimed from the ARCVM guest.
 // Ignored when the "guest_reclaim_enabled" param is false.
 const base::FeatureParam<bool> kGuestReclaimOnlyAnonymous{
-    &kGuestZram, "guest_reclaim_only_anonymous", false};
+    &kGuestSwap, "guest_reclaim_only_anonymous", false};
+
+// Controls whether to enable virtual swap device for ARCVM.
+const base::FeatureParam<bool> kVirtualSwapEnabled{
+    &kGuestSwap, "virtual_swap_enabled", false};
+
+// Controls how often ARCVM's virtual swap device is swapped out in the host.
+const base::FeatureParam<int> kVirtualSwapIntervalMs{
+    &kGuestSwap, "virtual_swap_interval_ms", 1000};
+
+// Controls whether to enable virtio-pvclock in ARCVM
+BASE_FEATURE(kArcVmPvclock,
+             "ArcEnablePvclock",
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Controls whether enable ignoring hover event ANR in input dispatcher.
 BASE_FEATURE(kIgnoreHoverEventAnr,
              "IgnoreHoverEventAnr",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Enables/disables ghost when user launch ARC app from shelf/launcher when
 // App already ready for launch.
@@ -306,6 +371,11 @@ BASE_FEATURE(kSaveRawFilesOnTracing,
              "ArcSaveRawFilesOnTracing",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
+// When enabled, skip dropping ARCVM page cache after boot.
+BASE_FEATURE(kSkipDropCaches,
+             "ArcSkipDropPageCache",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 // When enabled, CertStoreService will talk to KeyMint instead of Keymaster on
 // ARC-T.
 BASE_FEATURE(kSwitchToKeyMintOnT,
@@ -330,16 +400,11 @@ BASE_FEATURE(kTouchscreenEmulation,
              "ArcTouchscreenEmulation",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-// Controls whether ARC should be enabled on unaffiliated devices on client side
-BASE_FEATURE(kUnaffiliatedDeviceArcRestriction,
-             "UnaffiliatedDeviceArcRestriction",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 // When enabled, ARC will not be throttled when there is active audio stream
 // from ARC.
 BASE_FEATURE(kUnthrottleOnActiveAudio,
              "ArcUnthrottleOnActiveAudio",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Controls ARC USB Storage UI feature.
 // When enabled, chrome://settings and Files.app will ask if the user wants
@@ -447,9 +512,6 @@ const base::FeatureParam<base::TimeDelta> kVmmSwapTrimInterval{
 // when swap is enabled or swap trimming is performed.
 const base::FeatureParam<base::TimeDelta> kVmmSwapMinShrinkInterval{
     &kVmmSwapPolicy, "min_shrink_interval", base::Minutes(10)};
-
-// When enabled, ARC uses XDG-based Wayland protocols.
-BASE_FEATURE(kXdgMode, "ArcXdgMode", base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Controls the feature to delay low memory kills of high priority apps when the
 // memory pressure is below foreground.

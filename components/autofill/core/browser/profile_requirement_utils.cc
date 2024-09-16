@@ -9,6 +9,7 @@
 
 #include "base/containers/contains.h"
 #include "base/strings/utf_string_conversions.h"
+#include "components/autofill/core/browser/address_data_manager.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/geo/autofill_country.h"
 #include "components/autofill/core/common/autofill_internals/log_message.h"
@@ -45,7 +46,7 @@ ValidateProfileImportRequirements(const AutofillProfile& profile,
       [&](bool required, const std::vector<FieldType>& types,
           AddressImportRequirement valid, AddressImportRequirement invalid) {
         const bool is_valid =
-            !required || base::ranges::any_of(types, [&](FieldType type) {
+            !required || std::ranges::any_of(types, [&](FieldType type) {
               return profile.HasRawInfo(type);
             });
         if (is_valid) {
@@ -147,7 +148,7 @@ bool IsMinimumAddress(const AutofillProfile& profile, LogBuffer* log_buffer) {
   }
   std::vector<AddressImportRequirement> address_requirements =
       ValidateProfileImportRequirements(profile, log_buffer);
-  return !base::ranges::any_of(
+  return !std::ranges::any_of(
       kMinimumAddressRequirementViolations,
       [&](AddressImportRequirement address_requirement_violation) {
         return base::Contains(address_requirements,
@@ -156,15 +157,12 @@ bool IsMinimumAddress(const AutofillProfile& profile, LogBuffer* log_buffer) {
 }
 
 bool IsEligibleForMigrationToAccount(
-    const PersonalDataManager& personal_data_manager,
+    const AddressDataManager& address_data_manager,
     const AutofillProfile& profile) {
-  return personal_data_manager.address_data_manager()
-             .IsEligibleForAddressAccountStorage() &&
-         !personal_data_manager.address_data_manager()
-              .IsProfileMigrationBlocked(profile.guid()) &&
-         personal_data_manager.address_data_manager()
-             .IsCountryEligibleForAccountStorage(
-                 base::UTF16ToUTF8(profile.GetRawInfo(ADDRESS_HOME_COUNTRY)));
+  return address_data_manager.IsEligibleForAddressAccountStorage() &&
+         !address_data_manager.IsProfileMigrationBlocked(profile.guid()) &&
+         address_data_manager.IsCountryEligibleForAccountStorage(
+             base::UTF16ToUTF8(profile.GetRawInfo(ADDRESS_HOME_COUNTRY)));
 }
 
 }  // namespace autofill

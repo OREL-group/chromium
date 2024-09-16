@@ -7,6 +7,7 @@
 #include <jni.h>
 #include <stddef.h>
 #include <stdint.h>
+
 #include <memory>
 #include <string>
 #include <vector>
@@ -37,10 +38,10 @@
 #include "chrome/browser/preloading/prefetch/search_prefetch/search_prefetch_service_factory.h"
 #include "chrome/browser/preloading/prerender/prerender_manager.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/profiles/profile_android.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/common/webui_url_constants.h"
 #include "components/browser_ui/util/android/url_constants.h"
+#include "components/omnibox/browser/actions/omnibox_answer_action.h"
 #include "components/omnibox/browser/autocomplete_classifier.h"
 #include "components/omnibox/browser/autocomplete_controller_emitter.h"
 #include "components/omnibox/browser/autocomplete_grouper_sections.h"
@@ -77,7 +78,7 @@
 #include "url/android/gurl_android.h"
 #include "url/gurl.h"
 
-// Must come after other includes, because FromJniType() uses Profile.
+// Must come after all headers that specialize FromJniType() / ToJniType().
 #include "chrome/browser/ui/android/omnibox/jni_headers/AutocompleteController_jni.h"
 
 using base::android::AppendJavaStringArrayToStringVector;
@@ -93,13 +94,6 @@ using base::android::ScopedJavaLocalRef;
 using metrics::OmniboxEventProto;
 
 namespace {
-// The delay between the Omnibox being opened and a spare renderer being
-// started. Starting a spare renderer is a very expensive operation, so this
-// value must always be great enough for the Omnibox to be fully rendered and
-// otherwise not doing anything important but not so great that the user
-// navigates before it occurs. Experimentation between 1s, 2s, 3s found that 1s
-// was the most ideal.
-static constexpr int OMNIBOX_SPARE_RENDERER_DELAY_MS = 1000;
 
 void RecordClipboardMetrics(AutocompleteMatchType::Type match_type) {
   if (match_type != AutocompleteMatchType::CLIPBOARD_URL &&
@@ -133,7 +127,6 @@ AutocompleteControllerAndroid::AutocompleteControllerAndroid(
     : profile_{profile},
       java_controller_{Java_AutocompleteController_Constructor(
           AttachCurrentThread(),
-          ProfileAndroid::FromProfile(profile)->GetJavaObject(),
           reinterpret_cast<intptr_t>(this))},
       autocomplete_controller_{std::make_unique<AutocompleteController>(
           std::move(client),
@@ -245,7 +238,8 @@ void AutocompleteControllerAndroid::OnOmniboxFocused(
     const JavaParamRef<jstring>& j_omnibox_text,
     const JavaParamRef<jstring>& j_current_url,
     jint j_page_classification,
-    const JavaParamRef<jstring>& j_current_title) {
+    const JavaParamRef<jstring>& j_current_title,
+    bool is_on_focus_context) {
   // Prevents double triggering of zero suggest when OnOmniboxFocused is issued
   // in quick succession (due to odd timing in the Android focus callbacks).
   if (!autocomplete_controller_->done()) {
@@ -267,9 +261,9 @@ void AutocompleteControllerAndroid::OnOmniboxFocused(
   auto page_class =
       OmniboxEventProto::PageClassification(j_page_classification);
   const bool interaction_clobber_focus_type =
-      base::FeatureList::IsEnabled(
-          omnibox::kOmniboxOnClobberFocusTypeOnContent) &&
-      !omnibox::IsNTPPage(page_class);
+      !(omnibox::IsNTPPage(page_class) ||
+        (is_on_focus_context &&
+         base::FeatureList::IsEnabled(omnibox::kRetainOmniboxOnFocus)));
   if (interaction_clobber_focus_type) {
     omnibox_text.clear();
   }
@@ -284,11 +278,12 @@ void AutocompleteControllerAndroid::OnOmniboxFocused(
   if (!profile_->IsOffTheRecord() &&
       page_class != OmniboxEventProto::ANDROID_SEARCH_WIDGET &&
       !omnibox::IsNTPPage(page_class)) {
+    int spare_renderer_delay_ms = omnibox::kOmniboxSpareRendererDelayMs.Get();
     content::GetUIThreadTaskRunner({})->PostDelayedTask(
         FROM_HERE,
         base::BindOnce(&AutocompleteControllerAndroid::WarmUpRenderProcess,
                        weak_ptr_factory_.GetWeakPtr()),
-        base::Milliseconds(OMNIBOX_SPARE_RENDERER_DELAY_MS));
+        base::Milliseconds(spare_renderer_delay_ms));
   }
 
   input_ = AutocompleteInput(omnibox_text, page_class,
@@ -329,7 +324,7 @@ void AutocompleteControllerAndroid::OnSuggestionSelected(
       content::WebContents::FromJavaWebContents(j_web_contents);
 
   const auto& match = *reinterpret_cast<AutocompleteMatch*>(match_ptr);
-  SuggestionAnswer::LogAnswerUsed(match.answer);
+  omnibox::answer_data_parser::LogAnswerUsed(match.answer_type);
   TemplateURLService* template_url_service =
       TemplateURLServiceFactory::GetForProfile(profile_);
   if (template_url_service &&
@@ -439,6 +434,33 @@ ScopedJavaLocalRef<jobject> AutocompleteControllerAndroid::
   return url::GURLAndroid::FromNativeGURL(env, match->destination_url);
 }
 
+base::android::ScopedJavaLocalRef<jobject>
+AutocompleteControllerAndroid::GetAnswerActionDestinationURL(
+    JNIEnv* env,
+    uintptr_t match_ptr,
+    jlong elapsed_time_since_input_change,
+    uintptr_t answer_action_ptr) {
+  auto* match = reinterpret_cast<AutocompleteMatch*>(match_ptr);
+  auto* action = reinterpret_cast<OmniboxAnswerAction*>(answer_action_ptr);
+
+  TemplateURLService* template_url_service =
+      TemplateURLServiceFactory::GetForProfile(profile_);
+
+  if (action == nullptr || template_url_service == nullptr) {
+    return url::GURLAndroid::FromNativeGURL(env, GURL());
+  }
+
+  autocomplete_controller_->UpdateSearchTermsArgsWithAdditionalSearchboxStats(
+      base::Milliseconds(elapsed_time_since_input_change),
+      action->search_terms_args);
+  TemplateURL* template_url =
+      match->GetTemplateURL(template_url_service, false);
+  return url::GURLAndroid::FromNativeGURL(
+      env, GURL(template_url->url_ref().ReplaceSearchTerms(
+               action->search_terms_args,
+               template_url_service->search_terms_data())));
+}
+
 ScopedJavaLocalRef<jobject>
 AutocompleteControllerAndroid::GetMatchingTabForSuggestion(
     JNIEnv* env,
@@ -538,17 +560,9 @@ void AutocompleteControllerAndroid::NotifySuggestionsReceived(
     const AutocompleteResult& autocomplete_result) {
   JNIEnv* env = AttachCurrentThread();
 
-  // Get the inline-autocomplete text.
-  std::u16string inline_autocompletion;
-  if (auto* default_match = autocomplete_result.default_match()) {
-    inline_autocompletion = default_match->inline_autocompletion;
-  }
-  ScopedJavaLocalRef<jstring> inline_text =
-      ConvertUTF16ToJavaString(env, inline_autocompletion);
-
   Java_AutocompleteController_onSuggestionsReceived(
       env, java_controller_, autocomplete_result.GetOrCreateJavaObject(env),
-      inline_text, autocomplete_controller_->done());
+      autocomplete_controller_->done());
 }
 
 void AutocompleteControllerAndroid::WarmUpRenderProcess() const {

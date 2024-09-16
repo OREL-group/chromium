@@ -9,7 +9,10 @@ import android.accounts.AccountManager;
 import android.app.Activity;
 import android.content.Intent;
 import android.os.Bundle;
+import android.widget.Button;
 
+import androidx.annotation.AnyThread;
+import androidx.annotation.IdRes;
 import androidx.annotation.MainThread;
 import androidx.annotation.Nullable;
 
@@ -20,7 +23,6 @@ import org.chromium.base.ThreadUtils;
 import org.chromium.components.signin.AccessTokenData;
 import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.components.signin.AccountManagerFacadeProvider;
-import org.chromium.components.signin.AccountUtils;
 import org.chromium.components.signin.AccountsChangeObserver;
 import org.chromium.components.signin.AuthException;
 import org.chromium.components.signin.base.AccountCapabilities;
@@ -29,53 +31,104 @@ import org.chromium.components.signin.base.CoreAccountId;
 import org.chromium.components.signin.base.CoreAccountInfo;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.UUID;
 import java.util.stream.Collectors;
 
-/**
- * FakeAccountManagerFacade is an {@link AccountManagerFacade} stub intended
- * for testing.
- */
+/** FakeAccountManagerFacade is an {@link AccountManagerFacade} stub intended for testing. */
 public class FakeAccountManagerFacade implements AccountManagerFacade {
     /**
-     * All the account names starting with this prefix will be considered as
-     * a child account in {@link FakeAccountManagerFacade}.
+     * Can be closed to unblock updates to the list of accounts. See {@link
+     * FakeAccountManagerFacade#blockGetCoreAccountInfos}.
+     */
+    public class UpdateBlocker implements AutoCloseable {
+        /** Use {@link FakeAccountManagerFacade#blockGetCoreAccountInfos} to instantiate. */
+        private UpdateBlocker() {}
+
+        @Override
+        public void close() {
+            unblockGetCoreAccountInfos();
+        }
+    }
+
+    /**
+     * All the account names starting with this prefix will be considered as a child account in
+     * {@link FakeAccountManagerFacade}.
      */
     private static final String CHILD_ACCOUNT_NAME_PREFIX = "child.";
 
-    /** AddAccountActivityStub intent arguments to set account name and result */
-    private static final String ADDED_ACCOUNT_NAME = "AddedAccountName";
-
-    private static final String ADD_ACCOUNT_RESULT = "AddAccountResult";
-
     /** An {@link Activity} stub to test add account flow. */
     public static final class AddAccountActivityStub extends Activity {
+        public static final @IdRes int OK_BUTTON_ID = R.id.ok_button;
+        public static final @IdRes int CANCEL_BUTTON_ID = R.id.cancel_button;
+
         @Override
         public void onCreate(Bundle savedInstanceState) {
             super.onCreate(savedInstanceState);
+
+            setContentView(R.layout.test_add_account_layout);
+            Button okButton = findViewById(OK_BUTTON_ID);
+            okButton.setOnClickListener(v -> addAccount());
+            Button cancelButton = findViewById(CANCEL_BUTTON_ID);
+            cancelButton.setOnClickListener(v -> cancel());
+        }
+
+        private void addAccount() {
             Intent data = new Intent();
-            int result = getIntent().getIntExtra(ADD_ACCOUNT_RESULT, RESULT_CANCELED);
-            String addedAccountName = getIntent().getStringExtra(ADDED_ACCOUNT_NAME);
+            FakeAccountManagerFacade accountManagerFacade =
+                    (FakeAccountManagerFacade) AccountManagerFacadeProvider.getInstance();
+            String addedAccountName = accountManagerFacade.mNameOfAccountToAdd;
+            boolean minorModeEnabled = accountManagerFacade.mIsMinorModeEnabledForAccountToAdd;
+
             data.putExtra(AccountManager.KEY_ACCOUNT_NAME, addedAccountName);
-            if (result != RESULT_CANCELED && addedAccountName != null) {
+            if (addedAccountName != null) {
                 ((FakeAccountManagerFacade) AccountManagerFacadeProvider.getInstance())
-                        .addAccount(AccountUtils.createAccountFromName(addedAccountName));
+                        .addAccount(
+                                new AccountInfo.Builder(
+                                                addedAccountName, toGaiaId(addedAccountName))
+                                        .accountCapabilities(
+                                                new AccountCapabilitiesBuilder()
+                                                        .setCanShowHistorySyncOptInsWithoutMinorModeRestrictions(
+                                                                !minorModeEnabled)
+                                                        .build())
+                                        .build());
             }
-            setResult(result, data);
+            accountManagerFacade.mNameOfAccountToAdd = null;
+            accountManagerFacade.mIsMinorModeEnabledForAccountToAdd = false;
+            setResult(RESULT_OK, data);
+            finish();
+        }
+
+        private void cancel() {
+            FakeAccountManagerFacade accountManagerFacade =
+                    (FakeAccountManagerFacade) AccountManagerFacadeProvider.getInstance();
+            accountManagerFacade.mNameOfAccountToAdd = null;
+            accountManagerFacade.mIsMinorModeEnabledForAccountToAdd = false;
+            setResult(RESULT_CANCELED, null);
             finish();
         }
     }
 
-    private final Set<AccountHolder> mAccountHolders = new LinkedHashSet<>();
     private final List<AccountsChangeObserver> mObservers = new ArrayList<>();
+
+    // `mAccountHolders` can be read from non-UI threads (this is used by `getAccessToken`), but
+    // should only be changed from the UI thread to guarantee the consistency of the observed state.
+    private final Set<AccountHolder> mAccountHolders =
+            Collections.synchronizedSet(new LinkedHashSet<>());
 
     /** Can be used to block {@link #getCoreAccountInfos()} ()} result. */
     private @Nullable Promise<List<CoreAccountInfo>> mBlockedGetCoreAccountInfosPromise;
 
-    private @Nullable Intent mAddAccountIntent;
+    private Intent mAddAccountIntent =
+            new Intent(ContextUtils.getApplicationContext(), AddAccountActivityStub.class);
+
+    /** Name of the account that will be added by AddAccountActivityStub. */
+    private String mNameOfAccountToAdd;
+
+    /** Whether the minor mode is enabled for the account added by AddAccountActivityStub. */
+    private boolean mIsMinorModeEnabledForAccountToAdd;
 
     /** Creates an object of FakeAccountManagerFacade. */
     public FakeAccountManagerFacade() {}
@@ -104,46 +157,31 @@ public class FakeAccountManagerFacade implements AccountManagerFacade {
     }
 
     @Override
-    public boolean hasGoogleAccountAuthenticator() {
-        return true;
-    }
-
-    @Override
     public AccessTokenData getAccessToken(CoreAccountInfo coreAccountInfo, String scope)
             throws AuthException {
-        @Nullable
-        AccessTokenData result =
-                ThreadUtils.runOnUiThreadBlockingNoException(
-                        () -> {
-                            @Nullable
-                            AccountHolder accountHolder = getAccountHolder(coreAccountInfo.getId());
-                            if (accountHolder == null) {
-                                return null;
-                            }
-                            if (accountHolder.getAuthToken(scope) == null) {
-                                accountHolder.updateAuthToken(scope, UUID.randomUUID().toString());
-                            }
-                            return accountHolder.getAuthToken(scope);
-                        });
-        if (result != null) {
-            return result;
+        @Nullable AccountHolder accountHolder = getAccountHolder(coreAccountInfo.getId());
+        if (accountHolder == null) {
+            // Since token requests are asynchronous, sometimes they arrive after the account has
+            // been removed. Thus, throwing an unchecked exception here would cause test failures
+            // (see https://crbug.com/1205346 for details). On the other hand, AuthException thrown
+            // here will be caught by ProfileOAuth2TokenServiceDelegate and reported as a token
+            // request failure (which matches the behavior of the production code in the situation
+            // when a token is requested for an account that doesn't exist or has been removed).
+            throw new AuthException(
+                    /* isTransientError= */ false,
+                    "Cannot find account:" + coreAccountInfo.toString());
         }
-        // Since token requests are asynchronous, sometimes they arrive after the account has been
-        // removed. Thus, throwing an unchecked exception here would cause test failures (see
-        // https://crbug.com/1205346 for details). On the other hand, AuthException thrown here
-        // will be caught by ProfileOAuth2TokenServiceDelegate and reported as a token request
-        // failure (which matches the behavior of the production code in the situation when a token
-        // is requested for an account that doesn't exist or has been removed).
-        throw new AuthException(
-                /* isTransientError= */ false, "Cannot find account:" + coreAccountInfo.toString());
+        return accountHolder.getAccessTokenOrGenerateNew(scope);
     }
 
     @Override
     public void invalidateAccessToken(String accessToken) {
         ThreadUtils.checkUiThread();
-        for (AccountHolder accountHolder : mAccountHolders) {
-            if (accountHolder.removeAuthToken(accessToken)) {
-                break;
+        synchronized (mAccountHolders) {
+            for (AccountHolder accountHolder : mAccountHolders) {
+                if (accountHolder.removeAccessToken(accessToken)) {
+                    break;
+                }
             }
         }
     }
@@ -168,7 +206,6 @@ public class FakeAccountManagerFacade implements AccountManagerFacade {
     @Override
     public void createAddAccountIntent(Callback<Intent> callback) {
         callback.onResult(mAddAccountIntent);
-        mAddAccountIntent = null;
     }
 
     @Override
@@ -197,15 +234,7 @@ public class FakeAccountManagerFacade implements AccountManagerFacade {
      */
     @Deprecated
     public void addAccount(Account account) {
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    AccountInfo accountInfo =
-                            new AccountInfo.Builder(account.name, toGaiaId(account.name)).build();
-                    mAccountHolders.add(new AccountHolder(accountInfo));
-                    if (mBlockedGetCoreAccountInfosPromise == null) {
-                        fireOnAccountsChangedNotification();
-                    }
-                });
+        addAccount(new AccountInfo.Builder(account.name, toGaiaId(account.name)).build());
     }
 
     /** Adds an account represented by {@link AccountInfo}. */
@@ -228,9 +257,16 @@ public class FakeAccountManagerFacade implements AccountManagerFacade {
     public void removeAccount(Account account) {
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    AccountHolder accountHolder = getAccountHolder(account);
-                    if (accountHolder == null || !mAccountHolders.remove(accountHolder)) {
-                        throw new IllegalArgumentException("Cannot find account:" + accountHolder);
+                    synchronized (mAccountHolders) {
+                        @Nullable
+                        AccountHolder accountHolder =
+                                mAccountHolders.stream()
+                                        .filter((ah) -> ah.getAccount().equals(account))
+                                        .findFirst()
+                                        .orElse(null);
+                        if (accountHolder == null || !mAccountHolders.remove(accountHolder)) {
+                            throw new IllegalArgumentException("Cannot find account:" + account);
+                        }
                     }
                     if (mBlockedGetCoreAccountInfosPromise == null) {
                         fireOnAccountsChangedNotification();
@@ -242,9 +278,20 @@ public class FakeAccountManagerFacade implements AccountManagerFacade {
     public void removeAccount(CoreAccountId accountId) {
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    AccountHolder accountHolder = getAccountHolder(accountId);
-                    if (accountHolder == null || !mAccountHolders.remove(accountHolder)) {
-                        throw new IllegalArgumentException("Cannot find account:" + accountId);
+                    synchronized (mAccountHolders) {
+                        @Nullable
+                        AccountHolder accountHolder =
+                                mAccountHolders.stream()
+                                        .filter(
+                                                (ah) ->
+                                                        ah.getAccountInfo()
+                                                                .getId()
+                                                                .equals(accountId))
+                                        .findFirst()
+                                        .orElse(null);
+                        if (accountHolder == null || !mAccountHolders.remove(accountHolder)) {
+                            throw new IllegalArgumentException("Cannot find account:" + accountId);
+                        }
                     }
                     if (mBlockedGetCoreAccountInfosPromise == null) {
                         fireOnAccountsChangedNotification();
@@ -267,17 +314,17 @@ public class FakeAccountManagerFacade implements AccountManagerFacade {
     }
 
     /**
-     * Blocks callers from getting accounts through {@link #getCoreAccountInfos()}. After this
-     * method is called, subsequent calls to {@link #getCoreAccountInfos()} will return a
-     * non-fulfilled promise.
+     * Blocks updates to the account lists returned by {@link #getCoreAccountInfos}. After this
+     * method is called, subsequent calls to {@link #getCoreAccountInfos} will return the same
+     * promise that won't be updated until the returned {@link AutoCloseable} is closed.
      *
-     * <p>If populateCache is true then the blocking promise will be fulfilled with the current list
-     * of available accounts. Any account addition/removal later on will not be reflected in {@link
-     * #getCoreAccountInfos()}.
-     *
-     * <p>Use {@link #unblockGetCoreAccountInfos()} to unblock this promise.
+     * @param populateCache whether {@link #getCoreAccountInfos} should return a fulfilled promise.
+     *     If true, then the promise will be fulfilled with the current list of available accounts.
+     *     Any account addition/removal later on will not be reflected in {@link
+     *     #getCoreAccountInfos()}.
+     * @return {@link AutoCloseable} that should be closed to unblock account updates.
      */
-    public void blockGetCoreAccountInfos(boolean populateCache) {
+    public UpdateBlocker blockGetCoreAccountInfos(boolean populateCache) {
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     assert mBlockedGetCoreAccountInfosPromise == null;
@@ -286,6 +333,7 @@ public class FakeAccountManagerFacade implements AccountManagerFacade {
                         mBlockedGetCoreAccountInfosPromise.fulfill(getCoreAccountInfosInternal());
                     }
                 });
+        return new UpdateBlocker();
     }
 
     /**
@@ -293,7 +341,7 @@ public class FakeAccountManagerFacade implements AccountManagerFacade {
      * #blockGetCoreAccountInfos(boolean)} to unblock callers waiting for promises obtained from
      * {@link #getCoreAccountInfos()}.
      */
-    public void unblockGetCoreAccountInfos() {
+    private void unblockGetCoreAccountInfos() {
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     assert mBlockedGetCoreAccountInfosPromise != null;
@@ -306,23 +354,33 @@ public class FakeAccountManagerFacade implements AccountManagerFacade {
     }
 
     /**
-     * Sets the result for the next add account flow.
-     * @param result The activity result to return when the intent is launched
-     * @param newAccountName The account name to return when the intent is launched
+     * Initializes the next add account flow with a given account to add.
+     *
+     * @param newAccountName The account name to return when the add account flow finishes.
+     * @param isMinorModeEnabled The account is subjected to minor mode restrictions
      */
-    public void setResultForNextAddAccountFlow(int result, @Nullable String newAccountName) {
-        assert mAddAccountIntent == null : "mAddAccountIntent is already set";
-        mAddAccountIntent =
-                new Intent(ContextUtils.getApplicationContext(), AddAccountActivityStub.class);
-        mAddAccountIntent.putExtra(ADD_ACCOUNT_RESULT, result);
-        mAddAccountIntent.putExtra(ADDED_ACCOUNT_NAME, newAccountName);
+    public void setUpNextAddAccountFlow(
+            @Nullable String newAccountName, boolean isMinorModeEnabled) {
+        // TODO(crbug.com/343872217) Update method to use AccountInfo
+        mNameOfAccountToAdd = newAccountName;
+        mIsMinorModeEnabledForAccountToAdd = isMinorModeEnabled;
+    }
+
+    /**
+     * Makes the add account intent creation fail: createAddAccountIntent() will provide a null
+     * intent when it's called.
+     */
+    public void forceAddAccountIntentCreationFailure() {
+        mAddAccountIntent = null;
     }
 
     private List<CoreAccountInfo> getCoreAccountInfosInternal() {
         ThreadUtils.checkUiThread();
-        return mAccountHolders.stream()
-                .map(AccountHolder::getAccountInfo)
-                .collect(Collectors.toList());
+        synchronized (mAccountHolders) {
+            return mAccountHolders.stream()
+                    .map(AccountHolder::getAccountInfo)
+                    .collect(Collectors.toList());
+        }
     }
 
     // Deprecated, use the version with CoreAccountId below.
@@ -330,21 +388,24 @@ public class FakeAccountManagerFacade implements AccountManagerFacade {
     @MainThread
     private @Nullable AccountHolder getAccountHolder(Account account) {
         ThreadUtils.checkUiThread();
-        for (AccountHolder accountHolder : mAccountHolders) {
-            if (accountHolder.getAccount().equals(account)) {
-                return accountHolder;
-            }
+        synchronized (mAccountHolders) {
+            return mAccountHolders.stream()
+                    .filter(accountHolder -> account.equals(accountHolder.getAccount()))
+                    .findFirst()
+                    .orElse(null);
         }
-        return null;
     }
 
-    @MainThread
+    @AnyThread
     private @Nullable AccountHolder getAccountHolder(CoreAccountId accountId) {
-        ThreadUtils.checkUiThread();
-        return mAccountHolders.stream()
-                .filter(accountHolder -> accountId.equals(accountHolder.getAccountInfo().getId()))
-                .findFirst()
-                .orElse(null);
+        synchronized (mAccountHolders) {
+            return mAccountHolders.stream()
+                    .filter(
+                            accountHolder ->
+                                    accountId.equals(accountHolder.getAccountInfo().getId()))
+                    .findFirst()
+                    .orElse(null);
+        }
     }
 
     @MainThread
@@ -360,6 +421,7 @@ public class FakeAccountManagerFacade implements AccountManagerFacade {
      */
     public void setAccountCapabilities(
             CoreAccountId accountId, AccountCapabilities accountCapabilities) {
+        ThreadUtils.checkUiThread();
         assert accountId != null;
         AccountHolder accountHolder = getAccountHolder(accountId);
         accountHolder.setAccountCapabilities(accountCapabilities);

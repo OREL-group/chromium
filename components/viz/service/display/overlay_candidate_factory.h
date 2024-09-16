@@ -59,9 +59,6 @@ class VIZ_SERVICE_EXPORT OverlayCandidateFactory {
     bool supports_rounded_display_masks = false;
     bool supports_mask_filter = false;
     bool transform_and_clip_rpdq = false;
-    // When true, allow a quad to be promoted, even if its resource is not an
-    // overlay candidate.
-    bool allow_non_overlay_resources = false;
     bool supports_flip_rotate_transform = false;
   };
 
@@ -117,6 +114,10 @@ class VIZ_SERVICE_EXPORT OverlayCandidateFactory {
 
   gfx::Rect GetUnassignedDamage() { return unassigned_surface_damage_; }
 
+  // Adjusts candidate for subsampling and cliping for required overlay
+  // and logging purposes.
+  void HandleClipAndSubsampling(OverlayCandidate& candidate) const;
+
  private:
   CandidateStatus FromDrawQuadResource(const DrawQuad* quad,
                                        ResourceId resource_id,
@@ -138,16 +139,10 @@ class VIZ_SERVICE_EXPORT OverlayCandidateFactory {
   CandidateStatus FromVideoHoleQuad(const VideoHoleDrawQuad* quad,
                                     OverlayCandidate& candidate) const;
 
-  void HandleClipAndSubsampling(OverlayCandidate& candidate) const;
-
   void AssignDamage(const DrawQuad* quad, OverlayCandidate& candidate) const;
 
   // Damage returned from this function is in target space.
-  // If quad doesn't have damage from the surface damage list, this returns the
-  // intersection of unassigned damage and the smallest axis-aligned rectangle
-  // containing |display_rect| in target space.
-  gfx::RectF GetDamageRect(const DrawQuad* quad,
-                           const OverlayCandidate& candidate) const;
+  gfx::RectF GetDamageRect(const DrawQuad* quad) const;
 
   gfx::RectF GetDamageEstimate(const OverlayCandidate& candidate) const;
 

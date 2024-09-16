@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl.h"
 
 #include <map>
@@ -15,6 +20,7 @@
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/shared_memory_mapping.h"
+#include "base/notimplemented.h"
 #include "base/run_loop.h"
 #include "base/test/bind.h"
 #include "base/test/test_mock_time_task_runner.h"
@@ -32,7 +38,6 @@
 #include "components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_manager.h"
 #include "components/viz/test/test_context_provider.h"
 #include "gpu/command_buffer/client/client_shared_image.h"
-#include "gpu/command_buffer/common/gpu_memory_buffer_support.h"
 #include "media/base/format_utils.h"
 #include "media/base/limits.h"
 #include "media/base/test_helpers.h"
@@ -104,13 +109,12 @@ media::VideoPixelFormat CopyOutputRequestFormatToVideoPixelFormat(
   switch (format) {
     case CopyOutputRequest::ResultFormat::I420_PLANES:
       return media::PIXEL_FORMAT_I420;
-    case CopyOutputRequest::ResultFormat::NV12_MULTIPLANE:
-    case CopyOutputRequest::ResultFormat::NV12_PLANES:
+    case CopyOutputRequest::ResultFormat::NV12:
       return media::PIXEL_FORMAT_NV12;
     case CopyOutputRequest::ResultFormat::RGBA:
       return media::PIXEL_FORMAT_ARGB;
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -122,7 +126,7 @@ gfx::ColorSpace GetColorSpaceForPixelFormat(media::VideoPixelFormat format) {
     case media::PIXEL_FORMAT_ARGB:
       return gfx::ColorSpace::CreateSRGB();
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -137,7 +141,7 @@ gfx::Size GetBufferSizeInPixelsForVideoPixelFormat(
       return {cc::MathUtil::CheckedRoundUp(coded_size.width(), 2),
               cc::MathUtil::CheckedRoundUp(coded_size.height(), 2)};
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -254,7 +258,7 @@ class MockConsumer : public mojom::FrameSinkVideoConsumer {
       // is the same type, with null check being equivalent to IsValid() check.
       // Given the above, we should never be able to receive a read only shmem
       // region that is not valid - mojo will enforce it for us.
-      DCHECK(shmem_region.IsValid());
+      CHECK(shmem_region.IsValid());
 
       auto required_bytes_to_hold_planes = media::VideoFrame::AllocationSize(
           info->pixel_format, info->coded_size);
@@ -282,15 +286,14 @@ class MockConsumer : public mojom::FrameSinkVideoConsumer {
           GetBufferSizeInPixelsForVideoPixelFormat(info->pixel_format,
                                                    info->coded_size),
           VideoPixelFormatToGfxBufferFormat(info->pixel_format).value());
-      gpu::MailboxHolder mailbox_dummy[4];
 
       // The frame is only gonna tell Letterbox to skip the test.
       frame = media::VideoFrame::WrapExternalGpuMemoryBuffer(
           info->visible_rect, info->visible_rect.size(), std::move(gmb_dummy),
-          mailbox_dummy, base::NullCallback(), info->timestamp);
+          info->timestamp);
       ASSERT_TRUE(frame);
     } else {
-      NOTREACHED_NORETURN();
+      NOTREACHED();
     }
 
     frame->set_metadata(info->metadata);
@@ -323,7 +326,6 @@ class FakeGpuCopyResult : public CopyOutputResult {
         format_(format),
         result_(TextureResult(
             gpu::Mailbox{},
-            gpu::SyncToken{},
             GetColorSpaceForPixelFormat(
                 CopyOutputRequestFormatToVideoPixelFormat(format)))) {}
 
@@ -494,7 +496,7 @@ class FakeCapturableFrameSink : public CapturableFrameSink {
             break;
           }
           default: {
-            NOTREACHED_NORETURN();
+            NOTREACHED();
           }
         }
         break;
@@ -506,7 +508,7 @@ class FakeCapturableFrameSink : public CapturableFrameSink {
         break;
       }
       default: {
-        NOTREACHED_NORETURN();
+        NOTREACHED();
       }
     }
     results_.push_back(base::BindOnce(
@@ -624,7 +626,7 @@ bool IsLetterboxedI420Plane(int plane,
                             const VideoFrame& frame,
                             testing::MatchResultListener* result_listener) {
   gfx::Rect content_rect_copy = content_rect;
-  if (plane != VideoFrame::kYPlane) {
+  if (plane != VideoFrame::Plane::kY) {
     content_rect_copy = gfx::Rect(
         content_rect_copy.x() / 2, content_rect_copy.y() / 2,
         content_rect_copy.width() / 2, content_rect_copy.height() / 2);
@@ -643,7 +645,7 @@ bool IsLetterboxedI420Plane(int plane,
           return false;
         }
       } else {  // Letterbox border around content.
-        if (plane == VideoFrame::kYPlane && p[col] != 0x00) {
+        if (plane == VideoFrame::Plane::kY && p[col] != 0x00) {
           *result_listener << " where pixel at (" << col << ", " << row
                            << ") should be outside content rectangle and the "
                               "component should match 0x00 but is 0x"
@@ -665,8 +667,8 @@ bool IsLetterboxedRGBA(SkColor color,
                                                 frame.coded_size().height());
   bitmap.installPixels(
       bitmap_info,
-      const_cast<uint8_t*>(frame.visible_data(VideoFrame::kARGBPlane)),
-      frame.stride(VideoFrame::kARGBPlane));
+      const_cast<uint8_t*>(frame.visible_data(VideoFrame::Plane::kARGB)),
+      frame.stride(VideoFrame::Plane::kARGB));
 
   for (int row = 0; row < bitmap.height(); ++row) {
     for (int col = 0; col < bitmap.width(); ++col) {
@@ -709,7 +711,7 @@ MATCHER_P3(IsLetterboxedFrame, color, content_rect, pixel_format, "") {
   const VideoFrame& frame = *arg;
 
   // Pretend kUseGpuMemoryBuffer rendered corrected data.
-  if (frame.HasGpuMemoryBuffer()) {
+  if (frame.HasMappableGpuBuffer()) {
     return true;
   }
 
@@ -719,15 +721,15 @@ MATCHER_P3(IsLetterboxedFrame, color, content_rect, pixel_format, "") {
     }
     case media::PIXEL_FORMAT_I420: {
       const YUVColor yuvColor = RGBToYUV(color);
-      return IsLetterboxedI420Plane(VideoFrame::kYPlane, yuvColor.y,
+      return IsLetterboxedI420Plane(VideoFrame::Plane::kY, yuvColor.y,
                                     content_rect, frame, result_listener) &&
-             IsLetterboxedI420Plane(VideoFrame::kUPlane, yuvColor.u,
+             IsLetterboxedI420Plane(VideoFrame::Plane::kU, yuvColor.u,
                                     content_rect, frame, result_listener) &&
-             IsLetterboxedI420Plane(VideoFrame::kVPlane, yuvColor.v,
+             IsLetterboxedI420Plane(VideoFrame::Plane::kV, yuvColor.v,
                                     content_rect, frame, result_listener);
     }
     default: {
-      NOTREACHED_NORETURN();
+      NOTREACHED();
     }
   }
 }
@@ -737,7 +739,7 @@ class TestVideoCaptureOverlay : public VideoCaptureOverlay {
   using PropertiesCallback =
       base::RepeatingCallback<void(const CapturedFrameProperties&)>;
   TestVideoCaptureOverlay(
-      FrameSource* frame_source,
+      FrameSource& frame_source,
       mojo::PendingReceiver<mojom::FrameSinkVideoCaptureOverlay> receiver,
       PropertiesCallback properties_cb)
       : VideoCaptureOverlay(frame_source, std::move(receiver)),
@@ -774,7 +776,7 @@ class TestGmbVideoFramePoolContext
       const gfx::ColorSpace& color_space,
       GrSurfaceOrigin surface_origin,
       SkAlphaType alpha_type,
-      uint32_t usage,
+      gpu::SharedImageUsageSet usage,
       gpu::SyncToken& sync_token) override {
     return context_provider_->SharedImageInterface()->CreateSharedImage(
         {si_format, gpu_memory_buffer->GetSize(), color_space, surface_origin,
@@ -783,24 +785,32 @@ class TestGmbVideoFramePoolContext
   }
 
   scoped_refptr<gpu::ClientSharedImage> CreateSharedImage(
-      gfx::GpuMemoryBuffer* gpu_memory_buffer,
-      gfx::BufferPlane plane,
+      const gfx::Size& size,
+      gfx::BufferUsage buffer_usage,
+      const SharedImageFormat& si_format,
       const gfx::ColorSpace& color_space,
       GrSurfaceOrigin surface_origin,
       SkAlphaType alpha_type,
-      uint32_t usage,
+      gpu::SharedImageUsageSet usage,
       gpu::SyncToken& sync_token) override {
+    context_provider_->SharedImageInterface()
+        ->UseTestGMBInSharedImageCreationWithBufferUsage();
     return context_provider_->SharedImageInterface()->CreateSharedImage(
-        gpu_memory_buffer, /*gpu_memory_buffer_manager=*/nullptr, plane,
-        {color_space, surface_origin, alpha_type, usage,
-         "FrameSinkVideoCapturerImplUnittest"});
+        {si_format, size, color_space, surface_origin, alpha_type, usage,
+         "FrameSinkVideoCapturerImplUnittest"},
+        gpu::kNullSurfaceHandle, buffer_usage);
   }
 
-  void DestroySharedImage(
-      const gpu::SyncToken& sync_token,
-      scoped_refptr<gpu::ClientSharedImage> shared_image) override {
-    context_provider_->SharedImageInterface()->DestroySharedImage(
-        sync_token, std::move(shared_image));
+  void DestroySharedImage(const gpu::SyncToken& sync_token,
+                          scoped_refptr<gpu::ClientSharedImage> shared_image,
+                          const bool is_mappable_si_enabled) override {
+    CHECK(shared_image);
+    if (is_mappable_si_enabled) {
+      shared_image->UpdateDestructionSyncToken(sync_token);
+    } else {
+      context_provider_->SharedImageInterface()->DestroySharedImage(
+          sync_token, std::move(shared_image));
+    }
   }
 
  private:
@@ -837,7 +847,7 @@ class FrameSinkVideoCapturerTest
         std::make_unique<TestGmbVideoFramePoolContextProvider>();
 
     capturer_ = std::make_unique<FrameSinkVideoCapturerImpl>(
-        &frame_sink_manager_, gmb_context_provider_.get(), mojo::NullReceiver(),
+        frame_sink_manager_, gmb_context_provider_.get(), mojo::NullReceiver(),
         std::move(oracle), false);
   }
 
@@ -2112,7 +2122,7 @@ TEST_P(FrameSinkVideoCapturerTest, ProperlyHandlesCaptureSizeForOverlay) {
   mojo::Remote<mojom::FrameSinkVideoCaptureOverlay> overlay_remote;
   std::optional<VideoCaptureOverlay::CapturedFrameProperties> frame_properties;
   auto test_overlay = std::make_unique<TestVideoCaptureOverlay>(
-      capturer_.get(), overlay_remote.BindNewPipeAndPassReceiver(),
+      *capturer_, overlay_remote.BindNewPipeAndPassReceiver(),
       base::BindLambdaForTesting(
           [&](const VideoCaptureOverlay::CapturedFrameProperties& properties) {
             frame_properties = properties;
@@ -2185,7 +2195,7 @@ TEST_P(FrameSinkVideoCapturerTest, ProperlyHandlesSubtreeSizeForOverlay) {
   mojo::Remote<mojom::FrameSinkVideoCaptureOverlay> overlay_remote;
   std::optional<VideoCaptureOverlay::CapturedFrameProperties> frame_properties;
   auto test_overlay = std::make_unique<TestVideoCaptureOverlay>(
-      capturer_.get(), overlay_remote.BindNewPipeAndPassReceiver(),
+      *capturer_, overlay_remote.BindNewPipeAndPassReceiver(),
       base::BindLambdaForTesting(
           [&](const VideoCaptureOverlay::CapturedFrameProperties& properties) {
             frame_properties = properties;

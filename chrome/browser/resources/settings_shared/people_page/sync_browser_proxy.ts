@@ -18,10 +18,19 @@ export interface StoredAccount {
 }
 
 /**
- * TODO(crbug.com/40838076): signedIn doesn't indicate if the user is signed-in,
- * but instead if the user is syncing.
- * TODO(crbug.com/40707088): signedIn actually means having primary account with
- * sync consent. Rename to make this clear.
+ * Equivalent to C++ counterpart.
+ * @see chrome/browser/signin/signin_ui_util.h
+ * TODO(b/336510160): Look into integrating SYNC_PAUSED value.
+ */
+export enum SignedInState {
+  SIGNED_OUT = 0,
+  SIGNED_IN = 1,
+  SYNCING = 2,
+  SIGNED_IN_PAUSED = 3,
+  WEB_ONLY_SIGNED_IN = 4,
+}
+
+/**
  * @see chrome/browser/ui/webui/settings/people_handler.cc
  */
 export interface SyncStatus {
@@ -33,11 +42,12 @@ export interface SyncStatus {
   hasUnrecoverableError?: boolean;
   managed?: boolean;
   firstSetupInProgress?: boolean;
-  signedIn?: boolean;
+  signedInState?: SignedInState;
   signedInUsername?: string;
   statusActionText?: string;
   statusText?: string;
   supervisedUser?: boolean;
+  syncCookiesSupported?: boolean;
   syncSystemEnabled?: boolean;
 }
 
@@ -72,6 +82,9 @@ export interface SyncPrefs {
   bookmarksManaged: boolean;
   bookmarksRegistered: boolean;
   bookmarksSynced: boolean;
+  cookiesManaged: boolean;
+  cookiesRegistered: boolean;
+  cookiesSynced: boolean;
   customPassphraseAllowed: boolean;
   encryptAllData: boolean;
   extensionsManaged: boolean;
@@ -87,6 +100,9 @@ export interface SyncPrefs {
   preferencesManaged: boolean;
   preferencesRegistered: boolean;
   preferencesSynced: boolean;
+  productComparisonManaged: boolean;
+  productComparisonRegistered: boolean;
+  productComparisonSynced: boolean;
   readingListManaged: boolean;
   readingListRegistered: boolean;
   readingListSynced: boolean;
@@ -118,11 +134,13 @@ export const syncPrefsIndividualDataTypes: string[] = [
   'appsSynced',
   'autofillSynced',
   'bookmarksSynced',
+  'cookiesSynced',
   'extensionsSynced',
   'readingListSynced',
   'passwordsSynced',
   'paymentsSynced',
   'preferencesSynced',
+  'productComparisonSynced',
   'savedTabGroupsSynced',
   'tabsSynced',
   'themesSynced',
@@ -323,15 +341,15 @@ export class SyncBrowserProxyImpl implements SyncBrowserProxy {
 
   // <if expr="chromeos_ash">
   attemptUserExit() {
-    return chrome.send('AttemptUserExit');
+    chrome.send('AttemptUserExit');
   }
 
   turnOnSync() {
-    return chrome.send('TurnOnSync');
+    chrome.send('TurnOnSync');
   }
 
   turnOffSync() {
-    return chrome.send('TurnOffSync');
+    chrome.send('TurnOffSync');
   }
   // </if>
 

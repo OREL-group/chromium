@@ -261,7 +261,7 @@ void PageInfoMainView::SetPermissionInfo(
   // permissions to align toggles.
   bool should_show_spacer = false;
   for (const auto& permission : permission_info_list) {
-    if (permissions::PermissionUtil::CanPermissionBeAllowedOnce(
+    if (permissions::PermissionUtil::DoesSupportTemporaryGrants(
             permission.type)) {
       should_show_spacer = true;
     }
@@ -340,7 +340,7 @@ void PageInfoMainView::UpdateResetButton(
   int num_permissions = 0;
   for (const auto& permission : permission_info_list) {
     const bool is_permission_user_managed =
-        permission.source == content_settings::SETTING_SOURCE_USER &&
+        permission.source == content_settings::SettingSource::kUser &&
         (ui_delegate_->ShouldShowAllow(permission.type) ||
          ui_delegate_->ShouldShowAsk(permission.type));
     if (is_permission_user_managed &&
@@ -529,14 +529,15 @@ void PageInfoMainView::HandleMoreInfoRequestAsync(int view_id) {
       presenter_->OpenSiteSettingsView();
       break;
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
-gfx::Size PageInfoMainView::CalculatePreferredSize() const {
+gfx::Size PageInfoMainView::CalculatePreferredSize(
+    const views::SizeBounds& available_size) const {
   if (site_settings_view_ == nullptr && permissions_view_ == nullptr &&
       security_container_view_ == nullptr) {
-    return views::View::CalculatePreferredSize();
+    return views::View::CalculatePreferredSize(available_size);
   }
 
   int width = 0;
@@ -552,7 +553,8 @@ gfx::Size PageInfoMainView::CalculatePreferredSize() const {
     width =
         std::max(width, security_container_view_->GetPreferredSize().width());
   }
-  return gfx::Size(width, views::View::GetHeightForWidth(width));
+  return gfx::Size(width,
+                   GetLayoutManager()->GetPreferredHeightForWidth(this, width));
 }
 
 void PageInfoMainView::ChildPreferredSizeChanged(views::View* child) {
@@ -560,40 +562,38 @@ void PageInfoMainView::ChildPreferredSizeChanged(views::View* child) {
 }
 
 std::unique_ptr<views::View> PageInfoMainView::CreateBubbleHeaderView() {
-  auto header = std::make_unique<views::View>();
-  header->SetLayoutManager(std::make_unique<views::FlexLayout>())
-      ->SetInteriorMargin(
-          gfx::Insets::VH(0, features::IsChromeRefresh2023() ? 20 : 16));
-  title_ = header->AddChildView(std::make_unique<views::Label>(
-      std::u16string(), views::style::CONTEXT_DIALOG_TITLE,
-      views::style::STYLE_PRIMARY,
-      gfx::DirectionalityMode::DIRECTIONALITY_AS_URL));
-  title_->SetMultiLine(true);
-  title_->SetAllowCharacterBreak(true);
-  title_->SetProperty(
-      views::kFlexBehaviorKey,
-      views::FlexSpecification(views::MinimumFlexSizeRule::kScaleToZero,
-                               views::MaximumFlexSizeRule::kUnbounded,
-                               /*adjust_height_for_width =*/true)
-          .WithWeight(1));
-  title_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-  if (features::IsChromeRefresh2023()) {
-    title_->SetTextStyle(views::style::STYLE_HEADLINE_4);
-  }
-  auto close_button = views::BubbleFrameView::CreateCloseButton(
-      base::BindRepeating(&PageInfoNavigationHandler::CloseBubble,
-                          base::Unretained(navigation_handler_)));
-
-  close_button->SetVisible(true);
-  close_button->SetProperty(views::kCrossAxisAlignmentKey,
-                            views::LayoutAlignment::kStart);
-  // Set views::kInternalPaddingKey for flex layout to account for internal
-  // button padding when calculating margins.
-  close_button->SetProperty(views::kInternalPaddingKey,
-                            close_button->GetInsets());
-  header->AddChildView(close_button.release());
-
-  return header;
+  return views::Builder<views::FlexLayoutView>()
+      .SetInteriorMargin(gfx::Insets::VH(0, 20))
+      .AddChildren(
+          views::Builder<views::Label>(
+              std::make_unique<views::Label>(
+                  std::u16string(), views::style::CONTEXT_DIALOG_TITLE,
+                  views::style::STYLE_HEADLINE_4,
+                  gfx::DirectionalityMode::DIRECTIONALITY_AS_URL))
+              .CopyAddressTo(&title_)
+              .SetMultiLine(true)
+              .SetAllowCharacterBreak(true)
+              .SetHorizontalAlignment(gfx::ALIGN_LEFT)
+              .SetProperty(views::kFlexBehaviorKey,
+                           views::FlexSpecification(
+                               views::LayoutOrientation::kHorizontal,
+                               views::MinimumFlexSizeRule::kScaleToZero,
+                               views::MaximumFlexSizeRule::kUnbounded)
+                               .WithWeight(1)),
+          views::Builder<views::View>(
+              views::BubbleFrameView::CreateCloseButton(
+                  base::BindRepeating(&PageInfoNavigationHandler::CloseBubble,
+                                      base::Unretained(navigation_handler_))))
+              .SetVisible(true)
+              .SetProperty(views::kCrossAxisAlignmentKey,
+                           views::LayoutAlignment::kStart)
+              .CustomConfigure(base::BindOnce([](views::View* button) {
+                // Set views::kInternalPaddingKey for flex layout to account for
+                // internal button padding when calculating margins.
+                button->SetProperty(views::kInternalPaddingKey,
+                                    button->GetInsets());
+              })))
+      .Build();
 }
 
 std::unique_ptr<views::View> PageInfoMainView::CreateAboutThisSiteSection(

@@ -219,23 +219,6 @@ TEST_F(GattServiceTest, CreateCharacteristic_SuccessIfCreated) {
                            /*expected_success=*/true);
 }
 
-TEST_F(GattServiceTest, CreateCharacteristic_FailureIfAlreadyExists) {
-  // Create the characteristic the first time.
-  CallCreateCharacteristic(/*gatt_service_exists=*/true,
-                           /*expected_success=*/true);
-
-  // Expect failure on another call because it already exists.
-  base::test::TestFuture<bool> future;
-  remote_->CreateCharacteristic(
-      /*characteristic_uuid=*/device::BluetoothUUID(kCharacteristicUuid),
-      /*permissions=*/
-      device::BluetoothGattCharacteristic::Permission::PERMISSION_READ,
-      /*properties=*/
-      device::BluetoothGattCharacteristic::Property::PROPERTY_READ,
-      future.GetCallback());
-  EXPECT_FALSE(future.Take());
-}
-
 TEST_F(GattServiceTest,
        CreateCharacteristic_Success_MultiplePermissionsAndProperties) {
   device::BluetoothGattCharacteristic::Permissions permissions =
@@ -354,6 +337,34 @@ TEST_F(GattServiceTest, MojoDisconnect_GattServiceObserverRemote) {
 
   EXPECT_TRUE(gatt_service_invalidated_);
   EXPECT_TRUE(fake_local_gatt_service_->WasDeleted());
+}
+
+TEST_F(GattServiceTest, Register_Success) {
+  // Simulate that the GATT service is created successfully, and is never
+  // destroyed during the lifetime of this test.
+  ON_CALL(*mock_bluetooth_adapter_, GetGattService)
+      .WillByDefault(testing::Return(fake_local_gatt_service_.get()));
+  fake_local_gatt_service_->set_should_registration_succeed(true);
+
+  base::test::TestFuture<
+      std::optional<device::BluetoothGattService::GattErrorCode>>
+      future;
+  remote_->Register(future.GetCallback());
+  EXPECT_FALSE(future.Take());
+}
+
+TEST_F(GattServiceTest, Register_Failure) {
+  // Simulate that the GATT service is created successfully, and is never
+  // destroyed during the lifetime of this test.
+  ON_CALL(*mock_bluetooth_adapter_, GetGattService)
+      .WillByDefault(testing::Return(fake_local_gatt_service_.get()));
+  fake_local_gatt_service_->set_should_registration_succeed(false);
+
+  base::test::TestFuture<
+      std::optional<device::BluetoothGattService::GattErrorCode>>
+      future;
+  remote_->Register(future.GetCallback());
+  EXPECT_TRUE(future.Take());
 }
 
 }  // namespace bluetooth

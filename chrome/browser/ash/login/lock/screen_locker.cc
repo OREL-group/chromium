@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ash/login/lock/screen_locker.h"
 
+#include <optional>
+
 #include "ash/constants/ash_features.h"
 #include "ash/constants/ash_pref_names.h"
 #include "ash/public/cpp/login_screen.h"
@@ -11,6 +13,7 @@
 #include "base/command_line.h"
 #include "base/containers/contains.h"
 #include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/memory/weak_ptr.h"
@@ -34,15 +37,15 @@
 #include "chrome/browser/ash/login/quick_unlock/quick_unlock_storage.h"
 #include "chrome/browser/ash/login/quick_unlock/quick_unlock_utils.h"
 #include "chrome/browser/ash/login/session/user_session_manager.h"
-#include "chrome/browser/ash/login/ui/user_adding_screen.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/certificate_provider/certificate_provider_service.h"
 #include "chrome/browser/certificate_provider/certificate_provider_service_factory.h"
 #include "chrome/browser/certificate_provider/pin_dialog_manager.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/ash/login_screen_client_impl.h"
-#include "chrome/browser/ui/ash/session_controller_client_impl.h"
+#include "chrome/browser/ui/ash/login/login_screen_client_impl.h"
+#include "chrome/browser/ui/ash/login/user_adding_screen.h"
+#include "chrome/browser/ui/ash/session/session_controller_client_impl.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/grit/browser_resources.h"
 #include "chrome/grit/generated_resources.h"
@@ -307,7 +310,7 @@ void ScreenLocker::OnAuthSuccess(const UserContext& user_context) {
       quick_unlock_storage->fingerprint_storage()->ResetUnlockAttemptCount();
     }
   } else {
-    NOTREACHED() << "Logged in user not found.";
+    NOTREACHED_IN_MIGRATION() << "Logged in user not found.";
   }
 
   if (pending_auth_state_) {
@@ -439,7 +442,7 @@ void ScreenLocker::OnChallengeResponseKeysPrepared(
     const AccountId& account_id,
     std::vector<ChallengeResponseKey> challenge_response_keys) {
   if (challenge_response_keys.empty()) {
-    // TODO(crbug.com/826417): Indicate the error in the UI.
+    // TODO(crbug.com/40568975): Indicate the error in the UI.
     if (pending_auth_state_) {
       std::move(pending_auth_state_->callback).Run(/*auth_success=*/false);
       pending_auth_state_.reset();
@@ -460,7 +463,10 @@ void ScreenLocker::OnPinAttemptDone(std::unique_ptr<UserContext> user_context,
                                     std::optional<AuthenticationError> error) {
   if (error.has_value()) {
     // PIN authentication has failed; try submitting as a normal password.
+    // Clear the label value so auth performer will look up the label for
+    // the password factor.
     user_context->SetIsUsingPin(false);
+    user_context->GetKey()->SetLabel("");
     ContinueAuthenticate(std::move(user_context));
     return;
   }
@@ -783,7 +789,7 @@ void ScreenLocker::OnStatusChanged(
   }
   LOG(ERROR) << "ScreenLocker StatusChanged to an unknown state: "
              << static_cast<int>(status);
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 void ScreenLocker::OnEnrollScanDone(device::mojom::ScanResult scan_result,
@@ -945,10 +951,12 @@ void ScreenLocker::MaybeDisablePinAndFingerprintFromTimeout(
   }
 }
 
-void ScreenLocker::OnPinCanAuthenticate(const AccountId& account_id,
-                                        bool can_authenticate) {
-  LoginScreen::Get()->GetModel()->SetPinEnabledForUser(account_id,
-                                                       can_authenticate);
+void ScreenLocker::OnPinCanAuthenticate(
+    const AccountId& account_id,
+    bool can_authenticate,
+    cryptohome::PinLockAvailability available_at) {
+  LoginScreen::Get()->GetModel()->SetPinEnabledForUser(
+      account_id, can_authenticate, available_at);
 }
 
 void ScreenLocker::UpdateFingerprintStateForUser(

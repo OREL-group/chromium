@@ -27,6 +27,10 @@ namespace signin {
 class GaiaIdHash;
 }  // namespace signin
 
+namespace sync_pb {
+class TrustedVaultAutoUpgradeExperimentGroup;
+}  // namespace sync_pb
+
 namespace syncer {
 
 class SyncPrefObserver {
@@ -201,16 +205,19 @@ class SyncPrefs {
   void SetCachedPassphraseType(PassphraseType passphrase_type);
   void ClearCachedPassphraseType();
 
+  // The user's TrustedVaultAutoUpgradeExperimentGroup, determined the first
+  // time the engine is successfully initialized.
+  std::optional<sync_pb::TrustedVaultAutoUpgradeExperimentGroup>
+  GetCachedTrustedVaultAutoUpgradeExperimentGroup() const;
+  void SetCachedTrustedVaultAutoUpgradeExperimentGroup(
+      const sync_pb::TrustedVaultAutoUpgradeExperimentGroup& group);
+  void ClearCachedTrustedVaultAutoUpgradeExperimentGroup();
+
   // The encryption bootstrap token is used for explicit passphrase users
   // (usually custom passphrase) and represents a user-entered passphrase.
-  // TODO(crbug.com/40069260): Cleanup *EncryptionBootstrapToken when
-  // kSyncRememberCustomPassphraseAfterSignout is fully rolled-out. The Set/Get
-  // methods will not be used, but ClearAllEncryptionBootstrapTokens will still
-  // be needed to clear the gaia-keyed pref on signout for syncing users. It
-  // should be removed only when kMigrateSyncingUserToSignedIn is fully
-  // rolled-out.
-  std::string GetEncryptionBootstrapToken() const;
-  void SetEncryptionBootstrapToken(const std::string& token);
+  // TODO(crbug.com/40282890): ClearAllEncryptionBootstrapTokens is only needed
+  // to clear the gaia-keyed pref on signout for syncing users. It should be
+  // removed only when kMigrateSyncingUserToSignedIn is fully rolled-out.
   void ClearAllEncryptionBootstrapTokens();
   // The encryption bootstrap token per account. Used for explicit passphrase
   // users (usually custom passphrase) and represents a user-entered passphrase.
@@ -227,24 +234,12 @@ class SyncPrefs {
   void SetPassphrasePromptMutedProductVersion(int major_version);
   void ClearPassphrasePromptMutedProductVersion();
 
-#if BUILDFLAG(IS_IOS)
-  // Before signed-in non-syncing users were migrated to per-account "selected
-  // type" prefs (crbug.com/1485015), an iOS user might have disabled the global
-  // passwords pref via a toggle. If so, this function makes sure the new
-  // per-account setting is also disabled.
-  // Does nothing for signed-out or syncing users.
-  void MaybeMigratePasswordsToPerAccountPref(
-      SyncAccountState account_state,
-      const signin::GaiaIdHash& gaia_id_hash);
-#endif  // BUILDFLAG(IS_IOS)
-
   // Migrates any user settings for pre-existing signed-in users, for the
   // feature `kReplaceSyncPromosWithSignInPromos`. For signed-out users or
   // syncing users, no migration is necessary - this also covers new users (or
   // more precisely, new profiles).
   // This should be called early during browser startup.
   // Returns whether the migration ran, i.e. whether any user settings were set.
-  // On iOS this must run after MaybeMigratePasswordsToPerAccountPref().
   bool MaybeMigratePrefsForSyncToSigninPart1(
       SyncAccountState account_state,
       const signin::GaiaIdHash& gaia_id_hash);
@@ -261,6 +256,7 @@ class SyncPrefs {
   // Migrates kSyncEncryptionBootstrapToken to the gaia-keyed pref, for the
   // feature `kSyncRememberCustomPassphraseAfterSignout`. This should be called
   // early during browser startup.
+  // TODO(crbug.com/325201878): Clean up the migration logic and the old pref.
   void MaybeMigrateCustomPassphrasePref(const signin::GaiaIdHash& gaia_id_hash);
 
   // Should be called when Sync gets disabled / the user signs out. Clears any
@@ -283,6 +279,19 @@ class SyncPrefs {
       PrefService* pref_service,
       const signin::GaiaIdHash& gaia_id_hash);
 
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+  // If switches::kExplicitBrowserSigninUIOnDesktop is enabled, performs a
+  // one-off migration which ensures that, for a user who...
+  // ...enabled sync-the-feature, then...
+  // ...disabled an autofill data type, then...
+  // ...disabled sync-the-feature, then...
+  // ...signed-in with the same account (without sync-the-feture), the autofill
+  // data type is disabled.
+  // Internally this works by reading the global passwords setting and writing
+  // it to the account setting for kGoogleServicesLastSyncingGaiaId.
+  static void MaybeMigrateAutofillToPerAccountPref(PrefService* pref_service);
+#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+
  private:
   static void RegisterTypeSelectedPref(PrefRegistrySimple* prefs,
                                        UserSelectableType type);
@@ -301,10 +310,6 @@ class SyncPrefs {
 #if !BUILDFLAG(IS_CHROMEOS_ASH)
   void OnFirstSetupCompletePrefChange();
 #endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
-
-  void KeepAccountSettingsPrefsOnlyForUsers(
-      const std::vector<signin::GaiaIdHash>& available_gaia_ids,
-      const char* pref_path);
 
   // Never null.
   const raw_ptr<PrefService> pref_service_;

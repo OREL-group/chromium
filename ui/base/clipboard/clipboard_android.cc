@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -15,11 +16,15 @@
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/containers/contains.h"
+#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/lazy_instance.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/notreached.h"
+#include "base/ranges/algorithm.h"
+#include "base/strings/string_split.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
 #include "base/task/thread_pool.h"
@@ -30,8 +35,9 @@
 #include "ui/base/clipboard/clipboard_format_type.h"
 #include "ui/base/clipboard/clipboard_metrics.h"
 #include "ui/base/clipboard/clipboard_util.h"
+#include "ui/base/clipboard_jni_headers/Clipboard_jni.h"
 #include "ui/base/data_transfer_policy/data_transfer_endpoint.h"
-#include "ui/base/ui_base_jni_headers/Clipboard_jni.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/gfx/android/java_bitmap.h"
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/image/image.h"
@@ -116,10 +122,11 @@ class ClipboardMap {
   base::Time GetLastModifiedTime() const;
   void ClearLastModifiedTime();
   bool HasFormat(const ClipboardFormatType& format);
-  std::vector<ClipboardFormatType> GetFormats();
   void OnPrimaryClipboardChanged();
   void OnPrimaryClipTimestampInvalidated(int64_t timestamp_ms);
-  void Set(const ClipboardFormatType& format, base::StringPiece data);
+  void Set(const ClipboardFormatType& format, std::string_view data);
+  const std::vector<ui::FileInfo>& GetFilenames();
+  void SetFilenames(std::vector<ui::FileInfo> filenames);
   void CommitToAndroidClipboard();
   void Clear();
   void MarkPasswordData();
@@ -146,6 +153,7 @@ class ClipboardMap {
 
   std::map<ClipboardFormatType, std::string> map_ GUARDED_BY(lock_);
   MapState map_state_;
+  std::vector<ui::FileInfo> filenames_;
 
   // This lock is for read/write |map_|.
   base::Lock lock_;
@@ -233,6 +241,10 @@ bool ClipboardMap::HasFormat(const ClipboardFormatType& format) {
       return base::Contains(map_, ClipboardFormatType::PngType()) ||
              base::Contains(map_, ClipboardFormatType::BitmapType());
     }
+    // Files are stored outside of `map_` in `filenames_`.
+    if (format == ClipboardFormatType::FilenamesType()) {
+      return !filenames_.empty();
+    }
     return base::Contains(map_, format);
   }
 
@@ -253,50 +265,15 @@ bool ClipboardMap::HasFormat(const ClipboardFormatType& format) {
   } else if (format == ClipboardFormatType::PngType() ||
              format == ClipboardFormatType::BitmapType()) {
     return Java_Clipboard_hasImage(env, clipboard_manager_);
+  } else if (format == ClipboardFormatType::FilenamesType()) {
+    if (!base::FeatureList::IsEnabled(features::kClipboardFiles)) {
+      return false;
+    }
+    return Java_Clipboard_hasFilenames(env, clipboard_manager_);
   }
 
   // Android unsupported format types, check local only.
   return base::Contains(map_, format);
-}
-
-std::vector<ClipboardFormatType> ClipboardMap::GetFormats() {
-  base::AutoLock lock(lock_);
-  std::vector<ClipboardFormatType> formats;
-  formats.reserve(map_.size());
-
-  // Check with Android for Android clipboard supported formats.
-  if (map_state_ != MapState::kUpToDate) {
-    JNIEnv* env = AttachCurrentThread();
-    if (Java_Clipboard_hasCoercedText(env, clipboard_manager_)) {
-      formats.push_back(ClipboardFormatType::PlainTextType());
-    }
-    if (Java_Clipboard_hasHTMLOrStyledText(env, clipboard_manager_)) {
-      formats.push_back(ClipboardFormatType::HtmlType());
-    }
-    if (Java_Clipboard_hasUrl(env, clipboard_manager_)) {
-      formats.push_back(ClipboardFormatType::UrlType());
-    }
-    if (Java_Clipboard_hasImage(env, clipboard_manager_)) {
-      formats.push_back(ClipboardFormatType::BitmapType());
-      formats.push_back(ClipboardFormatType::PngType());
-    }
-  }
-
-  // Check local cache, since the formats not supported by Android clipboard are
-  // not synced on any other layer.
-  for (const auto& it : map_) {
-    if (map_state_ != MapState::kUpToDate &&
-        (it.first == ClipboardFormatType::PlainTextType() ||
-         it.first == ClipboardFormatType::HtmlType() ||
-         it.first == ClipboardFormatType::UrlType() ||
-         it.first == ClipboardFormatType::BitmapType() ||
-         it.first == ClipboardFormatType::PngType())) {
-      continue;
-    }
-    formats.push_back(it.first);
-  }
-
-  return formats;
 }
 
 void ClipboardMap::OnPrimaryClipboardChanged() {
@@ -316,10 +293,20 @@ void ClipboardMap::OnPrimaryClipTimestampInvalidated(int64_t timestamp_ms) {
 }
 
 void ClipboardMap::Set(const ClipboardFormatType& format,
-                       base::StringPiece data) {
+                       std::string_view data) {
   base::AutoLock lock(lock_);
   map_[format] = data;
   map_state_ = MapState::kPreparingCommit;
+}
+
+const std::vector<ui::FileInfo>& ClipboardMap::GetFilenames() {
+  base::AutoLock lock(lock_);
+  UpdateFromAndroidClipboard();
+  return filenames_;
+}
+
+void ClipboardMap::SetFilenames(std::vector<ui::FileInfo> filenames) {
+  filenames_ = std::move(filenames);
 }
 
 void ClipboardMap::CommitToAndroidClipboard() {
@@ -366,6 +353,16 @@ void ClipboardMap::CommitToAndroidClipboard() {
         Java_Clipboard_getImageUriString(env, clipboard_manager_);
     JNI_Clipboard_AddMapEntry(env, &map_, ClipboardFormatType::BitmapType(),
                               jimageuri);
+  } else if (!filenames_.empty()) {
+    // Files are stored outside of `map_` in `filenames_`.
+    std::vector<std::string> paths;
+    for (const auto& filename : filenames_) {
+      paths.push_back(filename.path.value());
+    }
+    ScopedJavaLocalRef<jobjectArray> arr =
+        base::android::ToJavaArrayOfStrings(env, paths);
+    DCHECK(arr.obj());
+    Java_Clipboard_setFilenames(env, clipboard_manager_, arr);
   } else {
     Java_Clipboard_clear(env, clipboard_manager_);
     NOTIMPLEMENTED();
@@ -379,6 +376,7 @@ void ClipboardMap::Clear() {
   JNIEnv* env = AttachCurrentThread();
   base::AutoLock lock(lock_);
   map_.clear();
+  filenames_.clear();
   Java_Clipboard_clear(env, clipboard_manager_);
   map_state_ = MapState::kUpToDate;
   sequence_number_ = ClipboardSequenceNumberToken();
@@ -417,6 +415,17 @@ void ClipboardMap::UpdateFromAndroidClipboard() {
       Java_Clipboard_getUrl(env, clipboard_manager_);
   ScopedJavaLocalRef<jstring> jimageuri =
       Java_Clipboard_getImageUriString(env, clipboard_manager_);
+  if (base::FeatureList::IsEnabled(features::kClipboardFiles)) {
+    filenames_.clear();
+    std::vector<std::vector<std::string>> filenames;
+    base::android::Java2dStringArrayTo2dStringVector(
+        env, Java_Clipboard_getFilenames(env, clipboard_manager_), &filenames);
+    for (const auto& info : filenames) {
+      // The first elemennt is the file path, the second is the display name.
+      CHECK_EQ(info.size(), 2u);
+      filenames_.emplace_back(base::FilePath(info[0]), base::FilePath(info[1]));
+    }
+  }
 
   JNI_Clipboard_AddMapEntry(env, &map_, ClipboardFormatType::PlainTextType(),
                             jtext);
@@ -529,7 +538,10 @@ std::vector<std::u16string> ClipboardAndroid::GetStandardFormats(
     types.push_back(base::UTF8ToUTF16(kMimeTypeImageURI));
     types.push_back(base::UTF8ToUTF16(kMimeTypePNG));
   }
-
+  if (IsFormatAvailable(ClipboardFormatType::FilenamesType(), buffer,
+                        data_dst)) {
+    types.push_back(base::UTF8ToUTF16(kMimeTypeURIList));
+  }
   // these formats aren't supported by the ClipboardMap currently, but might
   // be one day?
   if (IsFormatAvailable(ClipboardFormatType::RtfType(), buffer, data_dst))
@@ -629,10 +641,11 @@ void ClipboardAndroid::ReadPng(ClipboardBuffer buffer,
 
 // |data_dst| is not used. It's only passed to be consistent with other
 // platforms.
-void ClipboardAndroid::ReadCustomData(ClipboardBuffer buffer,
-                                      const std::u16string& type,
-                                      const DataTransferEndpoint* data_dst,
-                                      std::u16string* result) const {
+void ClipboardAndroid::ReadDataTransferCustomData(
+    ClipboardBuffer buffer,
+    const std::u16string& type,
+    const DataTransferEndpoint* data_dst,
+    std::u16string* result) const {
   DCHECK(CalledOnValidThread());
   NOTIMPLEMENTED();
 }
@@ -643,7 +656,9 @@ void ClipboardAndroid::ReadFilenames(ClipboardBuffer buffer,
                                      const DataTransferEndpoint* data_dst,
                                      std::vector<ui::FileInfo>* result) const {
   DCHECK(CalledOnValidThread());
-  NOTIMPLEMENTED();
+  DCHECK_EQ(buffer, ClipboardBuffer::kCopyPaste);
+  RecordRead(ClipboardFormatMetric::kFilenames);
+  base::ranges::copy(g_map.Get().GetFilenames(), std::back_inserter(*result));
 }
 
 // 'data_dst' and 'title' are not used. It's only passed to be consistent with
@@ -700,32 +715,35 @@ void ClipboardAndroid::WritePortableAndPlatformRepresentations(
   g_map.Get().CommitToAndroidClipboard();
 }
 
-void ClipboardAndroid::WriteText(base::StringPiece text) {
+void ClipboardAndroid::WriteText(std::string_view text) {
   g_map.Get().Set(ClipboardFormatType::PlainTextType(), text);
 }
 
 void ClipboardAndroid::WriteHTML(
-    base::StringPiece markup,
-    std::optional<base::StringPiece> /* source_url */) {
+    std::string_view markup,
+    std::optional<std::string_view> /* source_url */) {
   g_map.Get().Set(ClipboardFormatType::HtmlType(), markup);
 }
 
-void ClipboardAndroid::WriteSvg(base::StringPiece markup) {
+void ClipboardAndroid::WriteSvg(std::string_view markup) {
   g_map.Get().Set(ClipboardFormatType::SvgType(), markup);
 }
 
-void ClipboardAndroid::WriteRTF(base::StringPiece rtf) {
+void ClipboardAndroid::WriteRTF(std::string_view rtf) {
   NOTIMPLEMENTED();
 }
 
 void ClipboardAndroid::WriteFilenames(std::vector<ui::FileInfo> filenames) {
-  NOTIMPLEMENTED();
+  if (!base::FeatureList::IsEnabled(features::kClipboardFiles)) {
+    return;
+  }
+  g_map.Get().SetFilenames(std::move(filenames));
 }
 
 // According to other platforms implementations, this really writes the
 // URL spec.
-void ClipboardAndroid::WriteBookmark(base::StringPiece title,
-                                     base::StringPiece url) {
+void ClipboardAndroid::WriteBookmark(std::string_view title,
+                                     std::string_view url) {
   g_map.Get().Set(ClipboardFormatType::UrlType(), url);
 }
 
@@ -745,9 +763,8 @@ void ClipboardAndroid::WriteBitmap(const SkBitmap& sk_bitmap) {
   // background sequence.
   scoped_refptr<base::RefCountedMemory> image_memory =
       gfx::Image::CreateFrom1xBitmap(sk_bitmap).As1xPNGBytes();
-  std::string packed(image_memory->front_as<char>(), image_memory->size());
-
-  g_map.Get().Set(ClipboardFormatType::PngType(), packed);
+  g_map.Get().Set(ClipboardFormatType::PngType(),
+                  std::string(base::as_string_view(*image_memory)));
 }
 
 void ClipboardAndroid::WriteData(const ClipboardFormatType& format,

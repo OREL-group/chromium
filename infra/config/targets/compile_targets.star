@@ -199,6 +199,11 @@ targets.compile_target(
 )
 
 targets.compile_target(
+    name = "core_runtime_starboard",
+    label = "//chromecast/cast_core:core_runtime_starboard",
+)
+
+targets.compile_target(
     name = "cronet_package",
     label = "//components/cronet:cronet_package",
 )
@@ -216,11 +221,6 @@ targets.compile_target(
 targets.compile_target(
     name = "empty_main",
     label = "//testing:empty_main",
-)
-
-targets.compile_target(
-    name = "test_ash_chrome_cipd_yaml",
-    label = "//chrome/test:test_ash_chrome_cipd_yaml",
 )
 
 targets.compile_target(
@@ -299,7 +299,7 @@ targets.compile_target(
 
 targets.compile_target(
     name = "pdfium_test",
-    label = "//third_party/pdfium/samples:pdfium_test",
+    label = "//third_party/pdfium/testing:pdfium_test",
 )
 
 targets.compile_target(
@@ -368,6 +368,11 @@ targets.compile_target(
 )
 
 targets.compile_target(
+    name = "traffic_annotation_proto",
+    label = "//chrome/browser/privacy:traffic_annotation_proto",
+)
+
+targets.compile_target(
     name = "chrome/updater:all",
     label = "//chrome/updater:all",
 )
@@ -400,4 +405,9 @@ targets.compile_target(
 targets.compile_target(
     name = "web_engine_shell_pkg",
     label = "//fuchsia_web/shell:web_engine_shell_pkg",
+)
+
+targets.compile_target(
+    name = "chrome/enterprise_companion:all",
+    label = "//chrome/enterprise_companion:all",
 )

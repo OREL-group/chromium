@@ -56,6 +56,11 @@
       "5107DE9024C329EEA9C9A72D94C16723790C6422"   // Apps Developer Tool Dev.
     ]
   },
+  "experimentalAiData": {
+    "extension_types": ["extension"],
+    "channel": "dev",
+    "command_line_switch": "extension-ai-data-collection"
+  },
   "autofillPrivate": {
     "channel": "trunk",
     "extension_types": ["extension", "platform_app"],
@@ -294,13 +299,12 @@
     "channel": "stable",
     "extension_types": ["extension"],
     "location": "policy",
-    // TODO(b/303379531): Add support for Lacros
-    "platforms": ["chromeos"],
+    "platforms": ["chromeos", "lacros"],
     "session_types": ["kiosk"],
     "allowlist": [
-      "E62CAB6E5341E96208DA8E0E6896770907FFA00C",  // https://b/303379761
-      "36139D0E820CE4B911D38D10D8C23448431D098B",  // https://b/303379761
-      "51DC616F82F8E8B3FA5185A83699F0E5CDACFF41"   // https://b/303379761
+      "E62CAB6E5341E96208DA8E0E6896770907FFA00C",  // http://b/303379761
+      "36139D0E820CE4B911D38D10D8C23448431D098B",  // http://b/303379761
+      "51DC616F82F8E8B3FA5185A83699F0E5CDACFF41"   // http://b/303379761
     ],
     // TODO(b/307230150): Clean up API flag
     "feature_flag": "ApiEnterpriseKioskInput"
@@ -358,7 +362,9 @@
       "349E89FE0296161007623C0B4096B617D7CECD54",  // https://crbug.com/882461 SecureConnect
       "18B761AA5B58FA89E596EB7996B4C92C86775C7F",  // https://crbug.com/882461 SecureConnect
       "2012C0122892D332325339998251D1CC3CAE396A",  // https://crbug.com/882461 SecureConnect
-      "C8F4673FC69965390BC376C0761EC341492F9D87"   // Contact Center Insights
+      "C8F4673FC69965390BC376C0761EC341492F9D87",  // Contact Center Insights
+      "31367E6C4D69B90D866289492A307C205AF8A32F", // b/361094242 Secure Enterprise Browser Extension
+      "50B8ECD18A36937668D1FCA9CEEE668BC25C39CC" // b/361094242 Beyondcorp Enterprise Extension
     ]
   },
   "experimental": {
@@ -449,7 +455,7 @@
   "input": {
     "channel": "stable",
     "extension_types": ["extension", "legacy_packaged_app"],
-    "platforms": ["chromeos", "win", "linux"]
+    "platforms": ["chromeos"]
   },
   "imageLoaderPrivate": [{
     "channel": "stable",
@@ -686,7 +692,9 @@
     "extension_types": ["extension"],
     "allowlist": [
       "1BFB3A47AA4A1E1C4714D919217602685CDD0FA7",  // http://crbug.com/574600
-      "DD87C93131FF8D3DE4E483DC1EB298D73C7223A6"   // http://crbug.com/1328114
+      "DD87C93131FF8D3DE4E483DC1EB298D73C7223A6",  // http://crbug.com/1328114
+      "13E3107CEF097680EF38F4C405F0014ECC2428C6",  // https://crbug.com/333576806
+      "F14B6BF9F5B9205222E568B3C838D9E99C3F5032"   // https://crbug.com/333576806
     ]
   },
   {

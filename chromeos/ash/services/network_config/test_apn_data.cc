@@ -124,6 +124,7 @@ base::Value::Dict TestApnData::AsShillApn() const {
   apn.Set(shill::kApnUsernameProperty, username);
   apn.Set(shill::kApnPasswordProperty, password);
   apn.Set(shill::kApnAttachProperty, attach);
+  apn.Set(shill::kApnSourceProperty, onc_source);
   apn.Set(kShillApnAuthenticationType, onc_authentication);
   if (features::IsApnRevampEnabled()) {
     apn.Set(kShillApnId, id);
@@ -136,7 +137,7 @@ base::Value::Dict TestApnData::AsShillApn() const {
     } else if (onc_ip_type == shill::kApnIpTypeV4V6) {
       shill_ip_type = shill::kApnIpTypeV4V6;
     } else {
-      NOTREACHED() << "An IP type is required";
+      NOTREACHED_IN_MIGRATION() << "An IP type is required";
     }
     apn.Set(shill::kApnIpTypeProperty, shill_ip_type);
 

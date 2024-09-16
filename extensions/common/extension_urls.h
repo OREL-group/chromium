@@ -8,6 +8,8 @@
 #include <string>
 #include <string_view>
 
+#include "base/auto_reset.h"
+#include "build/branding_buildflags.h"
 #include "extensions/common/extension_id.h"
 #include "url/gurl.h"
 
@@ -67,7 +69,10 @@ GURL GetWebstoreItemJsonDataURL(const extensions::ExtensionId& extension_id);
 
 // Returns the URL used to get webstore data (ratings, manifest, icon URL,
 // etc.) about an extension from the webstore using the new itemSnippets API.
-GURL GetWebstoreItemSnippetURL(const std::string& extension_id);
+GURL GetWebstoreItemSnippetURL(const extensions::ExtensionId& extension_id);
+
+// Sets the itemSnippets API URL to `test_url`.
+base::AutoReset<const GURL*> SetItemSnippetURLForTesting(const GURL* test_url);
 
 // Returns the compile-time constant webstore update url specific to
 // Chrome. Usually you should prefer using GetWebstoreUpdateUrl.
@@ -82,10 +87,15 @@ GURL GetWebstoreUpdateUrl();
 GURL GetWebstoreReportAbuseUrl(const extensions::ExtensionId& extension_id,
                                const std::string& referrer_id);
 
+// Returns the URL with extension recommendations related to `extension_id` in
+// the new Web Store.
+GURL GetNewWebstoreItemRecommendationsUrl(
+    const extensions::ExtensionId& extension_id);
+
 // Returns whether the URL's host matches or is in the same domain as any of the
 // webstore URLs. Note: This includes any subdomains of the webstore URLs.
-// TODO(crbug.com/1355623): We should move the domain checks for the webstore to
-// use the IsSameOrigin version below where appropriate.
+// TODO(crbug.com/40235977): We should move the domain checks for the webstore
+// to use the IsSameOrigin version below where appropriate.
 bool IsWebstoreDomain(const GURL& url);
 
 // Returns whether the origin is the same origin as any of the webstore URLs.

@@ -15,7 +15,6 @@
 #include "base/notreached.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/extensions/api/side_panel/side_panel_service.h"
-#include "chrome/browser/extensions/chrome_extension_browser_constants.h"
 #include "chrome/browser/extensions/context_menu_matcher.h"
 #include "chrome/browser/extensions/extension_management.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
@@ -23,18 +22,20 @@
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/menu_manager.h"
 #include "chrome/browser/extensions/permissions/site_permissions_helper.h"
+#include "chrome/browser/extensions/permissions_url_constants.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/extensions/extension_side_panel_utils.h"
 #include "chrome/browser/ui/extensions/extensions_container.h"
-#include "chrome/browser/ui/side_panel/side_panel_entry_id.h"
-#include "chrome/browser/ui/side_panel/side_panel_entry_key.h"
-#include "chrome/browser/ui/side_panel/side_panel_ui.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_model.h"
 #include "chrome/browser/ui/ui_features.h"
+#include "chrome/browser/ui/views/side_panel/side_panel_entry_id.h"
+#include "chrome/browser/ui/views/side_panel/side_panel_entry_key.h"
+#include "chrome/browser/ui/views/side_panel/side_panel_ui.h"
 #include "chrome/common/extensions/api/side_panel.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/branded_strings.h"
@@ -77,15 +78,15 @@ bool MenuItemMatchesAction(const std::optional<ActionInfo::Type> action_type,
   if (contexts.Contains(MenuItem::ALL))
     return true;
   if (contexts.Contains(MenuItem::PAGE_ACTION) &&
-      (*action_type == ActionInfo::TYPE_PAGE)) {
+      (*action_type == ActionInfo::Type::kPage)) {
     return true;
   }
   if (contexts.Contains(MenuItem::BROWSER_ACTION) &&
-      (*action_type == ActionInfo::TYPE_BROWSER)) {
+      (*action_type == ActionInfo::Type::kBrowser)) {
     return true;
   }
   if (contexts.Contains(MenuItem::ACTION) &&
-      (*action_type == ActionInfo::TYPE_ACTION)) {
+      (*action_type == ActionInfo::Type::kAction)) {
     return true;
   }
 
@@ -155,7 +156,7 @@ ExtensionContextMenuModel::ContextMenuAction CommandIdToContextMenuAction(
     case ExtensionContextMenuModel::PAGE_ACCESS_SUBMENU:
     case ExtensionContextMenuModel::PAGE_ACCESS_ALL_EXTENSIONS_GRANTED:
     case ExtensionContextMenuModel::PAGE_ACCESS_ALL_EXTENSIONS_BLOCKED:
-      DUMP_WILL_BE_NOTREACHED_NORETURN();
+      DUMP_WILL_BE_NOTREACHED();
       break;
     case ExtensionContextMenuModel::VIEW_WEB_PERMISSIONS:
       return ContextMenuAction::kViewWebPermissions;
@@ -164,7 +165,7 @@ ExtensionContextMenuModel::ContextMenuAction CommandIdToContextMenuAction(
     default:
       break;
   }
-  NOTREACHED();
+  DUMP_WILL_BE_NOTREACHED();
   return ContextMenuAction::kNoAction;
 }
 
@@ -177,7 +178,7 @@ PermissionsManager::UserSiteAccess CommandIdToSiteAccess(int command_id) {
     case ExtensionContextMenuModel::PAGE_ACCESS_RUN_ON_ALL_SITES:
       return PermissionsManager::UserSiteAccess::kOnAllSites;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return PermissionsManager::UserSiteAccess::kOnClick;
 }
 
@@ -206,7 +207,7 @@ void LogPageAccessAction(int command_id) {
           "Extensions.ContextMenu.Hosts.LearnMoreClicked"));
       break;
     default:
-      NOTREACHED() << "Unknown option: " << command_id;
+      NOTREACHED_IN_MIGRATION() << "Unknown option: " << command_id;
       break;
   }
 }
@@ -392,7 +393,7 @@ bool ExtensionContextMenuModel::IsCommandIdEnabled(int command_id) const {
     case VIEW_WEB_PERMISSIONS:
       return true;
     default:
-      NOTREACHED() << "Unknown command" << command_id;
+      NOTREACHED_IN_MIGRATION() << "Unknown command" << command_id;
   }
   return true;
 }
@@ -496,17 +497,20 @@ void ExtensionContextMenuModel::ExecuteCommand(int command_id,
     }
     case PAGE_ACCESS_PERMISSIONS_PAGE:
       LogPageAccessAction(command_id);
-      OpenUrl(*browser_,
-              GURL(chrome_extension_constants::kExtensionsSitePermissionsURL));
+      OpenUrl(
+          *browser_,
+          GURL(extension_permissions_constants::kExtensionsSitePermissionsURL));
       break;
     case PAGE_ACCESS_LEARN_MORE:
       LogPageAccessAction(command_id);
-      OpenUrl(*browser_,
-              GURL(chrome_extension_constants::kRuntimeHostPermissionsHelpURL));
+      OpenUrl(
+          *browser_,
+          GURL(
+              extension_permissions_constants::kRuntimeHostPermissionsHelpURL));
 
       break;
     default:
-      NOTREACHED() << "Unknown option";
+      NOTREACHED_IN_MIGRATION() << "Unknown option";
       break;
   }
 }
@@ -788,8 +792,7 @@ void ExtensionContextMenuModel::InitMenu(const Extension* extension,
 
 void ExtensionContextMenuModel::AddSidePanelEntryIfPresent(
     const Extension& extension) {
-  if (!features::IsSidePanelPinningEnabled() ||
-      !extension.permissions_data()->HasAPIPermission(
+  if (!extension.permissions_data()->HasAPIPermission(
           mojom::APIPermissionID::kSidePanel)) {
     return;
   }
@@ -804,8 +807,7 @@ void ExtensionContextMenuModel::AddSidePanelEntryIfPresent(
   }
 
   AddSeparator(ui::NORMAL_SEPARATOR);
-  SidePanelUI* const side_panel_ui =
-      SidePanelUI::GetSidePanelUIForBrowser(browser_);
+  SidePanelUI* const side_panel_ui = browser_->GetFeatures().side_panel_ui();
   CHECK(side_panel_ui);
   bool is_side_panel_open = side_panel_ui->IsSidePanelEntryShowing(
       SidePanelEntryKey(SidePanelEntryId::kExtension, extension.id()));

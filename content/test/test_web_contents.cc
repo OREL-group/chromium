@@ -206,6 +206,10 @@ void TestWebContents::SetMainFrameMimeType(const std::string& mime_type) {
   GetPrimaryPage().SetContentsMimeType(mime_type);
 }
 
+void TestWebContents::SetMainFrameSize(const gfx::Size& frame_size) {
+  GetPrimaryMainFrame()->FrameSizeChanged(frame_size);
+}
+
 const std::string& TestWebContents::GetContentsMimeType() {
   return GetPrimaryPage().GetContentsMimeType();
 }
@@ -236,6 +240,10 @@ void TestWebContents::TestDidFinishLoad(const GURL& url) {
 void TestWebContents::TestDidFailLoadWithError(const GURL& url,
                                                int error_code) {
   GetPrimaryMainFrame()->DidFailLoadWithError(url, error_code);
+}
+
+void TestWebContents::TestDidFirstVisuallyNonEmptyPaint() {
+  OnFirstVisuallyNonEmptyPaint(GetPrimaryPage());
 }
 
 bool TestWebContents::CrossProcessNavigationPending() {
@@ -307,7 +315,8 @@ void TestWebContents::TestSetIsLoading(bool value) {
           node->render_manager()->speculative_frame_host();
       if (speculative_frame_host)
         speculative_frame_host->ResetLoadingState();
-      node->ResetNavigationRequest(NavigationDiscardReason::kCancelled);
+      node->ResetNavigationRequest(
+          NavigationDiscardReason::kExplicitCancellation);
     }
   }
 }
@@ -397,7 +406,12 @@ void TestWebContents::ResetPauseSubresourceLoadingCalled() {
   pause_subresource_loading_called_ = false;
 }
 
-void TestWebContents::SetLastActiveTime(base::TimeTicks last_active_time) {
+void TestWebContents::SetLastActiveTimeTicks(
+    base::TimeTicks last_active_time_ticks) {
+  last_active_time_ticks_ = last_active_time_ticks;
+}
+
+void TestWebContents::SetLastActiveTime(base::Time last_active_time) {
   last_active_time_ = last_active_time;
 }
 
@@ -437,7 +451,7 @@ TestWebContents::GetPictureInPictureOptions() const {
   return WebContentsImpl::GetPictureInPictureOptions();
 }
 
-int TestWebContents::AddPrerender(const GURL& url) {
+FrameTreeNodeId TestWebContents::AddPrerender(const GURL& url) {
   DCHECK(!base::FeatureList::IsEnabled(
       blink::features::kPrerender2MemoryControls));
 
@@ -447,17 +461,19 @@ int TestWebContents::AddPrerender(const GURL& url) {
       /*embedder_histogram_suffix=*/"",
       blink::mojom::SpeculationTargetHint::kNoHint, Referrer(),
       blink::mojom::SpeculationEagerness::kEager,
-      rfhi->GetLastCommittedOrigin(), rfhi->GetProcess()->GetID(), GetWeakPtr(),
-      rfhi->GetFrameToken(), rfhi->GetFrameTreeNodeId(),
-      rfhi->GetPageUkmSourceId(), ui::PAGE_TRANSITION_LINK,
+      /*no_vary_search_expected=*/std::nullopt, rfhi->GetLastCommittedOrigin(),
+      rfhi->GetProcess()->GetID(), GetWeakPtr(), rfhi->GetFrameToken(),
+      rfhi->GetFrameTreeNodeId(), rfhi->GetPageUkmSourceId(),
+      ui::PAGE_TRANSITION_LINK,
+      /*should_warm_up_compositor=*/false,
       /*url_match_predicate=*/{},
       /*prerender_navigation_handle_callback=*/{}));
 }
 
 TestRenderFrameHost* TestWebContents::AddPrerenderAndCommitNavigation(
     const GURL& url) {
-  int host_id = AddPrerender(url);
-  DCHECK_NE(RenderFrameHost::kNoFrameTreeNodeId, host_id);
+  FrameTreeNodeId host_id = AddPrerender(url);
+  DCHECK(host_id);
 
   PrerenderHost* host =
       GetPrerenderHostRegistry()->FindNonReservedHostById(host_id);
@@ -473,8 +489,8 @@ TestRenderFrameHost* TestWebContents::AddPrerenderAndCommitNavigation(
 
 std::unique_ptr<NavigationSimulator>
 TestWebContents::AddPrerenderAndStartNavigation(const GURL& url) {
-  int host_id = AddPrerender(url);
-  DCHECK_NE(RenderFrameHost::kNoFrameTreeNodeId, host_id);
+  FrameTreeNodeId host_id = AddPrerender(url);
+  DCHECK(host_id);
 
   PrerenderHost* host =
       GetPrerenderHostRegistry()->FindNonReservedHostById(host_id);
@@ -489,7 +505,7 @@ void TestWebContents::ActivatePrerenderedPage(const GURL& url) {
   PrerenderHostRegistry* registry = GetPrerenderHostRegistry();
   PrerenderHost* prerender_host = registry->FindHostByUrlForTesting(url);
   DCHECK(prerender_host);
-  int prerender_host_id = prerender_host->frame_tree_node_id();
+  FrameTreeNodeId prerender_host_id = prerender_host->frame_tree_node_id();
 
   // Activate the prerendered page.
   test::PrerenderHostObserver prerender_host_observer(*this, prerender_host_id);
@@ -513,7 +529,7 @@ void TestWebContents::ActivatePrerenderedPageFromAddressBar(const GURL& url) {
   PrerenderHostRegistry* registry = GetPrerenderHostRegistry();
   PrerenderHost* prerender_host = registry->FindHostByUrlForTesting(url);
   DCHECK(prerender_host);
-  int prerender_host_id = prerender_host->frame_tree_node_id();
+  FrameTreeNodeId prerender_host_id = prerender_host->frame_tree_node_id();
 
   // Activate the prerendered page by navigation initiated by the address bar.
   test::PrerenderHostObserver prerender_host_observer(*this, prerender_host_id);

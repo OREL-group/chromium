@@ -19,9 +19,13 @@
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/types/fixed_array.h"
 #include "chrome/browser/password_manager/password_manager_test_util.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profiles_state.h"
+#include "chrome/test/base/testing_browser_process.h"
+#include "chrome/test/base/testing_profile.h"
+#include "chrome/test/base/testing_profile_manager.h"
 #include "components/password_manager/core/browser/export/password_csv_writer.h"
 #include "components/password_manager/core/browser/password_form.h"
 #include "components/password_manager/core/browser/password_store/test_password_store.h"
@@ -30,10 +34,6 @@
 #include "content/public/test/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
-
-#include "chrome/test/base/testing_browser_process.h"
-#include "chrome/test/base/testing_profile.h"
-#include "chrome/test/base/testing_profile_manager.h"
 
 namespace android {
 
@@ -96,10 +96,12 @@ class PasswordUIViewAndroidTest : public ::testing::Test {
   raw_ptr<JNIEnv> env() { return env_; }
   base::ScopedTempDir& temp_dir() { return temp_dir_; }
 
+ protected:
+  raw_ptr<TestingProfile> testing_profile_;
+
  private:
   content::BrowserTaskEnvironment task_environment_;
   TestingProfileManager testing_profile_manager_;
-  raw_ptr<TestingProfile> testing_profile_;
   scoped_refptr<TestPasswordStore> store_;
   raw_ptr<JNIEnv> env_;
   base::ScopedTempDir temp_dir_;
@@ -120,8 +122,8 @@ TEST_F(PasswordUIViewAndroidTest, GetSerializedPasswords) {
           {password_manager::CredentialUIEntry(form)});
 
   std::unique_ptr<PasswordUIViewAndroid, PasswordUIViewAndroidDestroyDeleter>
-      password_ui_view(
-          new PasswordUIViewAndroid(env(), JavaParamRef<jobject>(nullptr)));
+      password_ui_view(new PasswordUIViewAndroid(
+          env(), JavaParamRef<jobject>(nullptr), testing_profile_));
   // SavedPasswordsPresenter needs time to initialize and fetch passwords.
   RunUntilIdle();
 
@@ -133,13 +135,13 @@ TEST_F(PasswordUIViewAndroidTest, GetSerializedPasswords) {
   content::RunAllTasksUntilIdle();
   // The buffer for actual result is 1 byte longer than the expected data to be
   // able to detect when the actual data are too long.
-  char actual_result[expected_result.size() + 1];
+  base::FixedArray<char> actual_result(expected_result.size() + 1);
   int number_of_bytes_read = base::ReadFile(
       base::FilePath::FromUTF8Unsafe(serialized_passwords.exported_file_path),
-      actual_result, expected_result.size() + 1);
+      actual_result.data(), expected_result.size() + 1);
   EXPECT_EQ(static_cast<int>(expected_result.size()), number_of_bytes_read);
   EXPECT_EQ(expected_result,
-            std::string(actual_result,
+            std::string(actual_result.data(),
                         (number_of_bytes_read < 0) ? 0 : number_of_bytes_read));
   EXPECT_EQ(1, serialized_passwords.entries_count);
   EXPECT_FALSE(serialized_passwords.exported_file_path.empty());
@@ -152,8 +154,8 @@ TEST_F(PasswordUIViewAndroidTest, GetSerializedPasswords_Cancelled) {
   AddPasswordEntry("https://example.com", "username", "password");
 
   std::unique_ptr<PasswordUIViewAndroid, PasswordUIViewAndroidDestroyDeleter>
-      password_ui_view(
-          new PasswordUIViewAndroid(env(), JavaParamRef<jobject>(nullptr)));
+      password_ui_view(new PasswordUIViewAndroid(
+          env(), JavaParamRef<jobject>(nullptr), testing_profile_));
   // SavedPasswordsPresenter needs time to initialize and fetch passwords.
   RunUntilIdle();
 
@@ -180,8 +182,8 @@ TEST_F(PasswordUIViewAndroidTest, GetSerializedPasswords_WriteFailed) {
   AddPasswordEntry("https://example.com", "username", "password");
 
   std::unique_ptr<PasswordUIViewAndroid, PasswordUIViewAndroidDestroyDeleter>
-      password_ui_view(
-          new PasswordUIViewAndroid(env(), JavaParamRef<jobject>(nullptr)));
+      password_ui_view(new PasswordUIViewAndroid(
+          env(), JavaParamRef<jobject>(nullptr), testing_profile_));
   // SavedPasswordsPresenter needs time to initialize and fetch passwords.
   RunUntilIdle();
 

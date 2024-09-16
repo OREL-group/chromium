@@ -94,6 +94,28 @@ export class SettingsDisplayAndMagnificationSubpageElement extends
               'isAccessibilityReducedAnimationsEnabled');
         },
       },
+      /**
+       * Whether the magnifier following select to speak words feature is
+       * enabled.
+       */
+      isAccessibilityMagnifierFollowsStsEnabled_: {
+        type: Boolean,
+        value() {
+          return loadTimeData.getBoolean(
+              'isAccessibilityMagnifierFollowsStsEnabled');
+        },
+      },
+      /**
+       * Whether the magnifier following ChromeVox focus feature is
+       * enabled.
+       */
+      isAccessibilityMagnifierFollowsChromeVoxEnabled_: {
+        type: Boolean,
+        value() {
+          return loadTimeData.getBoolean(
+              'isAccessibilityMagnifierFollowsChromeVoxEnabled');
+        },
+      },
 
       colorVisionDeficiencyTypeOptions_: {
         readOnly: true,
@@ -128,14 +150,16 @@ export class SettingsDisplayAndMagnificationSubpageElement extends
       supportedSettingIds: {
         type: Object,
         value: () => new Set<Setting>([
+          Setting.kAccessibilityMagnifierFollowsSts,
           Setting.kColorCorrectionEnabled,
           Setting.kColorCorrectionFilterType,
           Setting.kColorCorrectionFilterAmount,
-          Setting.kReducedAnimationsEnabled,
+          Setting.kDockedMagnifier,
           Setting.kFullscreenMagnifier,
           Setting.kFullscreenMagnifierMouseFollowingMode,
           Setting.kFullscreenMagnifierFocusFollowing,
-          Setting.kDockedMagnifier,
+          Setting.kMagnifierFollowsChromeVox,
+          Setting.kReducedAnimationsEnabled,
         ]),
       },
     };
@@ -145,6 +169,8 @@ export class SettingsDisplayAndMagnificationSubpageElement extends
   private screenMagnifierMouseFollowingModePrefValues_: {[key: string]: number};
   private screenMagnifierZoomOptions_: Array<{value: number, name: string}>;
   private isAccessibilityReducedAnimationsEnabled_: boolean;
+  private isAccessibilityMagnifierFollowsStsEnabled_: boolean;
+  private isAccessibilityMagnifierFollowsChromeVoxEnabled_: boolean;
 
 
   constructor() {

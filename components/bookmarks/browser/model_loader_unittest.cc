@@ -43,6 +43,49 @@ const BookmarkNode* FindNodeByUuid(const UuidIndex& index,
   return it == index.end() ? nullptr : *it;
 }
 
+TEST(ModelLoaderTest, LoadEmptyModelFromInexistentFile) {
+  base::HistogramTester histogram_tester;
+  base::test::TaskEnvironment task_environment;
+  const base::FilePath test_file =
+      GetTestDataDir().AppendASCII("inexistent_bookmarks_file.json");
+  ASSERT_FALSE(base::PathExists(test_file));
+
+  base::test::TestFuture<std::unique_ptr<BookmarkLoadDetails>> details_future;
+  scoped_refptr<ModelLoader> loader = ModelLoader::Create(
+      /*local_or_syncable_file_path=*/test_file,
+      /*account_file_path=*/base::FilePath(),
+      /*load_managed_node_callback=*/LoadManagedNodeCallback(),
+      details_future.GetCallback());
+
+  const std::unique_ptr<BookmarkLoadDetails>& details = details_future.Get();
+
+  ASSERT_NE(nullptr, details);
+  ASSERT_NE(nullptr, details->bb_node());
+  ASSERT_NE(nullptr, details->other_folder_node());
+  ASSERT_NE(nullptr, details->mobile_folder_node());
+
+  EXPECT_FALSE(details->required_recovery());
+  EXPECT_FALSE(details->ids_reassigned());
+  EXPECT_EQ(4, details->max_id());
+
+  EXPECT_EQ(0u, details->bb_node()->children().size());
+  EXPECT_EQ(0u, details->other_folder_node()->children().size());
+  EXPECT_EQ(0u, details->mobile_folder_node()->children().size());
+
+  EXPECT_EQ("", details->local_or_syncable_sync_metadata_str());
+
+  // Permanent node ID's are subject to change, but expectations are listed
+  // below for the purpose of documenting the current behavior.
+  EXPECT_EQ(1u, details->bb_node()->id());
+  EXPECT_EQ(2u, details->other_folder_node()->id());
+  EXPECT_EQ(3u, details->mobile_folder_node()->id());
+
+  histogram_tester.ExpectTotalCount(kLocalOrSyncableIdsReassignedMetricName,
+                                    /*expected_count=*/0);
+  histogram_tester.ExpectTotalCount(kAccountIdsReassignedMetricName,
+                                    /*expected_count=*/0);
+}
+
 TEST(ModelLoaderTest, LoadNonEmptyModel) {
   base::HistogramTester histogram_tester;
   base::test::TaskEnvironment task_environment;
@@ -54,12 +97,10 @@ TEST(ModelLoaderTest, LoadNonEmptyModel) {
   scoped_refptr<ModelLoader> loader = ModelLoader::Create(
       /*local_or_syncable_file_path=*/test_file,
       /*account_file_path=*/base::FilePath(),
-      /*loaded_account_bookmarks_file_as_local_or_syncable_bookmarks_for_uma=*/
-      false,
       /*load_managed_node_callback=*/LoadManagedNodeCallback(),
       details_future.GetCallback());
 
-  const std::unique_ptr<BookmarkLoadDetails>& details = details_future.Get();
+  const std::unique_ptr<BookmarkLoadDetails> details = details_future.Take();
 
   ASSERT_NE(nullptr, details);
   ASSERT_NE(nullptr, details->bb_node());
@@ -93,36 +134,41 @@ TEST(ModelLoaderTest, LoadNonEmptyModel) {
                                     /*expected_count=*/0);
 }
 
-TEST(ModelLoaderTest, LoadNonEmptyAccountBookmarksAsLocalOrSyncable) {
+TEST(ModelLoaderTest, LoadNonEmptyModelFromOneFileWithInternalIdCollisions) {
   base::HistogramTester histogram_tester;
   base::test::TaskEnvironment task_environment;
   const base::FilePath test_file =
-      GetTestDataDir().AppendASCII("bookmarks/model_with_sync_metadata_1.json");
+      GetTestDataDir().AppendASCII("bookmarks/model_with_duplicate_ids.json");
   ASSERT_TRUE(base::PathExists(test_file));
 
   base::test::TestFuture<std::unique_ptr<BookmarkLoadDetails>> details_future;
   scoped_refptr<ModelLoader> loader = ModelLoader::Create(
       /*local_or_syncable_file_path=*/test_file,
       /*account_file_path=*/base::FilePath(),
-      /*loaded_account_bookmarks_file_as_local_or_syncable_bookmarks_for_uma=*/
-      true,
       /*load_managed_node_callback=*/LoadManagedNodeCallback(),
       details_future.GetCallback());
 
-  const std::unique_ptr<BookmarkLoadDetails>& details = details_future.Get();
+  const std::unique_ptr<BookmarkLoadDetails> details = details_future.Take();
 
   ASSERT_NE(nullptr, details);
   ASSERT_NE(nullptr, details->bb_node());
   ASSERT_NE(nullptr, details->other_folder_node());
   ASSERT_NE(nullptr, details->mobile_folder_node());
 
-  EXPECT_FALSE(details->required_recovery());
-  EXPECT_FALSE(details->ids_reassigned());
-  EXPECT_EQ(11, details->max_id());
+  EXPECT_TRUE(details->required_recovery());
+  EXPECT_TRUE(details->ids_reassigned());
+  EXPECT_EQ(10, details->max_id());
 
   EXPECT_EQ(1u, details->bb_node()->children().size());
   EXPECT_EQ(1u, details->other_folder_node()->children().size());
   EXPECT_EQ(1u, details->mobile_folder_node()->children().size());
+
+  // Permanent node ID's are subject to change, but expectations are listed
+  // below for the purpose of documenting the current behavior. Note that in
+  // this case some permanent folders get non-standard IDs assigned.
+  EXPECT_EQ(1u, details->bb_node()->id());
+  EXPECT_EQ(4u, details->other_folder_node()->id());
+  EXPECT_EQ(7u, details->mobile_folder_node()->id());
 
   EXPECT_EQ("dummy-sync-metadata-1",
             details->local_or_syncable_sync_metadata_str());
@@ -134,13 +180,13 @@ TEST(ModelLoaderTest, LoadNonEmptyAccountBookmarksAsLocalOrSyncable) {
       FindNodeByUuid(uuid_index, "da47f36f-050f-4ac9-aa35-ab0d93d39f95");
   ASSERT_NE(nullptr, folder_b1);
   EXPECT_EQ(u"Folder B1", folder_b1->GetTitle());
-  EXPECT_EQ(4, folder_b1->id());
+  EXPECT_EQ(5, folder_b1->id());
 
-  histogram_tester.ExpectTotalCount(kLocalOrSyncableIdsReassignedMetricName,
-                                    /*expected_count=*/0);
-  histogram_tester.ExpectUniqueSample(kAccountIdsReassignedMetricName,
-                                      /*sample=*/false,
+  histogram_tester.ExpectUniqueSample(kLocalOrSyncableIdsReassignedMetricName,
+                                      /*sample=*/true,
                                       /*expected_bucket_count=*/1);
+  histogram_tester.ExpectTotalCount(kAccountIdsReassignedMetricName,
+                                    /*expected_count=*/0);
 }
 
 TEST(ModelLoaderTest, LoadTwoFilesWithNonCollidingIds) {
@@ -157,12 +203,10 @@ TEST(ModelLoaderTest, LoadTwoFilesWithNonCollidingIds) {
   scoped_refptr<ModelLoader> loader = ModelLoader::Create(
       /*local_or_syncable_file_path=*/test_file1,
       /*account_file_path=*/test_file2,
-      /*loaded_account_bookmarks_file_as_local_or_syncable_bookmarks_for_uma=*/
-      false,
       /*load_managed_node_callback=*/LoadManagedNodeCallback(),
       details_future.GetCallback());
 
-  const std::unique_ptr<BookmarkLoadDetails>& details = details_future.Get();
+  const std::unique_ptr<BookmarkLoadDetails> details = details_future.Take();
 
   ASSERT_NE(nullptr, details);
   ASSERT_NE(nullptr, details->bb_node());
@@ -224,12 +268,10 @@ TEST(ModelLoaderTest, LoadTwoFilesWithCollidingIdsAcross) {
   scoped_refptr<ModelLoader> loader = ModelLoader::Create(
       /*local_or_syncable_file_path=*/test_file,
       /*account_file_path=*/test_file,
-      /*loaded_account_bookmarks_file_as_local_or_syncable_bookmarks_for_uma=*/
-      false,
       /*load_managed_node_callback=*/LoadManagedNodeCallback(),
       details_future.GetCallback());
 
-  const std::unique_ptr<BookmarkLoadDetails>& details = details_future.Get();
+  const std::unique_ptr<BookmarkLoadDetails> details = details_future.Take();
 
   ASSERT_NE(nullptr, details);
   ASSERT_NE(nullptr, details->bb_node());
@@ -298,12 +340,10 @@ TEST(ModelLoaderTest, LoadTwoFilesWhereFirstHasInternalIdCollisions) {
   scoped_refptr<ModelLoader> loader = ModelLoader::Create(
       /*local_or_syncable_file_path=*/test_file1,
       /*account_file_path=*/test_file2,
-      /*loaded_account_bookmarks_file_as_local_or_syncable_bookmarks_for_uma=*/
-      false,
       /*load_managed_node_callback=*/LoadManagedNodeCallback(),
       details_future.GetCallback());
 
-  const std::unique_ptr<BookmarkLoadDetails>& details = details_future.Get();
+  const std::unique_ptr<BookmarkLoadDetails> details = details_future.Take();
 
   ASSERT_NE(nullptr, details);
   ASSERT_NE(nullptr, details->bb_node());
@@ -374,12 +414,10 @@ TEST(ModelLoaderTest, LoadTwoFilesWhereSecondHasInternalIdCollisions) {
   scoped_refptr<ModelLoader> loader = ModelLoader::Create(
       /*local_or_syncable_file_path=*/test_file1,
       /*account_file_path=*/test_file2,
-      /*loaded_account_bookmarks_file_as_local_or_syncable_bookmarks_for_uma=*/
-      false,
       /*load_managed_node_callback=*/LoadManagedNodeCallback(),
       details_future.GetCallback());
 
-  const std::unique_ptr<BookmarkLoadDetails>& details = details_future.Get();
+  const std::unique_ptr<BookmarkLoadDetails> details = details_future.Take();
 
   ASSERT_NE(nullptr, details);
   ASSERT_NE(nullptr, details->bb_node());
@@ -449,12 +487,10 @@ TEST(ModelLoaderTest, LoadTwoFilesWhereBothHaveInternalIdCollisions) {
   scoped_refptr<ModelLoader> loader = ModelLoader::Create(
       /*local_or_syncable_file_path=*/test_file1,
       /*account_file_path=*/test_file2,
-      /*loaded_account_bookmarks_file_as_local_or_syncable_bookmarks_for_uma=*/
-      false,
       /*load_managed_node_callback=*/LoadManagedNodeCallback(),
       details_future.GetCallback());
 
-  const std::unique_ptr<BookmarkLoadDetails>& details = details_future.Get();
+  const std::unique_ptr<BookmarkLoadDetails> details = details_future.Take();
 
   ASSERT_NE(nullptr, details);
   ASSERT_NE(nullptr, details->bb_node());
@@ -524,12 +560,10 @@ TEST(ModelLoaderTest, LoadTwoFilesWhereTheLocalOrSyncableFileDoesNotExist) {
   scoped_refptr<ModelLoader> loader = ModelLoader::Create(
       /*local_or_syncable_file_path=*/test_file1,
       /*account_file_path=*/test_file2,
-      /*loaded_account_bookmarks_file_as_local_or_syncable_bookmarks_for_uma=*/
-      false,
       /*load_managed_node_callback=*/LoadManagedNodeCallback(),
       details_future.GetCallback());
 
-  const std::unique_ptr<BookmarkLoadDetails>& details = details_future.Get();
+  const std::unique_ptr<BookmarkLoadDetails> details = details_future.Take();
 
   ASSERT_NE(nullptr, details);
   ASSERT_NE(nullptr, details->bb_node());

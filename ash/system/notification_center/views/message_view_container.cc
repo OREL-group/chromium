@@ -11,6 +11,7 @@
 #include "ash/system/notification_center/notification_style_utils.h"
 #include "ash/system/notification_center/views/notification_list_view.h"
 #include "ash/system/notification_center/views/notification_swipe_control_view.h"
+#include "third_party/abseil-cpp/absl/cleanup/cleanup.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/message_center/public/cpp/notification.h"
 #include "ui/message_center/views/message_view.h"
@@ -51,7 +52,7 @@ MessageViewContainer::MessageViewContainer(
 
 int MessageViewContainer::CalculateHeight() const {
   return message_view_ ? message_view_->GetHeightForWidth(
-                             kNotificationInMessageCenterWidth)
+                             GetNotificationInMessageCenterWidth())
                        : 0;
 }
 
@@ -120,15 +121,16 @@ void MessageViewContainer::TriggerPreferredSizeChangedForAnimation() {
   views::View::PreferredSizeChanged();
 }
 
-gfx::Size MessageViewContainer::CalculatePreferredSize() const {
+gfx::Size MessageViewContainer::CalculatePreferredSize(
+    const views::SizeBounds& available_size) const {
   if (list_view_ && list_view_->IsAnimatingExpandOrCollapseContainer(this)) {
     // Width should never change, only height.
-    return gfx::Size(kNotificationInMessageCenterWidth,
+    return gfx::Size(GetNotificationInMessageCenterWidth(),
                      gfx::Tween::IntValueBetween(
                          list_view_->GetCurrentAnimationValue(),
                          start_bounds_.height(), target_bounds_.height()));
   }
-  return gfx::Size(kNotificationInMessageCenterWidth, CalculateHeight());
+  return gfx::Size(GetNotificationInMessageCenterWidth(), CalculateHeight());
 }
 
 void MessageViewContainer::ChildPreferredSizeChanged(views::View* child) {
@@ -139,8 +141,9 @@ void MessageViewContainer::ChildPreferredSizeChanged(views::View* child) {
 
   // PreferredSizeChanged will trigger
   // NotificationListView::ChildPreferredSizeChanged.
-  base::ScopedClosureRunner defer_preferred_size_changed(base::BindOnce(
-      &MessageViewContainer::PreferredSizeChanged, base::Unretained(this)));
+  absl::Cleanup defer_preferred_size_changed = [this] {
+    PreferredSizeChanged();
+  };
 
   // Ignore non-user triggered expand/collapses.
   if (expanding_by_system_) {

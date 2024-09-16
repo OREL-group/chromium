@@ -31,7 +31,6 @@
 #include "ash/wm/wm_event.h"
 #include "base/check.h"
 #include "base/containers/contains.h"
-#include "base/debug/crash_logging.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
@@ -39,6 +38,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
 #include "media/capture/video/video_capture_device_descriptor.h"
+#include "third_party/abseil-cpp/absl/cleanup/cleanup.h"
 #include "ui/aura/window_targeter.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/compositor/layer.h"
@@ -177,7 +177,9 @@ const CameraInfo* GetCameraInfoById(const CameraId& id,
 
 // Returns the widget init params needed to create the camera preview widget.
 views::Widget::InitParams CreateWidgetParams(const gfx::Rect& bounds) {
-  views::Widget::InitParams params(views::Widget::InitParams::TYPE_POPUP);
+  views::Widget::InitParams params(
+      views::Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET,
+      views::Widget::InitParams::TYPE_POPUP);
   params.parent =
       CaptureModeController::Get()->GetOnCaptureSurfaceWidgetParentWindow();
   params.bounds = bounds;
@@ -455,7 +457,8 @@ std::string CaptureModeCameraController::GetDisplayNameOfSelectedCamera()
   return std::string();
 }
 
-void CaptureModeCameraController::SetSelectedCamera(CameraId camera_id) {
+void CaptureModeCameraController::SetSelectedCamera(CameraId camera_id,
+                                                    bool by_user) {
   // When cameras are disabled by policy, we don't allow any camera selection.
   if (IsCameraDisabledByPolicy()) {
     LOG(WARNING) << "Camera is disabled by policy. Selecting camera: "
@@ -465,6 +468,13 @@ void CaptureModeCameraController::SetSelectedCamera(CameraId camera_id) {
 
   if (selected_camera_ == camera_id)
     return;
+
+  did_user_ever_change_camera_ |= by_user;
+
+  // If camera auto-selection is on, and a camera change happened (either by
+  // user or due to disconnection), calling `MaybeRevertAutoCameraSelection()`
+  // should be a no-op, and the camera should not be restored to off.
+  did_make_camera_auto_selection_ = false;
 
   selected_camera_ = std::move(camera_id);
   camera_reconnect_timer_.Stop();
@@ -484,23 +494,6 @@ void CaptureModeCameraController::SetSelectedCamera(CameraId camera_id) {
 
 void CaptureModeCameraController::SetShouldShowPreview(bool value) {
   should_show_preview_ = value;
-
-  // TODO(http://b/290363225): Remove this if no more crashes after the fix.
-  SCOPED_CRASH_KEY_BOOL("SelfieCam", "selected_cam_valid",
-                        selected_camera_.is_valid());
-  SCOPED_CRASH_KEY_STRING256("SelfieCam", "selected_camera_",
-                             selected_camera_.ToString());
-  SCOPED_CRASH_KEY_STRING256("SelfieCam", "selected_cam_display_name",
-                             GetDisplayNameOfSelectedCamera());
-  SCOPED_CRASH_KEY_BOOL("SelfieCam", "should_show_preview_",
-                        should_show_preview_);
-  SCOPED_CRASH_KEY_BOOL("SelfieCam", "is_shutting_down_", is_shutting_down_);
-  SCOPED_CRASH_KEY_BOOL("SelfieCam", "camera_preview_widget_",
-                        !!camera_preview_widget_);
-  SCOPED_CRASH_KEY_BOOL("SelfieCam", "camera_preview_view_",
-                        !!camera_preview_view_);
-  SCOPED_CRASH_KEY_BOOL("SelfieCam", "IsCameraDisabledByPolicy",
-                        IsCameraDisabledByPolicy());
 
   RefreshCameraPreview();
 }
@@ -778,6 +771,7 @@ void CaptureModeCameraController::GetCameraDevices() {
 
 void CaptureModeCameraController::OnCameraDevicesReceived(
     RequestId request_id,
+    video_capture::mojom::VideoSourceProvider::GetSourceInfosResult,
     const std::vector<media::VideoCaptureDeviceInfo>& devices) {
   if (request_id < most_recent_request_id_) {
     // Ignore any out-dated requests replies, since a reply from a more recent
@@ -837,9 +831,9 @@ void CaptureModeCameraController::RefreshCameraPreview() {
   // is created or destroyed. The reason to trigger
   // `RunPostRefreshCameraPreview` at the exit of this function is we should
   // wait for camera preview's creation or destruction to be finished.
-  base::ScopedClosureRunner deferred_runner(
-      base::BindOnce(&CaptureModeCameraController::RunPostRefreshCameraPreview,
-                     weak_ptr_factory_.GetWeakPtr(), was_visible_before));
+  absl::Cleanup deferred_runner = [this, was_visible_before] {
+    RunPostRefreshCameraPreview(was_visible_before);
+  };
 
   const CameraInfo* camera_info = nullptr;
   if (selected_camera_.is_valid()) {

@@ -4,7 +4,6 @@
 
 package org.chromium.chrome.browser.app.bookmarks;
 
-import android.content.Intent;
 import android.content.res.Resources;
 import android.os.Bundle;
 import android.view.Menu;
@@ -49,8 +48,8 @@ import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 import org.chromium.url.GURL;
 
 /** The activity that enables the user to modify the title, url and parent folder of a bookmark. */
-// TODO(crbug.com/1448929): Separate the activity from its view.
-// TODO(crbug.com/1448929): Add a coordinator/mediator for business logic.
+// TODO(crbug.com/40269559): Separate the activity from its view.
+// TODO(crbug.com/40269559): Add a coordinator/mediator for business logic.
 public class BookmarkEditActivity extends SnackbarActivity {
     /** The intent extra specifying the ID of the bookmark to be edited. */
     public static final String INTENT_BOOKMARK_ID = "BookmarkEditActivity.BookmarkId";
@@ -123,7 +122,7 @@ public class BookmarkEditActivity extends SnackbarActivity {
         mTitleEditText = findViewById(R.id.title_text);
         mUrlEditText = findViewById(R.id.url_text);
 
-        Toolbar toolbar = (Toolbar) findViewById(R.id.toolbar);
+        Toolbar toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
         getSupportActionBar().setDisplayHomeAsUpEnabled(true);
 
@@ -138,7 +137,7 @@ public class BookmarkEditActivity extends SnackbarActivity {
                         });
 
         boolean isFolder = item.isFolder();
-        TextView folderTitle = (TextView) findViewById(R.id.folder_title);
+        TextView folderTitle = findViewById(R.id.folder_title);
         folderTitle.setText(isFolder ? R.string.bookmark_parent_folder : R.string.bookmark_folder);
         mUrlEditText.setVisibility(isFolder ? View.GONE : View.VISIBLE);
         getSupportActionBar().setTitle(isFolder ? R.string.edit_folder : R.string.edit_bookmark);
@@ -150,6 +149,7 @@ public class BookmarkEditActivity extends SnackbarActivity {
                 new ImprovedBookmarkRowCoordinator(
                         this,
                         new BookmarkImageFetcher(
+                                profile,
                                 this,
                                 mModel,
                                 ImageFetcherFactory.createImageFetcher(
@@ -167,16 +167,6 @@ public class BookmarkEditActivity extends SnackbarActivity {
         mFolderPickerRowContainer = findViewById(R.id.folder_row_container);
 
         updateViewContent(false);
-    }
-
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == MOVE_REQUEST_CODE && resultCode == RESULT_OK) {
-            mInFolderSelect = false;
-            mBookmarkId = BookmarkFolderSelectActivity.parseMoveIntentResult(data);
-            updateViewContent(true);
-        }
     }
 
     /**

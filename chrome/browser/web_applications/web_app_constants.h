@@ -232,14 +232,6 @@ enum class ApiApprovalState {
 
 std::ostream& operator<<(std::ostream& os, ApiApprovalState state);
 
-// State concerning whether a particular feature has been enabled at the OS
-// level. For example, with File Handling, this indicates whether an app should
-// be/has been registered with the OS to handle opening certain file types.
-enum class OsIntegrationState {
-  kEnabled = 0,
-  kDisabled = 1,
-};
-
 // TODO(b/274172447): Remove these and the manifest.h include after refactoring
 // away blink::Manifest and moving the inner classes to regular classes
 using LaunchHandler = blink::Manifest::LaunchHandler;
@@ -293,6 +285,8 @@ using ResultCallback = base::OnceCallback<void(Result)>;
 // Note: These work directly with the `webapps::IsUserUninstall` function - any
 // source that returns true there can uninstall these types but not others, and
 // will CHECK-fail in RemoveWebAppJob otherwise.
+// All WebAppManagement::Types must be listed in either this constant or
+// kNotUserUninstallableSources (located in the cc file).
 constexpr WebAppManagementTypes kUserUninstallableSources = {
     WebAppManagement::kDefault,
     WebAppManagement::kApsDefault,
@@ -314,4 +308,4 @@ constexpr WebAppManagementTypes kUserDrivenInstallSources = {
 
 }  // namespace web_app
 
-#endif  // CHROME_BROWSER_WEB_APPLICATIONS_WEB_APP_CONSTANTS_H
+#endif  // CHROME_BROWSER_WEB_APPLICATIONS_WEB_APP_CONSTANTS_H_

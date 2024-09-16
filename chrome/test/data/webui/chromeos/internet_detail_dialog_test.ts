@@ -20,7 +20,7 @@ import {NetworkSiminfoElement} from 'chrome://resources/ash/common/network/netwo
 import {OncMojo} from 'chrome://resources/ash/common/network/onc_mojo.js';
 import {assert} from 'chrome://resources/js/assert.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
-import {ApnAuthenticationType, ApnIpType, ApnProperties, ApnSource, ApnState, ApnType, InhibitReason, MAX_NUM_CUSTOM_APNS, SIMInfo} from 'chrome://resources/mojo/chromeos/services/network_config/public/mojom/cros_network_config.mojom-webui.js';
+import {ApnAuthenticationType, ApnIpType, ApnProperties, ApnSource, ApnState, ApnType, GlobalPolicy, InhibitReason, MAX_NUM_CUSTOM_APNS, SIMInfo} from 'chrome://resources/mojo/chromeos/services/network_config/public/mojom/cros_network_config.mojom-webui.js';
 import {ConnectionStateType, DeviceStateType, NetworkType, OncSource, PortalState} from 'chrome://resources/mojo/chromeos/services/network_config/public/mojom/network_types.mojom-webui.js';
 import {IronCollapseElement} from 'chrome://resources/polymer/v3_0/iron-collapse/iron-collapse.js';
 import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
@@ -161,6 +161,7 @@ suite('internet-detail-dialog', () => {
       managedNetworkAvailable: false,
       serial: undefined,
       isCarrierLocked: false,
+      isFlashing: false,
     });
   }
 
@@ -484,6 +485,72 @@ suite('internet-detail-dialog', () => {
         assertFalse(!!apnSection);
       }
     });
+  });
+
+  [true, false].forEach(isApnRevampAndAllowApnModificationPolicyEnabled => {
+    test(
+        `Managed APN UI states when ` +
+            `isApnRevampAndAllowApnModificationPolicyEnabled is ${
+                isApnRevampAndAllowApnModificationPolicyEnabled}`,
+        async () => {
+          loadTimeData.overrideValues({
+            apnRevamp: true,
+            isApnRevampAndAllowApnModificationPolicyEnabled:
+                isApnRevampAndAllowApnModificationPolicyEnabled,
+          });
+          await setupCellularNetwork(
+              /* isPrimary= */ true, /* isInhibited= */ false);
+
+          await init();
+          assertTrue(!!internetDetailDialog.shadowRoot!.querySelector(
+              'cr-expand-button'));
+
+          // Check for APN policies managed icon.
+          const getApnManagedIcon = () =>
+              internetDetailDialog.shadowRoot!.querySelector('#apnManagedIcon');
+          assertFalse(!!getApnManagedIcon());
+          const apnList =
+              internetDetailDialog.shadowRoot!.querySelector<ApnList>(
+                  '#apnList');
+          assertTrue(!!apnList);
+          assertFalse(apnList.shouldDisallowApnModification);
+          const createCustomApnButton = () =>
+              getElement<CrButtonElement>('#createCustomApnButton');
+          const discoverMoreApnsButton = () =>
+              getElement<CrButtonElement>('#discoverMoreApnsButton');
+          assertTrue(!!createCustomApnButton());
+          assertFalse(createCustomApnButton().disabled);
+          assertTrue(!!discoverMoreApnsButton());
+          assertFalse(discoverMoreApnsButton().disabled);
+
+          let globalPolicy = {
+            allowApnModification: true,
+          } as GlobalPolicy;
+          mojoApi.setGlobalPolicy(globalPolicy);
+          await flushAsync();
+          assertFalse(!!getApnManagedIcon());
+          assertFalse(apnList.shouldDisallowApnModification);
+          assertFalse(createCustomApnButton().disabled);
+          assertFalse(discoverMoreApnsButton().disabled);
+
+          globalPolicy = {
+            allowApnModification: false,
+          } as GlobalPolicy;
+          mojoApi.setGlobalPolicy(globalPolicy);
+          await flushAsync();
+          assertEquals(
+              isApnRevampAndAllowApnModificationPolicyEnabled,
+              !!getApnManagedIcon());
+          assertEquals(
+              isApnRevampAndAllowApnModificationPolicyEnabled,
+              apnList.shouldDisallowApnModification);
+          assertEquals(
+              isApnRevampAndAllowApnModificationPolicyEnabled,
+              createCustomApnButton().disabled);
+          assertEquals(
+              isApnRevampAndAllowApnModificationPolicyEnabled,
+              discoverMoreApnsButton().disabled);
+        });
   });
 
   test(

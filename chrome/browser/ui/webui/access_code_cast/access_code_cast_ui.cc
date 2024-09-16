@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ui/webui/access_code_cast/access_code_cast_ui.h"
 
 #include "chrome/browser/media/router/discovery/access_code/access_code_cast_feature.h"
@@ -61,8 +66,6 @@ AccessCodeCastUI::AccessCodeCastUI(content::WebUI* web_ui)
   source->AddLocalizedStrings(kStrings);
   source->AddBoolean("qrScannerEnabled", false);
   source->AddString("learnMoreUrl", chrome::kAccessCodeCastLearnMoreURL);
-
-  webui::SetupChromeRefresh2023(source);
 
   Profile* const profile = Profile::FromWebUI(web_ui);
   source->AddInteger("rememberedDeviceDuration",

@@ -22,7 +22,7 @@ import './peripheral_data_access_protection_dialog.js';
 import '../os_people_page/lock_screen_password_prompt_dialog.js';
 import '../os_people_page/os_sync_browser_proxy.js';
 
-import {SyncBrowserProxy, SyncBrowserProxyImpl, SyncStatus} from '/shared/settings/people_page/sync_browser_proxy.js';
+import {SignedInState, SyncBrowserProxy, SyncBrowserProxyImpl, SyncStatus} from '/shared/settings/people_page/sync_browser_proxy.js';
 import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
 import {AUTH_TOKEN_INVALID_EVENT_TYPE} from 'chrome://resources/ash/common/quick_unlock/utils.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
@@ -72,8 +72,7 @@ export class OsSettingsPrivacyPageElement extends
 
       /**
        * Authentication token.
-       * This is only used if `isAuthPanelEnabled_` is set to false.
-       * i.e if the `UseAuthPanelInSettings` feature is disabled.
+       * This is only used if `isAuthPanelInSessionEnabled_` is set to false.
        */
       authTokenInfo_: {
         type: Object,
@@ -82,9 +81,8 @@ export class OsSettingsPrivacyPageElement extends
 
       /**
        * The variable that stores the authentication token we receive
-       * from AuthPanel.
-       * This is only used if `isAuthPanelEnabled_` is set to true.
-       * i.e if the `UseAuthPanelInSettings` feature is enabled.
+       * from AuthPanel or ActiveSessionAuth.
+       * This is only used if `isAuthPanelInSessionEnabled_`
        */
       authTokenReply_: {
         type: Object,
@@ -125,7 +123,7 @@ export class OsSettingsPrivacyPageElement extends
        * True if auth panel will be used for authentication instead of
        * password prompt dialog.
        */
-      isAuthPanelEnabled_: {
+      isAuthPanelInSessionEnabled_: {
         type: Boolean,
         value() {
           return loadTimeData.getBoolean('isAuthPanelEnabled');
@@ -270,6 +268,11 @@ export class OsSettingsPrivacyPageElement extends
           };
         },
       },
+
+      isAuthenticating_: {
+        type: Boolean,
+        value: false,
+      },
     };
   }
 
@@ -292,7 +295,7 @@ export class OsSettingsPrivacyPageElement extends
   private dataAccessShiftTabPressed_: boolean;
   private fingerprintUnlockEnabled_: boolean;
   private isAccountManagerEnabled_: boolean;
-  private isAuthPanelEnabled_: boolean;
+  private isAuthPanelInSessionEnabled_: boolean;
   private isGuestMode_: boolean;
   private isRevampWayfindingEnabled_: boolean;
   private isRevenBranding_: boolean;
@@ -306,6 +309,7 @@ export class OsSettingsPrivacyPageElement extends
   private showSecureDnsSetting_: boolean;
   private showSyncSettingsRevamp_: boolean;
   private syncBrowserProxy_: SyncBrowserProxy;
+  private isAuthenticating_: boolean;
 
   constructor() {
     super();
@@ -468,8 +472,21 @@ export class OsSettingsPrivacyPageElement extends
   }
 
   private async onPasswordRequested_(): Promise<void> {
-    if (!this.isAuthPanelEnabled_) {
+    // We get called twice from `settings-lock-screen-subpage` and
+    // from `settings-fingerprint-list-subpage`. Once when the current route
+    // changed after entering those pages, via the `currentRouteChanged`
+    // overrides, and once from `onAuthTokenChanged` listeners that listen to
+    // changes in `authToken` value, and potentially request a new token.
+    // Prevent double token requests.
+    if (this.isAuthenticating_) {
+      return;
+    }
+
+    this.isAuthenticating_ = true;
+
+    if (!this.isAuthPanelInSessionEnabled_) {
       this.showPasswordPromptDialog_ = true;
+      this.isAuthenticating_ = false;
       return;
     }
 
@@ -477,11 +494,18 @@ export class OsSettingsPrivacyPageElement extends
         Reason.kAccessAuthenticationSettings,
         loadTimeData.getString('authPrompt'));
 
+    this.isAuthenticating_ = false;
+
+    if (!tokenInfo.reply) {
+      Router.getInstance().navigateToPreviousRoute();
+      return;
+    }
+
     this.authTokenReply_ = tokenInfo.reply;
   }
 
   private getAuthToken_(): string|undefined {
-    if (!this.isAuthPanelEnabled_) {
+    if (!this.isAuthPanelInSessionEnabled_) {
       return this.authTokenInfo_?.token;
     }
     return this.authTokenReply_?.token;
@@ -492,22 +516,30 @@ export class OsSettingsPrivacyPageElement extends
    * submit when too many attempts were made when using PrefStore based PIN.
    */
   private async onInvalidateTokenRequested_(): Promise<void> {
-    if (!this.isAuthPanelEnabled_) {
+    if (!this.isAuthPanelInSessionEnabled_) {
       this.authTokenInfo_ = undefined;
       return;
     }
 
     if (this.authTokenReply_) {
-      await InSessionAuth.getRemote().invalidateToken(
-          this.authTokenReply_.token);
+      const token = this.authTokenReply_.token;
       this.authTokenReply_ = undefined;
+      await InSessionAuth.getRemote().invalidateToken(token);
     }
   }
 
   private onPasswordPromptDialogClose_(): void {
-    this.showPasswordPromptDialog_ = false;
-    if (!this.authTokenInfo_) {
+    if (this.isAuthPanelInSessionEnabled_ && !this.authTokenReply_) {
       Router.getInstance().navigateToPreviousRoute();
+      return;
+    }
+
+    if (!this.isAuthPanelInSessionEnabled_) {
+      this.showPasswordPromptDialog_ = false;
+      this.isAuthenticating_ = false;
+      if (!this.authTokenInfo_) {
+        Router.getInstance().navigateToPreviousRoute();
+      }
     }
   }
 
@@ -520,11 +552,11 @@ export class OsSettingsPrivacyPageElement extends
    * Should request the password again to get latest token.
    */
   private onAuthTokenInvalid_(): void {
-    if (!this.isAuthPanelEnabled_) {
-      this.authTokenInfo_ = undefined;
+    if (this.isAuthPanelInSessionEnabled_) {
+      this.authTokenReply_ = undefined;
       return;
     }
-    this.authTokenReply_ = undefined;
+    this.authTokenInfo_ = undefined;
   }
 
   private onConfigureLockClick_(e: Event): void {
@@ -551,7 +583,8 @@ export class OsSettingsPrivacyPageElement extends
 
     // When ChromeOSAccountManager is disabled, fall back to using the sync
     // username ("alice@gmail.com") as the profile label.
-    if (!this.isAccountManagerEnabled_ && syncStatus && syncStatus.signedIn &&
+    if (!this.isAccountManagerEnabled_ && syncStatus &&
+        this.syncStatus.signedInState === SignedInState.SYNCING &&
         syncStatus.signedInUsername) {
       this.profileLabel_ = syncStatus.signedInUsername;
     }

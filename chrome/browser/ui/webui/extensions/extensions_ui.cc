@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ui/webui/extensions/extensions_ui.h"
 
 #include <memory>
@@ -18,9 +23,10 @@
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/extensions/chrome_extension_browser_constants.h"
+#include "chrome/browser/extensions/manifest_v2_experiment_manager.h"
+#include "chrome/browser/extensions/mv2_experiment_stage.h"
+#include "chrome/browser/extensions/permissions_url_constants.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/webui/extensions/extensions_hats_handler.h"
 #include "chrome/browser/ui/webui/favicon_source.h"
 #include "chrome/browser/ui/webui/managed_ui_handler.h"
 #include "chrome/browser/ui/webui/metrics_handler.h"
@@ -55,8 +61,6 @@
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 #include "chrome/browser/ash/crosapi/browser_util.h"
-#include "chrome/browser/ash/ownership/owner_settings_service_ash_factory.h"
-#include "chrome/browser/ui/webui/extensions/ash/kiosk_apps_handler.h"
 #endif
 
 namespace extensions {
@@ -79,7 +83,6 @@ content::WebUIDataSource* CreateAndAddExtensionsSource(Profile* profile,
   webui::SetupWebUIDataSource(
       source, base::make_span(kExtensionsResources, kExtensionsResourcesSize),
       IDR_EXTENSIONS_EXTENSIONS_HTML);
-  webui::SetupChromeRefresh2023(source);
 
   static constexpr webui::LocalizedString kLocalizedStrings[] = {
       // Add common strings.
@@ -103,6 +106,7 @@ content::WebUIDataSource* CreateAndAddExtensionsSource(Profile* profile,
 
       // Multi-use strings defined in extensions_strings.grdp.
       {"remove", IDS_EXTENSIONS_REMOVE},
+      {"moreOptions", IDS_EXTENSIONS_MORE_OPTIONS},
 
       // Add extension-specific strings.
       {"title", IDS_MANAGE_EXTENSIONS_SETTING_WINDOWS_TITLE},
@@ -214,6 +218,7 @@ content::WebUIDataSource* CreateAndAddExtensionsSource(Profile* profile,
       {"appIcon", IDS_EXTENSIONS_APP_ICON},
       {"extensionIcon", IDS_EXTENSIONS_EXTENSION_ICON},
       {"extensionA11yAssociation", IDS_EXTENSIONS_EXTENSION_A11Y_ASSOCIATION},
+      {"extensionsSectionHeader", IDS_EXTENSIONS_SECTION_HEADER},
       {"itemIdHeading", IDS_EXTENSIONS_ITEM_ID_HEADING},
       {"extensionEnabled", IDS_EXTENSIONS_EXTENSION_ENABLED},
       {"appEnabled", IDS_EXTENSIONS_APP_ENABLED},
@@ -332,6 +337,32 @@ content::WebUIDataSource* CreateAndAddExtensionsSource(Profile* profile,
       {"noSitesAdded", IDS_EXTENSIONS_NO_SITES_ADDED},
       {"editShortcutInputLabel", IDS_EXTENSIONS_EDIT_SHORTCUT_INPUT_LABEL},
       {"editShortcutButtonLabel", IDS_EXTENSIONS_EDIT_SHORTCUT_BUTTON_LABEL},
+      {"mv2DeprecationPanelTitle", IDS_EXTENSIONS_MV2_DEPRECATION_PANEL_TITLE},
+      {"mv2DeprecationPanelDismissButton",
+       IDS_EXTENSIONS_MV2_DEPRECATION_PANEL_DISMISS_BUTTON},
+      {"mv2DeprecationPanelExtensionActionMenuLabel",
+       IDS_EXTENSIONS_MV2_DEPRECATION_PANEL_ACTION_MENU_BUTTON_LABEL},
+      {"mv2DeprecationPanelFindAlternativeButton",
+       IDS_EXTENSIONS_MV2_DEPRECATION_PANEL_FIND_ALTERNATIVE_BUTTON},
+      {"mv2DeprecationPanelFindAlternativeButtonAccLabel",
+       IDS_EXTENSIONS_MV2_DEPRECATION_PANEL_FIND_ALTERNATIVE_BUTTON_ACC_LABEL},
+      {"mv2DeprecationPanelRemoveButtonAccLabel",
+       IDS_EXTENSIONS_MV2_DEPRECATION_PANEL_REMOVE_BUTTON_ACC_LABEL},
+      {"mv2DeprecationPanelKeepForNowButton",
+       IDS_EXTENSIONS_MV2_DEPRECATION_PANEL_KEEP_FOR_NOW_BUTTON},
+      {"mv2DeprecationPanelRemoveExtensionButton", IDS_EXTENSIONS_UNINSTALL},
+      {"mv2DeprecationMessageDisabledHeader",
+       IDS_EXTENSIONS_MV2_DEPRECATION_MESSAGE_DISABLED_HEADER},
+      {"mv2DeprecationMessageDisabledSubtitle",
+       IDS_EXTENSIONS_MV2_DEPRECATION_MESSAGE_DISABLED_SUBTITLE},
+      {"mv2DeprecationMessageRemoveButton",
+       IDS_EXTENSIONS_MV2_DEPRECATION_MESSAGE_REMOVE_BUTTON},
+      {"mv2DeprecationMessageWarningHeader",
+       IDS_EXTENSIONS_MV2_DEPRECATION_MESSAGE_WARNING_HEADER},
+      {"mv2DeprecationMessageWarningSubtitle",
+       IDS_EXTENSIONS_MV2_DEPRECATION_MESSAGE_WARNING_SUBTITLE},
+      {"mv2DeprecationUnsupportedExtensionOffText",
+       IDS_EXTENSIONS_MV2_DEPRECATION_UNSUPPORTED_EXTENSION_OFF_TEXT},
       {"shortcutNotSet", IDS_EXTENSIONS_SHORTCUT_NOT_SET},
       {"shortcutScopeGlobal", IDS_EXTENSIONS_SHORTCUT_SCOPE_GLOBAL},
       {"shortcutScopeLabel", IDS_EXTENSIONS_SHORTCUT_SCOPE_LABEL},
@@ -362,7 +393,6 @@ content::WebUIDataSource* CreateAndAddExtensionsSource(Profile* profile,
       {"viewServiceWorker", IDS_EXTENSIONS_SERVICE_WORKER_BACKGROUND},
       {"safetyCheckKeepExtension", IDS_EXTENSIONS_SC_KEEP_EXT},
       {"safetyCheckRemoveAll", IDS_EXTENSIONS_SC_REMOVE_ALL},
-      {"safetyCheckAllExtensions", IDS_EXTENSIONS_SC_ALL_EXTENSIONS},
       {"safetyHubHeader", IDS_SETTINGS_SAFETY_HUB},
       {"safetyCheckRemoveButtonA11yLabel",
        IDS_EXTENSIONS_SC_REMOVE_BUTTON_A11Y_LABEL},
@@ -415,8 +445,9 @@ content::WebUIDataSource* CreateAndAddExtensionsSource(Profile* profile,
                   extension_urls::kExtensionsSidebarUtmSource),
               g_browser_process->GetApplicationLocale())
               .spec()));
-  source->AddString("hostPermissionsLearnMoreLink",
-                    chrome_extension_constants::kRuntimeHostPermissionsHelpURL);
+  source->AddString(
+      "hostPermissionsLearnMoreLink",
+      extension_permissions_constants::kRuntimeHostPermissionsHelpURL);
   source->AddBoolean(kInDevModeKey, in_dev_mode);
   source->AddBoolean(kShowActivityLogKey,
                      base::CommandLine::ForCurrentProcess()->HasSwitch(
@@ -433,7 +464,7 @@ content::WebUIDataSource* CreateAndAddExtensionsSource(Profile* profile,
                          extensions_features::kExtensionsMenuAccessControl));
   source->AddString(
       "showAccessRequestsInToolbarLearnMoreLink",
-      chrome_extension_constants::kShowAccessRequestsInToolbarHelpURL);
+      extension_permissions_constants::kShowAccessRequestsInToolbarHelpURL);
   source->AddBoolean(
       "enableUserPermittedSites",
       base::FeatureList::IsEnabled(
@@ -443,6 +474,15 @@ content::WebUIDataSource* CreateAndAddExtensionsSource(Profile* profile,
       base::FeatureList::IsEnabled(features::kSafetyCheckExtensions));
   source->AddBoolean("safetyHubShowReviewPanel",
                      base::FeatureList::IsEnabled(features::kSafetyHub));
+
+  // MV2 deprecation.
+  auto* mv2_experiment_manager = ManifestV2ExperimentManager::Get(profile);
+  MV2ExperimentStage experiment_stage =
+      mv2_experiment_manager->GetCurrentExperimentStage();
+  source->AddInteger("MV2ExperimentStage", static_cast<int>(experiment_stage));
+  source->AddBoolean(
+      "MV2DeprecationNoticeDismissed",
+      mv2_experiment_manager->DidUserAcknowledgeNoticeGlobally());
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
   source->AddString(
@@ -491,15 +531,6 @@ ExtensionsUI::ExtensionsUI(content::WebUI* web_ui)
   source = CreateAndAddExtensionsSource(profile, *in_dev_mode_);
   ManagedUIHandler::Initialize(web_ui, source);
 
-  auto safety_check_hats_handler =
-      std::make_unique<ExtensionsHatsHandler>(profile);
-  web_ui->AddMessageHandler(std::move(safety_check_hats_handler));
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  web_ui->AddMessageHandler(std::make_unique<ash::KioskAppsHandler>(
-      ash::OwnerSettingsServiceAshFactory::GetForBrowserContext(profile)));
-#endif
-
   // Need to allow <object> elements so that the <extensionoptions> browser
   // plugin can be loaded within chrome://extensions.
   source->OverrideContentSecurityPolicy(
@@ -517,6 +548,18 @@ ExtensionsUI::ExtensionsUI(content::WebUI* web_ui)
                                             IDS_EXTENSIONS_SC_DESCRIPTION);
   plural_string_handler->AddLocalizedString("safetyCheckAllDoneForNow",
                                             IDS_EXTENSIONS_SC_ALL_DONE_FOR_NOW);
+  plural_string_handler->AddLocalizedString(
+      "mv2DeprecationPanelWarningHeader",
+      IDS_EXTENSIONS_MV2_DEPRECATION_PANEL_WARNING_HEADER);
+  plural_string_handler->AddLocalizedString(
+      "mv2DeprecationPanelWarningSubtitle",
+      IDS_EXTENSIONS_MV2_DEPRECATION_PANEL_WARNING_SUBTITLE);
+  plural_string_handler->AddLocalizedString(
+      "mv2DeprecationPanelDisabledHeader",
+      IDS_EXTENSIONS_MV2_DEPRECATION_PANEL_DISABLED_HEADER);
+  plural_string_handler->AddLocalizedString(
+      "mv2DeprecationPanelDisabledSubtitle",
+      IDS_EXTENSIONS_MV2_DEPRECATION_PANEL_DISABLED_SUBTITLE);
   web_ui->AddMessageHandler(std::move(plural_string_handler));
 }
 

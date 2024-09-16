@@ -77,14 +77,12 @@ class CONTENT_EXPORT SodaSpeechRecognitionEngineImpl
   // future transcriptions.
   void OnRecognizerDisconnected();
 
-  bool IsSpeechRecognitionAvailable();
-
   void SendAudioToSpeechRecognitionService(
       media::mojom::AudioDataS16Ptr audio_data);
 
   void MarkDone();
 
-  void Abort(blink::mojom::SpeechRecognitionErrorCode error);
+  void Abort(media::mojom::SpeechRecognitionErrorCode error);
 
   media::mojom::AudioDataS16Ptr ConvertToAudioDataS16(const AudioChunk& data);
 
@@ -105,9 +103,6 @@ class CONTENT_EXPORT SodaSpeechRecognitionEngineImpl
   SpeechRecognitionSessionConfig config_;
 
   SEQUENCE_CHECKER(main_sequence_checker_);
-
-  // Whether all mojo pipes are bound to the speech recognition service.
-  bool is_recognizer_bound_ = false;
 
   // A flag indicating the recognition state.
   bool is_start_recognition_ = false;

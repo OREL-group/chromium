@@ -43,65 +43,44 @@ DlcserviceClient* g_instance = nullptr;
 
 constexpr auto kGetExistingDlcsTimeout = base::Minutes(3);
 
-class DlcserviceErrorResponseHandler {
- public:
-  explicit DlcserviceErrorResponseHandler(dbus::ErrorResponse* err_response)
-      : err_(dlcservice::kErrorInternal) {
-    if (!err_response) {
-      LOG(ERROR) << "Failed to set err since ErrorResponse is null.";
-      return;
-    }
-    VerifyAndSetError(err_response);
-    VerifyAndSetErrorMessage(err_response);
-    VLOG(1) << "Handling err=" << err_ << " err_msg=" << err_msg_;
+std::string_view ToDlcServiceError(dbus::ErrorResponse* err_response) {
+  const std::string& error_name = err_response->GetErrorName();
+  static constexpr auto kErrSet = base::MakeFixedFlatSet<std::string_view>({
+      dlcservice::kErrorNone,
+      dlcservice::kErrorInternal,
+      dlcservice::kErrorBusy,
+      dlcservice::kErrorNeedReboot,
+      dlcservice::kErrorInvalidDlc,
+      dlcservice::kErrorNoImageFound,
+  });
+  // Lookup the dlcservice error code and provide default on invalid.
+  auto itr = kErrSet.find(error_name);
+  if (itr == kErrSet.end()) {
+    LOG(ERROR) << "Unknown ErrorResponse '" << error_name
+               << "', defaulting to kErrorInternal";
+    return dlcservice::kErrorInternal;
   }
+  return *itr;
+}
 
-  DlcserviceErrorResponseHandler(const DlcserviceErrorResponseHandler&) =
-      delete;
-  DlcserviceErrorResponseHandler& operator=(
-      const DlcserviceErrorResponseHandler&) = delete;
-
-  ~DlcserviceErrorResponseHandler() = default;
-
-  std::string get_err() { return err_; }
-
-  std::string get_err_msg() { return err_msg_; }
-
- private:
-  void VerifyAndSetError(dbus::ErrorResponse* err_response) {
-    const std::string& err = err_response->GetErrorName();
-    static constexpr auto kErrSet = base::MakeFixedFlatSet<std::string_view>({
-        dlcservice::kErrorNone,
-        dlcservice::kErrorInternal,
-        dlcservice::kErrorBusy,
-        dlcservice::kErrorNeedReboot,
-        dlcservice::kErrorInvalidDlc,
-        dlcservice::kErrorNoImageFound,
-    });
-    // Lookup the dlcservice error code and provide default on invalid.
-    auto itr = kErrSet.find(err);
-    if (itr == kErrSet.end()) {
-      LOG(ERROR) << "Failed to set error based on ErrorResponse "
-                    "defaulted to kErrorInternal, was:"
-                 << err;
-      err_ = dlcservice::kErrorInternal;
-      return;
-    }
-    err_ = *itr;
+std::string ToErrorMessage(dbus::ErrorResponse* err_response) {
+  std::string err_msg;
+  if (!dbus::MessageReader(err_response).PopString(&err_msg)) {
+    LOG(ERROR) << "Failed to pop error message from ErrorResponse.";
   }
+  return err_msg;
+}
 
-  void VerifyAndSetErrorMessage(dbus::ErrorResponse* err_response) {
-    if (!dbus::MessageReader(err_response).PopString(&err_msg_)) {
-      LOG(ERROR) << "Failed to set error message from ErrorResponse.";
-    }
+std::string_view ParseError(dbus::ErrorResponse* err_response) {
+  if (!err_response) {
+    LOG(ERROR) << "Failed to parse error, dbus ErrorResponse is null.";
+    return dlcservice::kErrorInternal;
   }
-
-  // Holds the dlcservice specific error.
-  std::string err_;
-
-  // Holds the entire error message from error response.
-  std::string err_msg_;
-};
+  std::string_view err = ToDlcServiceError(err_response);
+  std::string err_msg = ToErrorMessage(err_response);
+  VLOG(1) << "Handling err=" << err << " err_msg=" << err_msg;
+  return err;
+}
 
 }  // namespace
 
@@ -128,16 +107,13 @@ class DlcserviceClientImpl : public DlcserviceClient {
                        std::move(progress_callback));
       return;
     }
+    // TODO(b/220053648): Cleanup all ash-client logic.
     if (installing_) {
-      LOG(WARNING) << "DLC install is getting queued for: " << id;
-      EnqueueTask(base::BindOnce(
-          &DlcserviceClientImpl::Install, weak_ptr_factory_.GetWeakPtr(),
-          std::move(install_request), std::move(install_callback),
-          std::move(progress_callback)));
-      return;
+      LOG(WARNING) << "First time DLC install is skipping queue for: " << id;
+    } else {
+      TaskStarted();
     }
 
-    TaskStarted();
     dbus::MethodCall method_call(dlcservice::kDlcServiceInterface,
                                  dlcservice::kInstallMethod);
     dbus::MessageWriter writer(&method_call);
@@ -369,7 +345,7 @@ class DlcserviceClientImpl : public DlcserviceClient {
         // pending install from the queue (would waste time checking).
         return;
       default:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
     }
 
     // Try to run a pending install since we have complete/failed the current
@@ -396,10 +372,9 @@ class DlcserviceClientImpl : public DlcserviceClient {
       return;
     }
 
-    const auto err = DlcserviceErrorResponseHandler(err_response).get_err();
+    std::string_view err = ParseError(err_response);
     if (err == dlcservice::kErrorBusy) {
-      // No need to log here, as it can be inferred from error response handler
-      // and the binded callback logging.
+      LOG(WARNING) << "DLC install is getting queued for: " << id;
       EnqueueTask(base::BindOnce(&DlcserviceClientImpl::Install,
                                  weak_ptr_factory_.GetWeakPtr(),
                                  install_request, std::move(install_callback),
@@ -409,7 +384,7 @@ class DlcserviceClientImpl : public DlcserviceClient {
                        std::move(progress_callback));
       dlcservice::DlcState dlc_state;
       dlc_state.set_id(id);
-      dlc_state.set_last_error_code(err);
+      dlc_state.set_last_error_code(std::string(err));
       SendCompleted(dlc_state);
     }
     CheckAndRunPendingTask();
@@ -419,16 +394,14 @@ class DlcserviceClientImpl : public DlcserviceClient {
                    dbus::Response* response,
                    dbus::ErrorResponse* err_response) {
     std::move(uninstall_callback)
-        .Run(response ? dlcservice::kErrorNone
-                      : DlcserviceErrorResponseHandler(err_response).get_err());
+        .Run(response ? dlcservice::kErrorNone : ParseError(err_response));
   }
 
   void OnPurge(PurgeCallback purge_callback,
                dbus::Response* response,
                dbus::ErrorResponse* err_response) {
     std::move(purge_callback)
-        .Run(response ? dlcservice::kErrorNone
-                      : DlcserviceErrorResponseHandler(err_response).get_err());
+        .Run(response ? dlcservice::kErrorNone : ParseError(err_response));
   }
 
   void OnGetDlcState(GetDlcStateCallback callback,
@@ -439,9 +412,7 @@ class DlcserviceClientImpl : public DlcserviceClient {
         dbus::MessageReader(response).PopArrayOfBytesAsProto(&dlc_state)) {
       std::move(callback).Run(dlcservice::kErrorNone, dlc_state);
     } else {
-      std::move(callback).Run(
-          DlcserviceErrorResponseHandler(err_response).get_err(),
-          dlcservice::DlcState());
+      std::move(callback).Run(ParseError(err_response), dlcservice::DlcState());
     }
   }
 
@@ -453,9 +424,8 @@ class DlcserviceClientImpl : public DlcserviceClient {
                         &dlcs_with_content)) {
       std::move(callback).Run(dlcservice::kErrorNone, dlcs_with_content);
     } else {
-      std::move(callback).Run(
-          DlcserviceErrorResponseHandler(err_response).get_err(),
-          dlcservice::DlcsWithContent());
+      std::move(callback).Run(ParseError(err_response),
+                              dlcservice::DlcsWithContent());
     }
   }
 
@@ -464,7 +434,7 @@ class DlcserviceClientImpl : public DlcserviceClient {
 
   raw_ptr<dbus::ObjectProxy> dlcservice_proxy_;
 
-  // TODO(crbug.com/928805): Once platform dlcservice batches, can be removed.
+  // TODO(b/220053648): Once platform dlcservice batches, can be removed.
   // Specifically when platform dlcservice doesn't return a busy status.
   // Whether an install is currently in progress. Can be used to decide whether
   // to queue up incoming install requests.

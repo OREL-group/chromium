@@ -26,26 +26,33 @@ logging.getLogger('markdown_it').setLevel(logging.WARNING)
 _THIS_DIR = pathlib.Path(__file__).resolve().parent
 _SRC_DIR = _THIS_DIR.parents[1]
 
+_RECLIENT_CLI = _SRC_DIR.joinpath('buildtools', 'reclient_cfgs',
+                                  'configure_reclient_cfgs.py')
+_SISO_CLI = _SRC_DIR.joinpath('build', 'config', 'siso', 'configure_siso.py')
+_DEFAULT_RBE_PROJECT = 'rbe-chrome-untrusted'
+
 RerunOption = namedtuple('RerunOption', ['prompt', 'properties'])
 
 
-def check_rdb_auth():
-  """Checks that the user is logged in with resultdb."""
-  rdb_path = shutil.which('rdb')
-  if not rdb_path:
-    logging.error("'rdb' binary not found. Is depot_tools not on PATH?")
+def check_luci_context_auth():
+  """Checks that the user is logged in with luci-auth context."""
+  luci_auth_path = shutil.which('luci-auth')
+  if not luci_auth_path:
+    logging.error("'luci-auth' binary not found. Is depot_tools not on PATH?")
     return False
-  cmd = [rdb_path, 'auth-info']
+  cmd = [luci_auth_path, 'info', '-scopes-context']
   try:
-    p = subprocess.run(cmd,
-                       stdout=subprocess.PIPE,
-                       stderr=subprocess.STDOUT,
-                       text=True,
-                       check=True)
-  except subprocess.CalledProcessError:
-    logging.error('No rdb auth available:')
-    logging.error(p.stdout.strip())
-    logging.error("Please run 'rdb auth-login' to authenticate")
+    subprocess.run(cmd,
+                   stdout=subprocess.PIPE,
+                   stderr=subprocess.STDOUT,
+                   text=True,
+                   check=True)
+  except subprocess.CalledProcessError as e:
+    logging.error('luci-auth context auth unavailable:')
+    logging.error(e.output.strip())
+    logging.error(
+        "Please run 'luci-auth login -scopes-context' to authenticate, "
+        'preferring your @google.com account if you have one.')
     return False
   return True
 
@@ -80,39 +87,57 @@ class LegacyRunner:
   updated to support and utilize that new mode if/when it's available.
   """
 
-  UTR_RECIPE_NAME = 'chromium/universal_test_runner'
-
   def __init__(self,
                recipes_py,
                builder_props,
+               project,
                bucket,
                builder,
-               swarming_server,
                tests,
                skip_compile,
                skip_test,
                skip_prompts,
-               build_dir=None):
+               build_dir=None,
+               additional_test_args=None,
+               reuse_task=None,
+               skip_coverage=False):
     """Constructor for LegacyRunner
 
     Args:
       recipes_py: pathlib.Path to the root of the recipe bundle
       builder_props: Dict containing the props for the builder to run as.
+      project: Project name of the builder to run as.
       bucket: Bucket name of the builder to run as.
       builder: Builder name of the builder to run as.
-      swarming_server: Swarming server the builder runs on.
       tests: List of tests to run.
       skip_compile: If True, the UTR will only run the tests.
       skip_test: If True, the UTR will only compile.
       skip_prompts: If True, skip Y/N prompts for warnings.
+      skip_coverage: If True, skip code coverage instrumentation.
       build_dir: pathlib.Path to the build dir to build in. Will use the UTR's
           default otherwise if needed.
+      additional_test_args: List of additional args to pass to the tests.
+      reuse_task: String of a swarming task to reuse.
     """
     self._recipes_py = recipes_py
-    self._swarming_server = swarming_server
+    self._skip_coverage = skip_coverage
     self._skip_prompts = skip_prompts
     self._console_printer = console.Console()
     assert self._recipes_py.exists()
+
+    # It's probably safe to assume chromium implies chromium-swarm and chrome
+    # implies chrome-swarming. If it's not, cr-buildbucket.cfg attaches the
+    # swarming to each and every builder. So could use that instead.
+    self._swarming_server = 'chrome-swarming'
+    self._utr_recipe = 'chrome/universal_test_runner'
+    # Put all results in "try" realms. "try" should be writable for most devs,
+    # while other realms like "ci" likely aren't. "try" is generally where we
+    # confine untested code, so it's the best fit for our results here.
+    self._luci_realm = 'chrome:try'
+    if project == 'chromium':
+      self._swarming_server = 'chromium-swarm'
+      self._luci_realm = 'chromium:try'
+      self._utr_recipe = 'chromium/universal_test_runner'
 
     # Add UTR recipe props. Its schema is located at:
     # https://chromium.googlesource.com/chromium/tools/build/+/HEAD/recipes/recipes/chromium/universal_test_runner.proto
@@ -120,6 +145,9 @@ class LegacyRunner:
     input_props['checkout_path'] = str(_SRC_DIR)
     input_props['$recipe_engine/path'] = {'cache_dir': str(_SRC_DIR.parent)}
     input_props['test_names'] = tests
+    input_props['$build/chromium_swarming'] = {'task_realm': self._luci_realm}
+    if additional_test_args:
+      input_props['additional_test_args'] = additional_test_args
     if build_dir:
       input_props['build_dir'] = str(build_dir.absolute())
     # The recipe will overwrite this property so we have to put it preserve it
@@ -135,6 +163,9 @@ class LegacyRunner:
       mode = 'RUN_TYPE_COMPILE'
     input_props['run_type'] = mode
 
+    if reuse_task:
+      input_props['reuse_swarming_task'] = reuse_task
+
     # Need to pretend we're an actual build for various builder look-ups in
     # the recipe.
     input_props['$recipe_engine/buildbucket'] = {
@@ -148,7 +179,54 @@ class LegacyRunner:
             },
         },
     }
+    # TODO(crbug.com/41492688): Ensure the chrome version for internal builders
+    # when they are added.
+    # Set reclient and siso to use untrusted even for imitating ci builders
+    if not '$build/reclient' in input_props:
+      input_props['$build/reclient'] = {}
+    input_props['$build/reclient']['instance'] = self._get_reclient_instance()
+    if not '$build/siso' in input_props:
+      input_props['$build/siso'] = {}
+    input_props['$build/siso']['project'] = self._get_siso_project()
     self._input_props = input_props
+
+  def _merge_rerun_props(self, rerun_props_from_recipe):
+    """Merges user's preferred rerun props with the recipe's.
+
+    The user may explicitly opt-out of some behavior controlled via rerun props.
+    Use this method to make sure the recipe doesn't overwrite their preference.
+    """
+    merged_rerun_props = rerun_props_from_recipe.copy()
+    if self._skip_coverage:
+      merged_rerun_props['bypass_branch_check'] = True
+      merged_rerun_props['skip_instrumentation'] = True
+    return merged_rerun_props
+
+  def _get_cmd_output(self, cmd):
+    p = subprocess.run(cmd,
+                       stdout=subprocess.PIPE,
+                       stderr=subprocess.STDOUT,
+                       text=True,
+                       check=False)
+    if p.returncode == 0:
+      return p.stdout.strip()
+    return ''
+
+  def _get_reclient_instance(self):
+    cmd = [
+        'python3',
+        str(_RECLIENT_CLI),
+        '--get-rbe-instance',
+    ]
+    return self._get_cmd_output(cmd) or _DEFAULT_RBE_PROJECT
+
+  def _get_siso_project(self):
+    cmd = [
+        'python3',
+        str(_SISO_CLI),
+        '--get-siso-project',
+    ]
+    return self._get_cmd_output(cmd) or _DEFAULT_RBE_PROJECT
 
   def _run(self, adapter, rerun_props=None):
     """Internal implementation of invoking `recipes.py run`.
@@ -163,25 +241,21 @@ class LegacyRunner:
         a dict of rerun_props the recipe should be re-invoked with
     """
     input_props = self._input_props.copy()
-    input_props['rerun_options'] = rerun_props or {}
+    input_props['rerun_options'] = self._merge_rerun_props(rerun_props or {})
     with tempfile.TemporaryDirectory() as tmp_dir:
-
-      # TODO(crbug.com/41492688): Support both chrome and chromium realms. Just
-      # hard-code 'chromium' for now.
-      # Put all results in "try" realms. "try" should be writable for most devs,
-      # while other realms like "ci" likely aren't. "try" is generally where we
-      # confine untested code, so it's the best fit for our results here.
-      rdb_realm = 'chromium:try'
 
       output_path = pathlib.Path(tmp_dir).joinpath('out.json')
       rerun_props_path = pathlib.Path(tmp_dir).joinpath('rerun_props.json')
       input_props['output_properties_file'] = str(rerun_props_path)
       cmd = [
+          'luci-auth',
+          'context',
+          '--',
           'rdb',
           'stream',
           '-new',
           '-realm',
-          rdb_realm,
+          self._luci_realm,
           '--',
           self._recipes_py,
           'run',
@@ -189,7 +263,7 @@ class LegacyRunner:
           output_path,
           '--properties-file',
           '-',  # '-' means read from stdin
-          self.UTR_RECIPE_NAME,
+          self._utr_recipe,
       ]
       env = os.environ.copy()
       # This env var is read by both the cas and swarming recipe modules to
@@ -269,6 +343,7 @@ class LegacyRunner:
       # seems the least weird-looking.
       pretty_md = markdown.Markdown(failure_md, inline_code_lexer='python')
       if not rerun_prop_options:
+        logging.warning('')
         if exit_code:
           # Use the markdown printer from "rich" to better format the text in
           # a terminal.
@@ -276,13 +351,7 @@ class LegacyRunner:
           self._console_printer.print(md, style='red')
         else:
           logging.info('[green]Success![/]')
-
-        results_link = adapter.GetTestResultsLink()
-        if results_link:
-          logging.info('')
-          logging.info('For futher information, see the full test results at:')
-          logging.info(results_link)
-        return exit_code, 'Build/test failure' if exit_code else None
+        return exit_code, None  # Assume the recipe's failure_md is sufficient
       logging.warning('')
       self._console_printer.print(pretty_md)
       logging.warning('')

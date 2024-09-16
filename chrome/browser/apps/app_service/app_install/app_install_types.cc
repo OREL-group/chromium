@@ -16,12 +16,16 @@ std::ostream& operator<<(std::ostream& out, AppInstallSurface surface) {
       return out << "AppPreloadServiceOem";
     case AppInstallSurface::kAppPreloadServiceDefault:
       return out << "AppPreloadServiceDefault";
+    case AppInstallSurface::kOobeAppRecommendations:
+      return out << "OobeAppRecommendations";
     case AppInstallSurface::kAppInstallUriUnknown:
       return out << "AppInstallUriUnknown";
     case AppInstallSurface::kAppInstallUriShowoff:
       return out << "AppInstallUriShowoff";
     case AppInstallSurface::kAppInstallUriMall:
       return out << "AppInstallUriMall";
+    case AppInstallSurface::kAppInstallUriMallV2:
+      return out << "AppInstallUriMallV2";
     case AppInstallSurface::kAppInstallUriGetit:
       return out << "AppInstallUriGetit";
     case AppInstallSurface::kAppInstallUriLauncher:
@@ -68,7 +72,17 @@ std::ostream& operator<<(std::ostream& out, const WebAppInstallData& data) {
   out << ", original_manifest_url: " << data.original_manifest_url;
   out << ", proxied_manifest_url: " << data.proxied_manifest_url;
   out << ", document_url: " << data.document_url;
+  out << ", open_as_window: " << data.open_as_window;
   return out << "}";
+}
+
+std::ostream& operator<<(std::ostream& out,
+                         const GeForceNowAppInstallData& data) {
+  return out << "GeForceNowAppInstallData{}";
+}
+
+std::ostream& operator<<(std::ostream& out, const SteamAppInstallData& data) {
+  return out << "SteamAppInstallData{}";
 }
 
 AppInstallData::AppInstallData(PackageId package_id)
@@ -80,6 +94,21 @@ AppInstallData::AppInstallData(AppInstallData&&) = default;
 AppInstallData& AppInstallData::operator=(AppInstallData&&) = default;
 
 AppInstallData::~AppInstallData() = default;
+
+bool AppInstallData::IsValidForInstallation() const {
+  if (package_id.package_type() == PackageType::kWeb ||
+      package_id.package_type() == PackageType::kWebsite) {
+    if (!absl::holds_alternative<WebAppInstallData>(app_type_data)) {
+      return false;
+    }
+  } else if (!install_url.is_valid()) {
+    // For all package types other than Web/Website, there must be an Install
+    // URL for us to launch.
+    return false;
+  }
+
+  return true;
+}
 
 std::ostream& operator<<(std::ostream& out, const AppInstallData& data) {
   out << "AppInstallData{";
@@ -99,6 +128,8 @@ std::ostream& operator<<(std::ostream& out, const AppInstallData& data) {
     out << screenshot << ", ";
   }
   out << "}, ";
+
+  out << ", install_url: " << data.install_url;
 
   out << ", app_type_data: ";
   absl::visit([&out](const auto& data) { out << data; }, data.app_type_data);

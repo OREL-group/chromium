@@ -168,11 +168,12 @@ TEST_F(ChromeMetricsServiceClientTest, FilterFiles) {
 
 TEST_F(ChromeMetricsServiceClientTest, TestRegisterUKMProviders) {
   // Test that UKM service has initialized its metrics providers. Currently
-  // there are 8 providers for all platform except ChromeOS.
-  // NetworkMetricsProvider, GPUMetricsProvider, CPUMetricsProvider
-  // ScreenInfoMetricsProvider, FormFactorMetricsProvider, FieldTrialsProvider,
-  // PrivacyBudgetMetricsProvider, and ComponentMetricsProvider.
-  size_t expected_providers = 8;
+  // there are 9 providers for all platform except ChromeOS.
+  // NetworkMetricsProvider, InstallDateProvider, GPUMetricsProvider,
+  // CPUMetricsProvider ScreenInfoMetricsProvider, FormFactorMetricsProvider,
+  // FieldTrialsProvider, PrivacyBudgetMetricsProvider, and
+  // ComponentMetricsProvider.
+  size_t expected_providers = 9;
 #if BUILDFLAG(IS_CHROMEOS_ASH)
   // ChromeOSMetricsProvider
   expected_providers++;
@@ -242,28 +243,28 @@ TEST_F(ChromeMetricsServiceClientTest, TestRegisterMetricsServiceProviders) {
 #if BUILDFLAG(IS_CHROMEOS_ASH)
   // AmbientModeMetricsProvider, AssistantServiceMetricsProvider,
   // CrosHealthdMetricsProvider, ChromeOSMetricsProvider,
-  // ChromeOSHistogramMetricsProvider,
+  // ChromeOSHistogramMetricsProvider, ChromeShelfMetricsProvider,
   // KeyboardBacklightColorMetricsProvider,
   // PersonalizationAppThemeMetricsProvider, PrinterMetricsProvider,
   // FamilyUserMetricsProvider, FamilyLinkUserMetricsProvider,
   // UpdateEngineMetricsProvider, OsSettingsMetricsProvider,
   // UserTypeByDeviceTypeMetricsProvider, WallpaperMetricsProvider,
   // and VmmMetricsProvider.
-  expected_providers += 15;
+  expected_providers += 16;
 
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 #if !BUILDFLAG(IS_CHROMEOS_ASH)
   // ChromeSigninStatusMetricsProvider (for non ChromeOS).
-  // AccessibilityMetricsProvider
-  expected_providers += 2;
+  // AccessibilityMetricsProvider, FamilyLinkUserMetricsProvider
+  expected_providers += 3;
 #endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
 
 #if BUILDFLAG(IS_MAC)
   expected_providers++;  // PowerMetricsProvider
 #endif                   // BUILDFLAG(IS_MAC)
 
-// TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
+// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
 // of lacros-chrome is complete.
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || \
     (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS))

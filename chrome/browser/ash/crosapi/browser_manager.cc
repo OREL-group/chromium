@@ -57,8 +57,6 @@
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/ash/crosapi/browser_action.h"
-#include "chrome/browser/ash/crosapi/browser_data_migrator.h"
-#include "chrome/browser/ash/crosapi/browser_data_migrator_util.h"
 #include "chrome/browser/ash/crosapi/browser_launcher.h"
 #include "chrome/browser/ash/crosapi/browser_loader.h"
 #include "chrome/browser/ash/crosapi/browser_service_host_ash.h"
@@ -75,21 +73,22 @@
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part_ash.h"
-#include "chrome/browser/component_updater/cros_component_manager.h"
 #include "chrome/browser/notifications/system_notification_helper.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/ash/shelf/chrome_shelf_controller.h"
-#include "chrome/browser/ui/browser_navigator_params.h"
-#include "chrome/common/channel_info.h"
+#include "chrome/browser/web_applications/user_uninstalled_preinstalled_web_app_prefs.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_paths.h"
 #include "chromeos/ash/components/browser_context_helper/browser_context_helper.h"
 #include "chromeos/ash/components/standalone_browser/browser_support.h"
+#include "chromeos/ash/components/standalone_browser/channel_util.h"
+#include "chromeos/ash/components/standalone_browser/lacros_selection.h"
 #include "chromeos/ash/components/standalone_browser/migrator_util.h"
 #include "chromeos/crosapi/cpp/crosapi_constants.h"
 #include "chromeos/crosapi/cpp/lacros_startup_state.h"
 #include "chromeos/crosapi/mojom/crosapi.mojom-shared.h"
 #include "components/account_id/account_id.h"
+#include "components/component_updater/ash/component_manager_ash.h"
 #include "components/crash/core/common/crash_key.h"
 #include "components/feature_engagement/public/tracker.h"
 #include "components/nacl/common/buildflags.h"
@@ -106,6 +105,7 @@
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
 #include "components/user_manager/user_type.h"
+#include "components/user_prefs/user_prefs.h"
 #include "components/version_info/version_info.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -243,6 +243,13 @@ bool ShouldPrelaunchLacrosAtLoginScreen() {
   return true;
 }
 
+bool RemoveLacrosUserDataDir() {
+  const base::FilePath lacros_data_dir = browser_util::GetUserDataDir();
+
+  return base::PathExists(lacros_data_dir) &&
+         base::DeletePathRecursively(lacros_data_dir);
+}
+
 // TODO(b/330659545): Investigate why we cannot run this inside
 // OnUserProfileCreated.
 void PrepareLacrosPolicies(BrowserManager* manager) {
@@ -304,7 +311,7 @@ class BrowserVersionServiceDelegate : public BrowserVersionServiceAsh::Delegate,
     // loaded by the manager.
     if (IsNewerBrowserAvailable()) {
       const auto component_version_number =
-          browser_util::GetInstalledLacrosComponentVersion(
+          ash::standalone_browser::GetInstalledLacrosComponentVersion(
               component_update_service_);
       CHECK(component_version_number.IsValid());
       return component_version_number;
@@ -320,7 +327,7 @@ class BrowserVersionServiceDelegate : public BrowserVersionServiceAsh::Delegate,
     }
 
     const auto component_version_number =
-        browser_util::GetInstalledLacrosComponentVersion(
+        ash::standalone_browser::GetInstalledLacrosComponentVersion(
             component_update_service_);
     return (!browser_version_loaded_.IsValid() &&
             component_version_number.IsValid()) ||
@@ -358,7 +365,7 @@ BrowserManager* BrowserManager::Get() {
 }
 
 BrowserManager::BrowserManager(
-    scoped_refptr<component_updater::CrOSComponentManager> manager)
+    scoped_refptr<component_updater::ComponentManagerAsh> manager)
     : BrowserManager(std::make_unique<BrowserLoader>(manager),
                      g_browser_process->component_updater()) {}
 
@@ -636,16 +643,9 @@ void BrowserManager::InitializeAndStartIfNeeded() {
     }
   } else {
     SetState(State::UNAVAILABLE);
-    browser_loader_->Unload();  // NOTE: This deletes the user data dir.
+    browser_loader_->Unload();
+    ClearLacrosData();
   }
-
-  // Post `DryRunToCollectUMA()` to send UMA stats about sizes of files/dirs
-  // inside the profile data directory.
-  base::ThreadPool::PostTask(
-      FROM_HERE,
-      {base::MayBlock(), base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
-      base::BindOnce(&ash::browser_data_migrator_util::DryRunToCollectUMA,
-                     ProfileManager::GetPrimaryUserProfile()->GetPath()));
 }
 
 void BrowserManager::PrelaunchAtLoginScreen() {
@@ -819,7 +819,7 @@ void BrowserManager::Start(bool launching_at_login_screen) {
   CHECK(lacros_selection_.has_value());
 
   // Lacros-chrome starts with kNormal type
-  // TODO(crbug.com/1289736): When `LacrosThreadTypeDelegate` becomes usable,
+  // TODO(crbug.com/40212082): When `LacrosThreadTypeDelegate` becomes usable,
   // `options.pre_exec_delegate` should be assigned a `LacrosThreadTypeDelegate`
   // object.
   browser_launcher_.Launch(
@@ -867,6 +867,61 @@ void BrowserManager::PerformAction(std::unique_ptr<BrowserAction> action) {
        browser_service_.value().interface_version},
       base::BindOnce(&BrowserManager::OnActionPerformed,
                      weak_factory_.GetWeakPtr(), std::move(action)));
+}
+
+void BrowserManager::ClearLacrosData() {
+  // Check that Lacros is not running.
+  CHECK_EQ(state_, State::UNAVAILABLE);
+  // Skip if Chrome is in safe mode to avoid deleting
+  // user data when Lacros is disabled only temporarily.
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          ash::switches::kSafeMode)) {
+    return;
+  }
+
+  base::ThreadPool::PostTaskAndReplyWithResult(
+      FROM_HERE,
+      {base::MayBlock(), base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
+      base::BindOnce(RemoveLacrosUserDataDir),
+      base::BindOnce(&BrowserManager::OnLacrosUserDataDirRemoved,
+                     weak_factory_.GetWeakPtr()));
+}
+
+void BrowserManager::OnLacrosUserDataDirRemoved(bool cleared) {
+  if (!cleared) {
+    // Do nothing if Lacros user data dir did not exist or could not be deleted.
+    return;
+  }
+
+  LOG(WARNING) << "Lacros user data directory was cleared. Now clearing lacros "
+                  "related prefs.";
+
+  const user_manager::User* user =
+      user_manager::UserManager::Get()->GetPrimaryUser();
+  if (!user) {
+    CHECK_IS_TEST();
+    return;
+  }
+  content::BrowserContext* context =
+      ash::BrowserContextHelper::Get()->GetBrowserContextByUser(user);
+  if (!context) {
+    CHECK_IS_TEST();
+    return;
+  }
+  PrefService* pref_service = user_prefs::UserPrefs::Get(context);
+
+  // Clear prefs set by Lacros and stored in
+  // 'standalone_browser_preferences.json' if Lacros is disabled.
+  pref_service->RemoveAllStandaloneBrowserPrefs();
+
+  // Do a one time clearing of `kUserUninstalledPreinstalledWebAppPref`. This is
+  // because some users who had Lacros enabled before M114 had this pref set by
+  // accident for preinstalled web apps such as Calendar or Gmail. Without
+  // clearing this pref, if users disable Lacros, these apps will be considered
+  // uninstalled (and cannot easily be reinstalled). Note that this means that
+  // some users who intentionally uninstalled these apps on Lacros will find
+  // these apps reappear until they unistall them again.
+  web_app::UserUninstalledPreinstalledWebAppPrefs(pref_service).ClearAllApps();
 }
 
 void BrowserManager::OnBrowserServiceConnected(
@@ -1021,6 +1076,7 @@ void BrowserManager::OnLacrosChromeTerminated() {
     DCHECK(!relaunch_requested_);
     SetState(State::UNAVAILABLE);
     browser_loader_->Unload();
+    ClearLacrosData();
     return;
   }
 
@@ -1196,7 +1252,8 @@ void BrowserManager::ResumeLaunch() {
   // If Lacros selection (rootfs/stateful) for this user is forced to a
   // different value than the Lacros that was launched at login screen,
   // we need to reload and relaunch the correct version of Lacros.
-  auto user_lacros_selection = browser_util::DetermineLacrosSelection();
+  auto user_lacros_selection =
+      ash::standalone_browser::DetermineLacrosSelection();
   if (user_lacros_selection.has_value() &&
       lacros_selection_ != LacrosSelection::kDeployedLocally &&
       lacros_selection_ != user_lacros_selection) {
@@ -1235,7 +1292,7 @@ void BrowserManager::OnResumeLaunchComplete(
         SetState(State::STOPPED);
         return;
       case BrowserLauncher::LaunchFailureReason::kUnknown:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
         return;
     }
   }
@@ -1252,14 +1309,6 @@ void BrowserManager::OnResumeLaunchComplete(
   RecordLacrosLaunchModeAndMigrationStatus();
 
   crosapi::lacros_startup_state::SetLacrosStartupState(true);
-
-  // Post `DryRunToCollectUMA()` to send UMA stats about sizes of files/dirs
-  // inside the profile data directory.
-  base::ThreadPool::PostTask(
-      FROM_HERE,
-      {base::MayBlock(), base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
-      base::BindOnce(&ash::browser_data_migrator_util::DryRunToCollectUMA,
-                     ProfileManager::GetPrimaryUserProfile()->GetPath()));
 }
 
 void BrowserManager::HandleGoToFiles() {

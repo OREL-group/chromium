@@ -10,6 +10,8 @@ import androidx.annotation.VisibleForTesting;
 import androidx.preference.Preference;
 
 import org.chromium.base.metrics.RecordUserAction;
+import org.chromium.base.supplier.ObservableSupplier;
+import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.homepage.HomepageManager;
 import org.chromium.chrome.browser.homepage.HomepagePolicyManager;
@@ -32,12 +34,13 @@ public class HomepageSettings extends ChromeBaseSettingsFragment {
 
     private HomepageManager mHomepageManager;
     private RadioButtonGroupHomepagePreference mRadioButtons;
+    private final ObservableSupplierImpl<String> mPageTitle = new ObservableSupplierImpl<>();
 
     @Override
     public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
         mHomepageManager = HomepageManager.getInstance();
 
-        getActivity().setTitle(R.string.options_homepage_title);
+        mPageTitle.set(getString(R.string.options_homepage_title));
         SettingsUtils.addPreferencesFromResource(this, R.xml.homepage_preferences);
 
         // Set up preferences inside the activity.
@@ -55,7 +58,7 @@ public class HomepageSettings extends ChromeBaseSettingsFragment {
                 (RadioButtonGroupHomepagePreference) findPreference(PREF_HOMEPAGE_RADIO_GROUP);
 
         // Set up listeners and update the page.
-        boolean isHomepageEnabled = HomepageManager.isHomepageEnabled();
+        boolean isHomepageEnabled = mHomepageManager.isHomepageEnabled();
         homepageSwitch.setChecked(isHomepageEnabled);
         homepageSwitch.setOnPreferenceChangeListener(
                 (preference, newValue) -> {
@@ -65,6 +68,11 @@ public class HomepageSettings extends ChromeBaseSettingsFragment {
         mRadioButtons.setupPreferenceValues(createPreferenceValuesForRadioGroup());
 
         RecordUserAction.record("Settings.Homepage.Opened");
+    }
+
+    @Override
+    public ObservableSupplier<String> getPageTitle() {
+        return mPageTitle;
     }
 
     @Override
@@ -111,7 +119,7 @@ public class HomepageSettings extends ChromeBaseSettingsFragment {
         if (!newHomepage.isValid()) {
             newHomepage = GURL.emptyGURL();
         }
-        boolean useDefaultUri = HomepageManager.getDefaultHomepageGurl().equals(newHomepage);
+        boolean useDefaultUri = mHomepageManager.getDefaultHomepageGurl().equals(newHomepage);
 
         mHomepageManager.setHomepagePreferences(setToUseNtp, useDefaultUri, newHomepage);
     }
@@ -124,7 +132,7 @@ public class HomepageSettings extends ChromeBaseSettingsFragment {
             return HomepagePolicyManager.getHomepageUrl();
         }
 
-        GURL defaultGurl = HomepageManager.getDefaultHomepageGurl();
+        GURL defaultGurl = mHomepageManager.getDefaultHomepageGurl();
         GURL customGurl = mHomepageManager.getPrefHomepageCustomGurl();
         if (mHomepageManager.getPrefHomepageUseDefaultUri()) {
             return UrlUtilities.isNtpUrl(defaultGurl) ? GURL.emptyGURL() : defaultGurl;
@@ -151,7 +159,7 @@ public class HomepageSettings extends ChromeBaseSettingsFragment {
                     mHomepageManager.getPrefHomepageUseChromeNtp()
                             || (mHomepageManager.getPrefHomepageUseDefaultUri()
                                     && UrlUtilities.isNtpUrl(
-                                            HomepageManager.getDefaultHomepageGurl()));
+                                            mHomepageManager.getDefaultHomepageGurl()));
         }
 
         @HomepageOption
@@ -159,7 +167,7 @@ public class HomepageSettings extends ChromeBaseSettingsFragment {
                 shouldCheckNtp ? HomepageOption.ENTRY_CHROME_NTP : HomepageOption.ENTRY_CUSTOM_URI;
 
         boolean isRadioButtonPreferenceEnabled =
-                !isPolicyEnabled && HomepageManager.isHomepageEnabled();
+                !isPolicyEnabled && mHomepageManager.isHomepageEnabled();
 
         // NTP should be visible when policy is not enforced or the option is checked.
         boolean isNtpOptionVisible = !isPolicyEnabled || shouldCheckNtp;

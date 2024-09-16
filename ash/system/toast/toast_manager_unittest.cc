@@ -97,7 +97,9 @@ class ToastManagerImplTest : public AshTestBase,
   ~ToastManagerImplTest() override = default;
 
   void SetUp() override {
-    scoped_feature_list_.InitWithFeatureState(features::kSideAlignedToasts,
+    // Side-aligned toasts project is launching with Notifier Collision, so we
+    // use the flag `kNotifierCollision` here.
+    scoped_feature_list_.InitWithFeatureState(features::kNotifierCollision,
                                               AreSideAlignedToastsEnabled());
 
     AshTestBase::SetUp();
@@ -109,6 +111,7 @@ class ToastManagerImplTest : public AshTestBase,
 
     // Start in the ACTIVE (logged-in) state.
     ChangeLockState(false);
+    SetShouldLockScreenAutomatically(false);
   }
 
   bool AreSideAlignedToastsEnabled() const { return GetParam(); }
@@ -209,11 +212,18 @@ INSTANTIATE_TEST_SUITE_P(All,
                          testing::Bool() /* AreSideAlignedToastsEnabled() */);
 
 TEST_P(ToastManagerImplTest, ShowAndCloseAutomatically) {
-  ShowToast("DUMMY", base::Milliseconds(10));
+  // A toast with custom duration closes after its duration plus one second.
+  base::TimeDelta custom_duration = base::Milliseconds(10);
+  ShowToast("id", custom_duration);
+  EXPECT_TRUE(GetCurrentOverlay());
+  task_environment()->FastForwardBy(custom_duration + base::Seconds(1));
+  EXPECT_FALSE(GetCurrentOverlay());
 
-  EXPECT_EQ(1, GetToastSerial());
-
-  task_environment()->FastForwardBy(base::Milliseconds(1000));
+  // A toast with "infinite" duration closes after its duration plus one second.
+  ShowToast("id", ToastData::kInfiniteDuration);
+  EXPECT_TRUE(GetCurrentOverlay());
+  task_environment()->FastForwardBy(ToastData::kInfiniteDuration +
+                                    base::Seconds(1));
   EXPECT_FALSE(GetCurrentOverlay());
 }
 

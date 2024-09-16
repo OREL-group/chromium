@@ -24,7 +24,6 @@
 #include "base/process/process.h"
 #include "base/run_loop.h"
 #include "base/scoped_observation.h"
-#include "base/template_util.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/types/strong_alias.h"
 #include "base/types/to_address.h"
@@ -51,6 +50,7 @@
 #include "net/base/load_flags.h"
 #include "net/cookies/cookie_options.h"
 #include "net/cookies/cookie_partition_key_collection.h"
+#include "services/metrics/public/cpp/ukm_source_id.h"
 #include "services/network/public/mojom/cookie_manager.mojom-forward.h"
 #include "storage/common/file_system/file_system_types.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -118,6 +118,7 @@ typedef int PROPERTYID;
 
 namespace blink {
 class StorageKey;
+struct TransferableMessage;
 
 namespace mojom {
 class FrameWidget;
@@ -303,6 +304,11 @@ void PrepContentsForBeforeUnloadTest(WebContents* web_contents,
 void WaitForResizeComplete(WebContents* web_contents);
 #endif  // defined(USE_AURA) || BUILDFLAG(IS_ANDROID)
 
+void NotifyCopyableViewInWebContents(WebContents* web_contents,
+                                     base::OnceClosure done_callback);
+void NotifyCopyableViewInFrame(RenderFrameHost* render_frame_host,
+                               base::OnceClosure done_callback);
+
 // Allows tests to set the last committed origin of |render_frame_host|, to
 // simulate a scenario that might happen with a compromised renderer or might
 // not otherwise be possible.
@@ -335,6 +341,9 @@ void SimulateUnresponsiveRenderer(WebContents* web_contents,
 // RenderWidgetHostInputEventRouter and thus can target OOPIFs. If an OOPIF is
 // the intended target, ensure that its hit test data is available for routing,
 // using `WaitForHitTestData`, first.
+// Note: For simulating clicks inside a fenced frame tree, this function does
+// not work. Use `SimulateClickInFencedFrameTree` in
+// `content/public/test/fenced_frame_test_util.cc`
 void SimulateMouseClick(WebContents* web_contents,
                         int modifiers,
                         blink::WebMouseEvent::Button button);
@@ -344,6 +353,9 @@ void SimulateMouseClick(WebContents* web_contents,
 // through RenderWidgetHostInputEventRouter and thus can target OOPIFs. If an
 // OOPIF is the intended target, ensure that its hit test data is available for
 // routing, using `WaitForHitTestData`, first.
+// Note: For simulating clicks inside a fenced frame tree, this function does
+// not work. Use `SimulateClickInFencedFrameTree` in
+// `content/public/test/fenced_frame_test_util.cc`
 void SimulateMouseClickAt(WebContents* web_contents,
                           int modifiers,
                           blink::WebMouseEvent::Button button,
@@ -355,7 +367,7 @@ void SimulateMouseClickAt(WebContents* web_contents,
 // are relative to the page not the viewport. In particular for Android make
 // sure the page has the meta tag
 // <meta name="viewport" content="width=device-width,minimum-scale=1">
-// TODO(https://crbug.com/1199644): Make the Simulate* methods more user
+// TODO(crbug.com/40177926): Make the Simulate* methods more user
 // friendly by taking zooming into account.
 gfx::PointF GetCenterCoordinatesOfElementWithId(
     const ToRenderFrameHost& adapter,
@@ -521,6 +533,15 @@ void SimulateKeyPressWithoutChar(WebContents* web_contents,
                                  bool alt,
                                  bool command);
 
+// Simulates `source_render_frame_host` sending `message` to
+// `target_render_frame_host` through a `RenderFrameProxyHost`. This allows
+// testing corner cases where postMessage() should not be allowed, even from a
+// compromised renderer. `target_render_frame_host`'s frame must have a
+// `RenderFrameProxyHost` in `source_render_frame_host`'s `SiteInstanceGroup`.
+void SimulateProxyHostPostMessage(RenderFrameHost* source_render_frame_host,
+                                  RenderFrameHost* target_render_frame_host,
+                                  blink::TransferableMessage message);
+
 // Reset touch action for the embedder of a BrowserPluginGuest.
 void ResetTouchAction(RenderWidgetHost* host);
 
@@ -630,8 +651,8 @@ void ExecuteScriptAsyncWithoutUserGesture(const ToRenderFrameHost& adapter,
                                           std::string_view script);
 
 // JsLiteralHelper is a helper class that determines what types are legal to
-// pass to StringifyJsLiteral. Legal types include int, string, StringPiece,
-// char*, bool, double, GURL, url::Origin, and base::Value&&.
+// pass to StringifyJsLiteral. Legal types include int, string,
+// std::string_view, char*, bool, double, GURL, url::Origin, and base::Value&&.
 template <typename T>
 struct JsLiteralHelper {
   // This generic version enables passing any type from which base::Value can be
@@ -663,7 +684,7 @@ struct JsLiteralHelper<url::Origin> {
 // Construct a list-type base::Value from a mix of arguments.
 //
 // Each |arg| can be any type explicitly convertible to base::Value
-// (including int/string/StringPiece/char*/double/bool), or any type that
+// (including int/string/std::string_view/char*/double/bool), or any type that
 // JsLiteralHelper is specialized for -- like URL and url::Origin, which emit
 // string literals. |args| can be a mix of different types.
 template <typename... Args>
@@ -683,7 +704,7 @@ base::Value ListValueOf(Args&&... args) {
 // escape string content, even if it contains slashes or quotation marks.
 //
 // Each |arg| can be any type explicitly convertible to base::Value
-// (including int/string/StringPiece/char*/double/bool), or any type that
+// (including int/string/std::string_view/char*/double/bool), or any type that
 // JsLiteralHelper is specialized for -- like URL and url::Origin, which emit
 // string literals. |args| can be a mix of different types.
 //
@@ -844,14 +865,19 @@ std::ostream& operator<<(std::ostream& os, const EvalJsResult& bar);
 enum EvalJsOptions {
   EXECUTE_SCRIPT_DEFAULT_OPTIONS = 0,
 
-  // By default, EvalJs runs with a user gesture. This bit flag disables
-  // that.
+  // By default, EvalJs() runs with a user gesture. This bit flag disables that.
   EXECUTE_SCRIPT_NO_USER_GESTURE = (1 << 0),
 
   // By default, when the script passed to EvalJs evaluates to a Promise, the
   // execution continues until the Promise resolves, and the resolved value is
   // returned. Setting this bit disables such Promise resolution.
   EXECUTE_SCRIPT_NO_RESOLVE_PROMISES = (1 << 1),
+
+  // Content settings are a mechanism that allows users to disable various
+  // functions of the browser. One content setting disables javascript. By
+  // default, EvalJs() ignores this setting. This bit flag causes it to instead
+  // honor JS content settings.
+  EXECUTE_SCRIPT_HONOR_JS_CONTENT_SETTINGS = (1 << 2),
 };
 
 // EvalJs() -- run |script| in |execution_target| and return its value or error.
@@ -1161,7 +1187,7 @@ class TitleWatcher : public WebContentsObserver {
   // |web_contents| must be non-NULL and needs to stay alive for the
   // entire lifetime of |this|. |expected_title| is the title that |this|
   // will wait for.
-  TitleWatcher(WebContents* web_contents, const std::u16string& expected_title);
+  TitleWatcher(WebContents* web_contents, std::u16string_view expected_title);
 
   TitleWatcher(const TitleWatcher&) = delete;
   TitleWatcher& operator=(const TitleWatcher&) = delete;
@@ -1169,7 +1195,7 @@ class TitleWatcher : public WebContentsObserver {
   ~TitleWatcher() override;
 
   // Adds another title to watch for.
-  void AlsoWaitForTitle(const std::u16string& expected_title);
+  void AlsoWaitForTitle(std::u16string_view expected_title);
 
   // Waits until the title matches either expected_title or one of the titles
   // added with AlsoWaitForTitle. Returns the value of the most recently
@@ -1349,7 +1375,7 @@ class DOMMessageQueue {
 
   void OnDomMessageReceived(const std::string& message);
   void PrimaryMainFrameRenderProcessGone(base::TerminationStatus status);
-  void RenderFrameDeleted(RenderFrameHost* render_frame_host);
+  void RenderFrameDeleted();
 
   void OnWebContentsCreated(WebContents* contents);
   void OnBackingWebContentsDestroyed(MessageObserver* observer);
@@ -1359,7 +1385,6 @@ class DOMMessageQueue {
   base::queue<std::string> message_queue_;
   base::OnceClosure callback_;
   bool renderer_crashed_ = false;
-  raw_ptr<RenderFrameHost, DanglingUntriaged> render_frame_host_ = nullptr;
 };
 
 // Used to wait for a new WebContents to be created. Instantiate this object
@@ -1536,13 +1561,21 @@ class InputMsgWatcher : public RenderWidgetHost::InputEventObserver {
     return ack_source_;
   }
 
+  blink::WebInputEvent::Type last_sent_event_type() const {
+    return last_sent_event_type_;
+  }
+
  private:
   // Overridden InputEventObserver methods.
   void OnInputEventAck(blink::mojom::InputEventResultSource source,
                        blink::mojom::InputEventResultState state,
                        const blink::WebInputEvent&) override;
 
+  void OnInputEvent(const blink::WebInputEvent&) override;
+
   raw_ptr<RenderWidgetHost> render_widget_host_;
+  blink::WebInputEvent::Type last_sent_event_type_ =
+      blink::WebInputEvent::Type::kUndefined;
   blink::WebInputEvent::Type wait_for_type_;
   blink::mojom::InputEventResultState ack_result_;
   blink::mojom::InputEventResultSource ack_source_;
@@ -1645,7 +1678,7 @@ class FrameDeletedObserver {
 
   bool IsDeleted() const;
 
-  int GetFrameTreeNodeId() const;
+  FrameTreeNodeId GetFrameTreeNodeId() const;
 
  private:
   // Private impl struct which hides non public types including FrameTreeNode.
@@ -1692,6 +1725,18 @@ class TestNavigationManager : public WebContentsObserver {
   // WillStartRequest. Returns false if the request was aborted before starting.
   [[nodiscard]] bool WaitForRequestStart();
 
+  // Waits for the URLLoader of the navigation has been started. Returns false
+  // if the navigation never started the URLLoader.
+  [[nodiscard]] bool WaitForLoaderStart();
+
+  // Waits until the navigation request has received a redirect response. This
+  // will wait until all NavigationThrottles have proceeded through
+  // WillRedirectRequest. Returns false if the request was aborted before
+  // getting redirected, or it never got redirected. Note that this will only
+  // wait for only one redirection, so if the navigation gets redirected
+  // multiple times, this needs to be called multiple times.
+  [[nodiscard]] bool WaitForRequestRedirected();
+
   // Waits until the navigation response's headers have been received. This
   // will wait until all NavigationThrottles have proceeded through
   // WillProcessResponse. Returns false if the request was aborted before
@@ -1703,8 +1748,16 @@ class TestNavigationManager : public WebContentsObserver {
   // terminated before reaching DidStartNavigation (e.g. timeout).
   [[nodiscard]] bool WaitForNavigationFinished();
 
+  // Waits until a speculative render frame host is created.
+  // Note that the network may or may not be accessed.
+  void WaitForSpeculativeRenderFrameHostCreation();
+
+  RenderFrameHost* GetCreatedSpeculativeRFH();
+
   // Resume the navigation.
   // * Called after |WaitForRequestStart|, it causes the request to be sent.
+  // * Called after |WaitForRequestRedirected|, it causes the redirect to
+  // proceed.
   // * Called after |WaitForResponse|, it causes the response to be committed.
   void ResumeNavigation();
 
@@ -1734,18 +1787,27 @@ class TestNavigationManager : public WebContentsObserver {
   enum class NavigationState {
     INITIAL = 0,
     WILL_START = 1,
-    STARTED = 2,
-    RESPONSE = 3,
-    FINISHED = 4,
+    REQUEST_STARTED = 2,
+    LOADER_STARTED = 3,
+    REDIRECTED = 4,
+    RESPONSE = 5,
+    FINISHED = 6,
   };
 
   // WebContentsObserver:
   void DidStartNavigation(NavigationHandle* handle) override;
+  void DidRedirectNavigation(NavigationHandle* handle) override;
   void DidFinishNavigation(NavigationHandle* handle) override;
+  void DidUpdateNavigationHandleTiming(NavigationHandle* handle) override;
+  void RenderFrameCreated(RenderFrameHost* render_frame_host) override;
 
   // Called when the NavigationThrottle pauses the navigation in
   // WillStartRequest.
   void OnWillStartRequest();
+
+  // Called when the NavigationThrottle pauses the navigation in
+  // WillRedirectRequest.
+  void OnWillRedirectRequest();
 
   // Called when the NavigationThrottle pauses the navigation in
   // WillProcessResponse.
@@ -1771,7 +1833,10 @@ class TestNavigationManager : public WebContentsObserver {
   NavigationState desired_state_ = NavigationState::WILL_START;
   bool was_committed_ = false;
   bool was_successful_ = false;
-  base::OnceClosure quit_closure_;
+  bool speculative_rfh_created_ = false;
+  std::unique_ptr<RenderFrameHostWrapper> created_speculative_rfh_;
+  base::OnceClosure state_quit_closure_;
+  base::OnceClosure wait_rfh_closure_;
   base::RunLoop::Type message_loop_type_ = base::RunLoop::Type::kDefault;
 
   base::WeakPtrFactory<TestNavigationManager> weak_factory_{this};
@@ -1830,6 +1895,10 @@ class TestActivationManager : public WebContentsObserver {
 
   // Returns true if the navigation is paused by the TestActivationManager.
   bool is_paused() const { return !resume_callback_.is_null(); }
+
+  // Returns ukm::SourceId for the navigated page. This must be called after the
+  // navigation finished.
+  ukm::SourceId next_page_ukm_source_id() const;
 
  private:
   enum class ActivationState {
@@ -1890,6 +1959,8 @@ class TestActivationManager : public WebContentsObserver {
   bool was_committed_ = false;
   bool was_successful_ = false;
   bool was_activated_ = false;
+
+  ukm::SourceId next_page_ukm_source_id_ = ukm::kInvalidSourceId;
 
   // Callback to be called in the last condition callback after all commit
   // deferring conditions run.
@@ -2060,7 +2131,7 @@ class BlobURLStoreInterceptor
   void Register(
       mojo::PendingRemote<blink::mojom::Blob> blob,
       const GURL& url,
-      // TODO(https://crbug.com/1224926): Remove these once experiment is over.
+      // TODO(crbug.com/40775506): Remove these once experiment is over.
       const base::UnguessableToken& unsafe_agent_cluster_id,
       const std::optional<net::SchemefulSite>& unsafe_top_level_site,
       RegisterCallback callback) override;
@@ -2313,6 +2384,51 @@ class CookieChangeObserver : public content::WebContentsObserver {
   int num_expected_calls_;
   int num_read_seen_ = 0;
   int num_write_seen_ = 0;
+};
+
+// Wait for the creation of Speculative RFH without throttling the navigation.
+// Since the TestNavigationManager will throttle the navigation, using with
+// class with TestNavigationManager is not recommended. Manually driving the
+// run loop will be required to receive the events in both objects. We recommend
+// to use TestNavigationManager for simply driving the navigation. However if it
+// is required to intercept the navigation with other observers such as
+// CommitPauser, it would be better to use SpeculativeRenderFrameHostObserver to
+// ensure the speculative RFH to avoid interference caused by the
+// TestNavigationManager.
+class SpeculativeRenderFrameHostObserver : public content::WebContentsObserver {
+ public:
+  explicit SpeculativeRenderFrameHostObserver(
+      content::WebContents* web_contents,
+      const GURL& url);
+  ~SpeculativeRenderFrameHostObserver() override;
+
+  void Wait();
+
+ private:
+  void RenderFrameCreated(RenderFrameHost* render_frame_host) override;
+
+  base::RunLoop run_loop_;
+  GURL url_;
+};
+
+class SpareRenderProcessObserver {
+ public:
+  SpareRenderProcessObserver();
+
+  void SpareRenderProcessHostChanged(RenderProcessHost* render_process_host);
+
+  RenderProcessHost* spare_render_process_host();
+
+  void WaitForSpareRenderProcessCreation();
+
+  ~SpareRenderProcessObserver();
+
+ private:
+  raw_ptr<RenderProcessHost> spare_render_process_host_ = nullptr;
+  base::OnceClosure quit_closure_;
+  base::CallbackListSubscription subscription_;
+
+  base::WeakPtrFactory<SpareRenderProcessObserver> weak_factory_{this};
 };
 
 [[nodiscard]] base::CallbackListSubscription

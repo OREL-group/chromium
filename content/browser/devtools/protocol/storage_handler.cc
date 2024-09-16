@@ -21,10 +21,14 @@
 #include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "components/attribution_reporting/aggregatable_debug_reporting_config.h"
 #include "components/attribution_reporting/aggregatable_dedup_key.h"
 #include "components/attribution_reporting/aggregatable_trigger_data.h"
 #include "components/attribution_reporting/aggregatable_values.h"
 #include "components/attribution_reporting/aggregation_keys.h"
+#include "components/attribution_reporting/attribution_scopes_data.h"
+#include "components/attribution_reporting/attribution_scopes_set.h"
+#include "components/attribution_reporting/debug_types.h"
 #include "components/attribution_reporting/destination_set.h"
 #include "components/attribution_reporting/event_trigger_data.h"
 #include "components/attribution_reporting/filters.h"
@@ -284,7 +288,7 @@ class StorageHandler::IndexedDBObserver
     if (!owner_) {
       return;
     }
-    // TODO(crbug.com/1315371): Allow custom bucket names.
+    // TODO(crbug.com/40221733): Allow custom bucket names.
     auto found = storage_keys_.find(bucket_locator.storage_key);
     if (found == storage_keys_.end()) {
       return;
@@ -301,7 +305,7 @@ class StorageHandler::IndexedDBObserver
     if (!owner_) {
       return;
     }
-    // TODO(crbug.com/1315371): Allow custom bucket names.
+    // TODO(crbug.com/40221733): Allow custom bucket names.
     auto found = storage_keys_.find(bucket_locator.storage_key);
     if (found == storage_keys_.end()) {
       return;
@@ -359,7 +363,7 @@ class StorageHandler::SharedStorageObserver
   void OnSharedStorageAccessed(
       const base::Time& access_time,
       AccessType type,
-      int main_frame_id,
+      FrameTreeNodeId main_frame_id,
       const std::string& owner_origin,
       const SharedStorageEventParams& params) override {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -443,9 +447,8 @@ class StorageHandler::QuotaManagerObserver
   mojo::Receiver<storage::mojom::QuotaManagerObserver> receiver_{this};
 };
 
-StorageHandler::StorageHandler(bool client_is_trusted)
-    : DevToolsDomainHandler(Storage::Metainfo::domainName),
-      client_is_trusted_(client_is_trusted) {}
+StorageHandler::StorageHandler(DevToolsAgentHostClient* client)
+    : DevToolsDomainHandler(Storage::Metainfo::domainName), client_(client) {}
 
 StorageHandler::~StorageHandler() {
   DCHECK(!cache_storage_observer_);
@@ -491,9 +494,6 @@ Response StorageHandler::Disable() {
 
 void StorageHandler::GetCookies(Maybe<std::string> browser_context_id,
                                 std::unique_ptr<GetCookiesCallback> callback) {
-  if (!client_is_trusted_) {
-    callback->sendFailure(Response::ServerError("Permission denied"));
-  }
   StoragePartition* storage_partition = nullptr;
   Response response = StorageHandler::FindStoragePartition(browser_context_id,
                                                            &storage_partition);
@@ -503,12 +503,28 @@ void StorageHandler::GetCookies(Maybe<std::string> browser_context_id,
   }
 
   storage_partition->GetCookieManagerForBrowserProcess()->GetAllCookies(
-      base::BindOnce(
-          [](std::unique_ptr<GetCookiesCallback> callback,
-             const std::vector<net::CanonicalCookie>& cookies) {
-            callback->sendSuccess(NetworkHandler::BuildCookieArray(cookies));
-          },
-          std::move(callback)));
+      base::BindOnce(&StorageHandler::GotAllCookies,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
+}
+
+void StorageHandler::GotAllCookies(
+    std::unique_ptr<GetCookiesCallback> callback,
+    const std::vector<net::CanonicalCookie>& cookies) {
+  bool is_webui = frame_host_ && frame_host_->web_ui();
+  std::vector<net::CanonicalCookie> filtered_cookies;
+  for (const auto& cookie : cookies) {
+    if (client_->MayAttachToURL(
+            GURL(base::StrCat({url::kHttpsScheme, url::kStandardSchemeSeparator,
+                               cookie.DomainWithoutDot()})),
+            is_webui) &&
+        client_->MayAttachToURL(
+            GURL(base::StrCat({url::kHttpScheme, url::kStandardSchemeSeparator,
+                               cookie.DomainWithoutDot()})),
+            is_webui)) {
+      filtered_cookies.emplace_back(std::move(cookie));
+    }
+  }
+  callback->sendSuccess(NetworkHandler::BuildCookieArray(filtered_cookies));
 }
 
 void StorageHandler::SetCookies(
@@ -1473,8 +1489,8 @@ void StorageHandler::ResetSharedStorageBudget(
 
 namespace {
 
-std::string GetFrameTokenFromFrameTreeNodeId(int frame_id) {
-  if (frame_id == FrameTreeNode::kFrameTreeNodeInvalidId) {
+std::string GetFrameTokenFromFrameTreeNodeId(FrameTreeNodeId frame_id) {
+  if (frame_id.is_null()) {
     return std::string();
   }
   auto* frame_tree_node = FrameTreeNode::GloballyFindByID(frame_id);
@@ -1490,7 +1506,7 @@ void StorageHandler::NotifySharedStorageAccessed(
     const base::Time& access_time,
     SharedStorageWorkletHostManager::SharedStorageObserverInterface::AccessType
         type,
-    int main_frame_id,
+    FrameTreeNodeId main_frame_id,
     const std::string& owner_origin,
     const SharedStorageEventParams& params) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -1786,9 +1802,18 @@ ToSourceRegistrationResult(StoreSourceResult result) {
     case StoreSourceResult::kExceedsMaxChannelCapacity:
       return Storage::AttributionReportingSourceRegistrationResultEnum::
           ExceedsMaxChannelCapacity;
+    case StoreSourceResult::kExceedsMaxScopesChannelCapacity:
+      return Storage::AttributionReportingSourceRegistrationResultEnum::
+          ExceedsMaxScopesChannelCapacity;
     case StoreSourceResult::kExceedsMaxTriggerStateCardinality:
       return Storage::AttributionReportingSourceRegistrationResultEnum::
           ExceedsMaxTriggerStateCardinality;
+    case StoreSourceResult::kExceedsMaxEventStatesLimit:
+      return Storage::AttributionReportingSourceRegistrationResultEnum::
+          ExceedsMaxEventStatesLimit;
+    case StoreSourceResult::kDestinationPerDayReportingLimitReached:
+      return Storage::AttributionReportingSourceRegistrationResultEnum::
+          DestinationPerDayReportingLimitReached;
   }
 }
 
@@ -2059,7 +2084,8 @@ ToAggregatableTriggerData(
             .SetKeyPiece(attribution_reporting::HexEncodeAggregationKey(
                 aggregatable_trigger.key_piece()))
             .SetSourceKeys(std::make_unique<Array<String>>(
-                aggregatable_trigger.source_keys()))
+                aggregatable_trigger.source_keys().begin(),
+                aggregatable_trigger.source_keys().end()))
             .SetFilters(ToFilterPair(aggregatable_trigger.filters()))
             .Build());
   }
@@ -2078,7 +2104,8 @@ ToAggregatableValueDictEntries(
     out->emplace_back(
         Storage::AttributionReportingAggregatableValueDictEntry::Create()
             .SetKey(key)
-            .SetValue(value)
+            .SetValue(value.value())
+            .SetFilteringId(base::NumberToString(value.filtering_id()))
             .Build());
   }
 
@@ -2118,6 +2145,48 @@ ToSourceRegistrationTimeConfig(
   }
 }
 
+std::unique_ptr<
+    Array<Storage::AttributionReportingAggregatableDebugReportingData>>
+ToAggregatableDebugReportingDataArray(
+    const attribution_reporting::AggregatableDebugReportingConfig::DebugData&
+        data) {
+  auto out = std::make_unique<
+      Array<Storage::AttributionReportingAggregatableDebugReportingData>>();
+  for (const auto& [type, contribution] : data) {
+    auto types = std::make_unique<Array<String>>();
+    types->emplace_back(attribution_reporting::SerializeDebugDataType(type));
+    out->emplace_back(
+        Storage::AttributionReportingAggregatableDebugReportingData::Create()
+            .SetKeyPiece(attribution_reporting::HexEncodeAggregationKey(
+                contribution.key_piece()))
+            .SetValue(contribution.value())
+            .SetTypes(std::move(types))
+            .Build());
+  }
+  return out;
+}
+
+std::unique_ptr<Storage::AttributionReportingAggregatableDebugReportingConfig>
+ToAggregatableDebugReportingConfig(
+    std::optional<double> budget,
+    const attribution_reporting::AggregatableDebugReportingConfig& config) {
+  auto out_config =
+      Storage::AttributionReportingAggregatableDebugReportingConfig::Create()
+          .SetKeyPiece(
+              attribution_reporting::HexEncodeAggregationKey(config.key_piece))
+          .SetDebugData(
+              ToAggregatableDebugReportingDataArray(config.debug_data))
+          .Build();
+  if (budget.has_value()) {
+    out_config->SetBudget(*budget);
+  }
+  if (config.aggregation_coordinator_origin.has_value()) {
+    out_config->SetAggregationCoordinatorOrigin(
+        config.aggregation_coordinator_origin->Serialize());
+  }
+  return out_config;
+}
+
 }  // namespace
 
 void StorageHandler::OnSourceHandled(
@@ -2135,6 +2204,8 @@ void StorageHandler::OnSourceHandled(
   }
 
   const auto& common_info = source.common_info();
+  const auto& aggregatable_debug_reporting_config =
+      registration.aggregatable_debug_reporting_config;
   auto out_source =
       Storage::AttributionReportingSourceRegistration::Create()
           .SetTime(source_time.InSecondsFSinceUnixEpoch())
@@ -2154,10 +2225,32 @@ void StorageHandler::OnSourceHandled(
               registration.aggregatable_report_window.InSeconds())
           .SetTriggerDataMatching(
               ToTriggerDataMatching(registration.trigger_data_matching))
+          .SetDestinationLimitPriority(
+              base::NumberToString(registration.destination_limit_priority))
+          .SetAggregatableDebugReportingConfig(
+              ToAggregatableDebugReportingConfig(
+                  aggregatable_debug_reporting_config.budget(),
+                  aggregatable_debug_reporting_config.config()))
           .Build();
 
   if (registration.debug_key.has_value()) {
     out_source->SetDebugKey(base::NumberToString(*registration.debug_key));
+  }
+
+  if (const std::optional<attribution_reporting::AttributionScopesData>&
+          attribution_scopes_data = registration.attribution_scopes_data) {
+    out_source->SetScopesData(
+        Storage::AttributionScopesData::Create()
+            .SetValues(std::make_unique<Array<String>>(
+                attribution_scopes_data->attribution_scopes_set()
+                    .scopes()
+                    .begin(),
+                attribution_scopes_data->attribution_scopes_set()
+                    .scopes()
+                    .end()))
+            .SetLimit(attribution_scopes_data->attribution_scope_limit())
+            .SetMaxEventStates(attribution_scopes_data->max_event_states())
+            .Build());
   }
 
   frontend_->AttributionReportingSourceRegistered(
@@ -2180,10 +2273,21 @@ void StorageHandler::OnTriggerHandled(std::optional<uint64_t> cleared_debug_key,
               ToAggregatableTriggerData(registration.aggregatable_trigger_data))
           .SetAggregatableValues(
               ToAggregatableValueEntries(registration.aggregatable_values))
+          .SetAggregatableFilteringIdMaxBytes(
+              registration.aggregatable_trigger_config
+                  .aggregatable_filtering_id_max_bytes()
+                  .value())
           .SetDebugReporting(registration.debug_reporting)
           .SetSourceRegistrationTimeConfig(ToSourceRegistrationTimeConfig(
               registration.aggregatable_trigger_config
                   .source_registration_time_config()))
+          .SetAggregatableDebugReportingConfig(
+              ToAggregatableDebugReportingConfig(
+                  /*budget=*/std::nullopt,
+                  registration.aggregatable_debug_reporting_config))
+          .SetScopes(std::make_unique<Array<String>>(
+              registration.attribution_scopes.scopes().begin(),
+              registration.attribution_scopes.scopes().end()))
           .Build();
 
   if (registration.debug_key.has_value()) {
@@ -2210,7 +2314,11 @@ Response StorageHandler::SetAttributionReportingTracking(bool enable) {
     if (!manager) {
       return Response::ServerError("Attribution Reporting is disabled.");
     }
-    attribution_observation_.Observe(manager);
+    // Prevent `DCHECK` crashes in `base::ScopedObservation::Observe()` when we
+    // are already observing.
+    if (!attribution_observation_.IsObserving()) {
+      attribution_observation_.Observe(manager);
+    }
   } else {
     attribution_observation_.Reset();
   }

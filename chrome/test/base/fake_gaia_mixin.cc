@@ -31,8 +31,10 @@ const int FakeGaiaMixin::kFakeAccessTokenExpiration = 3600;
 const char FakeGaiaMixin::kFakeSIDCookie[] = "fake-SID-cookie";
 const char FakeGaiaMixin::kFakeLSIDCookie[] = "fake-LSID-cookie";
 
-const char FakeGaiaMixin::kEnterpriseUser1[] = "user-1@example.com";
+// LINT.IfChange
+const char FakeGaiaMixin::kEnterpriseUser1[] = "username@example.com";
 const char FakeGaiaMixin::kEnterpriseUser1GaiaId[] = "0000111111";
+// LINT.ThenChange(/components/policy/core/common/cloud/test/policy_builder.cc)
 const char FakeGaiaMixin::kEnterpriseUser2[] = "user-2@example.com";
 const char FakeGaiaMixin::kEnterpriseUser2GaiaId[] = "0000222222";
 
@@ -64,6 +66,12 @@ void FakeGaiaMixin::SetupFakeGaiaForLogin(const std::string& user_email,
   token_info.any_scope = true;
   token_info.expires_in = kFakeAccessTokenExpiration;
   fake_gaia_->IssueOAuthToken(refresh_token, token_info);
+}
+
+void FakeGaiaMixin::SetupFakeGaiaForLoginWithDefaults() {
+  SetupFakeGaiaForLogin(FakeGaiaMixin::kFakeUserEmail,
+                        FakeGaiaMixin::kFakeUserGaiaId,
+                        FakeGaiaMixin::kFakeRefreshToken);
 }
 
 void FakeGaiaMixin::SetupFakeGaiaForChildUser(const std::string& user_email,

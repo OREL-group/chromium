@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ui/views/omnibox/omnibox_view_views.h"
 
 #include <stddef.h>
@@ -300,7 +305,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewViewsTest, DISABLED_SelectAllOnClick) {
   ASSERT_NO_FATAL_FAILURE(ClickBrowserWindowCenter());
   ASSERT_NO_FATAL_FAILURE(Click(ui_controls::MIDDLE,
                                 click_location, click_location));
-// TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
+// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
 // of lacros-chrome is complete.
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
   EXPECT_TRUE(ui_test_utils::IsViewFocused(browser(), VIEW_ID_OMNIBOX));
@@ -310,10 +315,8 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewViewsTest, DISABLED_SelectAllOnClick) {
   EXPECT_FALSE(omnibox_view->IsSelectAll());
 }
 
-// TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
-// of lacros-chrome is complete.
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
-IN_PROC_BROWSER_TEST_F(OmniboxViewViewsTest, SelectionClipboard) {
+// TODO(crbug.com/339098004): Flaky across multiple builders.
+IN_PROC_BROWSER_TEST_F(OmniboxViewViewsTest, DISABLED_SelectionClipboard) {
   OmniboxView* omnibox_view = nullptr;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxViewForBrowser(browser(), &omnibox_view));
   omnibox_view->SetUserText(u"http://www.google.com/");
@@ -358,7 +361,6 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewViewsTest, SelectionClipboard) {
   EXPECT_EQ(u"http://www.goo4567123gle.com/", omnibox_view->GetText());
   EXPECT_EQ(18U, omnibox_view_views->GetCursorPosition());
 }
-#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
 
 // No touch on desktop Mac. Tracked in http://crbug.com/445520.
 #if !BUILDFLAG(IS_MAC) || defined(USE_AURA)
@@ -491,14 +493,14 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewViewsTest, CloseOmniboxPopupOnTextDrag) {
 
   // Simulate a mouse click before dragging the mouse.
   gfx::Point point(omnibox_view_views->origin() + gfx::Vector2d(10, 10));
-  ui::MouseEvent pressed(ui::ET_MOUSE_PRESSED, point, point,
+  ui::MouseEvent pressed(ui::EventType::kMousePressed, point, point,
                          ui::EventTimeForNow(), ui::EF_LEFT_MOUSE_BUTTON,
                          ui::EF_LEFT_MOUSE_BUTTON);
   omnibox_view_views->OnMousePressed(pressed);
   EXPECT_TRUE(omnibox_view->model()->PopupIsOpen());
 
   // Simulate a mouse drag of the omnibox text, and the omnibox should close.
-  ui::MouseEvent dragged(ui::ET_MOUSE_DRAGGED, point, point,
+  ui::MouseEvent dragged(ui::EventType::kMouseDragged, point, point,
                          ui::EventTimeForNow(), ui::EF_LEFT_MOUSE_BUTTON, 0);
   omnibox_view_views->OnMouseDragged(dragged);
 
@@ -651,7 +653,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewViewsTest, FriendlyAccessibleLabel) {
   // Test friendly label.
   const int kFriendlyPrefixLength = match.description.size() + 1;
   ui::AXNodeData node_data;
-  omnibox_view_views->GetAccessibleNodeData(&node_data);
+  omnibox_view_views->GetViewAccessibility().GetAccessibleNodeData(&node_data);
   EXPECT_EQ(u"Google https://google.com location from history, 1 of 1",
             node_data.GetString16Attribute(ax::mojom::StringAttribute::kValue));
   // Selection offsets are moved over by length the inserted descriptive text
@@ -685,7 +687,8 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewViewsTest, FriendlyAccessibleLabel) {
 
   // When editing starts, the accessible value becomes the same as the raw
   // edited text.
-  omnibox_view_views->GetAccessibleNodeData(&node_data);
+  node_data = ui::AXNodeData();
+  omnibox_view_views->GetViewAccessibility().GetAccessibleNodeData(&node_data);
   EXPECT_EQ(u"hxps://google.com",
             node_data.GetString16Attribute(ax::mojom::StringAttribute::kValue));
 }
@@ -720,7 +723,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewViewsTest, AccessiblePopup) {
       popup_node_data_1.HasIntAttribute(ax::mojom::IntAttribute::kPopupForId));
   EXPECT_EQ(
       popup_node_data_1.GetIntAttribute(ax::mojom::IntAttribute::kPopupForId),
-      omnibox_view_views->GetViewAccessibility().GetUniqueId().Get());
+      omnibox_view_views->GetViewAccessibility().GetUniqueId());
 
   // Populate suggestions for the omnibox popup.
   AutocompleteController* autocomplete_controller =

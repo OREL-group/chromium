@@ -8,15 +8,18 @@
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
-#include "chrome/browser/touch_to_fill/autofill/android/internal/jni/TouchToFillPaymentMethodControllerBridge_jni.h"
-#include "chrome/browser/touch_to_fill/autofill/android/touch_to_fill_payment_method_view.h"
 #include "chrome/browser/touch_to_fill/autofill/android/touch_to_fill_delegate_android_impl.h"
+#include "chrome/browser/touch_to_fill/autofill/android/touch_to_fill_payment_method_view.h"
 #include "components/autofill/content/browser/content_autofill_client.h"
 #include "components/autofill/content/browser/content_autofill_driver.h"
 #include "components/autofill/core/browser/autofill_manager.h"
 #include "components/autofill/core/browser/browser_autofill_manager.h"
+#include "components/autofill/core/browser/ui/suggestion.h"
 #include "components/autofill/core/browser/ui/touch_to_fill_delegate.h"
 #include "content/public/browser/navigation_handle.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "chrome/browser/touch_to_fill/autofill/android/internal/jni/TouchToFillPaymentMethodControllerBridge_jni.h"
 
 namespace autofill {
 
@@ -47,14 +50,11 @@ TouchToFillPaymentMethodController::TouchToFillPaymentMethodController(
           }),
           base::Seconds(1)) {
   driver_factory_observation_.Observe(
-      autofill_client->GetAutofillDriverFactory());
+      &autofill_client->GetAutofillDriverFactory());
 }
 
 TouchToFillPaymentMethodController::~TouchToFillPaymentMethodController() {
-  if (java_object_) {
-    Java_TouchToFillPaymentMethodControllerBridge_onNativeDestroyed(
-        base::android::AttachCurrentThread(), java_object_);
-  }
+  ResetJavaObject();
 }
 
 void TouchToFillPaymentMethodController::WebContentsDestroyed() {
@@ -89,7 +89,8 @@ void TouchToFillPaymentMethodController::OnContentAutofillDriverCreated(
 bool TouchToFillPaymentMethodController::Show(
     std::unique_ptr<TouchToFillPaymentMethodView> view,
     base::WeakPtr<TouchToFillDelegate> delegate,
-    base::span<const CreditCard> cards_to_suggest) {
+    base::span<const CreditCard> cards_to_suggest,
+    base::span<const Suggestion> suggestions) {
   if (!keyboard_suppressor_.is_suppressing()) {
     return false;
   }
@@ -98,9 +99,32 @@ bool TouchToFillPaymentMethodController::Show(
   if (view_)
     return false;
 
-  if (!view->Show(this, std::move(cards_to_suggest),
+  if (!view->Show(this, cards_to_suggest, suggestions,
                   delegate->ShouldShowScanCreditCard())) {
-    java_object_.Reset();
+    ResetJavaObject();
+    return false;
+  }
+
+  view_ = std::move(view);
+  delegate_ = std::move(delegate);
+  return true;
+}
+
+bool TouchToFillPaymentMethodController::Show(
+    std::unique_ptr<TouchToFillPaymentMethodView> view,
+    base::WeakPtr<TouchToFillDelegate> delegate,
+    base::span<const Iban> ibans_to_suggest) {
+  if (!keyboard_suppressor_.is_suppressing()) {
+    return false;
+  }
+
+  // Abort if TTF surface is already shown.
+  if (view_) {
+    return false;
+  }
+
+  if (!view->Show(this, ibans_to_suggest)) {
+    ResetJavaObject();
     return false;
   }
 
@@ -121,7 +145,7 @@ void TouchToFillPaymentMethodController::OnDismissed(JNIEnv* env,
   }
   view_.reset();
   delegate_.reset();
-  java_object_.Reset();
+  ResetJavaObject();
   keyboard_suppressor_.Unsuppress();
 }
 
@@ -137,13 +161,30 @@ void TouchToFillPaymentMethodController::ShowPaymentMethodSettings(JNIEnv* env) 
   }
 }
 
-void TouchToFillPaymentMethodController::SuggestionSelected(
+void TouchToFillPaymentMethodController::CreditCardSuggestionSelected(
     JNIEnv* env,
     base::android::JavaParamRef<jstring> unique_id,
     bool is_virtual) {
   if (delegate_) {
-    delegate_->SuggestionSelected(
+    delegate_->CreditCardSuggestionSelected(
         base::android::ConvertJavaStringToUTF8(env, unique_id), is_virtual);
+  }
+}
+
+void TouchToFillPaymentMethodController::LocalIbanSuggestionSelected(
+    JNIEnv* env,
+    base::android::JavaParamRef<jstring> guid) {
+  if (delegate_) {
+    delegate_->IbanSuggestionSelected(
+        Iban::Guid((*env).GetStringUTFChars(guid, nullptr)));
+  }
+}
+
+void TouchToFillPaymentMethodController::ServerIbanSuggestionSelected(
+    JNIEnv* env,
+    long instrument_id) {
+  if (delegate_) {
+    delegate_->IbanSuggestionSelected(Iban::InstrumentId(instrument_id));
   }
 }
 
@@ -154,6 +195,14 @@ TouchToFillPaymentMethodController::GetJavaObject() {
         base::android::AttachCurrentThread(), reinterpret_cast<intptr_t>(this));
   }
   return base::android::ScopedJavaLocalRef<jobject>(java_object_);
+}
+
+void TouchToFillPaymentMethodController::ResetJavaObject() {
+  if (java_object_) {
+    Java_TouchToFillPaymentMethodControllerBridge_onNativeDestroyed(
+        base::android::AttachCurrentThread(), java_object_);
+  }
+  java_object_.Reset();
 }
 
 }  // namespace autofill

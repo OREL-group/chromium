@@ -5,7 +5,7 @@
 #include "ash/constants/ash_features.h"
 #include "ash/webui/firmware_update_ui/url_constants.h"
 #include "base/test/scoped_feature_list.h"
-#include "chrome/test/base/chromeos/crosier/interactive_ash_test.h"
+#include "chrome/test/base/ash/interactive/interactive_ash_test.h"
 #include "chrome/test/interaction/interactive_browser_test.h"
 #include "chromeos/ash/components/dbus/fwupd/fake_fwupd_client.h"
 #include "chromeos/ash/components/fwupd/firmware_update_manager.h"
@@ -151,9 +151,9 @@ IN_PROC_BROWSER_TEST_F(FirmwareUpdateInteractiveUiTest,
                                      kUpdateDialogProgressQuery,
                                      "Paused (60% complete)"),
           Log("Waiting for update dialog body to match expected value..."),
-          WaitForElementTextContains(
-              webcontents_id_, kUpdateDialogBodyQuery,
-              "Unplug and replug the device to continue the update process."),
+          WaitForElementTextContains(webcontents_id_, kUpdateDialogBodyQuery,
+                                     "Unplug and replug the fake_device to "
+                                     "continue the update process"),
           Log("Triggering successful update."), TriggerSuccessfulUpdate(),
           Log("Verifying existence of update done button."),
           WaitForElementExists(webcontents_id_,

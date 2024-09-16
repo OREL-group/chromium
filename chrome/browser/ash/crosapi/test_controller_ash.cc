@@ -60,6 +60,7 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/views/tabs/tab_scrubber_chromeos.h"
 #include "chrome/browser/ui/webui/ash/app_install/app_install_page_handler.h"
+#include "chromeos/ash/components/cryptohome/cryptohome_parameters.h"
 #include "chromeos/ash/components/dbus/shill/shill_profile_client.h"
 #include "chromeos/ash/components/dbus/shill/shill_third_party_vpn_driver_client.h"
 #include "chromeos/ash/components/dbus/userdataauth/cryptohome_misc_client.h"
@@ -84,6 +85,7 @@
 #include "ui/events/base_event_utils.h"
 #include "ui/events/event.h"
 #include "ui/events/event_source.h"
+#include "ui/events/gesture_detection/gesture_configuration.h"
 #include "ui/events/types/event_type.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/views/controls/button/button.h"
@@ -148,6 +150,21 @@ void SetTabletModeEnabled(bool enabled) {
     ash::TabletModeControllerTestApi().LeaveTabletMode();
   }
   waiter.Wait();
+}
+
+std::string GetMachineStatisticKeyString(mojom::MachineStatisticKeyType key) {
+  if (key == mojom::MachineStatisticKeyType::kOemDeviceRequisitionKey) {
+    return ash::system::kOemDeviceRequisitionKey;
+  }
+  if (key == mojom::MachineStatisticKeyType::kHardwareClassKey) {
+    return ash::system::kHardwareClassKey;
+  }
+  if (key == mojom::MachineStatisticKeyType::kCustomizationIdKey) {
+    return ash::system::kCustomizationIdKey;
+  }
+
+  // Return empty string for unknown key.
+  return "";
 }
 
 const base::TimeDelta kWindowWaitTimeout = base::Seconds(10);
@@ -332,9 +349,10 @@ void TestControllerAsh::ClickWindow(const std::string& window_id) {
   if (!window)
     return;
   const gfx::Point center = window->bounds().CenterPoint();
-  bool destroyed = DispatchMouseEvent(window, ui::ET_MOUSE_PRESSED, center);
+  bool destroyed =
+      DispatchMouseEvent(window, ui::EventType::kMousePressed, center);
   if (!destroyed) {
-    DispatchMouseEvent(window, ui::ET_MOUSE_RELEASED, center);
+    DispatchMouseEvent(window, ui::EventType::kMouseReleased, center);
   }
 }
 
@@ -476,7 +494,8 @@ void TestControllerAsh::GetWindowPositionInScreen(
 
 void TestControllerAsh::LaunchAppFromAppList(const std::string& app_id) {
   ash::Shell::Get()->app_list_controller()->ActivateItem(
-      app_id, /*event_flags=*/0, ash::AppListLaunchedFrom::kLaunchedFromGrid);
+      app_id, /*event_flags=*/0, ash::AppListLaunchedFrom::kLaunchedFromGrid,
+      /*is_above_the_fold=*/false);
 }
 
 void TestControllerAsh::AreDesksBeingModified(
@@ -520,8 +539,9 @@ void TestControllerAsh::SelectItemInShelf(const std::string& item_id,
   }
 
   auto mouse_event = std::make_unique<ui::MouseEvent>(
-      ui::ET_MOUSE_PRESSED, gfx::PointF(), gfx::PointF(), ui::EventTimeForNow(),
-      ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON);
+      ui::EventType::kMousePressed, gfx::PointF(), gfx::PointF(),
+      ui::EventTimeForNow(), ui::EF_LEFT_MOUSE_BUTTON,
+      ui::EF_LEFT_MOUSE_BUTTON);
   delegate->ItemSelected(std::move(mouse_event), display::kInvalidDisplayId,
                          ash::LAUNCH_FROM_SHELF,
                          /*callback=*/base::DoNothing(),
@@ -564,19 +584,19 @@ void TestControllerAsh::SendTouchEvent(const std::string& window_id,
   switch (type) {
     case mojom::TouchEventType::kUnknown:
       // |type| is not optional, so kUnknown is never expected.
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return;
     case mojom::TouchEventType::kPressed:
-      event_type = ui::ET_TOUCH_PRESSED;
+      event_type = ui::EventType::kTouchPressed;
       break;
     case mojom::TouchEventType::kMoved:
-      event_type = ui::ET_TOUCH_MOVED;
+      event_type = ui::EventType::kTouchMoved;
       break;
     case mojom::TouchEventType::kReleased:
-      event_type = ui::ET_TOUCH_RELEASED;
+      event_type = ui::EventType::kTouchReleased;
       break;
     case mojom::TouchEventType::kCancelled:
-      event_type = ui::ET_TOUCH_CANCELLED;
+      event_type = ui::EventType::kTouchCancelled;
       break;
   }
   // Compute location relative to display root window.
@@ -594,7 +614,7 @@ void TestControllerAsh::SendTouchEvent(const std::string& window_id,
 void TestControllerAsh::RegisterStandaloneBrowserTestController(
     mojo::PendingRemote<mojom::StandaloneBrowserTestController> controller) {
   // At the moment only a single controller is supported.
-  // TODO(crbug.com/1174246): Support SxS lacros.
+  // TODO(crbug.com/40167449): Support SxS lacros.
   if (standalone_browser_test_controller_.is_bound()) {
     return;
   }
@@ -1040,6 +1060,41 @@ void TestControllerAsh::UpdateDisplay(int number_of_displays,
         current_display_info.id() + i));
   }
   display_manager.UpdateDisplayWithDisplayInfoList(display_infos);
+  std::move(callback).Run();
+}
+
+void TestControllerAsh::EnableStatisticsProviderForTesting(
+    bool enable,
+    EnableStatisticsProviderForTestingCallback callback) {
+  ash::system::StatisticsProvider::SetTestProvider(
+      enable ? &fake_statistics_provider_ : nullptr);
+  std::move(callback).Run();
+}
+
+void TestControllerAsh::ClearAllMachineStatistics(
+    ClearAllMachineStatisticsCallback callback) {
+  fake_statistics_provider_.ClearAllMachineStatistics();
+  std::move(callback).Run();
+}
+
+void TestControllerAsh::SetMachineStatistic(
+    mojom::MachineStatisticKeyType key,
+    const std::string& value,
+    SetMachineStatisticCallback callback) {
+  std::string key_string = GetMachineStatisticKeyString(key);
+  if (!key_string.empty()) {
+    fake_statistics_provider_.SetMachineStatistic(key_string, value);
+    std::move(callback).Run(true);
+  } else {
+    LOG(WARNING) << "Unknown key for setting machine statistic";
+    std::move(callback).Run(false);
+  }
+}
+
+void TestControllerAsh::SetMinFlingVelocity(
+    float velocity,
+    SetMinFlingVelocityCallback callback) {
+  ui::GestureConfiguration::GetInstance()->set_min_fling_velocity(velocity);
   std::move(callback).Run();
 }
 

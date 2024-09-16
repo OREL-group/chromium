@@ -21,7 +21,6 @@
 #include "chrome/browser/web_applications/web_app_icon_manager.h"
 #include "chrome/browser/web_applications/web_app_install_finalizer.h"
 #include "chrome/browser/web_applications/web_app_install_manager.h"
-#include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/browser/web_applications/web_app_registry_update.h"
 #include "chrome/browser/web_applications/web_app_sync_bridge.h"
@@ -90,9 +89,6 @@ void RemoveWebAppJob::Start(AllAppsLock& lock, Callback callback) {
       if (it != config_map.end()) {
         UserUninstalledPreinstalledWebAppPrefs(profile_->GetPrefs())
             .Add(app_id_, it->second.install_urls);
-      } else {
-        base::UmaHistogramBoolean(
-            "WebApp.Preinstalled.ExternalConfigMapAbsentDuringUninstall", true);
       }
     }
   }
@@ -219,7 +215,7 @@ void RemoveWebAppJob::MaybeFinishPrimaryRemoval() {
   }
 
   primary_removal_result_ = errors_ ? webapps::UninstallResultCode::kError
-                                    : webapps::UninstallResultCode::kSuccess;
+                                    : webapps::UninstallResultCode::kAppRemoved;
   debug_value_->Set("primary_removal_result",
                     base::ToString(primary_removal_result_.value()));
   base::UmaHistogramBoolean("WebApp.Uninstall.Result", !errors_);

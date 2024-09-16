@@ -43,6 +43,7 @@
 #include "net/http/http_response_headers.h"
 #include "services/network/public/mojom/fetch_api.mojom-shared.h"
 #include "third_party/blink/public/common/loader/resource_type_util.h"
+#include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom.h"
 #include "ui/base/page_transition_types.h"
 
 namespace page_load_metrics {
@@ -110,6 +111,39 @@ void MetricsWebContentsObserver::RecordFeatureUsage(
     blink::mojom::WebFeature feature) {
   MetricsWebContentsObserver::RecordFeatureUsage(
       render_frame_host, std::vector<blink::mojom::WebFeature>{feature});
+}
+
+// static
+void MetricsWebContentsObserver::RecordFeatureUsage(
+    content::RenderFrameHost* render_frame_host,
+    const std::vector<blink::mojom::WebDXFeature>& webdx_features) {
+  content::WebContents* web_contents =
+      content::WebContents::FromRenderFrameHost(render_frame_host);
+  MetricsWebContentsObserver* observer =
+      MetricsWebContentsObserver::FromWebContents(web_contents);
+
+  if (observer) {
+    std::vector<blink::UseCounterFeature> features;
+    for (auto webdx_feature : webdx_features) {
+      CHECK_NE(webdx_feature, blink::mojom::WebDXFeature::kPageVisits)
+          << "WebFeature::kPageVisits is a reserved feature.";
+      if (webdx_feature == blink::mojom::WebDXFeature::kPageVisits) {
+        continue;
+      }
+
+      features.emplace_back(blink::mojom::UseCounterFeatureType::kWebDXFeature,
+                            static_cast<uint32_t>(webdx_feature));
+    }
+    observer->OnBrowserFeatureUsage(render_frame_host, features);
+  }
+}
+
+// static
+void MetricsWebContentsObserver::RecordFeatureUsage(
+    content::RenderFrameHost* render_frame_host,
+    blink::mojom::WebDXFeature feature) {
+  MetricsWebContentsObserver::RecordFeatureUsage(
+      render_frame_host, std::vector<blink::mojom::WebDXFeature>{feature});
 }
 
 // static
@@ -200,7 +234,8 @@ void MetricsWebContentsObserver::RenderFrameHostChanged(
   RegisterInputEventObserver(new_host);
 }
 
-void MetricsWebContentsObserver::FrameDeleted(int frame_tree_node_id) {
+void MetricsWebContentsObserver::FrameDeleted(
+    content::FrameTreeNodeId frame_tree_node_id) {
   content::RenderFrameHost* rfh =
       web_contents()->UnsafeFindFrameByFrameTreeNodeId(frame_tree_node_id);
   if (!rfh) {
@@ -343,7 +378,7 @@ void MetricsWebContentsObserver::WillStartNavigationRequestImpl(
       source_id = ukm::NoURLSourceId();
     }
   } else {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
   }
 
   // For prerendered page activations, we don't create a new PageLoadTracker,
@@ -417,7 +452,7 @@ PageLoadTracker* MetricsWebContentsObserver::GetTrackerOrNullForRequest(
     // Sub-frame resources have a null RFH when browser-side navigation is
     // enabled, so we can't perform the RFH check below for them.
     //
-    // TODO(https://crbug.com/1301880): consider tracking GlobalRequestIDs for
+    // TODO(crbug.com/40216775): consider tracking GlobalRequestIDs for
     // sub-frame navigations in each PageLoadTracker, and performing a lookup
     // for sub-frames similar to the main-frame lookup above. Now we have
     // `active_pages_` in addition to `primary_page_`, and the following code
@@ -539,7 +574,10 @@ void MetricsWebContentsObserver::OnCookiesAccessedImpl(
     const content::CookieAccessDetails& details) {
   // TODO(altimin): Propagate `CookieAccessDetails` further.
   bool is_partitioned_access = base::ranges::all_of(
-      details.cookie_list, &net::CanonicalCookie::IsPartitioned);
+      details.cookie_access_result_list,
+      [](const net::CookieWithAccessResult& cookie_with_access_result) {
+        return cookie_with_access_result.cookie.IsPartitioned();
+      });
 
   switch (details.type) {
     case content::CookieAccessDetails::Type::kRead:
@@ -549,8 +587,10 @@ void MetricsWebContentsObserver::OnCookiesAccessedImpl(
                             is_partitioned_access);
       break;
     case content::CookieAccessDetails::Type::kChange:
-      for (const auto& cookie : details.cookie_list) {
-        tracker.OnCookieChange(details.url, details.first_party_url, cookie,
+      for (const auto& cookie_with_access_result :
+           details.cookie_access_result_list) {
+        tracker.OnCookieChange(details.url, details.first_party_url,
+                               cookie_with_access_result.cookie,
                                details.blocked_by_policy, details.is_ad_tagged,
                                details.cookie_setting_overrides,
                                is_partitioned_access);
@@ -627,7 +667,7 @@ void MetricsWebContentsObserver::DidFinishNavigation(
   // example, navigations to about:blank). DidFinishNavigation is guaranteed to
   // be called for every navigation, so we also update has_navigated_ here, to
   // ensure it is set consistently for all navigations.
-  // TODO(https://crbug.com/1301880): This flag seems broken for Prerender and
+  // TODO(crbug.com/40216775): This flag seems broken for Prerender and
   // FencedFrames.
   has_navigated_ = true;
 
@@ -985,6 +1025,18 @@ void MetricsWebContentsObserver::DidRedirectNavigation(
   it->second->Redirect(navigation_handle);
 }
 
+void MetricsWebContentsObserver::DidUpdateNavigationHandleTiming(
+    content::NavigationHandle* navigation_handle) {
+  if (!navigation_handle->IsInMainFrame()) {
+    return;
+  }
+  auto it = provisional_loads_.find(navigation_handle);
+  if (it == provisional_loads_.end()) {
+    return;
+  }
+  it->second->DidUpdateNavigationHandleTiming(navigation_handle);
+}
+
 void MetricsWebContentsObserver::OnVisibilityChanged(
     content::Visibility visibility) {
   if (web_contents_will_soon_be_destroyed_) {
@@ -1144,37 +1196,23 @@ void MetricsWebContentsObserver::OnTimingUpdated(
     const std::optional<blink::SubresourceLoadMetrics>&
         subresource_load_metrics,
     mojom::SoftNavigationMetricsPtr soft_navigation_metrics) {
-  // Replacing this call by GetPageLoadTracker breaks some tests.
-  //
-  // Note that if a PLMO only observes events at outermost page, misusing
-  // primary page's PageLoadTracker for OnTimingUpdated is safe because
-  // PageLoadTracker::UpdateMetrics forwards events unconditionally and
-  // unmodified, and outermost page's MetricsUpdateDispatcher manages all
-  // subframe's timing update.
-  PageLoadTracker* tracker = GetPageLoadTrackerLegacy(render_frame_host);
-  // We may receive notifications from frames that have been navigated away
-  // from. In that case the PageLoadTracker is already destroyed in
-  // DidFinishNavigation (unless it's stored in bfcache). We simply ignore them.
-  if (!tracker && !render_frame_host->GetMainFrame()->IsActive()) {
-    RecordInternalError(ERR_IPC_FROM_WRONG_FRAME);
-    return;
-  }
-
-  const bool is_main_frame = (render_frame_host->GetParent() == nullptr);
-  if (is_main_frame) {
-    if (DoesTimingUpdateHaveError(tracker)) {
-      return;
-    }
-  } else if (!tracker) {
-    RecordInternalError(ERR_SUBFRAME_IPC_WITH_NO_RELEVANT_LOAD);
-  }
-
-  if (tracker) {
+  if (PageLoadTracker* tracker = GetPageLoadTrackerIfValid(render_frame_host)) {
     tracker->UpdateMetrics(
         render_frame_host, std::move(timing), std::move(metadata),
         std::move(new_features), resources, std::move(render_data),
         std::move(cpu_timing), std::move(input_timing_delta),
         subresource_load_metrics, std::move(soft_navigation_metrics));
+  }
+}
+
+void MetricsWebContentsObserver::OnCustomUserTimingUpdated(
+    content::RenderFrameHost* rfh,
+    mojom::CustomUserTimingMarkPtr custom_timing) {
+  // Buffer timing data before seinding to the tracker as the tracker may not
+  // exist in some cases, in that case the buffered timings are sent next time.
+  page_load_custom_timings_.push_back(std::move(custom_timing));
+  if (PageLoadTracker* tracker = GetPageLoadTrackerIfValid(rfh)) {
+    tracker->AddCustomUserTimings(std::move(page_load_custom_timings_));
   }
 }
 
@@ -1215,6 +1253,13 @@ void MetricsWebContentsObserver::UpdateTiming(
                   subresource_load_metrics, std::move(soft_navigation_metrics));
 }
 
+void MetricsWebContentsObserver::AddCustomUserTiming(
+    mojom::CustomUserTimingMarkPtr custom_timing) {
+  content::RenderFrameHost* render_frame_host =
+      page_load_metrics_receivers_.GetCurrentTargetFrame();
+  OnCustomUserTimingUpdated(render_frame_host, std::move(custom_timing));
+}
+
 void MetricsWebContentsObserver::SetUpSharedMemoryForSmoothness(
     base::ReadOnlySharedMemoryRegion shared_memory) {
   content::RenderFrameHost* render_frame_host =
@@ -1222,7 +1267,7 @@ void MetricsWebContentsObserver::SetUpSharedMemoryForSmoothness(
   const bool is_outermost_main_frame =
       render_frame_host->GetParentOrOuterDocument() == nullptr;
   if (!is_outermost_main_frame) {
-    // TODO(https://crbug.com/1115136): Merge smoothness metrics from OOPIFs and
+    // TODO(crbug.com/40144214): Merge smoothness metrics from OOPIFs and
     // FencedFrames with the main-frame. Also need to check if FencedFrames
     // send this request correctly.
     return;
@@ -1353,6 +1398,32 @@ void MetricsWebContentsObserver::OnSharedStorageWorkletHostCreated(
   }
 }
 
+void MetricsWebContentsObserver::OnSharedStorageSelectURLCalled(
+    content::RenderFrameHost* main_rfh) {
+  if (!main_rfh) {
+    return;
+  }
+
+  if (PageLoadTracker* tracker = GetPageLoadTracker(main_rfh)) {
+    tracker->OnSharedStorageSelectURLCalled();
+  }
+}
+
+void MetricsWebContentsObserver::OnAdAuctionComplete(
+    content::RenderFrameHost* rfh,
+    bool is_server_auction,
+    bool is_on_device_auction,
+    content::AuctionResult result) {
+  if (!rfh) {
+    return;
+  }
+
+  if (PageLoadTracker* tracker = GetPageLoadTracker(rfh)) {
+    tracker->OnAdAuctionComplete(is_server_auction, is_on_device_auction,
+                                 result);
+  }
+}
+
 base::TimeTicks MetricsWebContentsObserver::GetCreated() {
   return created_;
 }
@@ -1373,7 +1444,7 @@ base::TimeTicks MetricsWebContentsObserver::GetCreated() {
 //
 // This is mitigated by using GetPageLoadTracker.
 //
-// TODO(https://crbug.com/1301880): Use GetPageLoadTracker always.
+// TODO(crbug.com/40216775): Use GetPageLoadTracker always.
 PageLoadTracker* MetricsWebContentsObserver::GetPageLoadTrackerLegacy(
     content::RenderFrameHost* rfh) {
   if (!rfh) {
@@ -1421,6 +1492,36 @@ PageLoadTracker* MetricsWebContentsObserver::GetPageLoadTracker(
   }
 
   return nullptr;
+}
+
+PageLoadTracker* MetricsWebContentsObserver::GetPageLoadTrackerIfValid(
+    content::RenderFrameHost* render_frame_host) {
+  // Replacing this call by GetPageLoadTracker breaks some tests.
+  //
+  // Note that if a PLMO only observes events at outermost page, misusing
+  // primary page's PageLoadTracker for OnTimingUpdated is safe because
+  // PageLoadTracker::UpdateMetrics forwards events unconditionally and
+  // unmodified, and outermost page's MetricsUpdateDispatcher manages all
+  // subframe's timing update.
+  PageLoadTracker* tracker = GetPageLoadTrackerLegacy(render_frame_host);
+  // We may receive notifications from frames that have been navigated away
+  // from. In that case the PageLoadTracker is already destroyed in
+  // DidFinishNavigation (unless it's stored in bfcache). We simply ignore them.
+  if (!tracker && !render_frame_host->GetMainFrame()->IsActive()) {
+    RecordInternalError(ERR_IPC_FROM_WRONG_FRAME);
+    return nullptr;
+  }
+
+  const bool is_main_frame = (render_frame_host->GetParent() == nullptr);
+  if (is_main_frame) {
+    if (DoesTimingUpdateHaveError(tracker)) {
+      return nullptr;
+    }
+  } else if (!tracker) {
+    RecordInternalError(ERR_SUBFRAME_IPC_WITH_NO_RELEVANT_LOAD);
+  }
+
+  return tracker;
 }
 
 PageLoadTracker* MetricsWebContentsObserver::GetAncestralAlivePageLoadTracker(

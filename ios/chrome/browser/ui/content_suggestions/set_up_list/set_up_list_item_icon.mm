@@ -281,8 +281,8 @@ UIView* IconInSquare(NSString* symbol,
           @[ [UIColor whiteColor], [UIColor colorNamed:kBlue500Color] ]);
     }
     case SetUpListItemType::kFollow:
-      // TODO(crbug.com/1428070): Add a Follow item to the Set Up List.
-      NOTREACHED();
+      // TODO(crbug.com/40262090): Add a Follow item to the Set Up List.
+      NOTREACHED_IN_MIGRATION();
       return nil;
   }
 }

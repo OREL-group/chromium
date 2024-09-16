@@ -6,6 +6,8 @@
 
 #import <UIKit/UIKit.h>
 
+#include <string_view>
+
 #include "base/apple/foundation_util.h"
 #include "base/containers/span.h"
 #include "base/strings/sys_string_conversions.h"
@@ -133,7 +135,7 @@ void ClipboardIOS::ReadAvailableTypes(
   *types = GetStandardFormats(buffer, data_dst);
 
   NSData* data = GetDataWithTypeFromPasteboard(
-      GetPasteboard(), (NSString*)kUTTypeChromiumWebCustomData);
+      GetPasteboard(), (NSString*)kUTTypeChromiumDataTransferCustomData);
   if (data) {
     ReadCustomDataTypes(
         base::span(reinterpret_cast<const uint8_t*>([data bytes]),
@@ -260,16 +262,17 @@ void ClipboardIOS::ReadPng(ClipboardBuffer buffer,
 
 // |data_dst| is not used. It's only passed to be consistent with other
 // platforms.
-void ClipboardIOS::ReadCustomData(ClipboardBuffer buffer,
-                                  const std::u16string& type,
-                                  const DataTransferEndpoint* data_dst,
-                                  std::u16string* result) const {
+void ClipboardIOS::ReadDataTransferCustomData(
+    ClipboardBuffer buffer,
+    const std::u16string& type,
+    const DataTransferEndpoint* data_dst,
+    std::u16string* result) const {
   DCHECK(CalledOnValidThread());
   DCHECK_EQ(buffer, ClipboardBuffer::kCopyPaste);
   RecordRead(ClipboardFormatMetric::kCustomData);
 
   NSData* data = GetDataWithTypeFromPasteboard(
-      GetPasteboard(), (NSString*)kUTTypeChromiumWebCustomData);
+      GetPasteboard(), (NSString*)kUTTypeChromiumDataTransferCustomData);
   if (data) {
     if (std::optional<std::u16string> maybe_result = ReadCustomDataForType(
             base::span(reinterpret_cast<const uint8_t*>([data bytes]),
@@ -370,7 +373,7 @@ void ClipboardIOS::WritePortableAndPlatformRepresentations(
   }
 }
 
-void ClipboardIOS::WriteText(base::StringPiece text) {
+void ClipboardIOS::WriteText(std::string_view text) {
   NSDictionary<NSString*, id>* text_item = @{
     ClipboardFormatType::PlainTextType().ToNSString() :
         base::SysUTF8ToNSString(text)
@@ -378,9 +381,8 @@ void ClipboardIOS::WriteText(base::StringPiece text) {
   [GetPasteboard() addItems:@[ text_item ]];
 }
 
-void ClipboardIOS::WriteHTML(
-    base::StringPiece markup,
-    std::optional<base::StringPiece> /* source_url */) {
+void ClipboardIOS::WriteHTML(std::string_view markup,
+                             std::optional<std::string_view> /* source_url */) {
   // We need to mark it as utf-8. (see crbug.com/40759159)
   std::string html_fragment_str("<meta charset='utf-8'>");
   html_fragment_str += markup;
@@ -391,7 +393,7 @@ void ClipboardIOS::WriteHTML(
   [GetPasteboard() addItems:@[ html_item ]];
 }
 
-void ClipboardIOS::WriteSvg(base::StringPiece markup) {
+void ClipboardIOS::WriteSvg(std::string_view markup) {
   NSDictionary<NSString*, id>* svg_item = @{
     ClipboardFormatType::SvgType().ToNSString() :
         base::SysUTF8ToNSString(markup)
@@ -399,7 +401,7 @@ void ClipboardIOS::WriteSvg(base::StringPiece markup) {
   [GetPasteboard() addItems:@[ svg_item ]];
 }
 
-void ClipboardIOS::WriteRTF(base::StringPiece rtf) {
+void ClipboardIOS::WriteRTF(std::string_view rtf) {
   WriteData(ClipboardFormatType::RtfType(),
             base::as_bytes(base::make_span(rtf)));
 }
@@ -421,8 +423,7 @@ void ClipboardIOS::WriteFilenames(std::vector<ui::FileInfo> filenames) {
   [GetPasteboard() addItems:items];
 }
 
-void ClipboardIOS::WriteBookmark(base::StringPiece title,
-                                 base::StringPiece url) {
+void ClipboardIOS::WriteBookmark(std::string_view title, std::string_view url) {
   NSDictionary<NSString*, id>* bookmarkItem = @{
     ClipboardFormatType::UrlType().ToNSString() : base::SysUTF8ToNSString(url),
     kUTTypeURLName : base::SysUTF8ToNSString(title),
@@ -450,10 +451,7 @@ void ClipboardIOS::WriteBitmap(const SkBitmap& bitmap) {
       CGColorSpaceCreateDeviceRGB());
   UIImage* image =
       skia::SkBitmapToUIImageWithColorSpace(bitmap, 1.0f, color_space.get());
-  if (!image) {
-    NOTREACHED() << "SkBitmapToUIImageWithColorSpace failed";
-    return;
-  }
+  CHECK(image) << "SkBitmapToUIImageWithColorSpace failed";
 
   [GetPasteboard() setImage:image];
 }

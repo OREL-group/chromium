@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 
 #include "testing/gmock/include/gmock/gmock-matchers.h"
@@ -25,7 +30,6 @@
 #include "third_party/blink/renderer/core/testing/sim/sim_test.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/json/json_values.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "ui/gfx/geometry/decomposed_transform.h"
 
 namespace blink {
@@ -1795,6 +1799,156 @@ TEST_F(LayoutObjectTest, ContainingScrollContainer) {
       GetLayoutObjectByElementId("absolute")->ContainingScrollContainer());
   EXPECT_EQ(scroller1, GetLayoutObjectByElementId("under-absolute")
                            ->ContainingScrollContainer());
+}
+
+TEST_F(LayoutObjectTest, ScrollOffsetMapping) {
+  SetBodyInnerHTML(R"HTML(
+    <div id="scroller" style="overflow:scroll; width:300px; height:300px;">
+      <div id="inner" style="width:1000px; height:1000px; margin:50px;"></div>
+    </div>
+    <div style="width:200vw; height:200vh;"></div>
+  )HTML");
+
+  Element* scroller = GetElementById("scroller");
+  ASSERT_TRUE(scroller);
+  scroller->scrollTo(100, 200);
+  GetDocument().View()->LayoutViewport()->SetScrollOffset(
+      ScrollOffset(10, 20), mojom::blink::ScrollType::kProgrammatic);
+  UpdateAllLifecyclePhasesForTest();
+  LayoutObject* inner = GetLayoutObjectByElementId("inner");
+  ASSERT_TRUE(inner);
+
+  // Test with scroll offsets included:
+  gfx::PointF offset;
+  offset = inner->LocalToAncestorPoint(offset, /*ancestor=*/nullptr);
+  EXPECT_EQ(offset, gfx::PointF(-52, -162));
+  // And back again:
+  offset = inner->AncestorToLocalPoint(/*ancestor=*/nullptr, offset);
+  EXPECT_EQ(offset, gfx::PointF());
+
+  // Test with scroll offsets excluded:
+  offset = gfx::PointF();
+  offset = inner->LocalToAncestorPoint(offset, /*ancestor=*/nullptr,
+                                       kIgnoreScrollOffset);
+  EXPECT_EQ(offset, gfx::PointF(58, 58));
+  // And back again:
+  offset = inner->AncestorToLocalPoint(/*ancestor=*/nullptr, offset,
+                                       kIgnoreScrollOffset);
+  EXPECT_EQ(offset, gfx::PointF());
+}
+
+TEST_F(LayoutObjectTest, QuadsInAncestor_Block) {
+  SetBodyInnerHTML(R"HTML(
+    <div id="scroller" style="overflow:hidden; width:200px; height:200px;">
+      <div id="child" style="margin-left:10px; margin-top:20px;">
+        <div style="height:200px;"></div>
+        <div style="columns:2; column-fill:auto; column-gap:0; width:200px; height:200px; margin-left:100px;">
+          <div style="height:150px;"></div>
+          <div style="columns:2; column-fill:auto; column-gap:0; height:90px;">
+            <div style="height:20px;"></div>
+            <div id="target" style="height:130px;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )HTML");
+
+  Element* scroller_elm = GetElementById("scroller");
+  ASSERT_TRUE(scroller_elm);
+  scroller_elm->scrollTo(110, 220);
+  UpdateAllLifecyclePhasesForTest();
+
+  const LayoutBox* scroller = GetLayoutBoxByElementId("scroller");
+  const LayoutBox* child = GetLayoutBoxByElementId("child");
+  const LayoutBox* target = GetLayoutBoxByElementId("target");
+  ASSERT_TRUE(scroller && child && target);
+
+  // #target is inside a multicol container which is inside another multicol
+  // container. #target will start in the first inner column in the first outer
+  // column, take up both inner columns there, and resume in the first inner
+  // column in the second outer column, also taking up both inner columns
+  // there. Four fragments in total.
+
+  // Relative to #child with default mode flags:
+  Vector<gfx::QuadF> quads;
+  target->QuadsInAncestor(quads, child);
+  ASSERT_EQ(quads.size(), 4u);
+  EXPECT_EQ(quads[0].BoundingBox(), gfx::RectF(100, 370, 50, 30));
+  EXPECT_EQ(quads[1].BoundingBox(), gfx::RectF(150, 350, 50, 50));
+  EXPECT_EQ(quads[2].BoundingBox(), gfx::RectF(200, 200, 50, 40));
+  EXPECT_EQ(quads[3].BoundingBox(), gfx::RectF(250, 200, 50, 10));
+
+  // Relative to #scroller with default mode flags:
+  quads = Vector<gfx::QuadF>();
+  target->QuadsInAncestor(quads, scroller);
+  ASSERT_EQ(quads.size(), 4u);
+  EXPECT_EQ(quads[0].BoundingBox(), gfx::RectF(0, 170, 50, 30));
+  EXPECT_EQ(quads[1].BoundingBox(), gfx::RectF(50, 150, 50, 50));
+  EXPECT_EQ(quads[2].BoundingBox(), gfx::RectF(100, 0, 50, 40));
+  EXPECT_EQ(quads[3].BoundingBox(), gfx::RectF(150, 0, 50, 10));
+
+  // Relative to #scroller, ignoring scroll offset:
+  quads = Vector<gfx::QuadF>();
+  target->QuadsInAncestor(quads, scroller, kIgnoreScrollOffset);
+  ASSERT_EQ(quads.size(), 4u);
+  EXPECT_EQ(quads[0].BoundingBox(), gfx::RectF(110, 390, 50, 30));
+  EXPECT_EQ(quads[1].BoundingBox(), gfx::RectF(160, 370, 50, 50));
+  EXPECT_EQ(quads[2].BoundingBox(), gfx::RectF(210, 220, 50, 40));
+  EXPECT_EQ(quads[3].BoundingBox(), gfx::RectF(260, 220, 50, 10));
+}
+
+TEST_F(LayoutObjectTest, QuadsInAncestor_Inline) {
+  LoadAhem();
+  SetBodyInnerHTML(R"HTML(
+    <div id="scroller" style="overflow:hidden; width:200px; height:200px; font-size:20px; font-family:Ahem;">
+      <div id="child" style="margin-left:10px; margin-top:20px;">
+        <div style="height:200px;"></div>
+        <div style="width:200px; height:200px; margin-left:100px;">
+          <br>
+          xxxx
+          <span id="target">
+            xxx        <!-- Second line -->
+            xxxxxx xx  <!-- Third line -->
+            x          <!-- Fourth line -->
+          </span>
+        </div>
+      </div>
+    </div>
+  )HTML");
+
+  Element* scroller_elm = GetElementById("scroller");
+  ASSERT_TRUE(scroller_elm);
+  scroller_elm->scrollTo(110, 220);
+  UpdateAllLifecyclePhasesForTest();
+
+  const LayoutBox* scroller = GetLayoutBoxByElementId("scroller");
+  const LayoutBox* child = GetLayoutBoxByElementId("child");
+  const LayoutObject* target = GetLayoutObjectByElementId("target");
+  ASSERT_TRUE(scroller && child && target);
+
+  // Relative to #child with default mode flags:
+  Vector<gfx::QuadF> quads;
+  target->QuadsInAncestor(quads, child);
+  ASSERT_EQ(quads.size(), 3u);
+  EXPECT_EQ(quads[0].BoundingBox(), gfx::RectF(200, 220, 60, 20));
+  EXPECT_EQ(quads[1].BoundingBox(), gfx::RectF(100, 240, 180, 20));
+  EXPECT_EQ(quads[2].BoundingBox(), gfx::RectF(100, 260, 20, 20));
+
+  // Relative to #scroller with default mode flags:
+  quads = Vector<gfx::QuadF>();
+  target->QuadsInAncestor(quads, scroller);
+  ASSERT_EQ(quads.size(), 3u);
+  EXPECT_EQ(quads[0].BoundingBox(), gfx::RectF(100, 20, 60, 20));
+  EXPECT_EQ(quads[1].BoundingBox(), gfx::RectF(0, 40, 180, 20));
+  EXPECT_EQ(quads[2].BoundingBox(), gfx::RectF(0, 60, 20, 20));
+
+  // Relative to #scroller, ignoring scroll offset:
+  quads = Vector<gfx::QuadF>();
+  target->QuadsInAncestor(quads, scroller, kIgnoreScrollOffset);
+  ASSERT_EQ(quads.size(), 3u);
+  EXPECT_EQ(quads[0].BoundingBox(), gfx::RectF(210, 240, 60, 20));
+  EXPECT_EQ(quads[1].BoundingBox(), gfx::RectF(110, 260, 180, 20));
+  EXPECT_EQ(quads[2].BoundingBox(), gfx::RectF(110, 280, 20, 20));
 }
 
 }  // namespace blink

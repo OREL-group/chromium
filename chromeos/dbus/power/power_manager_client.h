@@ -17,7 +17,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/power_monitor/power_observer.h"
 #include "base/time/time.h"
-#include "chromeos/dbus/common/dbus_method_call_status.h"
+#include "chromeos/dbus/common/dbus_callback.h"
 #include "chromeos/dbus/power_manager/backlight.pb.h"
 #include "chromeos/dbus/power_manager/battery_saver.pb.h"
 #include "chromeos/dbus/power_manager/charge_history_state.pb.h"
@@ -40,6 +40,7 @@ namespace power_manager {
 class BacklightBrightnessChange;
 class ScreenIdleState;
 class SetBacklightBrightnessRequest;
+class SetAmbientLightSensorEnabledRequest;
 }  // namespace power_manager
 
 namespace chromeos {
@@ -88,6 +89,10 @@ class COMPONENT_EXPORT(DBUS_POWER) PowerManagerClient {
 
     // Called when the ambient light sensor status changes.
     virtual void AmbientLightSensorEnabledChanged(
+        const power_manager::AmbientLightSensorChange& change) {}
+
+    // Called when the keyboard ambient light sensor status changes.
+    virtual void KeyboardAmbientLightSensorEnabledChanged(
         const power_manager::AmbientLightSensorChange& change) {}
 
     // Called when the ambient light changed.
@@ -248,7 +253,14 @@ class COMPONENT_EXPORT(DBUS_POWER) PowerManagerClient {
 
   // Sets whether the ambient light sensor should be used in brightness
   // calculations.
-  virtual void SetAmbientLightSensorEnabled(bool enabled) = 0;
+  virtual void SetAmbientLightSensorEnabled(
+      const power_manager::SetAmbientLightSensorEnabledRequest& request) = 0;
+
+  // Asynchronously gets whether the ambient light sensor is currently enabled
+  // (i.e. whether it's being used in brightness calculations). On error (e.g.
+  // powerd not running), |callback| will be run with nullopt.
+  virtual void GetAmbientLightSensorEnabled(
+      DBusMethodCallback<bool> callback) = 0;
 
   // Asynchronously gets whether the device has at least one ambient light
   // sensor. On error (e.g. powerd not running), |callback| will be run with
@@ -275,6 +287,17 @@ class COMPONENT_EXPORT(DBUS_POWER) PowerManagerClient {
 
   // Toggle the keyboard backlight on or off.
   virtual void ToggleKeyboardBacklight() = 0;
+
+  // Sets whether the ambient light sensor should be used in keyboard brightness
+  // calculations.
+  virtual void SetKeyboardAmbientLightSensorEnabled(
+      const power_manager::SetAmbientLightSensorEnabledRequest& request) = 0;
+
+  // Asynchronously gets whether the keyboard ambient light sensor is currently
+  // enabled. On error (e.g. powerd not running), |callback| will be run with
+  // nullopt.
+  virtual void GetKeyboardAmbientLightSensorEnabled(
+      DBusMethodCallback<bool> callback) = 0;
 
   // Returns the last power status that was received from D-Bus, if any.
   virtual const std::optional<power_manager::PowerSupplyProperties>&

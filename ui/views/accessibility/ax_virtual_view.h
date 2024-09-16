@@ -30,7 +30,6 @@
 namespace ui {
 
 struct AXActionData;
-class AXUniqueId;
 
 }  // namespace ui
 
@@ -158,7 +157,7 @@ class VIEWS_EXPORT AXVirtualView : public ui::AXPlatformNodeDelegate {
   bool AccessibilityPerformAction(const ui::AXActionData& data) override;
   bool ShouldIgnoreHoveredStateForTesting() override;
   bool IsOffscreen() const override;
-  const ui::AXUniqueId& GetUniqueId() const override;
+  ui::AXPlatformNodeId GetUniqueId() const override;
   gfx::AcceleratedWidget GetTargetForNativeAccessibilityEvent() override;
   std::vector<int32_t> GetColHeaderNodeIds() const override;
   std::vector<int32_t> GetColHeaderNodeIds(int col_index) const override;
@@ -240,7 +239,7 @@ class VIEWS_EXPORT AXVirtualView : public ui::AXPlatformNodeDelegate {
   // this object, if any.
   raw_ptr<AXAuraObjCache> ax_aura_obj_cache_ = nullptr;
 
-  ui::AXUniqueId unique_id_;
+  const ui::AXUniqueId unique_id_{ui::AXUniqueId::Create()};
   ui::AXNodeData custom_data_;
   base::RepeatingCallback<void(ui::AXNodeData*)> populate_data_callback_;
 

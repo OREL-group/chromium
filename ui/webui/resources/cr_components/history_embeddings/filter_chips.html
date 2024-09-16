@@ -1,4 +1,4 @@
-<style>
+<style include="md-select">
 :host {
   display: flex;
   align-items: center;
@@ -24,20 +24,29 @@ hr {
 }
 </style>
 
-<cr-chip id="byGroupChip" selected$="[[showResultsByGroup]]"
-    on-click="onByGroupClick_">
-  <iron-icon id="byGroupChipIcon"
-      icon="[[getByGroupIcon_(showResultsByGroup)]]">
-  </iron-icon>
-  $i18n{historyClustersTabLabel}
-</cr-chip>
+<select id="showByGroupSelectMenu" class="md-select"
+    aria-label="[[i18n('historyEmbeddingsShowByLabel')]]"
+    value="[[showResultsByGroup]]"
+    on-change="onShowByGroupSelectMenuChanged_"
+    hidden$="[[!enableShowResultsByGroupOption]]">
+  <option value="false">
+    [[i18n('historyEmbeddingsShowByDate')]]
+  </option>
+  <option value="true">
+    [[i18n('historyEmbeddingsShowByGroup')]]
+  </option>
+</select>
 
-<hr></hr>
+<hr hidden$="[[!enableShowResultsByGroupOption]]"></hr>
 
 <div id="suggestions">
   <template is="dom-repeat" items="[[suggestions_]]">
     <cr-chip on-click="onSuggestionClick_"
-        selected$="[[isSuggestionSelected_(item, selectedSuggestion)]]">
+        selected$="[[isSuggestionSelected_(item, selectedSuggestion)]]"
+        chip-aria-label="[[item.ariaLabel]]">
+      <cr-icon icon="cr:check"
+          hidden$="[[!isSuggestionSelected_(item, selectedSuggestion)]]">
+      </cr-icon>
       <span class="suggestion-label">[[item.label]]</span>
     </cr-chip>
   </template>

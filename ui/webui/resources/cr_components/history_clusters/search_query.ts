@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import {CrRippleMixin} from '//resources/cr_elements/cr_ripple/cr_ripple_mixin.js';
+import {assert} from '//resources/js/assert.js';
 import {CrLitElement} from '//resources/lit/v3_0/lit.rollup.js';
 
 import {BrowserProxyImpl} from './browser_proxy.js';
@@ -56,17 +57,15 @@ export class SearchQueryElement extends SearchQueryElementBase {
   //============================================================================
 
   index: number = -1;  // Initialized to an invalid value.
-  searchQuery: SearchQuery;
+  searchQuery?: SearchQuery;
 
   //============================================================================
   // Event handlers
   //============================================================================
 
   override firstUpdated() {
-    if (document.documentElement.hasAttribute('chrome-refresh-2023')) {
-      this.addEventListener('pointerdown', this.onPointerDown_.bind(this));
-      this.addEventListener('pointercancel', this.onPointerCancel_.bind(this));
-    }
+    this.addEventListener('pointerdown', this.onPointerDown_.bind(this));
+    this.addEventListener('pointercancel', this.onPointerCancel_.bind(this));
   }
 
   protected onAuxClick_() {
@@ -74,10 +73,7 @@ export class SearchQueryElement extends SearchQueryElementBase {
         RelatedSearchAction.kClicked, this.index);
 
     // Notify the parent <history-cluster> element of this event.
-    this.dispatchEvent(new CustomEvent('related-search-clicked', {
-      bubbles: true,
-      composed: true,
-    }));
+    this.fire('related-search-clicked');
   }
 
   protected onClick_(event: MouseEvent) {
@@ -119,6 +115,7 @@ export class SearchQueryElement extends SearchQueryElementBase {
   }
 
   private openUrl_(event: MouseEvent|KeyboardEvent) {
+    assert(this.searchQuery);
     BrowserProxyImpl.getInstance().handler.openHistoryCluster(
         this.searchQuery.url, {
           middleButton: false,

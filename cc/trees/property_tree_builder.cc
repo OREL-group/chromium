@@ -688,8 +688,8 @@ bool PropertyTreeBuilderContext::IsRoundedCornerLayerWithinParentLayerBounds(
     return true;
   }
 
-  // TODO(1382038): support cases when the layer has transforms or pixel moving
-  // filters.
+  // TODO(crbug.com/40245439): support cases when the layer has transforms or
+  // pixel moving filters.
   if (!layer->transform().IsIdentity() ||
       layer->filters().HasFilterThatMovesPixels()) {
     return false;
@@ -717,7 +717,7 @@ void PropertyTreeBuilderContext::AddScrollNodeIfNeeded(
 
   bool is_root = !layer->parent();
   bool scrollable = layer->scrollable();
-  CHECK(layer->non_fast_scrollable_region().IsEmpty());
+  CHECK(layer->main_thread_scroll_hit_test_region().IsEmpty());
   bool requires_node = is_root || scrollable;
 
   int node_id;

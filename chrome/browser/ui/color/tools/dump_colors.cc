@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 // This command-line program dumps the computed values of all color IDs to
 // stdout.
 
@@ -56,7 +61,6 @@ int main(int argc, const char* argv[]) {
     ui::AddColorMixers(provider, key);
     color::AddComponentsColorMixers(provider, key);
     AddChromeColorMixers(provider, key);
-    provider->GenerateColorMap();
   };
   ui::ColorProvider light_provider, dark_provider, light_high_contrast_provider,
       dark_high_contrast_provider;

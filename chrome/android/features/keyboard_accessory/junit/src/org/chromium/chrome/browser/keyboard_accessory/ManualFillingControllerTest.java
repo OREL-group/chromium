@@ -62,7 +62,6 @@ import org.robolectric.annotation.Config;
 import org.chromium.base.UserDataHost;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.JniMocker;
 import org.chromium.chrome.browser.ActivityTabProvider;
 import org.chromium.chrome.browser.ChromeWindow;
@@ -91,11 +90,10 @@ import org.chromium.chrome.browser.tab.TabHidingType;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeController;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
-import org.chromium.components.browser_ui.widget.InsetObserver;
-import org.chromium.components.browser_ui.widget.InsetObserverSupplier;
 import org.chromium.components.browser_ui.widget.gesture.BackPressHandler;
 import org.chromium.components.embedder_support.view.ContentView;
 import org.chromium.content_public.browser.WebContents;
+import org.chromium.ui.InsetObserver;
 import org.chromium.ui.base.ApplicationViewportInsetSupplier;
 import org.chromium.ui.display.DisplayAndroid;
 import org.chromium.ui.modelutil.PropertyModel;
@@ -133,7 +131,6 @@ public class ManualFillingControllerTest {
     @Mock private EdgeToEdgeController mMockEdgeToEdgeController;
 
     @Rule public JniMocker mJniMocker = new JniMocker();
-    @Rule public Features.JUnitProcessor mFeaturesProcessor = new Features.JUnitProcessor();
 
     @Captor ArgumentCaptor<FullscreenManager.Observer> mFullscreenObserverCaptor;
 
@@ -146,6 +143,8 @@ public class ManualFillingControllerTest {
             ApplicationViewportInsetSupplier.createForTests();
     private final ObservableSupplierImpl<Integer> mKeyboardInsetSupplier =
             new ObservableSupplierImpl<>();
+    private final ObservableSupplierImpl<EdgeToEdgeController> mMockEdgeToEdgeControllerSupplier =
+            new ObservableSupplierImpl<EdgeToEdgeController>();
 
     private static class MockActivityTabProvider extends ActivityTabProvider {
         public Tab mTab;
@@ -228,7 +227,11 @@ public class ManualFillingControllerTest {
          */
         void providePasswordSheet(String passwordString) {
             AccessorySheetData sheetData =
-                    new AccessorySheetData(AccessoryTabType.PASSWORDS, "Passwords", "");
+                    new AccessorySheetData(
+                            AccessoryTabType.PASSWORDS,
+                            /* userInfoTitle= */ "Passwords",
+                            /* plusAddressTitle= */ "",
+                            /* warning= */ "");
             UserInfo userInfo = new UserInfo("", false);
             userInfo.addField(
                     new UserInfoField("(No username)", "No username", /* id= */ "", false, null));
@@ -331,7 +334,7 @@ public class ManualFillingControllerTest {
         mJniMocker.mock(ProfileJni.TEST_HOOKS, mProfileJniMock);
         when(mProfileJniMock.fromWebContents(any())).thenReturn(mMockProfile);
 
-        InsetObserverSupplier.setInstanceForTesting(mInsetObserver);
+        when(mMockWindow.getInsetObserver()).thenReturn(mInsetObserver);
         simulateLayoutSizeChange(
                 2.f, 80, 128, /* keyboardShown= */ false, VirtualKeyboardMode.RESIZES_VISUAL);
         Configuration config = new Configuration();
@@ -342,13 +345,15 @@ public class ManualFillingControllerTest {
                 .when(mMockBackPressManager)
                 .addHandler(any(), eq(BackPressHandler.Type.MANUAL_FILLING));
         when(mMockEdgeToEdgeController.getBottomInset()).thenReturn(0);
+        mMockEdgeToEdgeControllerSupplier.set(mMockEdgeToEdgeController);
         mController.initialize(
                 mMockWindow,
                 mMockKeyboardAccessory,
                 mMockAccessorySheet,
                 mMockBottomSheetController,
+                /* isContextualSearchOpened= */ () -> false,
                 mMockBackPressManager,
-                () -> mMockEdgeToEdgeController,
+                mMockEdgeToEdgeControllerSupplier,
                 mMockSoftKeyboardDelegate,
                 mMockConfirmationHelper);
     }
@@ -551,7 +556,7 @@ public class ManualFillingControllerTest {
                 mLastMockWebContents, AccessoryTabType.PASSWORDS, new PropertyProvider<>());
 
         // Simulate closing the tab (uncommitted):
-        mMediator.getTabModelObserverForTesting().willCloseTab(tab, false, true);
+        mMediator.getTabModelObserverForTesting().willCloseTab(tab, true);
         mMediator.getTabObserverForTesting().onHidden(tab, TabHidingType.CHANGED_TABS);
         getStateForBrowserTab().getWebContentsObserverForTesting().wasHidden();
         // The state should be kept if the closure wasn't committed.
@@ -990,6 +995,8 @@ public class ManualFillingControllerTest {
     @Test
     public void testAdjustsOffsetAndHeightForFullscreen() {
         final int density = 2;
+        // Turn off E2E mode
+        mMockEdgeToEdgeControllerSupplier.set(null);
 
         mInsetSupplier.setVirtualKeyboardMode(VirtualKeyboardMode.RESIZES_CONTENT);
         Tab tab = addBrowserTab(mMediator, 1234, null);
@@ -1005,7 +1012,7 @@ public class ManualFillingControllerTest {
 
         // Ensure it's bottom-aligned and insetting the page with its height.
         assertEquals(
-                (int) mController.getBottomInsetSupplier().get(), sAccessoryHeightDp * density);
+                sAccessoryHeightDp * density, (int) mController.getBottomInsetSupplier().get());
         verify(mMockKeyboardAccessory).setBottomOffset(0);
         reset(mMockKeyboardAccessory, mMockAccessorySheet);
 
@@ -1015,7 +1022,7 @@ public class ManualFillingControllerTest {
                 .onEnterFullscreen(tab, new FullscreenOptions(false, false));
 
         // Ensure it's not insetting the page.
-        assertEquals((int) mController.getBottomInsetSupplier().get(), 0);
+        assertEquals(0, (int) mController.getBottomInsetSupplier().get());
     }
 
     @Test
@@ -1030,8 +1037,6 @@ public class ManualFillingControllerTest {
         when(mMockKeyboardAccessory.isShown()).thenReturn(true);
         when(mMockKeyboardAccessory.hasActiveTab()).thenReturn(false);
 
-        // return non-zero to simulate e2e mode.
-        when(mMockEdgeToEdgeController.getBottomInset()).thenReturn(42);
         mModel.set(SHOW_WHEN_VISIBLE, true);
         when(mMockSoftKeyboardDelegate.isSoftKeyboardShowing(eq(mMockActivity), any()))
                 .thenReturn(true);
@@ -1039,7 +1044,7 @@ public class ManualFillingControllerTest {
 
         // Ensure it's bottom-aligned and insetting the page with its height.
         assertEquals(
-                (int) mController.getBottomInsetSupplier().get(), sAccessoryHeightDp * density);
+                sAccessoryHeightDp * density, (int) mController.getBottomInsetSupplier().get());
         verify(mMockKeyboardAccessory).setBottomOffset(0);
         reset(mMockKeyboardAccessory, mMockAccessorySheet);
 
@@ -1049,7 +1054,8 @@ public class ManualFillingControllerTest {
                 .onEnterFullscreen(tab, new FullscreenOptions(false, false));
 
         // Ensure it's not insetting the page.
-        assertEquals((int) mController.getBottomInsetSupplier().get(), 0);
+        assertEquals(
+                sAccessoryHeightDp * density, (int) mController.getBottomInsetSupplier().get());
     }
 
     @Test
@@ -1472,7 +1478,7 @@ public class ManualFillingControllerTest {
      * @param tabToBeClosed The mocked {@link Tab} to be closed. Needs |getId()|.
      */
     private void closeBrowserTab(ManualFillingMediator mediator, Tab tabToBeClosed) {
-        mediator.getTabModelObserverForTesting().willCloseTab(tabToBeClosed, false, true);
+        mediator.getTabModelObserverForTesting().willCloseTab(tabToBeClosed, true);
         mediator.getTabObserverForTesting().onHidden(tabToBeClosed, TabHidingType.CHANGED_TABS);
         mCache.getStateFor(mLastMockWebContents).getWebContentsObserverForTesting().wasHidden();
         mLastMockWebContents = null;

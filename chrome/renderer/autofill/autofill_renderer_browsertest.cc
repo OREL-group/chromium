@@ -41,7 +41,7 @@ auto FormField(
 }
 
 auto FormWithFields(auto matcher) {
-  return ElementsAre(Field(&FormData::fields, matcher));
+  return ElementsAre(Property(&FormData::fields, matcher));
 }
 
 auto Nth(int index, auto matcher) {
@@ -161,7 +161,7 @@ TEST_F(AutofillRendererTest, IgnoreNonUserGestureTextFieldChanges) {
   GetMainFrame()->AutofillClient()->TextFieldDidChange(full_name);
 
   EXPECT_CALL(autofill_driver(), TextFieldDidChange);
-  SimulateUserInputChangeForElement(&full_name, "Alice");
+  SimulateUserInputChangeForElement(full_name, "Alice");
 }
 
 }  // namespace

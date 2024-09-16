@@ -12,7 +12,7 @@
 
 #include "base/check.h"
 #include "base/check_op.h"
-#include "base/feature_list.h"
+#include "base/files/file_path.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
@@ -26,7 +26,6 @@
 #include "components/update_client/configurator.h"
 #include "components/update_client/crx_cache.h"
 #include "components/update_client/crx_update_item.h"
-#include "components/update_client/features.h"
 #include "components/update_client/persisted_data.h"
 #include "components/update_client/protocol_parser.h"
 #include "components/update_client/update_checker.h"
@@ -46,7 +45,8 @@ UpdateContext::UpdateContext(
     const UpdateEngine::NotifyObserversCallback& notify_observers_callback,
     UpdateEngine::Callback callback,
     PersistedData* persisted_data,
-    bool is_update_check_only)
+    bool is_update_check_only,
+    base::RepeatingCallback<int64_t(const base::FilePath&)> get_available_space)
     : config(config),
       crx_cache_(crx_cache),
       is_foreground(is_foreground),
@@ -58,7 +58,8 @@ UpdateContext::UpdateContext(
       session_id(base::StrCat(
           {"{", base::Uuid::GenerateRandomV4().AsLowercaseString(), "}"})),
       persisted_data(persisted_data),
-      is_update_check_only(is_update_check_only) {
+      is_update_check_only(is_update_check_only),
+      get_available_space(get_available_space) {
   for (const auto& id : ids) {
     components.insert(
         std::make_pair(id, std::make_unique<Component>(*this, id)));
@@ -213,8 +214,7 @@ void UpdateEngine::DoUpdateCheck(scoped_refptr<UpdateContext> update_context) {
     update_context->components[id]->Handle(base::DoNothing());
   }
 
-  update_context->update_checker =
-      update_checker_factory_.Run(config_, config_->GetPersistedData());
+  update_context->update_checker = update_checker_factory_.Run(config_);
 
   update_context->update_checker->CheckForUpdates(
       update_context, config_->ExtraRequestParams(),
@@ -406,11 +406,10 @@ void UpdateEngine::HandleComponentComplete(
     update_context->next_update_delay = component->GetUpdateDuration();
     queue.pop();
     if (!component->events().empty()) {
-      ping_manager_->SendPing(
-          *component, *config_->GetPersistedData(),
-          base::BindOnce([](base::OnceClosure callback, int,
-                            const std::string&) { std::move(callback).Run(); },
-                         std::move(callback)));
+      CHECK(component->crx_component());
+      ping_manager_->SendPing(component->session_id(),
+                              *component->crx_component(),
+                              component->GetEvents(), std::move(callback));
       return;
     }
   }

@@ -11,6 +11,7 @@
 #include <sstream>
 #include <vector>
 
+#include "base/command_line.h"
 #include "base/containers/flat_set.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
@@ -27,6 +28,7 @@
 #include "components/feature_engagement/public/configuration.h"
 #include "components/feature_engagement/public/feature_configurations.h"
 #include "components/feature_engagement/public/feature_constants.h"
+#include "components/feature_engagement/public/feature_list.h"
 #include "components/feature_engagement/public/tracker.h"
 #include "components/feature_engagement/test/scoped_iph_feature_list.h"
 #include "components/user_education/common/feature_promo_registry.h"
@@ -43,12 +45,15 @@ namespace {
 
 enum class IPHFailureReason {
   kNone,
-  kNotConfigured,
+  kUnlisted,
   kWrongSessionRate,
   kWrongSessionImpact,
+  kWrongSessionImpactToast,
   kWrongSessionImpactKeyedNotice,
   kWrongSessionImpactLegalNotice,
+  kWrongSessionImpactActionableAlert,
   kLegacyPromoNoScreenReader,
+  kWrongSessionParamsRotatingPromo,
 };
 
 struct IPHException {
@@ -128,12 +133,12 @@ std::ostream& operator<<(std::ostream& os, const IPHFailure& failure) {
   os << failure.feature->name;
   switch (failure.reason) {
     case IPHFailureReason::kNone:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
-    case IPHFailureReason::kNotConfigured:
-      os << " is not configured. Please add a configuration to "
-            "feature_configurations.cc (preferred) or "
-            "fieldtrial_testing_config.json.";
+    case IPHFailureReason::kUnlisted:
+      os << " is not registered in feature_engagement::kAllFeatures in "
+            "feature_list.cc. This will cause most attempts to show or access "
+            "data about the feature to crash. Please add it.";
       break;
     case IPHFailureReason::kWrongSessionRate:
       os << " has unexpected session rate: "
@@ -150,12 +155,23 @@ std::ostream& operator<<(std::ostream& os, const IPHFailure& failure) {
             "similar IPH from running (session rate impact ALL); an IPH which "
             "is not limited should not (session rate impact NONE).";
       break;
-    case IPHFailureReason::kWrongSessionImpactKeyedNotice:
-      os << " has unexpected per-key session rate impact: "
+    case IPHFailureReason::kWrongSessionImpactToast:
+      os << " has unexpected per-app session rate and/or session rate impact: "
+         << failure.config->session_rate.type << ", "
+         << failure.config->session_rate.value << ", "
          << failure.config->session_rate_impact.type
-         << ". A heavyweight IPH which runs per app or account should prevent "
-            "other IPH from running (session rate impact ALL); it may or may "
-            "not be limited by other IPH.";
+         << ". Toast promos should never be prevented from "
+            "running (session rate ANY) and should not prevent other IPH from "
+            "running (session rate impact NONE).";
+      break;
+    case IPHFailureReason::kWrongSessionImpactKeyedNotice:
+      os << " has unexpected per-key session rate and/or session rate impact: "
+         << failure.config->session_rate.type << ", "
+         << failure.config->session_rate.value << ", "
+         << failure.config->session_rate_impact.type
+         << ". A heavyweight keyed notice should never be prevented from "
+            "running (session rate ANY) but should prevent other IPH from "
+            "running (session rate impact ALL).";
       break;
     case IPHFailureReason::kWrongSessionImpactLegalNotice:
       os << " has unexpected per-app session rate and/or session rate impact: "
@@ -166,9 +182,27 @@ std::ostream& operator<<(std::ostream& os, const IPHFailure& failure) {
             "running (session rate ANY) but should prevent other IPH from "
             "running (session rate impact ALL).";
       break;
+    case IPHFailureReason::kWrongSessionImpactActionableAlert:
+      os << " has unexpected per-app session rate and/or session rate impact: "
+         << failure.config->session_rate.type << ", "
+         << failure.config->session_rate.value << ", "
+         << failure.config->session_rate_impact.type
+         << ". An actionable alert should never be prevented from "
+            "running (session rate ANY) but should prevent other IPH from "
+            "running (session rate impact ALL).";
+      break;
     case IPHFailureReason::kLegacyPromoNoScreenReader:
       os << " is a legacy promo with inadequate screen reader support. Use a "
             "toast promo instead.";
+      break;
+    case IPHFailureReason::kWrongSessionParamsRotatingPromo:
+      os << " has unexpected session rate and/or session rate impact: "
+         << failure.config->session_rate.type << ", "
+         << failure.config->session_rate.value << ", "
+         << failure.config->session_rate_impact.type
+         << ". A rotating promo should never be prevented from running "
+            "(session rate ANY) and should not prevent other IPH from "
+            "running (session rate impact NONE).";
       break;
   }
   return os;
@@ -183,10 +217,7 @@ void MaybeAddFailure(T& failures,
   IPHFailure failure(feature, reason, feature_config);
   for (const auto& exception : exceptions) {
     if (exception.feature == feature) {
-      if ((exception.reason.has_value() &&
-           exception.reason.value() == reason) ||
-          (reason != IPHFailureReason::kNotConfigured &&
-           !exception.reason.has_value())) {
+      if (!exception.reason.has_value() || exception.reason.value() == reason) {
         LOG(WARNING) << "Allowed by exception or currently being worked - "
                      << exception.description << ":\n"
                      << failure;
@@ -200,7 +231,18 @@ void MaybeAddFailure(T& failures,
 template <typename T>
 std::string FailuresToString(const T& failures, const char* type) {
   std::ostringstream oss;
-  oss << "Errors found during " << type << " configuration validation.";
+  oss << "\nNOTE TO GARDENERS:\n"
+         "This test validates the configurations of "
+      << type
+      << "s in browser_user_education_service.cc, feature_configurations.cc, "
+         "and/or fieldtrial_testing_config.json. If this test fails, it is "
+         "likely not because this test is faulty, but because an invalid "
+         "configuration has somehow snuck past CQ.\n\n"
+         "The failed configurations will be listed below. The feature names "
+         "listed will help you track down which CL may have caused the error. "
+         "Please do not disable this test. Instead, locate the offending CL "
+         "and revert that, or tag a bug to its author if it cannot be reverted."
+      << "\n\nErrors found during " << type << " configuration validation:";
   for (auto& failure : failures) {
     oss << "\n" << failure;
   }
@@ -239,8 +281,12 @@ IN_PROC_BROWSER_TEST_F(BrowserUserEducationServiceBrowserTest,
        IPHFailureReason::kLegacyPromoNoScreenReader, "Known legacy promo."},
       {&feature_engagement::kIPHGMCCastStartStopFeature,
        IPHFailureReason::kLegacyPromoNoScreenReader, "Known legacy promo."},
-      {&feature_engagement::kIPHWebUiHelpBubbleTestFeature,
-       IPHFailureReason::kNotConfigured, "For testing purposes only."},
+      {&feature_engagement::kIPHDesktopPwaInstallFeature,
+       IPHFailureReason::kLegacyPromoNoScreenReader, "crbug.com/1443016"},
+      {&feature_engagement::kIPHReadingListDiscoveryFeature,
+       IPHFailureReason::kLegacyPromoNoScreenReader, "crbug.com/1443020"},
+      {&feature_engagement::kIPHDesktopSharedHighlightingFeature,
+       IPHFailureReason::kLegacyPromoNoScreenReader, "crbug.com/1443071"},
 
       // Toast IPH that probably need session impact updated.
       {&feature_engagement::kIPHPasswordsManagementBubbleAfterSaveFeature,
@@ -269,31 +315,20 @@ IN_PROC_BROWSER_TEST_F(BrowserUserEducationServiceBrowserTest,
       {&feature_engagement::kIPHPowerBookmarksSidePanelFeature,
        IPHFailureReason::kWrongSessionRate,
        "crbug.com/1443067, crbug.com/1443063"},
-      {&feature_engagement::kIPHPasswordsAccountStorageFeature,
-       IPHFailureReason::kWrongSessionRate, "crbug.com/1443075"},
 
       // Deprecated; should probably be removed.
-      {&feature_engagement::kIPHReadingListDiscoveryFeature,
-       IPHFailureReason::kNotConfigured, "crbug.com/1443020"},
-      {&feature_engagement::kIPHReadingListEntryPointFeature,
-       IPHFailureReason::kNotConfigured, "crbug.com/1443020"},
-      {&feature_engagement::kIPHDesktopSharedHighlightingFeature,
-       IPHFailureReason::kNotConfigured, "crbug.com/1443071"},
       {&feature_engagement::kIPHReadingListInSidePanelFeature, std::nullopt,
        "crbug.com/1443078"},
       {&feature_engagement::kIPHTabSearchFeature, std::nullopt,
        "crbug.com/1443079"},
       {&feature_engagement::kIPHWebUITabStripFeature, std::nullopt,
        "crbug.com/1443082"},
-
-      // Needs configuration.
-      {&feature_engagement::kIPHLiveCaptionFeature,
-       IPHFailureReason::kNotConfigured, "crbug.com/1443002"},
-      {&feature_engagement::kIPHBackNavigationMenuFeature,
-       IPHFailureReason::kNotConfigured, "crbug.com/1443013"},
-      {&feature_engagement::kIPHDesktopPwaInstallFeature,
-       IPHFailureReason::kNotConfigured, "crbug.com/1443016"},
   });
+
+  // Fetch the list of known IPH from the Feature Engagement system; it is an
+  // error to fail to register an IPH in this list.
+  const base::flat_set<const base::Feature*> known_features(
+      feature_engagement::GetAllFeatures());
 
   // Fetch the tracker and ensure that it is properly initialized.
   auto* const tracker =
@@ -323,6 +358,13 @@ IN_PROC_BROWSER_TEST_F(BrowserUserEducationServiceBrowserTest,
   // Iterate through registered IPH and ensure that the configurations are
   // consistent.
   for (const auto& [feature, spec] : registry.feature_data()) {
+    // If the feature is not on the known features list, no configuration is
+    // possible.
+    if (!base::Contains(known_features, feature)) {
+      failures.emplace_back(feature, IPHFailureReason::kUnlisted, nullptr);
+      continue;
+    }
+
     const feature_engagement::FeatureConfig* feature_config =
         &configuration->GetFeatureConfig(*feature);
 
@@ -333,16 +375,9 @@ IN_PROC_BROWSER_TEST_F(BrowserUserEducationServiceBrowserTest,
       // we have to do it manually to ensure that if Finch enables the feature
       // the configuration we read will be correct.
       client_config = feature_engagement::GetClientSideFeatureConfig(feature);
-      if (client_config) {
-        feature_config = &client_config.value();
-      } else {
-        // This is a feature that can only be configured through Finch; current
-        // best practice is to also include a fieldtrial or (better) a config
-        // in feature_configurations.cc.
-        MaybeAddFailure(failures, exceptions, feature,
-                        IPHFailureReason::kNotConfigured, feature_config);
-        continue;
-      }
+      ASSERT_TRUE(client_config.has_value())
+          << "Auto-configuration failed for \"" << feature->name
+          << "\" - this should never happen and is not a normal failure.";
     }
 
     const bool limits_other_iph =
@@ -356,9 +391,9 @@ IN_PROC_BROWSER_TEST_F(BrowserUserEducationServiceBrowserTest,
       case user_education::FeaturePromoSpecification::PromoType::kToast:
         // Toast promos are allowed to bypass session exclusivity. However, they
         // should not limit other IPH.
-        if (limits_other_iph) {
+        if (is_session_limited || limits_other_iph) {
           MaybeAddFailure(failures, exceptions, feature,
-                          IPHFailureReason::kWrongSessionImpact,
+                          IPHFailureReason::kWrongSessionImpactToast,
                           feature_config);
         }
         break;
@@ -384,7 +419,7 @@ IN_PROC_BROWSER_TEST_F(BrowserUserEducationServiceBrowserTest,
               kKeyedNotice:
             // These can be session limited or not, but they should preclude
             // other IPH.
-            if (!limits_other_iph) {
+            if (is_session_limited || !limits_other_iph) {
               MaybeAddFailure(failures, exceptions, feature,
                               IPHFailureReason::kWrongSessionImpactKeyedNotice,
                               feature_config);
@@ -395,7 +430,7 @@ IN_PROC_BROWSER_TEST_F(BrowserUserEducationServiceBrowserTest,
             // These should not be session limited, and should limit other IPH.
             if (is_session_limited || !limits_other_iph) {
               MaybeAddFailure(failures, exceptions, feature,
-                              IPHFailureReason::kWrongSessionImpactKeyedNotice,
+                              IPHFailureReason::kWrongSessionImpactLegalNotice,
                               feature_config);
             }
             break;
@@ -403,9 +438,10 @@ IN_PROC_BROWSER_TEST_F(BrowserUserEducationServiceBrowserTest,
               kActionableAlert:
             // These should not be session limited, and should limit other IPH.
             if (is_session_limited || !limits_other_iph) {
-              MaybeAddFailure(failures, exceptions, feature,
-                              IPHFailureReason::kWrongSessionImpactKeyedNotice,
-                              feature_config);
+              MaybeAddFailure(
+                  failures, exceptions, feature,
+                  IPHFailureReason::kWrongSessionImpactActionableAlert,
+                  feature_config);
             }
             break;
         }
@@ -422,6 +458,14 @@ IN_PROC_BROWSER_TEST_F(BrowserUserEducationServiceBrowserTest,
         if (is_session_limited != limits_other_iph) {
           MaybeAddFailure(failures, exceptions, feature,
                           IPHFailureReason::kWrongSessionImpact,
+                          feature_config);
+        }
+        break;
+      case user_education::FeaturePromoSpecification::PromoType::kRotating:
+        // Rotating promos should be unlimited and not limit other IPH.
+        if (is_session_limited || limits_other_iph) {
+          MaybeAddFailure(failures, exceptions, feature,
+                          IPHFailureReason::kWrongSessionParamsRotatingPromo,
                           feature_config);
         }
         break;
@@ -450,7 +494,7 @@ std::ostream& operator<<(std::ostream& os, const TutorialFailure& failure) {
   os << failure.tutorial_id;
   switch (failure.reason) {
     case TutorialFailureReason::kNone:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
     case TutorialFailureReason::kLikelySkippedStep:
       os << " shows a bubble anchored to an always-visible UI element "
@@ -583,6 +627,18 @@ class BrowserUserEducationServiceNewBadgeBrowserTest
 
   ~BrowserUserEducationServiceNewBadgeBrowserTest() override = default;
 
+  void SetUpOnMainThread() override {
+    InProcessBrowserTest::SetUpOnMainThread();
+
+    // Make this seem like an old profile so we are not in the new profile
+    // grace period.
+    auto& storage_service =
+        UserEducationServiceFactory::GetForBrowserContext(browser()->profile())
+            ->feature_promo_storage_service();
+    storage_service.set_profile_creation_time_for_testing(
+        storage_service.GetCurrentTime() - base::Days(365));
+  }
+
  private:
   base::test::ScopedFeatureList feature_list_;
 };
@@ -675,4 +731,40 @@ IN_PROC_BROWSER_TEST_P(BrowserUserEducationServiceRecentSessionsTest,
       UserEducationServiceFactory::GetForBrowserContext(browser()->profile())
           ->recent_session_tracker();
   EXPECT_EQ(GetParam(), result != nullptr);
+}
+
+// Verify that the "disable rate limiting" command line arg works.
+class BrowserUserEducationServiceCommandLineTest
+    : public BrowserUserEducationServiceBrowserTest,
+      public testing::WithParamInterface<bool> {
+ public:
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    if (GetParam()) {
+      command_line->AppendSwitch(
+          user_education::features::kDisableRateLimitingCommandLine);
+    }
+  }
+};
+
+INSTANTIATE_TEST_SUITE_P(,
+                         BrowserUserEducationServiceCommandLineTest,
+                         testing::Bool());
+
+IN_PROC_BROWSER_TEST_P(BrowserUserEducationServiceCommandLineTest,
+                       DisableUserEducationRateLimiting) {
+  if (GetParam()) {
+    EXPECT_EQ(user_education::features::GetLowPriorityCooldown(),
+              base::Seconds(0));
+    EXPECT_EQ(user_education::features::GetSessionStartGracePeriod(),
+              base::Seconds(0));
+    EXPECT_EQ(user_education::features::GetNewProfileGracePeriod(),
+              base::Seconds(0));
+  } else {
+    EXPECT_GT(user_education::features::GetLowPriorityCooldown(),
+              base::Seconds(0));
+    EXPECT_GT(user_education::features::GetSessionStartGracePeriod(),
+              base::Seconds(0));
+    EXPECT_GT(user_education::features::GetNewProfileGracePeriod(),
+              base::Seconds(0));
+  }
 }

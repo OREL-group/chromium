@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 import type {PageRemote, ProfileData, SwitchToTabInfo, Tab, TabOrganizationSession, TabSearchApiProxy, UserFeedback} from 'chrome://tab-search.top-chrome/tab_search.js';
-import {PageCallbackRouter} from 'chrome://tab-search.top-chrome/tab_search.js';
+import {PageCallbackRouter, TabOrganizationModelStrategy} from 'chrome://tab-search.top-chrome/tab_search.js';
 import {TestBrowserProxy} from 'chrome://webui-test/test_browser_proxy.js';
 
 export class TestTabSearchApiProxy extends TestBrowserProxy implements
@@ -12,14 +12,20 @@ export class TestTabSearchApiProxy extends TestBrowserProxy implements
   callbackRouterRemote: PageRemote;
   private profileData_?: ProfileData;
   private tabOrganizationSession_?: TabOrganizationSession;
+  private staleTabs_: Tab[] = [];
 
   constructor() {
     super([
       'closeTab',
+      'declutterTabs',
       'acceptTabOrganization',
       'rejectTabOrganization',
+      'renameTabOrganization',
+      'excludeFromStaleTabs',
       'getProfileData',
+      'getStaleTabs',
       'getTabOrganizationSession',
+      'getTabOrganizationModelStrategy',
       'openRecentlyClosedEntry',
       'requestTabOrganization',
       'removeTabFromOrganization',
@@ -30,10 +36,9 @@ export class TestTabSearchApiProxy extends TestBrowserProxy implements
       'setTabIndex',
       'startTabGroupTutorial',
       'triggerFeedback',
-      'triggerSync',
       'triggerSignIn',
       'openHelpPage',
-      'openSyncSettings',
+      'setTabOrganizationModelStrategy',
       'setUserFeedback',
       'notifyOrganizationUiReadyToShow',
       'notifySearchUiReadyToShow',
@@ -49,14 +54,28 @@ export class TestTabSearchApiProxy extends TestBrowserProxy implements
     this.methodCalled('closeTab', [tabId]);
   }
 
+  declutterTabs(tabIds: number[]) {
+    this.methodCalled('declutterTabs', [tabIds]);
+  }
+
   acceptTabOrganization(
-      sessionId: number, organizationId: number, name: string, tabs: Tab[]) {
+      sessionId: number, organizationId: number, tabs: Tab[]) {
     this.methodCalled(
-        'acceptTabOrganization', [sessionId, organizationId, name, tabs]);
+        'acceptTabOrganization', [sessionId, organizationId, tabs]);
   }
 
   rejectTabOrganization(sessionId: number, organizationId: number) {
     this.methodCalled('rejectTabOrganization', [sessionId, organizationId]);
+  }
+
+  renameTabOrganization(
+      sessionId: number, organizationId: number, name: string) {
+    this.methodCalled(
+        'renameTabOrganization', [sessionId, organizationId, name]);
+  }
+
+  excludeFromStaleTabs(tabId: number) {
+    this.methodCalled('excludeFromStaleTabs', [tabId]);
   }
 
   getProfileData() {
@@ -64,9 +83,19 @@ export class TestTabSearchApiProxy extends TestBrowserProxy implements
     return Promise.resolve({profileData: this.profileData_!});
   }
 
+  getStaleTabs() {
+    this.methodCalled('getStaleTabs');
+    return Promise.resolve({tabs: this.staleTabs_});
+  }
+
   getTabOrganizationSession() {
     this.methodCalled('getTabOrganizationSession');
     return Promise.resolve({session: this.tabOrganizationSession_!});
+  }
+
+  getTabOrganizationModelStrategy() {
+    this.methodCalled('getTabOrganizationModelStrategy');
+    return Promise.resolve({strategy: TabOrganizationModelStrategy.kTopic});
   }
 
   openRecentlyClosedEntry(
@@ -114,10 +143,6 @@ export class TestTabSearchApiProxy extends TestBrowserProxy implements
     this.methodCalled('triggerFeedback', [sessionId]);
   }
 
-  triggerSync() {
-    this.methodCalled('triggerSync');
-  }
-
   triggerSignIn() {
     this.methodCalled('triggerSignIn');
   }
@@ -126,8 +151,8 @@ export class TestTabSearchApiProxy extends TestBrowserProxy implements
     this.methodCalled('openHelpPage');
   }
 
-  openSyncSettings() {
-    this.methodCalled('openSyncSettings');
+  setTabOrganizationModelStrategy(strategy: TabOrganizationModelStrategy) {
+    this.methodCalled('setTabOrganizationModelStrategy', [strategy]);
   }
 
   setUserFeedback(feedback: UserFeedback) {
@@ -156,5 +181,9 @@ export class TestTabSearchApiProxy extends TestBrowserProxy implements
 
   setSession(session: TabOrganizationSession) {
     this.tabOrganizationSession_ = session;
+  }
+
+  setStaleTabs(tabs: Tab[]) {
+    this.staleTabs_ = tabs;
   }
 }

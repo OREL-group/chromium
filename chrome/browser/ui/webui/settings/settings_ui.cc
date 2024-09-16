@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ui/webui/settings/settings_ui.h"
 
 #include <stddef.h>
@@ -16,6 +21,7 @@
 #include "build/branding_buildflags.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
+#include "chrome/browser/browser_features.h"
 #include "chrome/browser/commerce/shopping_service_factory.h"
 #include "chrome/browser/companion/core/features.h"
 #include "chrome/browser/download/bubble/download_bubble_prefs.h"
@@ -31,7 +37,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engine_choice/search_engine_choice_service_factory.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
-#include "chrome/browser/signin/signin_features.h"
+#include "chrome/browser/ssl/https_upgrades_util.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/hats/hats_service.h"
 #include "chrome/browser/ui/hats/hats_service_factory.h"
@@ -85,7 +91,7 @@
 #include "components/account_manager_core/account_manager_facade.h"
 #include "components/commerce/core/commerce_feature_list.h"
 #include "components/commerce/core/shopping_service.h"
-#include "components/compose/buildflags.h"
+#include "components/compose/core/browser/compose_features.h"
 #include "components/content_settings/core/common/features.h"
 #include "components/favicon_base/favicon_url_parser.h"
 #include "components/password_manager/core/common/password_manager_features.h"
@@ -100,6 +106,7 @@
 #include "components/search_engines/search_engine_choice/search_engine_choice_service.h"
 #include "components/search_engines/search_engine_choice/search_engine_choice_utils.h"
 #include "components/signin/public/base/signin_pref_names.h"
+#include "components/signin/public/base/signin_switches.h"
 #include "components/sync/base/features.h"
 #include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_contents.h"
@@ -107,6 +114,7 @@
 #include "content/public/browser/web_ui_data_source.h"
 #include "content/public/common/content_features.h"
 #include "crypto/crypto_buildflags.h"
+#include "device/vr/buildflags/buildflags.h"
 #include "printing/buildflags/buildflags.h"
 #include "services/network/public/cpp/features.h"
 #include "third_party/blink/public/common/features.h"
@@ -158,7 +166,6 @@
 #include "chrome/browser/search/background/ntp_custom_background_service_factory.h"
 #include "chrome/browser/signin/account_consistency_mode_manager.h"
 #include "chrome/browser/ui/webui/cr_components/theme_color_picker/theme_color_picker_handler.h"
-#include "chrome/browser/ui/webui/customize_themes/chrome_customize_themes_handler.h"
 #include "chrome/browser/ui/webui/settings/captions_handler.h"
 #include "chrome/browser/ui/webui/settings/settings_default_browser_handler.h"
 #include "chrome/browser/ui/webui/settings/settings_manage_profile_handler.h"
@@ -176,19 +183,12 @@
 #include "chrome/browser/ui/webui/settings/native_certificates_handler.h"
 #endif  // BUILDFLAG(USE_NSS_CERTS)
 
-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
-#include "chrome/browser/browser_process.h"
-#include "chrome/browser/browser_process_platform_part.h"
-#include "components/password_manager/core/browser/password_manager_util.h"
-#include "components/password_manager/core/common/password_manager_pref_names.h"
-#endif
-
 #if BUILDFLAG(IS_MAC)
 #include "chrome/browser/ui/webui/settings/mac_system_settings_handler.h"
 #endif
 
-#if BUILDFLAG(ENABLE_COMPOSE)
-#include "chrome/browser/compose/compose_enabling.h"
+#if BUILDFLAG(ENABLE_VR)
+#include "device/vr/public/cpp/features.h"
 #endif
 
 namespace settings {
@@ -223,14 +223,12 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
   AddSettingsPageUIHandler(std::make_unique<NativeCertificatesHandler>());
 #endif  // BUILDFLAG(USE_NSS_CERTS)
 
-// Chrome Certificate Management UI V2. Not on for ChromeOS.
-#if BUILDFLAG(IS_CHROMEOS)
-  html_source->AddBoolean("enableCertManagementUIV2", false);
-#elif BUILDFLAG(CHROME_ROOT_STORE_CERT_MANAGEMENT_UI)
+#if BUILDFLAG(CHROME_ROOT_STORE_CERT_MANAGEMENT_UI)
+  // Chrome Certificate Management UI V2.
   html_source->AddBoolean(
       "enableCertManagementUIV2",
       base::FeatureList::IsEnabled(features::kEnableCertManagementUIV2));
-#endif  // BUILDFLAG(IS_CHROMEOS)
+#endif  // BUILDFLAG(CHROME_ROOT_STORE_CERT_MANAGEMENT_UI)
 
 #if BUILDFLAG(IS_CHROMEOS)
   AddSettingsPageUIHandler(
@@ -330,12 +328,6 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
         ->FetchPriceEmailPref();
   }
 
-  const bool is_search_engine_choice_settings_ui =
-      search_engines::IsChoiceScreenFlagEnabled(
-          search_engines::ChoicePromo::kAny);
-  html_source->AddBoolean("searchEngineChoiceSettingsUi",
-                          is_search_engine_choice_settings_ui);
-
   search_engines::SearchEngineChoiceService*
       search_engine_choice_dialog_service =
           search_engines::SearchEngineChoiceServiceFactory::GetForProfile(
@@ -373,21 +365,19 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
       "enableCbdTimeframeRequired",
       base::FeatureList::IsEnabled(features::kCbdTimeframeRequired));
 
-  html_source->AddBoolean(
-      "enableFriendlierSafeBrowsingSettings",
-      base::FeatureList::IsEnabled(
-          safe_browsing::kFriendlierSafeBrowsingSettingsEnhancedProtection) &&
-          base::FeatureList::IsEnabled(
-              safe_browsing::
-                  kFriendlierSafeBrowsingSettingsStandardProtection));
+  html_source->AddBoolean("enableHandTrackingContentSetting",
+#if BUILDFLAG(ENABLE_VR)
+                          device::features::IsHandTrackingEnabled());
+#else
+                          false);
+#endif
 
   html_source->AddBoolean("enableHashPrefixRealTimeLookups",
                           safe_browsing::hash_realtime_utils::
                               IsHashRealTimeLookupEligibleInSession());
 
-  html_source->AddBoolean(
-      "enableHttpsFirstModeNewSettings",
-      base::FeatureList::IsEnabled(features::kHttpsFirstModeIncognito));
+  html_source->AddBoolean("enableHttpsFirstModeNewSettings",
+                          IsBalancedModeAvailable());
 
   html_source->AddBoolean(
       "enableKeyboardAndPointerLockPrompt",
@@ -396,6 +386,10 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
   html_source->AddBoolean(
       "enableLinkedServicesSetting",
       base::FeatureList::IsEnabled(features::kLinkedServicesSetting));
+
+  html_source->AddBoolean("enableComposeProactiveNudge",
+                          base::FeatureList::IsEnabled(
+                              compose::features::kEnableComposeProactiveNudge));
 
   html_source->AddBoolean(
       "enablePageContentSetting",
@@ -408,19 +402,15 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
       download::IsDownloadBubbleEnabled() &&
           download::IsDownloadBubblePartialViewControlledByPref());
 
-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
   html_source->AddBoolean(
-      "biometricAuthenticationForFilling",
-      password_manager_util::
-          ShouldBiometricAuthenticationForFillingToggleBeVisible(
-              g_browser_process->local_state()));
-#endif
+      "extendedReportingRemovePrefDependency",
+      base::FeatureList::IsEnabled(
+          safe_browsing::kExtendedReportingRemovePrefDependency));
 
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   html_source->AddBoolean(
-      "showGetTheMostOutOfChromeSection",
-      base::FeatureList::IsEnabled(features::kGetTheMostOutOfChrome));
-#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
+      "hashPrefixRealTimeLookupsSamplePing",
+      base::FeatureList::IsEnabled(
+          safe_browsing::kHashPrefixRealTimeLookupsSamplePing));
 
   AddSettingsPageUIHandler(std::make_unique<AboutHandler>(profile));
   AddSettingsPageUIHandler(std::make_unique<ResetSettingsHandler>(profile));
@@ -454,6 +444,9 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
       "safetyCheckUnusedSitePermissionsSecondaryLabel",
       IDS_SETTINGS_SAFETY_CHECK_UNUSED_SITE_PERMISSIONS_SECONDARY_LABEL);
   plural_string_handler->AddLocalizedString(
+      "safetyHubRevokedPermissionsSecondaryLabel",
+      IDS_SETTINGS_SAFETY_HUB_REVOKED_PERMISSIONS_SECONDARY_LABEL);
+  plural_string_handler->AddLocalizedString(
       "safetyCheckUnusedSitePermissionsToastBulkLabel",
       IDS_SETTINGS_SAFETY_CHECK_UNUSED_SITE_PERMISSIONS_TOAST_BULK_LABEL);
   plural_string_handler->AddLocalizedString(
@@ -476,7 +469,6 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
       base::make_span(kSettingsSharedResources, kSettingsSharedResourcesSize));
 #endif
 
-  webui::SetupChromeRefresh2023(html_source);
   AddLocalizedStrings(html_source, profile, web_ui->GetWebContents());
 
   ManagedUIHandler::Initialize(web_ui, html_source);
@@ -507,6 +499,11 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
       base::FeatureList::IsEnabled(
           content_settings::features::kSafetyCheckUnusedSitePermissions));
 
+  html_source->AddBoolean(
+      "safetyHubAbusiveNotificationRevocationEnabled",
+      base::FeatureList::IsEnabled(
+          safe_browsing::kSafetyHubAbusiveNotificationRevocation));
+
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   html_source->AddBoolean(
       "safetyCheckExtensionsReviewEnabled",
@@ -516,30 +513,19 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
   html_source->AddBoolean("enableSafetyHub",
                           base::FeatureList::IsEnabled(features::kSafetyHub));
 
-  // Tracking Protection
+  // Mode B UX
   html_source->AddBoolean(
       "is3pcdCookieSettingsRedesignEnabled",
       TrackingProtectionSettingsFactory::GetForProfile(profile)
           ->IsTrackingProtection3pcdEnabled());
+
+  // ACT UX
   html_source->AddBoolean(
-      "enableTrackingProtectionRolloutUx",
-      TrackingProtectionSettingsFactory::GetForProfile(profile)
-              ->IsTrackingProtection3pcdEnabled() &&
-          base::FeatureList::IsEnabled(
-              privacy_sandbox::kTrackingProtectionSettingsLaunch));
-  html_source->AddBoolean(
-      "isIpProtectionV1Enabled",
-      base::FeatureList::IsEnabled(privacy_sandbox::kIpProtectionUx) && false);
-  html_source->AddBoolean("isFingerprintingProtectionEnabled",
+      "isIpProtectionUxEnabled",
+      base::FeatureList::IsEnabled(privacy_sandbox::kIpProtectionUx));
+  html_source->AddBoolean("isFingerprintingProtectionUxEnabled",
                           base::FeatureList::IsEnabled(
                               privacy_sandbox::kFingerprintingProtectionUx));
-  auto* onboarding_service =
-      TrackingProtectionOnboardingFactory::GetForProfile(profile);
-  html_source->AddBoolean(
-      "showTrackingProtectionSettingsRollbackNotice",
-      onboarding_service && onboarding_service->IsOffboarded() &&
-          base::FeatureList::IsEnabled(
-              privacy_sandbox::kTrackingProtectionSettingsPageRollbackNotice));
 
   html_source->AddBoolean(
       "isProactiveTopicsBlockingEnabled",
@@ -549,9 +535,9 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
   // Performance
   AddSettingsPageUIHandler(std::make_unique<PerformanceHandler>());
   html_source->AddBoolean(
-      "isMemorySaverMultistateModeEnabled",
+      "isPerformanceInterventionUiEnabled",
       base::FeatureList::IsEnabled(
-          performance_manager::features::kMemorySaverMultistateMode));
+          performance_manager::features::kPerformanceInterventionUI));
   html_source->AddBoolean(
       "isBatterySaverModeManagedByOS",
       performance_manager::user_tuning::IsBatterySaverModeManagedByOS());
@@ -572,18 +558,35 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
                           base::FeatureList::IsEnabled(
                               features::kAutomaticFullscreenContentSetting));
 
+  html_source->AddBoolean(
+      "enableSmartCardReadersContentSetting",
+      base::FeatureList::IsEnabled(blink::features::kSmartCard));
+
+#if BUILDFLAG(IS_WIN) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
+  // System
+  html_source->AddBoolean(
+      "showFeatureNotificationsSetting",
+      base::FeatureList::IsEnabled(features::kRegisterOsUpdateHandlerWin));
+#endif  // BUILDFLAG(IS_WIN) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
+
+  html_source->AddBoolean(
+      "enableWebAppInstallation",
+      base::FeatureList::IsEnabled(blink::features::kWebAppInstallation));
+
   // AI
-  optimization_guide::UserVisibleFeatureKey optimization_guide_features[3] = {
+  optimization_guide::UserVisibleFeatureKey optimization_guide_features[4] = {
       optimization_guide::UserVisibleFeatureKey::kCompose,
       optimization_guide::UserVisibleFeatureKey::kTabOrganization,
       optimization_guide::UserVisibleFeatureKey::kWallpaperSearch,
+      optimization_guide::UserVisibleFeatureKey::kHistorySearch,
   };
 
   auto* optimization_guide_service =
       OptimizationGuideKeyedServiceFactory::GetForProfile(profile);
-  bool optimization_guide_feature_visible[4] = {false, false, false, false};
+  bool optimization_guide_feature_visible[5] = {false, false, false, false,
+                                                false};
 
-  for (size_t i = 0; i < 3; i++) {
+  for (size_t i = 0; i < 4; i++) {
     const bool visible = optimization_guide_service &&
                          optimization_guide_service->IsSettingVisible(
                              optimization_guide_features[i]);
@@ -602,6 +605,12 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
                           optimization_guide_feature_visible[2]);
   html_source->AddBoolean("showWallpaperSearchControl",
                           optimization_guide_feature_visible[3]);
+  html_source->AddBoolean("showHistorySearchControl",
+                          optimization_guide_feature_visible[4]);
+
+  html_source->AddBoolean(
+      "enableAiSettingsPageRefresh",
+      base::FeatureList::IsEnabled(features::kAiSettingsPageRefresh));
 
   TryShowHatsSurveyWithTimeout();
 }
@@ -654,16 +663,6 @@ void SettingsUI::InitBrowserSettingsWebUIHandlers() {
 #else   // BUILDFLAG(IS_CHROMEOS_ASH)
 void SettingsUI::BindInterface(
     mojo::PendingReceiver<
-        customize_themes::mojom::CustomizeThemesHandlerFactory>
-        pending_receiver) {
-  if (customize_themes_factory_receiver_.is_bound()) {
-    customize_themes_factory_receiver_.reset();
-  }
-  customize_themes_factory_receiver_.Bind(std::move(pending_receiver));
-}
-
-void SettingsUI::BindInterface(
-    mojo::PendingReceiver<
         theme_color_picker::mojom::ThemeColorPickerHandlerFactory>
         pending_receiver) {
   if (theme_color_picker_handler_factory_receiver_.is_bound()) {
@@ -683,19 +682,6 @@ void SettingsUI::BindInterface(
   help_bubble_handler_factory_receiver_.Bind(std::move(pending_receiver));
 }
 
-#if BUILDFLAG(CHROME_ROOT_STORE_CERT_MANAGEMENT_UI)
-void SettingsUI::BindInterface(
-    mojo::PendingReceiver<
-        certificate_manager_v2::mojom::CertificateManagerPageHandlerFactory>
-        pending_receiver) {
-  if (certificate_manager_handler_factory_receiver_.is_bound()) {
-    certificate_manager_handler_factory_receiver_.reset();
-  }
-  certificate_manager_handler_factory_receiver_.Bind(
-      std::move(pending_receiver));
-}
-#endif  // BUILDFLAG(CHROME_ROOT_STORE_CERT_MANAGEMENT_UI)
-
 void SettingsUI::AddSettingsPageUIHandler(
     std::unique_ptr<content::WebUIMessageHandler> handler) {
   DCHECK(handler);
@@ -713,16 +699,6 @@ void SettingsUI::TryShowHatsSurveyWithTimeout() {
 }
 
 #if !BUILDFLAG(IS_CHROMEOS_ASH)
-void SettingsUI::CreateCustomizeThemesHandler(
-    mojo::PendingRemote<customize_themes::mojom::CustomizeThemesClient>
-        pending_client,
-    mojo::PendingReceiver<customize_themes::mojom::CustomizeThemesHandler>
-        pending_handler) {
-  customize_themes_handler_ = std::make_unique<ChromeCustomizeThemesHandler>(
-      std::move(pending_client), std::move(pending_handler),
-      web_ui()->GetWebContents(), Profile::FromWebUI(web_ui()));
-}
-
 void SettingsUI::CreateThemeColorPickerHandler(
     mojo::PendingReceiver<theme_color_picker::mojom::ThemeColorPickerHandler>
         handler,
@@ -744,6 +720,7 @@ void SettingsUI::CreateHelpBubbleHandler(
       std::vector<ui::ElementIdentifier>{
           kEnhancedProtectionSettingElementId,
           kAnonymizedUrlCollectionPersonalizationSettingId,
+          kInactiveTabSettingElementId,
       });
 }
 
@@ -758,18 +735,6 @@ void SettingsUI::CreateCustomizeColorSchemeModeHandler(
       std::make_unique<CustomizeColorSchemeModeHandler>(
           std::move(client), std::move(handler), Profile::FromWebUI(web_ui()));
 }
-
-#if BUILDFLAG(CHROME_ROOT_STORE_CERT_MANAGEMENT_UI)
-void SettingsUI::CreateCertificateManagerPageHandler(
-    mojo::PendingRemote<certificate_manager_v2::mojom::CertificateManagerPage>
-        client,
-    mojo::PendingReceiver<
-        certificate_manager_v2::mojom::CertificateManagerPageHandler> handler) {
-  certificate_manager_page_handler_ =
-      std::make_unique<CertificateManagerPageHandler>(std::move(client),
-                                                      std::move(handler));
-}
-#endif  // BUILDFLAG(CHROME_ROOT_STORE_CERT_MANAGEMENT_UI)
 
 void SettingsUI::BindInterface(
     mojo::PendingReceiver<customize_color_scheme_mode::mojom::

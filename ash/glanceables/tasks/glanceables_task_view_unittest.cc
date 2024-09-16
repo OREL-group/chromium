@@ -24,12 +24,18 @@
 #include "base/time/time_override.h"
 #include "base/types/cxx23_to_underlying.h"
 #include "chromeos/ash/components/settings/scoped_timezone_settings.h"
+#include "google_apis/common/api_error_codes.h"
+#include "ui/accessibility/ax_enums.mojom.h"
+#include "ui/accessibility/platform/ax_platform_node.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/keycodes/keyboard_codes_posix.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/button/label_button.h"
+#include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/textfield/textfield.h"
+#include "ui/views/view.h"
 #include "ui/views/view_utils.h"
 #include "ui/views/widget/widget.h"
 #include "url/gurl.h"
@@ -81,7 +87,8 @@ TEST_F(GlanceablesTaskViewTest, FormatsDueDate) {
                                 /*due=*/due, /*completed=*/false,
                                 /*has_subtasks=*/false,
                                 /*has_email_link=*/false, /*has_notes=*/false,
-                                /*updated=*/due, /*web_view_link=*/GURL());
+                                /*updated=*/due, /*web_view_link=*/GURL(),
+                                api::Task::OriginSurfaceType::kRegular);
     const auto view = GlanceablesTaskView(
         &task, /*mark_as_completed_callback=*/base::DoNothing(),
         /*save_callback=*/base::DoNothing(),
@@ -103,7 +110,8 @@ TEST_F(GlanceablesTaskViewTest,
                               /*due=*/std::nullopt, /*completed=*/false,
                               /*has_subtasks=*/false, /*has_email_link=*/false,
                               /*has_notes=*/false, /*updated=*/base::Time(),
-                              /*web_view_link=*/GURL());
+                              /*web_view_link=*/GURL(),
+                              api::Task::OriginSurfaceType::kRegular);
 
   const auto widget = CreateFramelessTestWidget();
   widget->SetFullscreen(true);
@@ -122,6 +130,7 @@ TEST_F(GlanceablesTaskViewTest,
       views::AsViewClass<views::Label>(view->GetViewByID(
           base::to_underlying(GlanceablesViewId::kTaskItemTitleLabel)));
   ASSERT_TRUE(title_label);
+  EXPECT_TRUE(title_label->IsDrawn());
 
   // No `STRIKE_THROUGH` style applied initially.
   EXPECT_FALSE(view->GetCompletedForTest());
@@ -144,12 +153,13 @@ TEST_F(GlanceablesTaskViewTest, UpdatingTaskTriggersErrorMessageIfNoNetwork) {
                               /*due=*/std::nullopt, /*completed=*/false,
                               /*has_subtasks=*/false, /*has_email_link=*/false,
                               /*has_notes=*/false, /*updated=*/base::Time(),
-                              /*web_view_link=*/GURL());
+                              /*web_view_link=*/GURL(),
+                              api::Task::OriginSurfaceType::kRegular);
 
   const auto widget = CreateFramelessTestWidget();
   widget->SetFullscreen(true);
   base::test::TestFuture<GlanceablesTasksErrorType,
-                         GlanceablesErrorMessageView::ButtonActionType>
+                         ErrorMessageToast::ButtonActionType>
       error_future;
 
   const auto* const view =
@@ -166,6 +176,7 @@ TEST_F(GlanceablesTaskViewTest, UpdatingTaskTriggersErrorMessageIfNoNetwork) {
       views::AsViewClass<views::Label>(view->GetViewByID(
           base::to_underlying(GlanceablesViewId::kTaskItemTitleLabel)));
   ASSERT_TRUE(title_label);
+  EXPECT_TRUE(title_label->IsDrawn());
 
   {
     // Tap on the checkbox. The action shouldn't be complete because there is no
@@ -175,7 +186,7 @@ TEST_F(GlanceablesTaskViewTest, UpdatingTaskTriggersErrorMessageIfNoNetwork) {
     EXPECT_EQ(task_error_type,
               GlanceablesTasksErrorType::kCantMarkCompleteNoNetwork);
     EXPECT_EQ(button_action_type,
-              GlanceablesErrorMessageView::ButtonActionType::kDismiss);
+              ErrorMessageToast::ButtonActionType::kDismiss);
   }
 
   // No `STRIKE_THROUGH` style should be applied to the label.
@@ -189,13 +200,14 @@ TEST_F(GlanceablesTaskViewTest, UpdatingTaskTriggersErrorMessageIfNoNetwork) {
     GestureTapOn(title_label);
     EXPECT_EQ(title_label, view->GetViewByID(base::to_underlying(
                                GlanceablesViewId::kTaskItemTitleLabel)));
-    EXPECT_FALSE(view->GetViewByID(
-        base::to_underlying(GlanceablesViewId::kTaskItemTitleTextField)));
+    const auto* title_text_field = view->GetViewByID(
+        base::to_underlying(GlanceablesViewId::kTaskItemTitleTextField));
+    EXPECT_FALSE(title_text_field);
     const auto [task_error_type, button_action_type] = error_future.Take();
     EXPECT_EQ(task_error_type,
               GlanceablesTasksErrorType::kCantUpdateTitleNoNetwork);
     EXPECT_EQ(button_action_type,
-              GlanceablesErrorMessageView::ButtonActionType::kDismiss);
+              ErrorMessageToast::ButtonActionType::kDismiss);
   }
 }
 
@@ -204,7 +216,8 @@ TEST_F(GlanceablesTaskViewTest, InvokesMarkAsCompletedCallback) {
                               /*due=*/std::nullopt, /*completed=*/false,
                               /*has_subtasks=*/false, /*has_email_link=*/false,
                               /*has_notes=*/false, /*updated=*/base::Time(),
-                              /*web_view_link=*/GURL());
+                              /*web_view_link=*/GURL(),
+                              api::Task::OriginSurfaceType::kRegular);
 
   base::test::TestFuture<const std::string&, bool> future;
 
@@ -247,7 +260,8 @@ TEST_F(GlanceablesTaskViewTest, EntersAndExitsEditState) {
                               /*due=*/std::nullopt, /*completed=*/false,
                               /*has_subtasks=*/false, /*has_email_link=*/false,
                               /*has_notes=*/false, /*updated=*/base::Time(),
-                              /*web_view_link=*/GURL());
+                              /*web_view_link=*/GURL(),
+                              api::Task::OriginSurfaceType::kRegular);
 
   const auto widget = CreateFramelessTestWidget();
   widget->SetFullscreen(true);
@@ -267,8 +281,10 @@ TEST_F(GlanceablesTaskViewTest, EntersAndExitsEditState) {
             base::to_underlying(GlanceablesViewId::kTaskItemTitleTextField)));
 
     ASSERT_TRUE(title_label);
-    ASSERT_FALSE(title_text_field);
+    EXPECT_TRUE(title_label->IsDrawn());
     EXPECT_EQ(title_label->GetText(), u"Task title");
+
+    EXPECT_FALSE(title_text_field);
 
     LeftClickOn(title_label);
   }
@@ -281,8 +297,10 @@ TEST_F(GlanceablesTaskViewTest, EntersAndExitsEditState) {
         views::AsViewClass<views::Textfield>(view->GetViewByID(
             base::to_underlying(GlanceablesViewId::kTaskItemTitleTextField)));
 
-    ASSERT_FALSE(title_label);
+    EXPECT_FALSE(title_label);
+
     ASSERT_TRUE(title_text_field);
+    EXPECT_TRUE(title_text_field->IsDrawn());
     EXPECT_EQ(title_text_field->GetText(), u"Task title");
 
     PressAndReleaseKey(ui::VKEY_SPACE);
@@ -303,8 +321,9 @@ TEST_F(GlanceablesTaskViewTest, EntersAndExitsEditState) {
             base::to_underlying(GlanceablesViewId::kTaskItemTitleTextField)));
 
     ASSERT_TRUE(title_label);
-    ASSERT_FALSE(title_text_field);
+    EXPECT_TRUE(title_label->IsDrawn());
     EXPECT_EQ(title_label->GetText(), u"Task title upd");
+    EXPECT_FALSE(title_text_field);
   }
 }
 
@@ -341,7 +360,8 @@ TEST_F(GlanceablesTaskViewTest, InvokesSaveCallbackAfterEditing) {
                               /*due=*/std::nullopt, /*completed=*/false,
                               /*has_subtasks=*/false, /*has_email_link=*/false,
                               /*has_notes=*/false, /*updated=*/base::Time(),
-                              /*web_view_link=*/GURL());
+                              /*web_view_link=*/GURL(),
+                              api::Task::OriginSurfaceType::kRegular);
 
   base::test::TestFuture<base::WeakPtr<GlanceablesTaskView>, const std::string&,
                          const std::string&,
@@ -377,7 +397,8 @@ TEST_F(GlanceablesTaskViewTest, CommitEditedTaskOnTab) {
                               /*due=*/std::nullopt, /*completed=*/false,
                               /*has_subtasks=*/false, /*has_email_link=*/false,
                               /*has_notes=*/false, /*updated=*/base::Time(),
-                              /*web_view_link=*/GURL());
+                              /*web_view_link=*/GURL(),
+                              api::Task::OriginSurfaceType::kRegular);
 
   base::test::TestFuture<base::WeakPtr<GlanceablesTaskView>, const std::string&,
                          const std::string&,
@@ -413,14 +434,20 @@ TEST_F(GlanceablesTaskViewTest, CommitEditedTaskOnTab) {
                   /*due=*/std::nullopt, /*completed=*/false,
                   /*has_subtasks=*/false,
                   /*has_email_link=*/false, /*has_notes=*/false,
-                  /*updated=*/base::Time::Now(), /*web_view_link=*/GURL());
-    std::move(callback).Run(&updated_task);
+                  /*updated=*/base::Time::Now(), /*web_view_link=*/GURL(),
+                  api::Task::OriginSurfaceType::kRegular);
+    std::move(callback).Run(google_apis::ApiErrorCode::HTTP_SUCCESS,
+                            &updated_task);
   }
 
-  EXPECT_FALSE(views::AsViewClass<views::Label>(view->GetViewByID(
-      base::to_underlying(GlanceablesViewId::kTaskItemTitleLabel))));
-  EXPECT_TRUE(views::AsViewClass<views::Textfield>(view->GetViewByID(
-      base::to_underlying(GlanceablesViewId::kTaskItemTitleTextField))));
+  const auto* title_label = views::AsViewClass<views::Label>(view->GetViewByID(
+      base::to_underlying(GlanceablesViewId::kTaskItemTitleLabel)));
+  EXPECT_FALSE(title_label);
+  const auto* title_text_field =
+      views::AsViewClass<views::Textfield>(view->GetViewByID(
+          base::to_underlying(GlanceablesViewId::kTaskItemTitleTextField)));
+  ASSERT_TRUE(title_text_field);
+  EXPECT_TRUE(title_text_field->IsDrawn());
   const auto* edit_in_browser_button = view->GetViewByID(
       base::to_underlying(GlanceablesViewId::kTaskItemEditInBrowserLabel));
   ASSERT_TRUE(edit_in_browser_button);
@@ -449,12 +476,16 @@ TEST_F(GlanceablesTaskViewTest, CommitEditedTaskOnTab) {
   view->GetFocusManager()->ClearFocus();
   base::RunLoop().RunUntilIdle();
 
-  EXPECT_TRUE(views::AsViewClass<views::Label>(view->GetViewByID(
-      base::to_underlying(GlanceablesViewId::kTaskItemTitleLabel))));
-  EXPECT_FALSE(views::AsViewClass<views::Textfield>(view->GetViewByID(
-      base::to_underlying(GlanceablesViewId::kTaskItemTitleTextField))));
-  EXPECT_FALSE(views::AsViewClass<views::Textfield>(view->GetViewByID(
-      base::to_underlying(GlanceablesViewId::kTaskItemEditInBrowserLabel))));
+  title_label = views::AsViewClass<views::Label>(view->GetViewByID(
+      base::to_underlying(GlanceablesViewId::kTaskItemTitleLabel)));
+  ASSERT_TRUE(title_label);
+  EXPECT_TRUE(title_label->IsDrawn());
+  title_text_field = views::AsViewClass<views::Textfield>(view->GetViewByID(
+      base::to_underlying(GlanceablesViewId::kTaskItemTitleTextField)));
+  EXPECT_FALSE(title_text_field);
+  edit_in_browser_button = view->GetViewByID(
+      base::to_underlying(GlanceablesViewId::kTaskItemEditInBrowserLabel));
+  EXPECT_FALSE(edit_in_browser_button);
 }
 
 TEST_F(GlanceablesTaskViewTest, SupportsEditingRightAfterAdding) {
@@ -492,8 +523,10 @@ TEST_F(GlanceablesTaskViewTest, SupportsEditingRightAfterAdding) {
                   /*due=*/std::nullopt, /*completed=*/false,
                   /*has_subtasks=*/false,
                   /*has_email_link=*/false, /*has_notes=*/false,
-                  /*updated=*/base::Time::Now(), /*web_view_link=*/GURL());
-    std::move(callback).Run(&created_task);
+                  /*updated=*/base::Time::Now(), /*web_view_link=*/GURL(),
+                  api::Task::OriginSurfaceType::kRegular);
+    std::move(callback).Run(google_apis::ApiErrorCode::HTTP_SUCCESS,
+                            &created_task);
   }
 
   {
@@ -549,6 +582,7 @@ TEST_F(GlanceablesTaskViewTest, HandlesPressingCheckButtonWhileAdding) {
       views::AsViewClass<views::Label>(view->GetViewByID(
           base::to_underlying(GlanceablesViewId::kTaskItemTitleLabel)));
   ASSERT_TRUE(title_label);
+  EXPECT_TRUE(title_label->IsDrawn());
   const auto* const title_button =
       views::AsViewClass<views::LabelButton>(title_label->parent());
   ASSERT_TRUE(title_button);
@@ -560,10 +594,109 @@ TEST_F(GlanceablesTaskViewTest, HandlesPressingCheckButtonWhileAdding) {
                 /*due=*/std::nullopt, /*completed=*/false,
                 /*has_subtasks=*/false,
                 /*has_email_link=*/false, /*has_notes=*/false,
-                /*updated=*/base::Time::Now(), /*web_view_link=*/GURL());
-  std::move(callback).Run(&created_task);
+                /*updated=*/base::Time::Now(), /*web_view_link=*/GURL(),
+                api::Task::OriginSurfaceType::kRegular);
+  std::move(callback).Run(google_apis::ApiErrorCode::HTTP_SUCCESS,
+                          &created_task);
   EXPECT_TRUE(view->GetCheckButtonForTest()->GetEnabled());
   EXPECT_TRUE(title_button->GetEnabled());
+}
+
+TEST_F(GlanceablesTaskViewTest, DisplaysOriginSurfaceType) {
+  for (auto origin_surface_type : {api::Task::OriginSurfaceType::kRegular,
+                                   api::Task::OriginSurfaceType::kDocument,
+                                   api::Task::OriginSurfaceType::kSpace,
+                                   api::Task::OriginSurfaceType::kUnknown}) {
+    SCOPED_TRACE(::testing::Message()
+                 << "origin_surface_type="
+                 << base::to_underlying(origin_surface_type));
+
+    const auto task = api::Task("task-id", "Task title",
+                                /*due=*/std::nullopt, /*completed=*/false,
+                                /*has_subtasks=*/false,
+                                /*has_email_link=*/false,
+                                /*has_notes=*/false,
+                                /*updated=*/base::Time::Now(),
+                                /*web_view_link=*/GURL(), origin_surface_type);
+    const auto widget = CreateFramelessTestWidget();
+    widget->SetFullscreen(true);
+    const auto* const view =
+        widget->SetContentsView(std::make_unique<GlanceablesTaskView>(
+            &task, /*mark_as_completed_callback=*/base::DoNothing(),
+            /*save_callback=*/base::DoNothing(),
+            /*edit_in_browser_callback=*/base::DoNothing(),
+            /*show_error_message_callback=*/base::DoNothing()));
+
+    const auto* const origin_surface_type_icon =
+        views::AsViewClass<views::ImageView>(view->GetViewByID(
+            base::to_underlying(GlanceablesViewId::kOriginSurfaceTypeIcon)));
+
+    // Check presence of the origin surface type icon. It's only added to
+    // assigned/shared tasks except `kUnknown` and visible by default.
+    if (origin_surface_type == api::Task::OriginSurfaceType::kDocument ||
+        origin_surface_type == api::Task::OriginSurfaceType::kSpace) {
+      ASSERT_TRUE(origin_surface_type_icon);
+      EXPECT_TRUE(origin_surface_type_icon->GetVisible());
+      EXPECT_FALSE(views::AsViewClass<views::View>(view->GetViewByID(
+          base::to_underlying(GlanceablesViewId::kAssignedTaskNotice))));
+    } else {
+      EXPECT_FALSE(origin_surface_type_icon);
+    }
+
+    {
+      const auto* const title_label =
+          views::AsViewClass<views::Label>(view->GetViewByID(
+              base::to_underlying(GlanceablesViewId::kTaskItemTitleLabel)));
+      ASSERT_TRUE(title_label);
+      LeftClickOn(title_label);
+    }
+
+    // The icon should disappear after switching to edit mode...
+    if (origin_surface_type == api::Task::OriginSurfaceType::kDocument ||
+        origin_surface_type == api::Task::OriginSurfaceType::kSpace) {
+      EXPECT_FALSE(origin_surface_type_icon->GetVisible());
+    }
+
+    // ...and the notice should appear for all tasks except `kRegular`.
+    if (origin_surface_type != api::Task::OriginSurfaceType::kRegular) {
+      EXPECT_TRUE(views::AsViewClass<views::View>(view->GetViewByID(
+          base::to_underlying(GlanceablesViewId::kAssignedTaskNotice))));
+    }
+  }
+}
+
+TEST_F(GlanceablesTaskViewTest,
+       CheckButtonAccessibleDefaultActionVerbAndCheckedState) {
+  const auto task = api::Task("task-id", "Task title",
+                              /*due=*/std::nullopt, /*completed=*/false,
+                              /*has_subtasks=*/false, /*has_email_link=*/false,
+                              /*has_notes=*/false, /*updated=*/base::Time(),
+                              /*web_view_link=*/GURL(),
+                              api::Task::OriginSurfaceType::kRegular);
+  const auto widget = CreateFramelessTestWidget();
+  widget->SetFullscreen(true);
+  auto* view = widget->SetContentsView(std::make_unique<GlanceablesTaskView>(
+      &task, /*mark_as_completed_callback=*/base::DoNothing(),
+      /*save_callback=*/base::DoNothing(),
+      /*edit_in_browser_callback=*/base::DoNothing(),
+      /*show_error_message_callback=*/base::DoNothing()));
+  auto* check_button = view->GetCheckButtonForTest();
+  ui::AXNodeData data;
+  check_button->GetViewAccessibility().GetAccessibleNodeData(&data);
+  EXPECT_EQ(data.GetDefaultActionVerb(), ax::mojom::DefaultActionVerb::kCheck);
+
+  view->SetCheckedForTest(true);
+  data = ui::AXNodeData();
+  check_button->GetViewAccessibility().GetAccessibleNodeData(&data);
+  EXPECT_EQ(data.GetCheckedState(), ax::mojom::CheckedState::kTrue);
+  EXPECT_EQ(data.GetDefaultActionVerb(),
+            ax::mojom::DefaultActionVerb::kUncheck);
+
+  view->SetCheckedForTest(false);
+  data = ui::AXNodeData();
+  check_button->GetViewAccessibility().GetAccessibleNodeData(&data);
+  EXPECT_EQ(data.GetCheckedState(), ax::mojom::CheckedState::kFalse);
+  EXPECT_EQ(data.GetDefaultActionVerb(), ax::mojom::DefaultActionVerb::kCheck);
 }
 
 }  // namespace ash

@@ -103,10 +103,6 @@ constexpr CGFloat kProfileImageHeightWidth = 32.0;
 constexpr CGFloat kProfileImageCompactHeightWidth = 48.0;
 constexpr CGFloat kNonProfileLogoImageCompactHeightWidth = 34.0;
 constexpr CGFloat kNonProfileBackgroundImageCompactHeightWidth = 54.0;
-// Size of the font for the headline.
-constexpr CGFloat kSignInPromoHeadlineFontSize = 17.0;
-// Constant for the size of the compact style text.
-constexpr CGFloat kCompactStyleTextSize = 15.0;
 }
 
 @interface SigninPromoView ()
@@ -283,7 +279,7 @@ constexpr CGFloat kCompactStyleTextSize = 15.0;
       break;
     case SigninPromoViewStyleOnlyButton:
       // This style has no image.
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
   DCHECK_EQ(kProfileImageHeightWidth, image.size.height);
   DCHECK_EQ(kProfileImageHeightWidth, image.size.width);
@@ -308,9 +304,6 @@ constexpr CGFloat kCompactStyleTextSize = 15.0;
       self.imageView.image = nil;
       self.imageView.backgroundColor =
           [UIColor colorNamed:kPrimaryBackgroundColor];
-      if (!IsFeedContainmentEnabled()) {
-        self.imageView.backgroundColor = [UIColor colorNamed:kGrey100Color];
-      }
       self.imageView.layer.cornerRadius = kNonProfileIconCornerRadius;
 
       logoImageView.translatesAutoresizingMaskIntoConstraints = NO;
@@ -334,7 +327,7 @@ constexpr CGFloat kCompactStyleTextSize = 15.0;
     }
     case SigninPromoViewStyleOnlyButton:
       // This style has no image.
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -391,8 +384,7 @@ constexpr CGFloat kCompactStyleTextSize = 15.0;
   // Customize UIButton based on SigninPromoViewStyle.
   switch (self.promoViewStyle) {
     case SigninPromoViewStyleCompactVertical:
-      font = [[UIFont preferredFontForTextStyle:UIFontTextStyleHeadline]
-          fontWithSize:kSignInPromoHeadlineFontSize];
+      font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
       attributes = @{NSFontAttributeName : font};
       attributedTitle = [[NSAttributedString alloc] initWithString:title
                                                         attributes:attributes];
@@ -414,7 +406,7 @@ constexpr CGFloat kCompactStyleTextSize = 15.0;
 #pragma mark - NSObject(Accessibility)
 
 - (void)setAccessibilityLabel:(NSString*)accessibilityLabel {
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 - (NSString*)accessibilityLabel {
@@ -651,8 +643,7 @@ constexpr CGFloat kCompactStyleTextSize = 15.0;
 
       // Configures fonts for the compact horizontal layout.
       self.textLabel.font =
-          [[UIFont preferredFontForTextStyle:UIFontTextStyleBody]
-              fontWithSize:kCompactStyleTextSize];
+          [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
       self.textLabel.textColor = [UIColor colorNamed:kGrey800Color];
 
       // In the Compact Horizontal style, the primary button is plain.
@@ -690,15 +681,10 @@ constexpr CGFloat kCompactStyleTextSize = 15.0;
       self.imageView.hidden = NO;
 
       self.textLabel.font =
-          [[UIFont preferredFontForTextStyle:UIFontTextStyleBody]
-              fontWithSize:kCompactStyleTextSize];
+          [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
       self.textLabel.textColor = [UIColor colorNamed:kGrey800Color];
       self.primaryButton.backgroundColor =
           [UIColor colorNamed:kBackgroundColor];
-      if (!IsFeedContainmentEnabled()) {
-        self.primaryButton.backgroundColor =
-            [UIColor colorNamed:kBlueHaloColor];
-      }
       self.primaryButton.layer.cornerRadius =
           kCompactVerticalStyle.kButtonCornerRadius;
       self.primaryButton.clipsToBounds = YES;
@@ -762,12 +748,11 @@ constexpr CGFloat kCompactStyleTextSize = 15.0;
 // Updates promo for no accounts mode.
 - (void)activateNoAccountsMode {
   DCHECK_EQ(self.mode, SigninPromoViewModeNoAccounts);
-  UIImage* logo = nil;
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
-  logo = [UIImage imageNamed:@"signin_promo_logo_chrome_color"];
+#if BUILDFLAG(IOS_USE_BRANDED_SYMBOLS)
+  UIImage* logo = [UIImage imageNamed:kChromeSigninPromoLogoImage];
 #else
-  logo = [UIImage imageNamed:@"signin_promo_logo_chromium_color"];
-#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
+  UIImage* logo = [UIImage imageNamed:kChromiumSigninPromoLogoImage];
+#endif  // BUILDFLAG(IOS_USE_BRANDED_SYMBOLS)
   DCHECK(logo);
   self.imageView.image = logo;
   self.secondaryButton.hidden = YES;

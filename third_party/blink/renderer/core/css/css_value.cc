@@ -76,6 +76,7 @@
 #include "third_party/blink/renderer/core/css/css_ratio_value.h"
 #include "third_party/blink/renderer/core/css/css_ray_value.h"
 #include "third_party/blink/renderer/core/css/css_reflect_value.h"
+#include "third_party/blink/renderer/core/css/css_relative_color_value.h"
 #include "third_party/blink/renderer/core/css/css_repeat_style_value.h"
 #include "third_party/blink/renderer/core/css/css_revert_layer_value.h"
 #include "third_party/blink/renderer/core/css/css_revert_value.h"
@@ -119,7 +120,7 @@ CSSValue* CSSValue::Create(const Length& value, float zoom) {
     case Length::kDeviceHeight:
     case Length::kMinIntrinsic:
     case Length::kNone:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
   }
   return nullptr;
@@ -341,8 +342,10 @@ bool CSSValue::operator==(const CSSValue& other) const {
         return CompareCSSValues<cssvalue::CSSPaletteMixValue>(*this, other);
       case kRepeatStyleClass:
         return CompareCSSValues<CSSRepeatStyleValue>(*this, other);
+      case kRelativeColorClass:
+        return CompareCSSValues<cssvalue::CSSRelativeColorValue>(*this, other);
     }
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return false;
   }
   return false;
@@ -497,8 +500,10 @@ String CSSValue::CssText() const {
       return To<cssvalue::CSSPaletteMixValue>(this)->CustomCSSText();
     case kRepeatStyleClass:
       return To<CSSRepeatStyleValue>(this)->CustomCSSText();
+    case kRelativeColorClass:
+      return To<cssvalue::CSSRelativeColorValue>(this)->CustomCSSText();
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return String();
 }
 
@@ -515,7 +520,7 @@ const CSSValue& CSSValue::PopulateWithTreeScope(
     case kValueListClass:
       return To<CSSValueList>(this)->PopulateWithTreeScope(tree_scope);
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return *this;
   }
 }
@@ -753,8 +758,11 @@ void CSSValue::Trace(Visitor* visitor) const {
     case kRepeatStyleClass:
       To<CSSRepeatStyleValue>(this)->TraceAfterDispatch(visitor);
       return;
+    case kRelativeColorClass:
+      To<cssvalue::CSSRelativeColorValue>(this)->TraceAfterDispatch(visitor);
+      return;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 #if DCHECK_IS_ON()
@@ -901,7 +909,7 @@ String CSSValue::ClassTypeToString() const {
     case kAxisClass:
       return "AxisClass";
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return "Unknown ClassType";
   }
 }

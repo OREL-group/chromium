@@ -25,6 +25,7 @@ from gpu_tests import common_typing as ct
 from gpu_tests import context_lost_integration_test
 from gpu_tests import gpu_helper
 from gpu_tests import gpu_integration_test
+from gpu_tests import trace_integration_test as trace_it
 from gpu_tests import webgl1_conformance_integration_test as webgl1_cit
 from gpu_tests import webgl2_conformance_integration_test as webgl2_cit
 
@@ -149,7 +150,7 @@ class GpuIntegrationTestUnittest(unittest.TestCase):
         benchmark_dirs=[os.path.join(gpu_path_util.GPU_DIR, 'unittest_data')])
     with binary_manager.TemporarilyReplaceBinaryManager(None), \
          mock.patch.object(gpu_project_config, 'CONFIG', unittest_config):
-      # TODO(crbug.com/1103792): Using NamedTemporaryFile() as a generator is
+      # TODO(crbug.com/40139419): Using NamedTemporaryFile() as a generator is
       # causing windows bots to fail. When the issue is fixed with
       # tempfile_ext.NamedTemporaryFile(), put it in the list of generators
       # starting this with block. Also remove the try finally statement
@@ -286,14 +287,34 @@ class GpuIntegrationTestUnittest(unittest.TestCase):
   def testWebGlConformanceTimeoutNoAsan(self) -> None:
     instance = webgl1_cit.WebGL1ConformanceIntegrationTest(
         '_RunConformanceTest')
-    instance.is_asan = False
+    instance._is_asan = False
     self.assertEqual(instance._GetTestTimeout(), 300)
 
   def testWebGlConformanceTimeoutAsan(self) -> None:
     instance = webgl1_cit.WebGL1ConformanceIntegrationTest(
         '_RunConformanceTest')
-    instance.is_asan = True
+    instance._is_asan = True
     self.assertEqual(instance._GetTestTimeout(), 600)
+
+  def testAsanClassMemberSetCorrectly(self):
+    test_class = gpu_integration_test.GpuIntegrationTest
+    platform = fakes.FakePlatform('win', 'win10')
+    browser = fakes.FakeBrowser(platform, 'release')
+    browser = typing.cast(ct.Browser, browser)
+
+    browser._returned_system_info = _GetSystemInfo(is_asan=True)
+    with mock.patch.object(test_class,
+                           'ExpectationsFiles',
+                           return_value=['exp.txt']):
+      test_class.GetPlatformTags(browser)
+    self.assertTrue(test_class._is_asan)
+
+    browser._returned_system_info = _GetSystemInfo(is_asan=False)
+    with mock.patch.object(test_class,
+                           'ExpectationsFiles',
+                           return_value=['exp.txt']):
+      test_class.GetPlatformTags(browser)
+    self.assertFalse(test_class._is_asan)
 
   @mock.patch('gpu_tests.util.host_information.IsLinux', return_value=False)
   def testGenerateNvidiaExampleTags(self, _) -> None:
@@ -391,6 +412,15 @@ class GpuIntegrationTestUnittest(unittest.TestCase):
       os.environ['WAYLAND_DISPLAY'] = 'wayland-0'
       tags = gpu_integration_test.GpuIntegrationTest.GetPlatformTags(browser)
       self.assertIn('display-server-wayland', tags)
+
+  def testTraceTestPrefixesInSync(self):
+    """Verifies that the trace test known prefix list is in sync."""
+    test_cases = list(
+        trace_it.TraceIntegrationTest.GenerateTestCases__RunGpuTest(
+            mock.MagicMock()))
+    valid_prefixes = tuple(trace_it.TraceIntegrationTest.known_test_prefixes)
+    for test_name, _ in test_cases:
+      self.assertTrue(test_name.startswith(valid_prefixes))
 
   def testSimpleIntegrationTest(self) -> None:
     test_args = _IntegrationTestArgs('simple_integration_unittest')

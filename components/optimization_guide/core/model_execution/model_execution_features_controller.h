@@ -12,6 +12,7 @@
 #include "base/observer_list_types.h"
 #include "base/scoped_observation.h"
 #include "base/threading/thread_checker.h"
+#include "components/optimization_guide/core/feature_registry/mqls_feature_registry.h"
 #include "components/optimization_guide/core/model_execution/feature_keys.h"
 #include "components/optimization_guide/core/model_execution/model_execution_prefs.h"
 #include "components/optimization_guide/core/model_execution/settings_enabled_observer.h"
@@ -47,14 +48,23 @@ class ModelExecutionFeaturesController
     kNotVisibleModelExecutionCapability = 6,
     // Not visible because the feature is already graduated.
     kNotVisibleGraduatedFeature = 7,
+    // Not visible because the device is unsupported by the feature.
+    kNotVisibleHardwareUnsupported = 8,
     // Updates should match with FeaturesSettingsVisibilityResult enum in
     // enums.xml.
-    kMaxValue = kNotVisibleGraduatedFeature
+    kMaxValue = kNotVisibleHardwareUnsupported
+  };
+
+  enum class DogfoodStatus {
+    DOGFOOD,
+    NON_DOGFOOD,
   };
 
   // Must be created only for non-incognito browser contexts.
   ModelExecutionFeaturesController(PrefService* browser_context_profile_service,
-                                   signin::IdentityManager* identity_manager);
+                                   signin::IdentityManager* identity_manager,
+                                   PrefService* local_state,
+                                   DogfoodStatus dogfood_status);
 
   ~ModelExecutionFeaturesController() override;
 
@@ -76,7 +86,7 @@ class ModelExecutionFeaturesController
   // Returns whether the `feature` should be currently allowed for logging model
   // quality logs.
   bool ShouldFeatureBeCurrentlyAllowedForLogging(
-      UserVisibleFeatureKey feature) const;
+      const MqlsFeatureMetadata* metadata) const;
 
   // Adds `observer` which can observe the change in feature settings.
   void AddObserver(SettingsEnabledObserver* observer);
@@ -122,9 +132,10 @@ class ModelExecutionFeaturesController
   UserValidityResult GetCurrentUserValidityResult(
       UserVisibleFeatureKey feature) const;
 
-  // Returns the enterprise policy value for the `feature`.
-  model_execution::prefs::ModelExecutionEnterprisePolicyValue
-  GetEnterprisePolicyValue(UserVisibleFeatureKey feature) const;
+  // Performs settings visibility checks specific to History Search. If passed,
+  // `kUnknown` is returned. Otherwise, the corresponding enum for the failed
+  // check is returned (i.e. kNotVisibleXXXX).
+  SettingsVisibilityResult ShouldHideHistorySearch() const;
 
   // Initializes the state of the different features at startup.
   void InitializeFeatureSettings();
@@ -151,13 +162,19 @@ class ModelExecutionFeaturesController
 
   // Obtained from the user account capability. Updated whenever sign-in changes
   // or account capability changes.
-  bool can_use_model_execution_features_ = false;
+  bool account_allows_model_execution_features_ = false;
 
   base::ObserverList<SettingsEnabledObserver> observers_;
+
+  // The PrefService is guaranteed to outlive `this`.
+  raw_ptr<PrefService> local_state_;
 
   // Set of features that are visible to unsigned users.
   const base::flat_set<UserVisibleFeatureKey>
       features_allowed_for_unsigned_user_;
+
+  // Whether this client is a (likely) dogfood client.
+  const DogfoodStatus dogfood_status_;
 
   THREAD_CHECKER(thread_checker_);
 

@@ -116,10 +116,10 @@ class CORE_EXPORT HTMLFormControlElement : public HTMLElement,
   AtomicString popoverTargetAction() const;
   void setPopoverTargetAction(const AtomicString& value);
 
-  Element* invokeTargetElement();
+  Element* commandForElement();
 
-  AtomicString invokeAction() const;
-  InvokeAction GetInvokeAction() const;
+  AtomicString command() const;
+  CommandEventType GetCommandEventType() const;
 
   Element* interestTargetElement() override;
 
@@ -153,11 +153,6 @@ class CORE_EXPORT HTMLFormControlElement : public HTMLElement,
     return autofill_state_ == WebAutofillState::kPreviewed;
   }
   void SetAutofillState(WebAutofillState = WebAutofillState::kAutofilled);
-
-  // The autofill section to which this element belongs (e.g. billing address,
-  // shipping address, .. .)
-  WebString AutofillSection() const { return autofill_section_; }
-  void SetAutofillSection(const WebString&);
 
   bool IsAutocompleteEmailUrlOrPassword() const;
 
@@ -193,8 +188,7 @@ class CORE_EXPORT HTMLFormControlElement : public HTMLElement,
   void DidChangeForm() override;
   void DidMoveToNewDocument(Document& old_document) override;
 
-  bool SupportsFocus(UpdateBehavior update_behavior =
-                         UpdateBehavior::kStyleAndLayout) const override;
+  FocusableState SupportsFocus(UpdateBehavior update_behavior) const override;
   bool IsKeyboardFocusable(UpdateBehavior update_behavior =
                                UpdateBehavior::kStyleAndLayout) const override;
   bool ShouldHaveFocusAppearance() const override;
@@ -210,7 +204,6 @@ class CORE_EXPORT HTMLFormControlElement : public HTMLElement,
   void HandlePopoverTriggering(HTMLElement* popover,
                                PopoverTriggerAction action);
 
-  WebString autofill_section_;
   enum WebAutofillState autofill_state_;
 
   bool blocks_form_submission_ : 1;

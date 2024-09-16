@@ -61,11 +61,6 @@ bool DeleteCandidateInstallFolder(UpdaterScope scope) {
   return DeleteFolder(GetVersionedInstallDirectory(scope));
 }
 
-base::FilePath GetUpdaterFolderName() {
-  return base::FilePath(COMPANY_SHORTNAME_STRING)
-      .AppendASCII(PRODUCT_FULLNAME_STRING);
-}
-
 bool CopyDir(const base::FilePath& from_path,
              const base::FilePath& to_path,
              bool world_readable) {
@@ -80,7 +75,7 @@ bool CopyDir(const base::FilePath& from_path,
   base::FilePath from_path_base = from_path.DirName();
 
   base::stat_wrapper_t from_stat = {};
-  if (base::File::Stat(from_path.value().c_str(), &from_stat) < 0) {
+  if (base::File::Stat(from_path, &from_stat) < 0) {
     DPLOG(ERROR) << "Can't stat source directory: " << from_path;
     return false;
   }

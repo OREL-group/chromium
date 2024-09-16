@@ -6,6 +6,7 @@
 #define COMPONENTS_OMNIBOX_COMMON_OMNIBOX_FEATURES_H_
 
 #include "base/feature_list.h"
+#include "base/metrics/field_trial_params.h"
 
 namespace omnibox {
 
@@ -45,10 +46,10 @@ BASE_DECLARE_FEATURE(kLocalHistoryZeroSuggestBeyondNTP);
 BASE_DECLARE_FEATURE(kNormalizeSearchSuggestions);
 BASE_DECLARE_FEATURE(kOmniboxOnClobberFocusTypeOnContent);
 BASE_DECLARE_FEATURE(kZeroSuggestInMemoryCaching);
+BASE_DECLARE_FEATURE(kZeroSuggestPrefetchDebouncing);
 BASE_DECLARE_FEATURE(kZeroSuggestPrefetching);
 BASE_DECLARE_FEATURE(kZeroSuggestPrefetchingOnSRP);
 BASE_DECLARE_FEATURE(kZeroSuggestPrefetchingOnWeb);
-BASE_DECLARE_FEATURE(kOmniboxPopulateShortcutsDatabase);
 // Related, kMaxZeroSuggestMatches.
 
 // On Device Suggest.
@@ -58,7 +59,7 @@ BASE_DECLARE_FEATURE(kOnDeviceHeadProviderKorean);
 BASE_DECLARE_FEATURE(kOnDeviceTailModel);
 
 // Provider-specific - These features change the behavior of specific providers.
-// TODO(crbug.com/1202964): Clean up feature flag used in staged roll-out of
+// TODO(crbug.com/40179316): Clean up feature flag used in staged roll-out of
 // various CLs related to the contents/description clean-up work.
 BASE_DECLARE_FEATURE(kStoreTitleInContentsAndUrlInDescription);
 
@@ -72,23 +73,13 @@ BASE_DECLARE_FEATURE(kDomainSuggestions);
 BASE_DECLARE_FEATURE(kPrefBasedDataCollectionConsentHelper);
 
 // Suggestions UI - these affect the UI or function of the suggestions popup.
-BASE_DECLARE_FEATURE(kAdaptiveSuggestionsCount);
 BASE_DECLARE_FEATURE(kClipboardSuggestionContentHidden);
 BASE_DECLARE_FEATURE(kSuppressClipboardSuggestionAfterFirstUsed);
-BASE_DECLARE_FEATURE(kCompanyEntityIconAdjustment);
-enum class CompanyEntityIconAdjustmentGroup {
-  kLeastAggressive,
-  kModerate,
-  kMostAggressive,
-};
 BASE_DECLARE_FEATURE(kCr2023ActionChips);
 BASE_DECLARE_FEATURE(kCr2023ActionChipsIcons);
-BASE_DECLARE_FEATURE(kSuggestionAnswersColorReverse);
 BASE_DECLARE_FEATURE(kMostVisitedTilesHorizontalRenderGroup);
 BASE_DECLARE_FEATURE(kRichAutocompletion);
 BASE_DECLARE_FEATURE(kNtpRealboxPedals);
-BASE_DECLARE_FEATURE(kOmniboxMatchToolbarAndStatusBarColor);
-BASE_DECLARE_FEATURE(kSearchReadyOmniboxAllowQueryEdit);
 BASE_DECLARE_FEATURE(kSquareSuggestIcons);
 BASE_DECLARE_FEATURE(kUniformRowHeight);
 BASE_DECLARE_FEATURE(kWebUIOmniboxPopup);
@@ -98,7 +89,6 @@ BASE_DECLARE_FEATURE(kExpandedStateColors);
 BASE_DECLARE_FEATURE(kExpandedStateSuggestIcons);
 BASE_DECLARE_FEATURE(kExpandedLayout);
 BASE_DECLARE_FEATURE(kSuggestionHoverFillShape);
-BASE_DECLARE_FEATURE(kQueryTilesInZPSOnNTP);
 
 // Omnibox UI - these affect the UI or function of the location bar (not the
 // popup).
@@ -112,10 +102,6 @@ BASE_DECLARE_FEATURE(kOmniboxSteadyStateTextStyle);
 
 BASE_DECLARE_FEATURE(kOmniboxSteadyStateTextColor);
 
-// Omnibox & Suggestions UI - these affect both the omnibox and the suggestions
-// popup.
-BASE_DECLARE_FEATURE(kOmniboxModernizeVisualUpdate);
-
 // Android only flag that controls whether the new security indicator should be
 // used, on non-Android platforms this is controlled through the
 // ChromeRefresh2023 flag.
@@ -125,8 +111,16 @@ BASE_DECLARE_FEATURE(kUpdatedConnectionSecurityIndicators);
 BASE_DECLARE_FEATURE(kDefaultTypedNavigationsToHttps);
 extern const char kDefaultTypedNavigationsToHttpsTimeoutParam[];
 
+BASE_DECLARE_FEATURE(kOverrideAndroidOmniboxSpareRendererDelay);
+// The delay value in milliseconds.
+inline constexpr base::FeatureParam<int> kOmniboxSpareRendererDelayMs{
+    &kOverrideAndroidOmniboxSpareRendererDelay,
+    "omnibox_spare_renderer_delay_ms", 1000};
+
 // Omnibox ML scoring.
 BASE_DECLARE_FEATURE(kLogUrlScoringSignals);
+BASE_DECLARE_FEATURE(kEnableHistoryScoringSignalsAnnotatorForSearches);
+BASE_DECLARE_FEATURE(kMlUrlPiecewiseMappedSearchBlending);
 BASE_DECLARE_FEATURE(kMlUrlScoreCaching);
 BASE_DECLARE_FEATURE(kMlUrlScoring);
 BASE_DECLARE_FEATURE(kMlUrlSearchBlending);
@@ -146,26 +140,33 @@ BASE_DECLARE_FEATURE(kOmniboxAnswerActions);
 BASE_DECLARE_FEATURE(kCategoricalSuggestions);
 BASE_DECLARE_FEATURE(kMergeSubtypes);
 
-// Returns true if the Omnibox CR23 `feature`, which depends on customize
-// chrome, should be enabled.
-bool IsOmniboxCr23CustomizeGuardedFeatureEnabled(const base::Feature& feature);
-
 // Allows for touch down events to send a signal to |SearchPrefetchService| to
 // start prefetching the suggestion. The feature only applies to search
 // suggestions and only controls whether the signal is sent.
 BASE_DECLARE_FEATURE(kOmniboxTouchDownTriggerForPrefetch);
 
 // Site search/Keyword mode related features.
+BASE_DECLARE_FEATURE(kShowFeaturedEnterpriseSiteSearch);
+BASE_DECLARE_FEATURE(kShowFeaturedEnterpriseSiteSearchIPH);
 BASE_DECLARE_FEATURE(kSiteSearchSettingsPolicy);
-BASE_DECLARE_FEATURE(kPolicyIndicationForManagedDefaultSearch);
 BASE_DECLARE_FEATURE(kStarterPackExpansion);
 BASE_DECLARE_FEATURE(kStarterPackIPH);
 
 // Search and Suggest requests and params.
 BASE_DECLARE_FEATURE(kAblateSearchProviderWarmup);
+BASE_DECLARE_FEATURE(kDropUnrecognizedTemplateUrlParameters);
 BASE_DECLARE_FEATURE(kReportApplicationLanguageInSearchRequest);
 
+BASE_DECLARE_FEATURE(kOmniboxAsyncViewInflation);
+BASE_DECLARE_FEATURE(kUseFusedLocationProvider);
+
+#if BUILDFLAG(IS_ANDROID)
+BASE_DECLARE_FEATURE(kRetainOmniboxOnFocus);
+#endif  // BUILDFLAG(IS_ANDROID)
+
+// `ShortcutsProvider` features.
 BASE_DECLARE_FEATURE(kOmniboxShortcutsAndroid);
+BASE_DECLARE_FEATURE(kOmniboxDeleteOldShortcuts);
 
 }  // namespace omnibox
 

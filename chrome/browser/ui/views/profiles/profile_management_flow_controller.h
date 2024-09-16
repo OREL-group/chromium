@@ -38,7 +38,7 @@ class ProfileManagementFlowController {
     kProfilePicker,
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
     // Renders the sign in screen on Dice platforms.
-    // TODO(https://crbug.com/1360773): Support the `kAccountSelection` step on
+    // TODO(crbug.com/40237764): Support the `kAccountSelection` step on
     // Lacros. Picking an account during the `kLacrosSelectAvailableAccount`
     // flow and the profile creation should be implemented as a standalone step.
     kAccountSelection,
@@ -98,6 +98,11 @@ class ProfileManagementFlowController {
   // Cancel the signed-in profile setup and returns back to the main picker
   // screen (if the original EntryPoint was to open the picker).
   virtual void CancelPostSignInFlow() = 0;
+
+  // Clears the current state and reset it to the initial state that shows the
+  // main screen. When calling this function the state should not be the
+  // initial one. Executes `callback` when the initial state is shown.
+  void Reset(StepSwitchFinishedCallback callback);
 
   // Returns a string to use as title for the window, for accessibility
   // purposes. It is used in case the host is not able to obtain a title from

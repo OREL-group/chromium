@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/modules/media_capabilities/media_capabilities.h"
 
 #include <memory>
@@ -26,9 +31,9 @@
 #include "media/mojo/mojom/media_metrics_provider.mojom-blink.h"
 #include "media/mojo/mojom/media_types.mojom-blink.h"
 #include "media/video/gpu_video_accelerator_factories.h"
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/mojom/permissions_policy/permissions_policy.mojom-blink.h"
 #include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom-blink.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/public/platform/web_encrypted_media_client.h"
@@ -212,10 +217,12 @@ class MediaCapabilitiesKeySystemAccessInitializer final
       const HeapVector<Member<MediaKeySystemConfiguration>>&
           supported_configurations,
       GetPerfCallback get_perf_callback)
-      : MediaKeySystemAccessInitializerBase(context,
-                                            resolver,
-                                            key_system,
-                                            supported_configurations),
+      : MediaKeySystemAccessInitializerBase(
+            context,
+            resolver,
+            key_system,
+            supported_configurations,
+            /*is_from_media_capabilities=*/true),
         get_perf_callback_(std::move(get_perf_callback)) {}
 
   MediaCapabilitiesKeySystemAccessInitializer(
@@ -290,7 +297,7 @@ bool IsValidMimeType(const String& content_type,
   if (parameters.ParameterCount() == 0)
     return true;
 
-  return parameters.begin()->name.LowerASCII() == kCodecsMimeTypeParam;
+  return EqualIgnoringASCIICase(parameters.begin()->name, kCodecsMimeTypeParam);
 }
 
 bool IsValidMediaConfiguration(const MediaConfiguration* configuration) {
@@ -476,7 +483,7 @@ WebMediaConfiguration ToWebMediaConfiguration(
   else if (configuration->type() == "transmission")
     web_configuration.type = MediaConfigurationType::kTransmission;
   else
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
 
   if (configuration->hasAudio()) {
     web_configuration.audio_configuration =
@@ -534,7 +541,7 @@ bool CheckMseSupport(const String& mime_type, const String& codec) {
 
   const std::string codec_ascii = codec.Ascii();
   if (!codec.Ascii().empty())
-    codecs = base::make_span(&codec_ascii, 1u);
+    codecs = base::span_from_ref(codec_ascii);
 
   if (media::SupportsType::kSupported !=
       media::StreamParserFactory::IsTypeSupported(mime_type.Ascii(), codecs)) {
@@ -568,7 +575,7 @@ void ParseDynamicRangeConfigurations(
     } else if (hdr_metadata_type == kSmpteSt209440HdrMetadataType) {
       *hdr_metadata = gfx::HdrMetadataType::kSmpteSt2094_40;
     } else {
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
     }
   } else {
     *hdr_metadata = gfx::HdrMetadataType::kNone;
@@ -584,7 +591,7 @@ void ParseDynamicRangeConfigurations(
     } else if (color_gamut == kRec2020ColorGamut) {
       color_space->primaries = media::VideoColorSpace::PrimaryID::BT2020;
     } else {
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
     }
   }
 
@@ -598,7 +605,7 @@ void ParseDynamicRangeConfigurations(
     } else if (transfer_function == kHlgTransferFunction) {
       color_space->transfer = media::VideoColorSpace::TransferID::ARIB_STD_B67;
     } else {
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
     }
   }
 }
@@ -841,7 +848,7 @@ ScriptPromise<MediaCapabilitiesDecodingInfo> MediaCapabilities::decodingInfo(
   String message;
   if (!IsValidMediaDecodingConfiguration(config, is_webrtc, &message)) {
     exception_state.ThrowTypeError(message);
-    return ScriptPromise<MediaCapabilitiesDecodingInfo>();
+    return EmptyPromise();
   }
   // Validation errors should return above.
   DCHECK(message.empty());
@@ -1044,7 +1051,7 @@ ScriptPromise<MediaCapabilitiesInfo> MediaCapabilities::encodingInfo(
     exception_state.ThrowTypeError(
         "The provided value 'record' is not a valid enum value of type "
         "MediaEncodingType.");
-    return ScriptPromise<MediaCapabilitiesInfo>();
+    return EmptyPromise();
     ;
   }
 
@@ -1054,7 +1061,7 @@ ScriptPromise<MediaCapabilitiesInfo> MediaCapabilities::encodingInfo(
   String message;
   if (!IsValidMediaEncodingConfiguration(config, is_webrtc, &message)) {
     exception_state.ThrowTypeError(message);
-    return ScriptPromise<MediaCapabilitiesInfo>();
+    return EmptyPromise();
   }
   // Validation errors should return above.
   DCHECK(message.empty());
@@ -1240,7 +1247,7 @@ ScriptPromise<MediaCapabilitiesDecodingInfo> MediaCapabilities::GetEmeSupport(
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
         "The context provided is not associated with a page.");
-    return ScriptPromise<MediaCapabilitiesDecodingInfo>();
+    return EmptyPromise();
   }
 
   ExecutionContext* execution_context = ExecutionContext::From(script_state);
@@ -1260,21 +1267,21 @@ ScriptPromise<MediaCapabilitiesDecodingInfo> MediaCapabilities::GetEmeSupport(
     exception_state.ThrowSecurityError(
         "decodingInfo(): Creating MediaKeySystemAccess is disabled by feature "
         "policy.");
-    return ScriptPromise<MediaCapabilitiesDecodingInfo>();
+    return EmptyPromise();
   }
 
   if (execution_context->IsWorkerGlobalScope()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
         "Encrypted Media decoding info not available in Worker context.");
-    return ScriptPromise<MediaCapabilitiesDecodingInfo>();
+    return EmptyPromise();
   }
 
   if (!execution_context->IsSecureContext()) {
     exception_state.ThrowSecurityError(
         "Encrypted Media decoding info can only be queried in a secure"
         " context.");
-    return ScriptPromise<MediaCapabilitiesDecodingInfo>();
+    return EmptyPromise();
   }
 
   const MediaCapabilitiesKeySystemConfiguration* key_system_config =
@@ -1282,7 +1289,7 @@ ScriptPromise<MediaCapabilitiesDecodingInfo> MediaCapabilities::GetEmeSupport(
   if (!key_system_config->hasKeySystem() ||
       key_system_config->keySystem().empty()) {
     exception_state.ThrowTypeError("The key system String is not valid.");
-    return ScriptPromise<MediaCapabilitiesDecodingInfo>();
+    return EmptyPromise();
   }
 
   MediaKeySystemConfiguration* eme_config =

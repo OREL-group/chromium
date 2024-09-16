@@ -32,6 +32,12 @@ bool IsSourceFromAnExtension(const std::u16string& source) {
 
 namespace extension_urls {
 
+namespace {
+
+const GURL* g_item_snippet_url_for_test_ = nullptr;
+
+}  // namespace
+
 const char kChromeWebstoreBaseURL[] = "https://chrome.google.com/webstore";
 const char kNewChromeWebstoreBaseURL[] = "https://chromewebstore.google.com/";
 const char kChromeWebstoreUpdateURL[] =
@@ -64,7 +70,7 @@ GURL AppendUtmSource(const GURL& url, std::string_view utm_source_value) {
 // TODO(devlin): Try to use GURL methods like Resolve instead of string
 // concatenation.
 std::string GetWebstoreExtensionsCategoryURL() {
-  // TODO(crbug.com/1488136): Refactor this check into
+  // TODO(crbug.com/40073814): Refactor this check into
   // extension_urls::GetWebstoreLaunchURL() and fix tests relying on it.
   if (base::FeatureList::IsEnabled(extensions_features::kNewWebstoreURL)) {
     return GetNewWebstoreLaunchURL().spec() + "category/extensions";
@@ -73,7 +79,7 @@ std::string GetWebstoreExtensionsCategoryURL() {
 }
 
 std::string GetWebstoreItemDetailURLPrefix() {
-  return GetWebstoreLaunchURL().spec() + "/detail/";
+  return GetNewWebstoreLaunchURL().spec() + "detail/";
 }
 
 GURL GetWebstoreItemJsonDataURL(const extensions::ExtensionId& extension_id) {
@@ -81,10 +87,23 @@ GURL GetWebstoreItemJsonDataURL(const extensions::ExtensionId& extension_id) {
               extension_id);
 }
 
-GURL GetWebstoreItemSnippetURL(const std::string& extension_id) {
+GURL GetWebstoreItemSnippetURL(const extensions::ExtensionId& extension_id) {
+  if (g_item_snippet_url_for_test_) {
+    // Return `<base URL><extension_id>`. There is no suffix if the URL is
+    // overridden by a test.
+    return GURL(base::StringPrintf("%s%s",
+                                   g_item_snippet_url_for_test_->spec().c_str(),
+                                   extension_id.c_str()));
+  }
+
+  // Return `<base URL><extension_id><suffix>`.
   return GURL(base::StringPrintf(
       "https://chromewebstore.googleapis.com/v2/items/%s:fetchItemSnippet",
       extension_id.c_str()));
+}
+
+base::AutoReset<const GURL*> SetItemSnippetURLForTesting(const GURL* test_url) {
+  return base::AutoReset<const GURL*>(&g_item_snippet_url_for_test_, test_url);
 }
 
 GURL GetDefaultWebstoreUpdateUrl() {
@@ -103,6 +122,13 @@ GURL GetWebstoreReportAbuseUrl(const extensions::ExtensionId& extension_id,
   return GURL(base::StringPrintf("%s/report/%s?utm_source=%s",
                                  GetWebstoreLaunchURL().spec().c_str(),
                                  extension_id.c_str(), referrer_id.c_str()));
+}
+
+GURL GetNewWebstoreItemRecommendationsUrl(
+    const extensions::ExtensionId& extension_id) {
+  return GURL(base::StringPrintf("%sdetail/%s/related-recommendations",
+                                 GetNewWebstoreLaunchURL().spec().c_str(),
+                                 extension_id.c_str()));
 }
 
 bool IsWebstoreDomain(const GURL& url) {
@@ -130,7 +156,7 @@ bool IsBlocklistUpdateUrl(const GURL& url) {
 
 bool IsSafeBrowsingUrl(const GURL& url) {
   url::Origin origin = url::Origin::Create(url);
-  base::StringPiece path = url.path_piece();
+  std::string_view path = url.path_piece();
   return origin.DomainIs("sb-ssl.google.com") ||
          origin.DomainIs("safebrowsing.googleapis.com") ||
          (origin.DomainIs("safebrowsing.google.com") &&

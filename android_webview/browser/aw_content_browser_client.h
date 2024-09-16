@@ -102,6 +102,7 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
       override;
   base::OnceClosure SelectClientCertificate(
       content::BrowserContext* browser_context,
+      int process_id,
       content::WebContents* web_contents,
       net::SSLCertRequestInfo* cert_request_info,
       net::ClientCertIdentityList client_certs,
@@ -162,15 +163,15 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
       content::BrowserContext* browser_context,
       const base::RepeatingCallback<content::WebContents*()>& wc_getter,
       content::NavigationUIData* navigation_ui_data,
-      int frame_tree_node_id,
+      content::FrameTreeNodeId frame_tree_node_id,
       std::optional<int64_t> navigation_id) override;
   std::vector<std::unique_ptr<blink::URLLoaderThrottle>>
   CreateURLLoaderThrottlesForKeepAlive(
       const network::ResourceRequest& request,
       content::BrowserContext* browser_context,
       const base::RepeatingCallback<content::WebContents*()>& wc_getter,
-      int frame_tree_node_id) override;
-  bool ShouldOverrideUrlLoading(int frame_tree_node_id,
+      content::FrameTreeNodeId frame_tree_node_id) override;
+  bool ShouldOverrideUrlLoading(content::FrameTreeNodeId frame_tree_node_id,
                                 bool browser_initiated,
                                 const GURL& gurl,
                                 const std::string& request_method,
@@ -180,7 +181,8 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
                                 bool is_prerendering,
                                 ui::PageTransition transition,
                                 bool* ignore_navigation) override;
-  bool CreateThreadPool(std::string_view name) override;
+  bool ShouldAllowSameSiteRenderFrameHostChange(
+      const content::RenderFrameHost& rfh) override;
   std::unique_ptr<content::LoginDelegate> CreateLoginDelegate(
       const net::AuthChallengeInfo& auth_info,
       content::WebContents* web_contents,
@@ -194,7 +196,7 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
   bool HandleExternalProtocol(
       const GURL& url,
       content::WebContents::Getter web_contents_getter,
-      int frame_tree_node_id,
+      content::FrameTreeNodeId frame_tree_node_id,
       content::NavigationUIData* navigation_data,
       bool is_primary_main_frame,
       bool is_in_fenced_frame_tree,
@@ -259,6 +261,9 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
       override;
   void LogWebFeatureForCurrentPage(content::RenderFrameHost* render_frame_host,
                                    blink::mojom::WebFeature feature) override;
+  void LogWebDXFeatureForCurrentPage(
+      content::RenderFrameHost* render_frame_host,
+      blink::mojom::WebDXFeature feature) override;
   PrivateNetworkRequestPolicyOverride ShouldOverridePrivateNetworkRequestPolicy(
       content::BrowserContext* browser_context,
       const url::Origin& origin) override;
@@ -290,12 +295,14 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
   network::mojom::IpProtectionProxyBypassPolicy
   GetIpProtectionProxyBypassPolicy() override;
   bool WillProvidePublicFirstPartySets() override;
+  bool IsFullCookieAccessAllowed(content::BrowserContext* browser_context,
+                                 content::WebContents* web_contents,
+                                 const GURL& url,
+                                 const blink::StorageKey& storage_key) override;
 
   AwFeatureListCreator* aw_feature_list_creator() {
     return aw_feature_list_creator_;
   }
-
-  static void DisableCreatingThreadPool();
 
  private:
   scoped_refptr<safe_browsing::UrlCheckerDelegate>

@@ -20,7 +20,7 @@ namespace {
 
 // Generates a 16 byte CTR counter block. The CTR counter block format is a
 // CTR IV appended with a CTR block counter. |iv| is an 8 byte CTR IV.
-// |iv_size| is the size of |iv| in btyes. Returns a string of
+// |iv_size| is the size of |iv| in bytes. Returns a string of
 // kDecryptionKeySize bytes.
 std::string GenerateWebMCounterBlock(base::span<const uint8_t> iv) {
   std::string counter_block(iv.begin(), iv.end());
@@ -54,7 +54,7 @@ bool ExtractSubsamples(base::span<const uint8_t> buf,
     const uint32_t prev_partition_offset = partition_offset;
     if (i < num_partitions) {
       // For each partition, the offset is read from the partition offset data.
-      partition_offset = base::numerics::U32FromBigEndian(
+      partition_offset = base::U32FromBigEndian(
           buf.subspan(kWebMEncryptedFramePartitionOffsetSize * i)
               .first<kWebMEncryptedFramePartitionOffsetSize>());
     } else {
@@ -102,11 +102,11 @@ bool WebMCreateDecryptConfig(const uint8_t* data_ptr,
                              int* data_offset) {
   // TODO(crbug.com/40284755):: The function should receive a span, not a
   // pointer/length pair.
-  auto data = UNSAFE_BUFFERS(
-      base::span(data_ptr, base::checked_cast<size_t>(data_size)));
+  auto data =
+      UNSAFE_TODO(base::span(data_ptr, base::checked_cast<size_t>(data_size)));
   // TODO(crbug.com/40284755):: The function should receive a span, not a
   // pointer/length pair.
-  auto key_id = UNSAFE_BUFFERS(
+  auto key_id = UNSAFE_TODO(
       base::span(key_id_ptr, base::checked_cast<size_t>(key_id_size)));
   auto reader = base::SpanReader(data);
 

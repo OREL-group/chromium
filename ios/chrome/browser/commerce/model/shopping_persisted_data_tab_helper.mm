@@ -14,7 +14,7 @@
 #import "ios/chrome/browser/optimization_guide/model/optimization_guide_service.h"
 #import "ios/chrome/browser/optimization_guide/model/optimization_guide_service_factory.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/web/public/navigation/navigation_context.h"
 #import "ios/web/public/navigation/navigation_item.h"
 #import "ios/web/public/navigation/navigation_manager.h"
@@ -46,7 +46,7 @@ const char* GetLogIdString(PriceDropLogId& log_id) {
     case NAVIGATION_COMPLETE:
       return kFinishNavigationMetricsString;
   }
-  NOTREACHED() << "Unknown PriceDropLogId " << log_id;
+  NOTREACHED_IN_MIGRATION() << "Unknown PriceDropLogId " << log_id;
   return "";
 }
 
@@ -88,7 +88,7 @@ ShoppingPersistedDataTabHelper::GetPriceDrop() {
       IsPriceDropStale(price_drop_->timestamp)) {
     ResetPriceDrop();
     OptimizationGuideService* optimization_guide_service =
-        OptimizationGuideServiceFactory::GetForBrowserState(
+        OptimizationGuideServiceFactory::GetForProfile(
             ChromeBrowserState::FromBrowserState(
                 web_state_->GetBrowserState()));
     if (!optimization_guide_service) {
@@ -131,7 +131,7 @@ ShoppingPersistedDataTabHelper::ShoppingPersistedDataTabHelper(
   web_state_->AddObserver(this);
 
   OptimizationGuideService* optimization_guide_service =
-      OptimizationGuideServiceFactory::GetForBrowserState(
+      OptimizationGuideServiceFactory::GetForProfile(
           ChromeBrowserState::FromBrowserState(web_state_->GetBrowserState()));
 
   if (!optimization_guide_service) {
@@ -184,7 +184,7 @@ void ShoppingPersistedDataTabHelper::DidFinishNavigation(
 
   ResetPriceDrop();
   OptimizationGuideService* optimization_guide_service =
-      OptimizationGuideServiceFactory::GetForBrowserState(
+      OptimizationGuideServiceFactory::GetForProfile(
           ChromeBrowserState::FromBrowserState(web_state->GetBrowserState()));
   if (!optimization_guide_service) {
     return;
@@ -236,7 +236,7 @@ void ShoppingPersistedDataTabHelper::ParseProto(
   if (!price_metadata) {
     return;
   }
-  // TODO(crbug.com/1270473) Change PriceDrop to PriceData.
+  // TODO(crbug.com/40205382) Change PriceDrop to PriceData.
   price_drop_ = std::make_unique<PriceDrop>();
   if (price_metadata->has_buyable_product() &&
       price_metadata->buyable_product().has_offer_id()) {
@@ -261,7 +261,7 @@ void ShoppingPersistedDataTabHelper::ParseProto(
     return;
   }
 
-  // TODO(crbug.com/1254900) Filter out non-qualifying price drops (< 10% or
+  // TODO(crbug.com/40794608) Filter out non-qualifying price drops (< 10% or
   // < 2 units).
   payments::CurrencyFormatter* currencyFormatter =
       GetCurrencyFormatter(product_update.old_price().currency_code(),

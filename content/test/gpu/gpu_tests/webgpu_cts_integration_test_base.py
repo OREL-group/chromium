@@ -6,7 +6,9 @@ import collections
 import enum
 import fnmatch
 import json
+import logging
 import os
+import re
 import time
 from typing import Dict, List, Optional
 
@@ -17,6 +19,7 @@ from gpu_tests import common_typing as ct
 from gpu_tests import gpu_integration_test
 from gpu_tests.util import host_information
 from gpu_tests.util import websocket_server as wss
+from gpu_tests.util import websocket_utils as wsu
 from typ import expectations_parser
 
 import gpu_path_util
@@ -63,6 +66,7 @@ MESSAGE_TYPE_TEST_STATUS = 'TEST_STATUS'
 MESSAGE_TYPE_TEST_LOG = 'TEST_LOG'
 MESSAGE_TYPE_TEST_FINISHED = 'TEST_FINISHED'
 
+TEST_NAME_REGEX = re.compile(r'([^:]+:[^:]+:[^:]+:).*')
 
 # This can be switched to a StrEnum once Python 3.11+ is used.
 class WorkerType(enum.Enum):
@@ -91,8 +95,13 @@ class WebGpuCtsIntegrationTestBase(gpu_integration_test.GpuIntegrationTest):
   # additional overhead like that can add up quickly.
   page_loaded = False
 
+  # The first attempt to handle the websocket connection flakily takes
+  # significantly longer, potentially due to resource contention from all
+  # parallel browsers starting at the same time. See crbug.com/344009517 for
+  # more information.
+  attempted_websocket_connection = False
+
   _test_timeout = DEFAULT_TEST_TIMEOUT
-  _is_asan = False
   _enable_dawn_backend_validation = False
   _use_webgpu_adapter: Optional[str] = None  # use the default
   _original_environ: Optional[collections.abc.Mapping] = None
@@ -204,6 +213,10 @@ class WebGpuCtsIntegrationTestBase(gpu_integration_test.GpuIntegrationTest):
       else:
         enable_dawn_features.append('use_dxc')
 
+    # TODO(crbug.com/364675466): Remove this when Tint IR is launched on macOS.
+    if host_information.IsMac():
+      enable_dawn_features.append('use_tint_ir')
+
     if enable_dawn_features:
       browser_args.append('--enable-dawn-features=%s' %
                           ','.join(enable_dawn_features))
@@ -273,7 +286,8 @@ class WebGpuCtsIntegrationTestBase(gpu_integration_test.GpuIntegrationTest):
         cls._original_environ = os.environ.copy()
       os.environ['MTL_DEBUG_LAYER'] = '1'
       os.environ['MTL_DEBUG_LAYER_VALIDATE_LOAD_ACTIONS'] = '1'
-      os.environ['MTL_DEBUG_LAYER_VALIDATE_STORE_ACTIONS'] = '1'
+      # TODO(crbug.com/40275874)  Re-enable when Apple fixes the validation
+      # os.environ['MTL_DEBUG_LAYER_VALIDATE_STORE_ACTIONS'] = '1'
       os.environ['MTL_DEBUG_LAYER_VALIDATE_UNRETAINED_RESOURCES'] = '4'
 
   @classmethod
@@ -381,12 +395,20 @@ class WebGpuCtsIntegrationTestBase(gpu_integration_test.GpuIntegrationTest):
       result = self.HandleMessageLoop(first_load)
 
       log_str = ''.join(result.log_pieces)
-      status = result.status
-      if status == 'skip':
-        self.skipTest('WebGPU CTS JavaScript reported test skip with logs ' +
-                      log_str)
-      elif status == 'fail':
-        self.fail(self._query + ' failed\n' + log_str)
+
+      if result.status in ['skip', 'fail']:
+        log_summary, *log_rest = log_str.split('\n', maxsplit=1)
+        if len(log_rest):
+          log_details = log_rest[0]
+          logging.log(logging.ERROR, log_details)
+
+        if result.status == 'skip':
+          self.skipTest('WebGPU CTS JavaScript reported test skip\n' +
+                        log_summary)
+        elif result.status == 'fail':
+          self.fail(
+              TEST_NAME_REGEX.match(self._query).group(1) + ' failed\n' +
+              log_summary)
     except wss.ClientClosedConnectionError as e:
       raise RuntimeError(
           'Detected closed websocket - likely caused by renderer crash') from e
@@ -572,7 +594,12 @@ class WebGpuCtsIntegrationTestBase(gpu_integration_test.GpuIntegrationTest):
         'window.setupWebsocket != undefined')
     self.tab.action_runner.ExecuteJavaScript('window.setupWebsocket("%s")' %
                                              cls.websocket_server.server_port)
-    cls.websocket_server.WaitForConnection()
+    timeout_multiplier = 1
+    if not cls.attempted_websocket_connection:
+      cls.attempted_websocket_connection = True
+      timeout_multiplier = 2
+    cls.websocket_server.WaitForConnection(
+        timeout_multiplier * wsu.GetScaledConnectionTimeout(self.child.jobs))
 
     # Wait for the page to set up the websocket.
     response = cls.websocket_server.Receive(MESSAGE_TIMEOUT_CONNECTION_ACK)
@@ -599,10 +626,6 @@ class WebGpuCtsIntegrationTestBase(gpu_integration_test.GpuIntegrationTest):
       tags.append('webgpu-adapter-' + cls._use_webgpu_adapter)
     else:
       tags.append('webgpu-adapter-default')
-    if cls.UseWebGpuCompatMode():
-      tags.append('webgpu-compat')
-    else:
-      tags.append('webgpu-not-compat')
 
     if host_information.IsWindows():
       if cls._use_fxc:
@@ -614,10 +637,6 @@ class WebGpuCtsIntegrationTestBase(gpu_integration_test.GpuIntegrationTest):
 
     # No need to tag _use_webgpu_power_preference here,
     # since Telemetry already reports the GPU vendorID
-
-    system_info = browser.GetSystemInfo()
-    if system_info:
-      cls._is_asan = system_info.gpu.aux_attributes.get('is_asan', False)
 
     return tags
 

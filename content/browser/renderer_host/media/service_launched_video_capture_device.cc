@@ -85,7 +85,7 @@ void ServiceLaunchedVideoCaptureDevice::ApplySubCaptureTarget(
     base::OnceCallback<void(media::mojom::ApplySubCaptureTargetResult)>
         callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  // TODO(crbug.com/1264849): Implement if necessary.
+  // TODO(crbug.com/40203554): Implement if necessary.
   std::move(callback).Run(
       media::mojom::ApplySubCaptureTargetResult::kNotImplemented);
 }
@@ -102,7 +102,7 @@ void ServiceLaunchedVideoCaptureDevice::SetDesktopCaptureWindowIdAsync(
   // This method should only be called for desktop capture devices.
   // The video_capture Mojo service does not support desktop capture devices
   // (yet) and should not be used for it.
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 void ServiceLaunchedVideoCaptureDevice::OnUtilizationReport(

@@ -34,7 +34,6 @@
 #include "base/notreached.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/attribute.h"
-#include "third_party/blink/renderer/core/html/parser/atomic_string_cache.h"
 #include "third_party/blink/renderer/core/html/parser/html_token.h"
 #include "third_party/blink/renderer/core/html_element_attribute_name_lookup_trie.h"
 #include "third_party/blink/renderer/core/html_element_lookup_trie.h"
@@ -222,7 +221,7 @@ class CORE_EXPORT AtomicHTMLToken {
       : type_(token.GetType()), name_(HTMLTokenNameFromToken(token)) {
     switch (type_) {
       case HTMLToken::kUninitialized:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
         break;
       case HTMLToken::DOCTYPE:
         doctype_data_ = token.ReleaseDoctypeData();
@@ -385,9 +384,13 @@ void AtomicHTMLToken::InitializeAttributes(
       }
     }
 
-    AtomicString value =
-        HTMLAtomicStringCache::MakeAttributeValue(attribute.ValueBuffer());
-    DCHECK(!value.IsNull()) << "Attribute value should never be null";
+    // The string pointer in |value| is null for attributes with no values, but
+    // the null atom is used to represent absence of attributes; attributes with
+    // no values have the value set to an empty atom instead.
+    AtomicString value(attribute.GetValue());
+    if (value.IsNull()) {
+      value = g_empty_atom;
+    }
     attributes_.UncheckedAppend(Attribute(std::move(name), std::move(value)));
   }
 }

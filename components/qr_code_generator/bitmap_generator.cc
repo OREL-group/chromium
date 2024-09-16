@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/qr_code_generator/bitmap_generator.h"
 
 #include "base/metrics/histogram_macros.h"
@@ -94,6 +99,18 @@ void DrawPasskeyIcon(SkCanvas* canvas,
   constexpr int kBorderPx = 0;  // Unlike the dino, the icon is already padded.
   auto icon = gfx::CreateVectorIcon(gfx::IconDescription(
       vector_icons::kPasskeyIcon, kSizePx, paint_foreground.getColor()));
+  PaintCenterImage(canvas, canvas_bounds, kSizePx, kSizePx, kBorderPx,
+                   paint_background, icon.GetRepresentation(1.0f).GetBitmap());
+}
+
+void DrawProductIcon(SkCanvas* canvas,
+                     const SkRect& canvas_bounds,
+                     const SkPaint& paint_foreground,
+                     const SkPaint& paint_background) {
+  constexpr int kSizePx = 100;
+  constexpr int kBorderPx = 0;  // Unlike the dino, the icon is already padded.
+  auto icon = gfx::CreateVectorIcon(gfx::IconDescription(
+      vector_icons::kProductRefreshIcon, kSizePx, paint_foreground.getColor()));
   PaintCenterImage(canvas, canvas_bounds, kSizePx, kSizePx, kBorderPx,
                    paint_background, icon.GetRepresentation(1.0f).GetBitmap());
 }
@@ -211,7 +228,7 @@ int CalculateMargin(QuietZone quiet_zone) {
     case QuietZone::kWillBeAddedByClient:
       return 0;
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 SkBitmap RenderBitmap(base::span<const uint8_t> data,
@@ -281,6 +298,9 @@ SkBitmap RenderBitmap(base::span<const uint8_t> data,
     case CenterImage::kPasskey:
       DrawPasskeyIcon(&canvas, bitmap_bounds, paint_black, paint_white);
       break;
+    case CenterImage::kProductLogo:
+      DrawProductIcon(&canvas, bitmap_bounds, paint_black, paint_white);
+      break;
 #endif
   }
 
@@ -290,6 +310,23 @@ SkBitmap RenderBitmap(base::span<const uint8_t> data,
 }  // namespace
 
 const int kQuietZoneSizePixels = kModuleSizePixels * 4;
+
+base::expected<gfx::ImageSkia, Error> GenerateImage(
+    base::span<const uint8_t> data,
+    ModuleStyle module_style,
+    LocatorStyle locator_style,
+    CenterImage center_image,
+    QuietZone quiet_zone) {
+  // TODO(crbug.com/338570710) CreateImage() should generate a higher resolution
+  // QR code for displays with scale-factor > 1. Not generating higher
+  // resolution QR codes is OK because:
+  // - QR codes are shown to the user rarely.
+  // - Many callers display the QR code at a downsampled size.
+  // - Upscaling QR codes has few upscaling artifacts.
+  return GenerateBitmap(data, module_style, locator_style, center_image,
+                        quiet_zone)
+      .transform(&gfx::ImageSkia::CreateFrom1xBitmap);
+}
 
 base::expected<SkBitmap, Error> GenerateBitmap(base::span<const uint8_t> data,
                                                ModuleStyle module_style,

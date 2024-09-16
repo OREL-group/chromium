@@ -59,7 +59,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_window_manager_helper.h"
-#include "chrome/browser/ui/ash/session_controller_client_impl.h"
+#include "chrome/browser/ui/ash/session/session_controller_client_impl.h"
 #include "chrome/browser/web_applications/app_service/publisher_helper.h"
 #include "chrome/browser/web_applications/web_app_helpers.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
@@ -173,6 +173,8 @@ ash::ShelfLaunchSource ConvertLaunchSource(apps::LaunchSource launch_source) {
     case apps::LaunchSource::kFromInstaller:
     case apps::LaunchSource::kFromFirstRun:
     case apps::LaunchSource::kFromWelcomeTour:
+    case apps::LaunchSource::kFromFocusMode:
+    case apps::LaunchSource::kFromSparky:
       return ash::LAUNCH_FROM_UNKNOWN;
   }
 }

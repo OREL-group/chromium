@@ -53,7 +53,7 @@ NSString* const kExternalActionOpenNTP = @"OpenNTP";
 // here due to a Smart App Banner presentation on a Google.com page.
 NSString* const kSmartAppBannerKey = @"safarisab";
 
-// TODO(crbug.com/1138702): When swift is supported move WidgetKit constants to
+// TODO(crbug.com/40725595): When swift is supported move WidgetKit constants to
 // a file where they can be shared with the extension. Currently these are also
 // declared as URLs in ios/c/widget_kit_extension/widget_constants.swift.
 //
@@ -125,7 +125,7 @@ enum MobileSessionStartAction {
   START_EXTERNAL_ACTION = 10,
   MOBILE_SESSION_START_ACTION_COUNT
 };
-// LINT.ThenChange(//tools/metrics/histograms/metadata/ios/enums.xml)
+// LINT.ThenChange(/tools/metrics/histograms/metadata/ios/enums.xml)
 
 // Values of the UMA iOS.SearchExtension.Action histogram.
 // LINT.IfChange
@@ -141,7 +141,7 @@ enum SearchExtensionAction {
   ACTION_LENS,
   SEARCH_EXTENSION_ACTION_COUNT,
 };
-// LINT.ThenChange(//tools/metrics/histograms/metadata/ios/enums.xml)
+// LINT.ThenChange(/tools/metrics/histograms/metadata/ios/enums.xml)
 
 // Values of the UMA IOS.WidgetKit.Action histogram.
 // These values are persisted to logs. Entries should not be renumbered and
@@ -164,7 +164,7 @@ enum class WidgetKitExtensionAction {
   ACTION_SEARCH_PASSWORDS_WIDGET_SEARCH_PASSWORDS = 13,
   kMaxValue = ACTION_SEARCH_PASSWORDS_WIDGET_SEARCH_PASSWORDS,
 };
-// LINT.ThenChange(//tools/metrics/histograms/metadata/ios/enums.xml)
+// LINT.ThenChange(/tools/metrics/histograms/metadata/ios/enums.xml)
 
 // Values of the UMA IOS.ExternalAction histogram.
 // These values are persisted to logs. Entries should not be renumbered and
@@ -182,7 +182,7 @@ enum class IOSExternalAction {
   ACTION_SKIPPED_DEFAULT_BROWSER_SETTINGS_FOR_NTP = 3,
   kMaxValue = ACTION_SKIPPED_DEFAULT_BROWSER_SETTINGS_FOR_NTP,
 };
-// LINT.ThenChange(//tools/metrics/histograms/metadata/ios/enums.xml)
+// LINT.ThenChange(/tools/metrics/histograms/metadata/ios/enums.xml)
 
 // Histogram helper to log the UMA IOS.WidgetKit.Action histogram.
 void LogWidgetKitAction(WidgetKitExtensionAction action) {
@@ -324,7 +324,7 @@ TabOpeningPostOpeningAction XCallbackPoaToPostOpeningAction(
   } else if (IsXCallbackURL(parsedURL)) {
     base::UmaHistogramEnumeration(kAppLaunchSource,
                                   AppLaunchSource::X_CALLBACK);
-    // TODO(crbug.com/228098): Temporary fix.
+    // TODO(crbug.com/41004788): Temporary fix.
     NSString* action = [completeURL path];
     // Currently only "open" and "extension-command" are supported.
     // Other actions are being considered (see b/6914153).
@@ -375,8 +375,7 @@ TabOpeningPostOpeningAction XCallbackPoaToPostOpeningAction(
     // so this assignment should not DCHECK, no matter what the URL is.
     startupParameters.postOpeningAction = postOpeningAction;
     return startupParameters;
-  } else if (IsExternalActionSchemeHandlingEnabled() &&
-             [self isChromeExternalActionURL:completeURL]) {
+  } else if ([self isChromeExternalActionURL:completeURL]) {
     base::RecordAction(
         base::UserMetricsAction("MobileExternalActionURLOpened"));
     UMA_HISTOGRAM_ENUMERATION(kUMAMobileSessionStartActionHistogram,
@@ -798,7 +797,7 @@ TabOpeningPostOpeningAction XCallbackPoaToPostOpeningAction(
         break;
 
       default:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
         break;
     }
   }
@@ -820,7 +819,7 @@ TabOpeningPostOpeningAction XCallbackPoaToPostOpeningAction(
         break;
 
       default:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
         break;
     }
   }
@@ -833,7 +832,7 @@ TabOpeningPostOpeningAction XCallbackPoaToPostOpeningAction(
         LogWidgetKitAction(WidgetKitExtensionAction::ACTION_SHORTCUTS_OPEN);
         break;
       default:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
         break;
     }
   }

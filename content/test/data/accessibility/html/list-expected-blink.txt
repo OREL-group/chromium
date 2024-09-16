@@ -4,30 +4,30 @@ rootWebArea
 ++++++list
 ++++++++listItem hierarchicalLevel=1
 ++++++++++listMarker name='%E2%80%A2 '
-++++++++++++staticText ignored name='%E2%80%A2 '
+++++++++++++staticText ignored
 ++++++++++staticText name='tic'
-++++++++++++inlineTextBox
+++++++++++++inlineTextBox name='tic'
 ++++++++listItem hierarchicalLevel=1
 ++++++++++listMarker name='%E2%80%A2 '
-++++++++++++staticText ignored name='%E2%80%A2 '
+++++++++++++staticText ignored
 ++++++++++staticText name='tac'
-++++++++++++inlineTextBox
+++++++++++++inlineTextBox name='tac'
 ++++++++listItem hierarchicalLevel=1
 ++++++++++listMarker name='%E2%80%A2 '
-++++++++++++staticText ignored name='%E2%80%A2 '
+++++++++++++staticText ignored
 ++++++++++staticText name='toe'
-++++++++++++inlineTextBox
+++++++++++++inlineTextBox name='toe'
 ++++++list
 ++++++++listItem hierarchicalLevel=1
 ++++++++++staticText name='tic'
-++++++++++++inlineTextBox
+++++++++++++inlineTextBox name='tic'
 ++++++++staticText name=' '
-++++++++++inlineTextBox
+++++++++++inlineTextBox name=' '
 ++++++++listItem hierarchicalLevel=1
 ++++++++++staticText name='tac'
-++++++++++++inlineTextBox
+++++++++++++inlineTextBox name='tac'
 ++++++++staticText name=' '
-++++++++++inlineTextBox
+++++++++++inlineTextBox name=' '
 ++++++++listItem hierarchicalLevel=1
 ++++++++++staticText name='toe'
-++++++++++++inlineTextBox
+++++++++++++inlineTextBox name='toe'

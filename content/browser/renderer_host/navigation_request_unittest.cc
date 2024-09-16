@@ -533,7 +533,7 @@ TEST_F(NavigationRequestTest, SharedStorageWritable) {
       blink::mojom::PermissionsPolicyFeature::kSharedStorage);
   FencedFrameProperties new_props = FencedFrameProperties(new_config);
   fenced_frame_node->set_fenced_frame_properties(new_props);
-  fenced_frame_root->ResetPermissionsPolicy();
+  fenced_frame_root->ResetPermissionsPolicy({});
 
   // Append a child frame to the fenced frame root and set its
   // `shared_storage_writable` attribute to true.
@@ -780,7 +780,7 @@ TEST_F(NavigationRequestTest, RuntimeFeatureStateStorageKey) {
 
     if (disable_sp) {
       request->GetMutableRuntimeFeatureStateContext()
-          .SetDisableThirdPartyStoragePartitioningEnabled(true);
+          .SetDisableThirdPartyStoragePartitioning2Enabled(true);
     }
 
     navigation->ReadyToCommit();
@@ -965,9 +965,9 @@ class CSPEmbeddedEnforcementUnitTest : public NavigationRequestTest {
     navigation->Start();
     NavigationRequest* request =
         NavigationRequest::From(navigation->GetNavigationHandle());
-    std::string sec_required_csp;
-    request->GetRequestHeaders().GetHeader("sec-required-csp",
-                                           &sec_required_csp);
+    std::string sec_required_csp = request->GetRequestHeaders()
+                                       .GetHeader("sec-required-csp")
+                                       .value_or(std::string());
 
     // Complete the navigation so that the required csp is stored in the
     // RenderFrameHost, so that when we will add children to this document they
@@ -1148,7 +1148,8 @@ class OriginTrialsControllerDelegateMock
       const url::Origin& origin,
       const url::Origin& partition_origin,
       const base::span<const std::string> header_tokens,
-      const base::Time current_time) override {
+      const base::Time current_time,
+      std::optional<ukm::SourceId> source_id) override {
     persisted_tokens_[origin] =
         std::vector<std::string>(header_tokens.begin(), header_tokens.end());
   }
@@ -1157,8 +1158,9 @@ class OriginTrialsControllerDelegateMock
       const url::Origin& partition_origin,
       const base::span<const url::Origin> script_origins,
       const base::span<const std::string> header_tokens,
-      const base::Time current_time) override {
-    NOTREACHED() << "not used by test";
+      const base::Time current_time,
+      std::optional<ukm::SourceId> source_id) override {
+    NOTREACHED_IN_MIGRATION() << "not used by test";
   }
   bool IsFeaturePersistedForOrigin(const url::Origin& origin,
                                    const url::Origin& partition_origin,
@@ -1330,9 +1332,9 @@ class NavigationRequestResponseBodyTest : public NavigationRequestTest {
 TEST_F(NavigationRequestResponseBodyTest, Received) {
   auto navigation = CreateNavigationSimulator();
   std::string response = "response-body-content";
-  size_t write_size = response.size();
-  ASSERT_EQ(MOJO_RESULT_OK, mojo::CreateDataPipe(write_size, producer_handle_,
-                                                 consumer_handle_));
+  ASSERT_EQ(MOJO_RESULT_OK,
+            mojo::CreateDataPipe(response.size(), producer_handle_,
+                                 consumer_handle_));
   navigation->SetResponseBody(std::move(consumer_handle_));
 
   navigation->ReadyToCommit();
@@ -1342,10 +1344,12 @@ TEST_F(NavigationRequestResponseBodyTest, Received) {
   EXPECT_FALSE(was_callback_called());
   EXPECT_EQ(std::string(), response_body());
 
+  size_t actually_written_bytes = 0;
   ASSERT_EQ(MOJO_RESULT_OK,
-            producer_handle_->WriteData(response.c_str(), &write_size,
-                                        MOJO_WRITE_DATA_FLAG_NONE));
-  EXPECT_EQ(write_size, response.size());
+            producer_handle_->WriteData(base::as_byte_span(response),
+                                        MOJO_WRITE_DATA_FLAG_NONE,
+                                        actually_written_bytes));
+  EXPECT_EQ(actually_written_bytes, response.size());
 
   navigation->Wait();
   EXPECT_EQ(
@@ -1372,11 +1376,12 @@ TEST_F(NavigationRequestResponseBodyTest, PartiallyReceived) {
   EXPECT_EQ(std::string(), response_body());
 
   std::string response = "response-body-content";
-  size_t write_size = response.size();
+  size_t actually_written_bytes = 0;
   ASSERT_EQ(MOJO_RESULT_OK,
-            producer_handle_->WriteData(response.c_str(), &write_size,
-                                        MOJO_WRITE_DATA_FLAG_NONE));
-  EXPECT_EQ(write_size, pipe_size);
+            producer_handle_->WriteData(base::as_byte_span(response),
+                                        MOJO_WRITE_DATA_FLAG_NONE,
+                                        actually_written_bytes));
+  EXPECT_EQ(actually_written_bytes, pipe_size);
 
   navigation->Wait();
   EXPECT_EQ(

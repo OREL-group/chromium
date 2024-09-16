@@ -101,8 +101,8 @@ bool TestNativeDisplayDelegate::Configure(
   else if (max_configurable_pixels_ < 0)
     return false;
 
-  if (display_config_params.mode.has_value()) {
-    return display_config_params.mode.value()->size().GetArea() <=
+  if (display_config_params.mode) {
+    return display_config_params.mode->size().GetArea() <=
            max_configurable_pixels_;
   }
 
@@ -120,7 +120,7 @@ bool TestNativeDisplayDelegate::IsConfigurationWithinSystemBandwidth(
       display_id_to_used_system_bw_;
   for (const DisplayConfigurationParams& config : config_requests) {
     requested_ids_with_bandwidth[config.id] =
-        config.mode.has_value() ? config.mode.value()->size().GetArea() : 0;
+        config.mode ? config.mode->size().GetArea() : 0;
   }
 
   int requested_bandwidth = 0;
@@ -137,7 +137,7 @@ void TestNativeDisplayDelegate::SaveCurrentConfigSystemBandwidth(
   // current system usage.
   for (const DisplayConfigurationParams& config : config_requests) {
     display_id_to_used_system_bw_[config.id] =
-        config.mode.has_value() ? config.mode.value()->size().GetArea() : 0;
+        config.mode ? config.mode->size().GetArea() : 0;
   }
 }
 
@@ -161,9 +161,10 @@ void TestNativeDisplayDelegate::Configure(
 
   if (run_async_) {
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-        FROM_HERE, base::BindOnce(std::move(callback), config_success));
+        FROM_HERE,
+        base::BindOnce(std::move(callback), config_requests, config_success));
   } else {
-    std::move(callback).Run(config_success);
+    std::move(callback).Run(config_requests, config_success);
   }
 }
 
@@ -220,7 +221,7 @@ void TestNativeDisplayDelegate::DoSetHDCPState(
 
   switch (state) {
     case HDCP_STATE_ENABLED:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
 
     case HDCP_STATE_DESIRED:
@@ -259,21 +260,6 @@ void TestNativeDisplayDelegate::SetGammaAdjustment(
   log_->AppendAction(SetGammaAdjustmentAction(display_id, gamma));
 }
 
-bool TestNativeDisplayDelegate::SetColorMatrix(
-    int64_t display_id,
-    const std::vector<float>& color_matrix) {
-  log_->AppendAction(SetColorMatrixAction(display_id, color_matrix));
-  return true;
-}
-
-bool TestNativeDisplayDelegate::SetGammaCorrection(
-    int64_t display_id,
-    const display::GammaCurve& degamma,
-    const display::GammaCurve& gamma) {
-  log_->AppendAction(SetGammaCorrectionAction(display_id, degamma, gamma));
-  return true;
-}
-
 void TestNativeDisplayDelegate::SetPrivacyScreen(
     int64_t display_id,
     bool enabled,
@@ -285,7 +271,36 @@ void TestNativeDisplayDelegate::SetPrivacyScreen(
 void TestNativeDisplayDelegate::GetSeamlessRefreshRates(
     int64_t display_id,
     GetSeamlessRefreshRatesCallback callback) const {
-  std::move(callback).Run(std::nullopt);
+  const DisplaySnapshot* snapshot = nullptr;
+  for (const auto& output : outputs_) {
+    if (output->display_id() == display_id) {
+      snapshot = output.get();
+      break;
+    }
+  }
+  // Return nullopt if there is no snapshot with this display_id.
+  std::optional<std::vector<float>> result;
+  if (snapshot) {
+    // Return empty vector if there is no current mode.
+    std::vector<float> refresh_rates;
+    if (snapshot->current_mode()) {
+      for (auto& mode : snapshot->modes()) {
+        // If a mode has the same size as the currently configured mode, then
+        // include that mode's refresh rate.
+        if (mode->size() == snapshot->current_mode()->size()) {
+          refresh_rates.push_back(mode->refresh_rate());
+        }
+      }
+    }
+    result.emplace(refresh_rates);
+  }
+
+  if (run_async_) {
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, base::BindOnce(std::move(callback), result));
+  } else {
+    std::move(callback).Run(result);
+  }
 }
 
 void TestNativeDisplayDelegate::AddObserver(NativeDisplayObserver* observer) {

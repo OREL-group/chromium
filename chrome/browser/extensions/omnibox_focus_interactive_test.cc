@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <string_view>
+
 #include "base/ranges/algorithm.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
@@ -33,7 +35,7 @@ class OmniboxFocusInteractiveTest : public ExtensionBrowserTest {
 
  protected:
   void WriteExtensionFile(const base::FilePath::StringType& filename,
-                          base::StringPiece contents) {
+                          std::string_view contents) {
     test_dir_.WriteFile(filename, contents);
   }
 
@@ -49,8 +51,9 @@ class OmniboxFocusInteractiveTest : public ExtensionBrowserTest {
         } )";
     test_dir_.WriteManifest(kManifest);
     const Extension* extension = LoadExtension(test_dir_.UnpackedPath());
-    if (!extension)
+    if (!extension) {
       return nullptr;
+    }
 
     // Prevent a focus-stealing focus bubble that warns the user that "An
     // extension has changed what page is shown when you open a new tab."

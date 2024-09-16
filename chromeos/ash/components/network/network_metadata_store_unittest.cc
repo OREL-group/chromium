@@ -306,7 +306,7 @@ class NetworkMetadataStoreTest : public ::testing::Test {
 
   base::test::SingleThreadTaskEnvironment task_environment_{
       base::test::TaskEnvironment::TimeSource::MOCK_TIME};
-  NetworkStateTestHelper helper_{false /* use_default_devices_and_services */};
+  NetworkStateTestHelper helper_{/*use_default_devices_and_services=*/false};
   std::unique_ptr<NetworkConfigurationHandler> network_configuration_handler_;
   std::unique_ptr<NetworkConnectionHandler> network_connection_handler_;
   raw_ptr<NetworkStateHandler> network_state_handler_;
@@ -402,7 +402,7 @@ TEST_F(NetworkMetadataStoreTest, ConfigurationUpdated) {
   metadata_store()->SetIsConfiguredBySync(kGuid);
   ASSERT_FALSE(metadata_store()->GetLastConnectedTimestamp(kGuid).is_zero());
   ASSERT_TRUE(metadata_store()->GetIsConfiguredBySync(kGuid));
-  ASSERT_EQ(0, metadata_observer()->GetNumberOfUpdates(kGuid));
+  ASSERT_EQ(1, metadata_observer()->GetNumberOfUpdates(kGuid));
 
   auto properties =
       base::Value::Dict()
@@ -416,7 +416,7 @@ TEST_F(NetworkMetadataStoreTest, ConfigurationUpdated) {
 
   ASSERT_TRUE(metadata_store()->GetLastConnectedTimestamp(kGuid).is_zero());
   ASSERT_FALSE(metadata_store()->GetIsConfiguredBySync(kGuid));
-  ASSERT_EQ(1, metadata_observer()->GetNumberOfUpdates(kGuid));
+  ASSERT_EQ(2, metadata_observer()->GetNumberOfUpdates(kGuid));
 }
 
 TEST_F(NetworkMetadataStoreTest, SharedConfigurationUpdatedByOtherUser) {

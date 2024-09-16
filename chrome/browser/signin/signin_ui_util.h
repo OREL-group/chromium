@@ -13,16 +13,20 @@
 #include "build/buildflag.h"
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/signin/reauth_result.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/signin/signin_reauth_view_controller.h"
 #include "components/signin/public/base/signin_buildflags.h"
 #include "components/signin/public/base/signin_metrics.h"
-#include "components/signin/public/identity_manager/identity_manager.h"
 
 struct AccountInfo;
 struct CoreAccountInfo;
 class Profile;
 class ProfileAttributesEntry;
 class ProfileAttributesStorage;
+
+namespace signin {
+class IdentityManager;
+}
 
 // Utility functions to gather status information from the various signed in
 // services and construct messages suitable for showing in UI.
@@ -110,7 +114,7 @@ AccountInfo GetSingleAccountForPromos(
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
 // Returns an existing re-usable Dice signin tab with the given access point.
 content::WebContents* GetSignInTabWithAccessPoint(
-    const Browser& browser,
+    BrowserWindowInterface* browser_window_interface,
     signin_metrics::AccessPoint access_point);
 #endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 

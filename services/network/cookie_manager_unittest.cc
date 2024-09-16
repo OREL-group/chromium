@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "services/network/cookie_manager.h"
 
 #include <algorithm>
@@ -123,7 +128,7 @@ class SynchronousCookieManager {
     return net::cookie_util::StripAccessResults(std::get<0>(future.Take()));
   }
 
-  // TODO(crbug.com/1225444): CookieManager should be able to see which cookies
+  // TODO(crbug.com/40188414): CookieManager should be able to see which cookies
   // are excluded because their partition key is not contained in the
   // key collection.
   net::CookieAccessResultList GetExcludedCookieList(
@@ -209,6 +214,12 @@ class SynchronousCookieManager {
     return future.Get();
   }
 
+  uint32_t DeleteStaleSessionOnlyCookies() {
+    base::test::TestFuture<uint32_t> future;
+    cookie_service_->DeleteStaleSessionOnlyCookies(future.GetCallback());
+    return future.Get();
+  }
+
   void FlushCookieStore() {
     base::RunLoop run_loop;
     cookie_service_->FlushCookieStore(base::BindLambdaForTesting([&]() {
@@ -287,17 +298,17 @@ class CookieManagerTest : public testing::Test {
   ContentSettingPatternSource CreateDefaultSetting(ContentSetting setting) {
     return ContentSettingPatternSource(
         ContentSettingsPattern::Wildcard(), ContentSettingsPattern::Wildcard(),
-        base::Value(setting), std::string(), false);
+        base::Value(setting), content_settings::ProviderType::kNone, false);
   }
 
   ContentSettingPatternSource CreateSetting(ContentSetting setting,
                                             const std::string& url_str) {
     const GURL url(url_str);
     EXPECT_TRUE(url.is_valid());
-    return ContentSettingPatternSource(ContentSettingsPattern::FromURL(url),
-                                       ContentSettingsPattern::Wildcard(),
-                                       base::Value(setting), std::string(),
-                                       false);
+    return ContentSettingPatternSource(
+        ContentSettingsPattern::FromURL(url),
+        ContentSettingsPattern::Wildcard(), base::Value(setting),
+        content_settings::ProviderType::kNone, false);
   }
 
   void SetContentSettings(ContentSettingsForOneType settings) {
@@ -2586,6 +2597,25 @@ class SessionCleanupCookieManagerTest : public CookieManagerTest {
         net::COOKIE_PRIORITY_MEDIUM);
   }
 
+  bool CreateAndTryToClearStaleCookie(base::Time expiration,
+                                      base::Time last_access,
+                                      base::Time last_update) {
+    EXPECT_TRUE(SetCanonicalCookie(
+        *net::CanonicalCookie::CreateUnsafeCookieForTesting(
+            "A", "B", kCookieDomain, "/",
+            /*creation=*/base::Time::Now() - base::Days(100), expiration,
+            last_access, last_update,
+            /*secure=*/true, /*httponly=*/false,
+            net::CookieSameSite::NO_RESTRICTION, net::COOKIE_PRIORITY_MEDIUM,
+            std::nullopt, net::CookieSourceScheme::kSecure),
+        "https", false));
+    EXPECT_EQ(1u, service_wrapper()->GetAllCookies().size());
+    uint32_t cleared = service_wrapper()->DeleteStaleSessionOnlyCookies();
+    uint32_t remaining = service_wrapper()->GetAllCookies().size();
+    EXPECT_EQ(1u, cleared + remaining);
+    return cleared == 1u;
+  }
+
  private:
   const scoped_refptr<base::SequencedTaskRunner> background_task_runner_ =
       base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock()});
@@ -2658,6 +2688,22 @@ TEST_F(SessionCleanupCookieManagerTest, SettingMustMatchDomain) {
   EXPECT_EQ(0u, service_wrapper()->GetAllCookies().size());
 }
 
+TEST_F(SessionCleanupCookieManagerTest, DeleteStaleSessionOnlyCookies) {
+  base::Time now = base::Time::Now();
+  base::Time eight_days_ago = now - base::Days(8);
+  for (base::Time expiration : {base::Time(), now + base::Days(8)}) {
+    for (base::Time last_access : {base::Time(), eight_days_ago, now}) {
+      for (base::Time last_update : {base::Time(), eight_days_ago, now}) {
+        EXPECT_EQ(CreateAndTryToClearStaleCookie(expiration, last_access,
+                                                 last_update),
+                  expiration.is_null() && last_access < now &&
+                      last_update < now &&
+                      !(last_access.is_null() && last_update.is_null()));
+      }
+    }
+  }
+}
+
 TEST_F(SessionCleanupCookieManagerTest, MorePreciseSettingTakesPrecedence) {
   EXPECT_TRUE(SetCanonicalCookie(CreateCookie(), "https", true));
 
@@ -2669,11 +2715,13 @@ TEST_F(SessionCleanupCookieManagerTest, MorePreciseSettingTakesPrecedence) {
       {ContentSettingPatternSource(
            ContentSettingsPattern::FromURLNoWildcard(GURL(kCookieURL)),
            ContentSettingsPattern::Wildcard(),
-           base::Value(CONTENT_SETTING_SESSION_ONLY), std::string(), false),
+           base::Value(CONTENT_SETTING_SESSION_ONLY),
+           content_settings::ProviderType::kNone, false),
        ContentSettingPatternSource(
            ContentSettingsPattern::FromURL(GURL(kCookieURL)),
            ContentSettingsPattern::Wildcard(),
-           base::Value(CONTENT_SETTING_ALLOW), std::string(), false)});
+           base::Value(CONTENT_SETTING_ALLOW),
+           content_settings::ProviderType::kNone, false)});
 
   auto store = CreateCookieStore();
   InitializeCookieService(store, store);

@@ -41,7 +41,7 @@ constexpr base::TimeDelta kAnimationDuration = base::Milliseconds(167);
 // because callbacks that bind to a WeakPtr receiver cannot return a non-void
 // type.
 //
-// TODO(crbug.com/1506856): It would be nice if CallbackLayerAnimationObserver
+// TODO(crbug.com/40947532): It would be nice if CallbackLayerAnimationObserver
 // took a OnceCallback and used that as an implicit signal to self-delete the
 // observer on completion. Until then, this needs to use a RepeatingCallback,
 // even though the callback only runs once.
@@ -199,12 +199,26 @@ void HoldingSpaceTrayChildBubble::Init() {
   // other child bubbles in the event of overflow.
   layer()->SetMasksToBounds(true);
 
-  if (!features::IsHoldingSpaceRefreshEnabled()) {
-    layer()->SetBackgroundBlur(ColorProvider::kBackgroundBlurSigma);
-    layer()->SetBackdropFilterQuality(ColorProvider::kBackgroundBlurQuality);
-    layer()->SetIsFastRoundedCorner(true);
-    layer()->SetRoundedCornerRadius(gfx::RoundedCornersF{kBubbleCornerRadius});
-  }
+  // Background.
+  layer()->SetBackgroundBlur(ColorProvider::kBackgroundBlurSigma);
+  layer()->SetBackdropFilterQuality(ColorProvider::kBackgroundBlurQuality);
+
+  SetBackground(views::CreateThemedSolidBackground(
+      chromeos::features::IsJellyEnabled()
+          ? static_cast<ui::ColorId>(cros_tokens::kCrosSysSystemBaseElevated)
+          : kColorAshShieldAndBase80));
+
+  // Border.
+  const float corner_radius = GetBubbleCornerRadius();
+  SetBorder(std::make_unique<views::HighlightBorder>(
+      corner_radius,
+      chromeos::features::IsJellyrollEnabled()
+          ? views::HighlightBorder::Type::kHighlightBorderOnShadow
+          : views::HighlightBorder::Type::kHighlightBorder1));
+
+  // Corner radius.
+  layer()->SetIsFastRoundedCorner(true);
+  layer()->SetRoundedCornerRadius(gfx::RoundedCornersF{corner_radius});
 
   // Placeholder.
   if (auto placeholder = CreatePlaceholder()) {
@@ -217,22 +231,6 @@ void HoldingSpaceTrayChildBubble::Init() {
     sections_.push_back(AddChildView(std::move(section)));
     sections_.back()->Init();
   }
-
-  // When refresh is enabled, backgrounds and borders are implemented in the
-  // top-level bubble rather than per child bubble.
-  if (features::IsHoldingSpaceRefreshEnabled()) {
-    return;
-  }
-
-  SetBackground(views::CreateThemedSolidBackground(
-      chromeos::features::IsJellyEnabled()
-          ? static_cast<ui::ColorId>(cros_tokens::kCrosSysSystemBaseElevated)
-          : kColorAshShieldAndBase80));
-  SetBorder(std::make_unique<views::HighlightBorder>(
-      kBubbleCornerRadius,
-      chromeos::features::IsJellyrollEnabled()
-          ? views::HighlightBorder::Type::kHighlightBorderOnShadow
-          : views::HighlightBorder::Type::kHighlightBorder1));
 }
 
 void HoldingSpaceTrayChildBubble::Reset() {

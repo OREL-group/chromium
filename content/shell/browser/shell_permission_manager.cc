@@ -62,6 +62,7 @@ bool IsAllowlistedPermissionType(PermissionType permission) {
     case PermissionType::CLIPBOARD_SANITIZED_WRITE:
     case PermissionType::NUM:
     case PermissionType::WAKE_LOCK_SYSTEM:
+    case PermissionType::HAND_TRACKING:
     case PermissionType::VR:
     case PermissionType::AR:
     case PermissionType::CAMERA_PAN_TILT_ZOOM:
@@ -74,10 +75,12 @@ bool IsAllowlistedPermissionType(PermissionType permission) {
     case PermissionType::SPEAKER_SELECTION:
     case PermissionType::KEYBOARD_LOCK:
     case PermissionType::POINTER_LOCK:
+    case PermissionType::AUTOMATIC_FULLSCREEN:
+    case PermissionType::WEB_APP_INSTALLATION:
       return false;
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return false;
 }
 
@@ -167,7 +170,8 @@ ShellPermissionManager::GetPermissionResultForOriginWithoutContext(
 blink::mojom::PermissionStatus
 ShellPermissionManager::GetPermissionStatusForCurrentDocument(
     PermissionType permission,
-    content::RenderFrameHost* render_frame_host) {
+    content::RenderFrameHost* render_frame_host,
+    bool should_include_device_status) {
   if (render_frame_host->IsNestedWithinFencedFrame())
     return blink::mojom::PermissionStatus::DENIED;
   return GetPermissionStatus(
@@ -199,18 +203,5 @@ ShellPermissionManager::GetPermissionStatusForEmbeddedRequester(
       permissions::PermissionUtil::GetLastCommittedOriginAsURL(
           render_frame_host->GetMainFrame()));
 }
-
-ShellPermissionManager::SubscriptionId
-ShellPermissionManager::SubscribeToPermissionStatusChange(
-    PermissionType permission,
-    RenderProcessHost* render_process_host,
-    RenderFrameHost* render_frame_host,
-    const GURL& requesting_origin,
-    base::RepeatingCallback<void(blink::mojom::PermissionStatus)> callback) {
-  return SubscriptionId();
-}
-
-void ShellPermissionManager::UnsubscribeFromPermissionStatusChange(
-    SubscriptionId subscription_id) {}
 
 }  // namespace content

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "cc/paint/paint_op_writer.h"
 
 #include <memory>
@@ -448,6 +453,13 @@ void PaintOpWriter::Write(const SkSamplingOptions& sampling) {
   }
 }
 
+void PaintOpWriter::Write(
+    const SkGradientShader::Interpolation& interpolation) {
+  WriteEnum(interpolation.fInPremul);
+  WriteEnum(interpolation.fColorSpace);
+  WriteEnum(interpolation.fHueMethod);
+}
+
 void PaintOpWriter::Write(const SkColorSpace* color_space) {
   if (!color_space) {
     WriteSize(static_cast<size_t>(0));
@@ -615,7 +627,7 @@ void PaintOpWriter::Write(const PaintShader* shader,
   WriteSimple(shader->end_point_);
   WriteSimple(shader->start_degrees_);
   WriteSimple(shader->end_degrees_);
-  WriteSimple(shader->gradient_interpolation_);
+  Write(shader->gradient_interpolation_);
 
   if (enable_security_constraints_) {
     DrawImage draw_image(shader->image_, false, MakeSrcRect(shader->image_),
@@ -748,7 +760,7 @@ void PaintOpWriter::Write(const PaintFilter* filter, const SkM44& current_ctm) {
   AssertFieldAlignment();
   switch (filter->type()) {
     case PaintFilter::Type::kNullFilter:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
     case PaintFilter::Type::kColorFilter:
       Write(static_cast<const ColorFilterPaintFilter&>(*filter), current_ctm);
@@ -852,7 +864,7 @@ void PaintOpWriter::Write(const DropShadowPaintFilter& filter,
   WriteSimple(filter.dy());
   WriteSimple(filter.sigma_x());
   WriteSimple(filter.sigma_y());
-  // TODO(crbug/1308932): Remove toSkColor and make all SkColor4f.
+  // TODO(crbug.com/40219248): Remove toSkColor and make all SkColor4f.
   WriteSimple(filter.color().toSkColor());
   WriteEnum(filter.shadow_mode());
   Write(filter.input().get(), current_ctm);
@@ -1019,7 +1031,7 @@ void PaintOpWriter::Write(const LightingDistantPaintFilter& filter,
                           const SkM44& current_ctm) {
   WriteEnum(filter.lighting_type());
   WriteSimple(filter.direction());
-  // TODO(crbug/1308932): Remove toSkColor and make all SkColor4f.
+  // TODO(crbug.com/40219248): Remove toSkColor and make all SkColor4f.
   WriteSimple(filter.light_color().toSkColor());
   WriteSimple(filter.surface_scale());
   WriteSimple(filter.kconstant());
@@ -1031,7 +1043,7 @@ void PaintOpWriter::Write(const LightingPointPaintFilter& filter,
                           const SkM44& current_ctm) {
   WriteEnum(filter.lighting_type());
   WriteSimple(filter.location());
-  // TODO(crbug/1308932): Remove toSkColor and make all SkColor4f.
+  // TODO(crbug.com/40219248): Remove toSkColor and make all SkColor4f.
   WriteSimple(filter.light_color().toSkColor());
   WriteSimple(filter.surface_scale());
   WriteSimple(filter.kconstant());
@@ -1046,7 +1058,7 @@ void PaintOpWriter::Write(const LightingSpotPaintFilter& filter,
   WriteSimple(filter.target());
   WriteSimple(filter.specular_exponent());
   WriteSimple(filter.cutoff_angle());
-  // TODO(crbug/1308932): Remove toSkColor and make all SkColor4f.
+  // TODO(crbug.com/40219248): Remove toSkColor and make all SkColor4f.
   WriteSimple(filter.light_color().toSkColor());
   WriteSimple(filter.surface_scale());
   WriteSimple(filter.kconstant());

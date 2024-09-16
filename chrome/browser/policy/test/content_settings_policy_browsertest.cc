@@ -51,7 +51,9 @@ const char kCookieOptions[] = ";expires=Wed Jan 01 2038 00:00:00 GMT";
 constexpr int kBlockAll = 2;
 
 bool IsJavascriptEnabled(content::WebContents* contents) {
-  return content::ExecJs(contents->GetPrimaryMainFrame(), "123");
+  return content::ExecJs(
+      contents->GetPrimaryMainFrame(), "123",
+      content::EvalJsOptions::EXECUTE_SCRIPT_HONOR_JS_CONTENT_SETTINGS);
 }
 
 }  // namespace
@@ -182,7 +184,7 @@ IN_PROC_BROWSER_TEST_F(WebBluetoothPolicyTest, MAYBE_Block) {
       new testing::NiceMock<device::MockBluetoothAdapter>;
   EXPECT_CALL(*adapter, IsPresent()).WillRepeatedly(testing::Return(true));
   auto bt_global_values =
-      device::BluetoothAdapterFactory::Get()->InitGlobalValuesForTesting();
+      device::BluetoothAdapterFactory::Get()->InitGlobalOverrideValues();
   bt_global_values->SetLESupported(true);
   device::BluetoothAdapterFactory::SetAdapterForTesting(adapter);
 

@@ -113,16 +113,30 @@ TEST(ProtoEnumConversionsTest, GetNoteTargetTypeString) {
 }
 
 TEST(ProtoEnumConversionsTest, GetInitialSyncStateString) {
-  TestEnumStringsNonEmpty(sync_pb::ModelTypeState::InitialSyncState);
+  TestEnumStringsNonEmpty(sync_pb::DataTypeState::InitialSyncState);
 }
 
 TEST(ProtoEnumConversionsTest, GetCategoryBenefitTypeString) {
   TestEnumStringsNonEmpty(sync_pb::CardBenefit::CategoryBenefitType);
 }
 
-TEST(ProtoEnumConversionsTest, GetAutoUpgradeExperimentGroupString) {
-  TestEnumStringsNonEmpty(sync_pb::NigoriSpecifics::AutoUpgradeDebugInfo::
-    AutoUpgradeExperimentGroup);
+TEST(ProtoEnumConversionsTest,
+     GetTrustedVaultAutoUpgradeExperimentGroupTypeString) {
+  TestEnumStringsNonEmpty(
+      sync_pb::TrustedVaultAutoUpgradeExperimentGroup::Type);
+}
+
+TEST(ProtoEnumConversionsTest, GetBrowserColorVariantString) {
+  TestEnumStringsNonEmpty(
+      sync_pb::ThemeSpecifics::UserColorTheme::BrowserColorVariant);
+}
+
+TEST(ProtoEnumConversionsTest, GetBrowserColorSchemeString) {
+  TestEnumStringsNonEmpty(sync_pb::ThemeSpecifics::BrowserColorScheme);
+}
+
+TEST(ProtoEnumConversionsTest, GetContactInfoAddressType) {
+  TestEnumStringsNonEmpty(sync_pb::ContactInfoSpecifics::AddressType);
 }
 
 }  // namespace

@@ -159,7 +159,7 @@ TEST_F(HotspotMetricsHelperTest, HotspotAllowStatusHistogram) {
 
   LoginState::Get()->SetLoggedInState(
       LoginState::LoggedInState::LOGGED_IN_ACTIVE,
-      LoginState::LoggedInUserType::LOGGED_IN_USER_OWNER);
+      LoginState::LoggedInUserType::LOGGED_IN_USER_REGULAR);
   SetHotspotAllowStatus(
       hotspot_config::mojom::HotspotAllowStatus::kDisallowedNoMobileData);
   histogram_tester_.ExpectTotalCount(
@@ -195,7 +195,7 @@ TEST_F(HotspotMetricsHelperTest, HotspotAllowStatusHistogram) {
 TEST_F(HotspotMetricsHelperTest, HotspotUsageConfigHistogram) {
   LoginState::Get()->SetLoggedInState(
       LoginState::LoggedInState::LOGGED_IN_ACTIVE,
-      LoginState::LoggedInUserType::LOGGED_IN_USER_OWNER);
+      LoginState::LoggedInUserType::LOGGED_IN_USER_REGULAR);
   auto mojom_config = hotspot_config::mojom::HotspotConfig::New();
   mojom_config->auto_disable = true;
   mojom_config->band = hotspot_config::mojom::WiFiBand::kAutoChoose;
@@ -394,6 +394,24 @@ TEST_F(HotspotMetricsHelperTest, HotspotDisableReasonHistogram) {
   histogram_tester_.ExpectBucketCount(
       HotspotMetricsHelper::kHotspotDisableReasonHistogram,
       HotspotMetricsHelper::HotspotMetricsDisableReason::kInternalError, 1);
+
+  hotspot_controller_->EnableHotspot(base::DoNothing());
+  base::RunLoop().RunUntilIdle();
+  SetHotspotStateInShill(shill::kTetheringStateActive);
+  // When user actions result in hotspot being disabled, we have to skip
+  // recording disable reason received from the platform as we will be recording
+  // it from hotspot controller.
+  status_dict = base::Value::Dict()
+                    .Set(shill::kTetheringStatusStateProperty,
+                         shill::kTetheringStateIdle)
+                    .Set(shill::kTetheringStatusIdleReasonProperty,
+                         shill::kTetheringIdleReasonUserExit);
+  network_state_test_helper_.manager_test()->SetManagerProperty(
+      shill::kTetheringStatusProperty, base::Value(status_dict.Clone()));
+  base::RunLoop().RunUntilIdle();
+  histogram_tester_.ExpectBucketCount(
+      HotspotMetricsHelper::kHotspotDisableReasonHistogram,
+      HotspotMetricsHelper::HotspotMetricsDisableReason::kUserInitiated, 1);
 }
 
 TEST_F(HotspotMetricsHelperTest, HotspotSetConfigHistogram) {

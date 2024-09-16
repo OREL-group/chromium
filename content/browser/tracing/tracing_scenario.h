@@ -125,7 +125,7 @@ class CONTENT_EXPORT NestedTracingScenario : public TracingScenarioBase {
 // tracing scenario. TracingScenario allows for multiple scenarios to be enabled
 // and watch for rules at once, and is meant to replace
 // BackgroundTracingActiveScenario.
-// TODO(crbug.com/1418116): Update the comment above once
+// TODO(crbug.com/40257548): Update the comment above once
 // BackgroundTracingActiveScenario is deleted.
 class CONTENT_EXPORT TracingScenario : public TracingScenarioBase,
                                        public NestedTracingScenario::Delegate {
@@ -170,6 +170,7 @@ class CONTENT_EXPORT TracingScenario : public TracingScenarioBase,
       const perfetto::protos::gen::ScenarioConfig& config,
       bool enable_privacy_filter,
       bool enable_package_name_filter,
+      bool request_startup_tracing,
       Delegate* scenario_delegate);
 
   ~TracingScenario() override;
@@ -195,7 +196,8 @@ class CONTENT_EXPORT TracingScenario : public TracingScenarioBase,
  protected:
   TracingScenario(const perfetto::protos::gen::ScenarioConfig& config,
                   Delegate* scenario_delegate,
-                  bool enable_privacy_filter);
+                  bool enable_privacy_filter,
+                  bool request_startup_tracing);
 
   bool Initialize(const perfetto::protos::gen::ScenarioConfig& config,
                   bool enable_package_name_filter);
@@ -249,6 +251,7 @@ class CONTENT_EXPORT TracingScenario : public TracingScenarioBase,
 
   const std::string config_hash_;
   const bool privacy_filtering_enabled_;
+  const bool request_startup_tracing_;
   State current_state_ = State::kDisabled;
   std::vector<std::unique_ptr<BackgroundTracingRule>> setup_rules_;
 

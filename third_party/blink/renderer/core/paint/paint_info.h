@@ -33,7 +33,6 @@
 #include "third_party/blink/renderer/core/layout/physical_box_fragment.h"
 #include "third_party/blink/renderer/core/paint/paint_flags.h"
 #include "third_party/blink/renderer/core/paint/paint_phase.h"
-#include "third_party/blink/renderer/platform/geometry/layout_rect.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
 #include "third_party/blink/renderer/platform/graphics/paint/cull_rect.h"
 #include "third_party/blink/renderer/platform/graphics/paint/display_item.h"
@@ -81,13 +80,15 @@ struct CORE_EXPORT PaintInfo {
   PaintInfo(GraphicsContext& context,
             const CullRect& cull_rect,
             PaintPhase phase,
+            bool descendant_painting_blocked,
             PaintFlags paint_flags = PaintFlag::kNoFlag,
             const SvgContextPaints* context_paints = nullptr)
       : context(context),
         phase(phase),
         cull_rect_(cull_rect),
         svg_context_paints_(context_paints),
-        paint_flags_(paint_flags) {}
+        paint_flags_(paint_flags),
+        descendant_painting_blocked_(descendant_painting_blocked) {}
 
   // Creates a PaintInfo for painting descendants. See comments about the paint
   // phases in PaintPhase.h for details.
@@ -171,9 +172,7 @@ struct CORE_EXPORT PaintInfo {
   bool DescendantPaintingBlocked() const {
     return descendant_painting_blocked_;
   }
-  void SetDescendantPaintingBlocked(bool blocked) {
-    descendant_painting_blocked_ = blocked;
-  }
+  void SetDescendantPaintingBlocked() { descendant_painting_blocked_ = true; }
 
   GraphicsContext& context;
   PaintPhase phase;
@@ -198,8 +197,6 @@ struct CORE_EXPORT PaintInfo {
 
   bool is_painting_background_in_contents_space = false;
   bool skips_background_ = false;
-
-  // Used by display-locking.
   bool descendant_painting_blocked_ = false;
 };
 

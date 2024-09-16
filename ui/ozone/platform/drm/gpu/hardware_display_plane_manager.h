@@ -61,8 +61,6 @@ struct HardwareDisplayPlaneList {
   // pageflipping.
   std::vector<PageFlipInfo> legacy_page_flips;
 
-  ScopedDrmAtomicReqPtr atomic_property_set;
-
   // Adds trace records to |context|.
   void WriteIntoTrace(perfetto::TracedValue context) const;
 };
@@ -108,6 +106,16 @@ class HardwareDisplayPlaneManager {
     display::ColorCalibration color_calibration;
     display::GammaAdjustment gamma_adjustment;
 
+    // The color space of all input planes. This assumes that all planes have
+    // the same color space, because all existing devices only support one
+    // color management configuration for all planes.
+    SkColorSpacePrimaries planes_primaries = SkNamedPrimariesExt::kSRGB;
+
+    // The color space of the output. All planes must be transformed to this
+    // space, using the hardware color management parameters (DEGAMMA, CTM,
+    // and GAMMA, where available).
+    SkColorSpacePrimaries output_primaries = SkNamedPrimariesExt::kSRGB;
+
     // Cached blobs for the properties to commit in CommitCrtcProperties.
     // * If a property is `std::nullopt`, then it should be left unchanged.
     // * If a property is `nullptr` then it should be set to 0.
@@ -146,6 +154,15 @@ class HardwareDisplayPlaneManager {
   // calls.
   void BeginFrame(HardwareDisplayPlaneList* plane_list);
 
+  // Sets the input color space for all planes. This assumes that all planes on
+  // a CRTC have the same color space.
+  void SetColorSpaceForAllPlanes(uint32_t crtc_id,
+                                 const SkColorSpacePrimaries& primaries);
+
+  // Sets the output color space for the given CRTC.
+  void SetOutputColorSpace(uint32_t crtc_id,
+                           const SkColorSpacePrimaries& primaries);
+
   // Sets the color temperature adjustment for a given CRTC.
   void SetColorTemperatureAdjustment(
       uint32_t crtc_id,
@@ -165,9 +182,11 @@ class HardwareDisplayPlaneManager {
   // Assign hardware planes from the |planes_| list to |overlay_list| entries,
   // recording the plane IDs in the |plane_list|. Only planes compatible with
   // |crtc_id| will be used. |overlay_list| must be sorted bottom-to-top.
-  virtual bool AssignOverlayPlanes(HardwareDisplayPlaneList* plane_list,
-                                   const DrmOverlayPlaneList& overlay_list,
-                                   uint32_t crtc_id);
+  virtual bool AssignOverlayPlanes(
+      HardwareDisplayPlaneList* plane_list,
+      const DrmOverlayPlaneList& overlay_list,
+      uint32_t crtc_id,
+      std::optional<gfx::Point> crtc_offset = std::nullopt);
 
   // Commit the plane states in |plane_list|.
   // If |page_flip_request| is null, this tests the plane configuration without
@@ -265,6 +284,7 @@ class HardwareDisplayPlaneManager {
                             HardwareDisplayPlane* hw_plane,
                             const DrmOverlayPlane& overlay,
                             uint32_t crtc_id,
+                            std::optional<gfx::Point> crtc_offset,
                             const gfx::Rect& src_rect) = 0;
 
   virtual std::unique_ptr<HardwareDisplayPlane> CreatePlane(uint32_t plane_id);
@@ -294,8 +314,8 @@ class HardwareDisplayPlaneManager {
   // Populates scanout formats supported by all planes.
   void PopulateSupportedFormats();
 
-  void UpdateAndCommitCrtcState(uint32_t crtc_id, CrtcState* state);
-  virtual bool CommitPendingCrtcState(CrtcState* state) = 0;
+  void UpdatePendingCrtcState(CrtcState& state);
+  virtual bool CommitPendingCrtcState(CrtcState& state) = 0;
 
   // Object containing the connection to the graphics device and wraps the API
   // calls to control it. Not owned.

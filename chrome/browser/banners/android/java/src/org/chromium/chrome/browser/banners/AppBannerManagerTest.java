@@ -45,12 +45,10 @@ import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.Feature;
-import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.chrome.browser.ShortcutHelper;
 import org.chromium.chrome.browser.app.ChromeActivity;
 import org.chromium.chrome.browser.customtabs.CustomTabActivityTestRule;
 import org.chromium.chrome.browser.customtabs.CustomTabsIntentTestUtils;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.profiles.ProfileManager;
 import org.chromium.chrome.browser.tab.Tab;
@@ -70,7 +68,6 @@ import org.chromium.components.webapps.AppDetailsDelegate;
 import org.chromium.components.webapps.bottomsheet.PwaInstallBottomSheetView;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_public.browser.WebContents;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.content_public.browser.test.util.TouchCommon;
 import org.chromium.content_public.common.ContentUrlConstants;
 import org.chromium.net.test.EmbeddedTestServer;
@@ -84,7 +81,6 @@ import java.util.Observer;
 /** Tests the app banners. */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
-@DisableFeatures({ChromeFeatureList.WEB_APP_AMBIENT_BADGE_SUPRESS_FIRST_VISIT})
 public class AppBannerManagerTest {
     @Rule
     public ChromeTabbedActivityTestRule mTabbedActivityTestRule =
@@ -200,6 +196,7 @@ public class AppBannerManagerTest {
 
         AppBannerManager.ignoreChromeChannelForTesting();
         AppBannerManager.setTotalEngagementForTesting(10);
+        AppBannerManager.setOverrideSegmentationResultForTesting(true);
         mTestServer =
                 EmbeddedTestServer.createAndStartServer(
                         ApplicationProvider.getApplicationContext());
@@ -241,7 +238,7 @@ public class AppBannerManagerTest {
 
     private void assertAppBannerPipelineStatus(int expectedValue) {
         Tab tab = mTabbedActivityTestRule.getActivity().getActivityTab();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     Assert.assertEquals(
                             expectedValue,
@@ -392,7 +389,7 @@ public class AppBannerManagerTest {
     }
 
     private void clickButton(final ChromeActivity activity, @ButtonType final int buttonType) {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     PropertyModel model =
                             activity.getModalDialogManager().getCurrentDialogForTest();
@@ -682,7 +679,7 @@ public class AppBannerManagerTest {
         View content = mBottomSheetController.getCurrentSheetContent().getContentView();
 
         // Expand the bottom sheet via drag handle.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     ImageView dragHandle = content.findViewById(R.id.drag_handlebar);
                     TouchCommon.singleClickView(dragHandle);
@@ -705,7 +702,7 @@ public class AppBannerManagerTest {
                 description.getText());
 
         // Collapse the bottom sheet.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     ImageView dragHandle = content.findViewById(R.id.drag_handlebar);
                     TouchCommon.singleClickView(dragHandle);
@@ -714,7 +711,7 @@ public class AppBannerManagerTest {
         waitUntilBottomSheetStatus(mTabbedActivityTestRule, BottomSheetController.SheetState.PEEK);
 
         // Dismiss the bottom sheet.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mBottomSheetController.hideContent(
                             mBottomSheetController.getCurrentSheetContent(), false);
@@ -742,7 +739,7 @@ public class AppBannerManagerTest {
         View content = mBottomSheetController.getCurrentSheetContent().getContentView();
 
         // Install app from the bottom sheet.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     ButtonCompat buttonInstall =
                             content.findViewById(
@@ -786,7 +783,7 @@ public class AppBannerManagerTest {
                 /* click= */ true);
 
         // Dismiss the bottom sheet.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mBottomSheetController.hideContent(
                             mBottomSheetController.getCurrentSheetContent(), false);
@@ -817,7 +814,7 @@ public class AppBannerManagerTest {
         triggerBottomSheet(mTabbedActivityTestRule, url, /* click= */ true);
 
         // Dismiss the bottom sheet after expanding it.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mBottomSheetController.hideContent(
                             mBottomSheetController.getCurrentSheetContent(), false);
@@ -865,7 +862,7 @@ public class AppBannerManagerTest {
         Tab backgroundTab = mTabbedActivityTestRule.getActivity().getCurrentTabModel().getTabAt(0);
         Assert.assertTrue(backgroundTab != null);
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     backgroundTab.loadUrl(new LoadUrlParams(url));
                 });

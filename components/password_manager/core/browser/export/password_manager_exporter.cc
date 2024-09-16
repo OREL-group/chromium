@@ -4,6 +4,7 @@
 
 #include "components/password_manager/core/browser/export/password_manager_exporter.h"
 
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -42,15 +43,16 @@ bool DoWriteOnTaskRunner(
         set_permissions_function,
     const base::FilePath& destination,
     const std::string& serialised) {
-  if (!write_function.Run(destination, serialised))
+  if (!write_function.Run(destination, serialised)) {
     return false;
+  }
 
   // Set file permissions. This is a no-op outside of Posix.
   set_permissions_function.Run(destination, 0600 /* -rw------- */);
   return true;
 }
 
-bool DefaultWriteFunction(const base::FilePath& file, base::StringPiece data) {
+bool DefaultWriteFunction(const base::FilePath& file, std::string_view data) {
   return base::WriteFile(file, data);
 }
 
@@ -105,8 +107,9 @@ void PasswordManagerExporter::SetDestination(
 
   destination_ = destination;
 
-  if (IsReadyForExport())
+  if (IsReadyForExport()) {
     Export();
+  }
 
   OnProgress({.status = ExportProgressStatus::kInProgress});
 }
@@ -116,8 +119,9 @@ void PasswordManagerExporter::SetSerialisedPasswordList(
     const std::string& serialised) {
   serialised_password_list_ = serialised;
   password_count_ = count;
-  if (IsReadyForExport())
+  if (IsReadyForExport()) {
     Export();
+  }
 }
 
 void PasswordManagerExporter::Cancel() {

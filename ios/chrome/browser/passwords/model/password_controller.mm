@@ -23,7 +23,7 @@
 #import "base/time/time.h"
 #import "base/timer/timer.h"
 #import "base/values.h"
-#import "components/autofill/core/browser/ui/popup_item_ids.h"
+#import "components/autofill/core/browser/ui/suggestion_type.h"
 #import "components/autofill/core/common/autofill_features.h"
 #import "components/autofill/core/common/form_data.h"
 #import "components/autofill/core/common/password_form_fill_data.h"
@@ -63,7 +63,7 @@
 #import "ios/chrome/browser/passwords/model/notify_auto_signin_view_controller.h"
 #import "ios/chrome/browser/passwords/model/password_controller_delegate.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
 #import "ios/chrome/browser/shared/public/commands/credential_provider_promo_commands.h"
 #import "ios/chrome/browser/shared/public/commands/password_breach_commands.h"
@@ -132,7 +132,7 @@ constexpr int kNotifyAutoSigninDuration = 3;  // seconds
 
 // Hides auto sign-in notification. Removes the view from superview and destroys
 // the controller.
-// TODO(crbug.com/435048): Animate disappearance.
+// TODO(crbug.com/40394758): Animate disappearance.
 - (void)hideAutosigninNotification;
 
 @end
@@ -314,7 +314,7 @@ constexpr int kNotifyAutoSigninDuration = 3;  // seconds
 }
 
 // Shows auto sign-in notification and schedules hiding it after 3 seconds.
-// TODO(crbug.com/435048): Animate appearance.
+// TODO(crbug.com/40394758): Animate appearance.
 - (void)showAutosigninNotification:(std::unique_ptr<PasswordForm>)formSignedIn {
   if (!_webState) {
     return;
@@ -506,16 +506,18 @@ constexpr int kNotifyAutoSigninDuration = 3;  // seconds
 
 - (void)sharedPasswordController:(SharedPasswordController*)controller
     showGeneratedPotentialPassword:(NSString*)generatedPotentialPassword
+                         proactive:(BOOL)proactive
                    decisionHandler:(void (^)(BOOL accept))decisionHandler {
   [self.passwordSuggestionDispatcher
       showPasswordSuggestion:generatedPotentialPassword
+                   proactive:proactive
+                    webState:_webState
              decisionHandler:decisionHandler];
 }
 
 - (void)sharedPasswordController:(SharedPasswordController*)controller
              didAcceptSuggestion:(FormSuggestion*)suggestion {
-  if (suggestion.popupItemId ==
-      autofill::PopupItemId::kAllSavedPasswordsEntry) {
+  if (suggestion.type == autofill::SuggestionType::kAllSavedPasswordsEntry) {
     // Navigate to the settings list.
     [self.delegate displaySavedPasswordList];
   }
@@ -528,6 +530,18 @@ constexpr int kNotifyAutoSigninDuration = 3;  // seconds
       AutofillBottomSheetTabHelper::FromWebState(_webState);
   if (bottomSheetTabHelper) {
     bottomSheetTabHelper->AttachPasswordListeners(rendererIds, frameId);
+  }
+}
+
+- (void)attachListenersForPasswordGenerationBottomSheet:
+            (const std::vector<autofill::FieldRendererId>&)rendererIds
+                                             forFrameId:
+                                                 (const std::string&)frameId {
+  AutofillBottomSheetTabHelper* bottomSheetTabHelper =
+      AutofillBottomSheetTabHelper::FromWebState(_webState);
+  if (bottomSheetTabHelper) {
+    bottomSheetTabHelper->AttachPasswordGenerationListeners(rendererIds,
+                                                            frameId);
   }
 }
 

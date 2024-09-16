@@ -30,6 +30,10 @@ dictionary AuctionReportBuyerDebugModeConfig {
   bigint? debugKey;
 };
 
+dictionary AuctionRealTimeReportingConfig {
+  required DOMString type;
+};
+
 dictionary AuctionAdConfig {
   required USVString seller;
 
@@ -45,6 +49,8 @@ dictionary AuctionAdConfig {
   [ImplementedAs=trustedScoringSignalsUrlDeprecated]
   USVString trustedScoringSignalsUrl;
   long maxTrustedScoringSignalsURLLength;
+  [RuntimeEnabled=FledgeTrustedSignalsKVv2Support]
+  USVString trustedScoringSignalsCoordinator;
   sequence<USVString> interestGroupBuyers;
   Promise<any> auctionSignals;
   Promise<any> sellerSignals;
@@ -86,16 +92,18 @@ dictionary AuctionAdConfig {
   sequence<DOMString> requiredSellerCapabilities;
 
   AuctionAdInterestGroupSize requestedSize;
-  [RuntimeEnabled=FledgeTrustedBiddingSignalsSlotSize]
   sequence<AuctionAdInterestGroupSize> allSlotsRequestedSizes;
 
-  [RuntimeEnabled=FledgeNegativeTargeting]
   Promise<undefined> additionalBids;
 
-  [RuntimeEnabled=FledgeNegativeTargeting]
   DOMString auctionNonce;
 
   ProtectedAudiencePrivateAggregationConfig privateAggregationConfig;
+
+  [RuntimeEnabled=FledgeRealTimeReporting]
+  AuctionRealTimeReportingConfig sellerRealTimeReportingConfig;
+  [RuntimeEnabled=FledgeRealTimeReporting]
+  record<USVString, AuctionRealTimeReportingConfig> perBuyerRealTimeReportingConfig;
 
   sequence<AuctionAdConfig> componentAuctions;
   AbortSignal? signal;

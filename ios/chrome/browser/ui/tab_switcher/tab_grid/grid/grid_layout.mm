@@ -7,6 +7,7 @@
 #import "base/notreached.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/util/rtl_geometry.h"
+#import "ios/chrome/browser/ui/tab_switcher/tab_grid/grid/grid_constants.h"
 #import "ios/chrome/common/ui/util/ui_util.h"
 #import "ios/web/common/uikit_ui_util.h"
 #import "ui/base/device_form_factor.h"
@@ -22,10 +23,15 @@ constexpr CGFloat kIPhonePortraitSpacing = 16;
 constexpr CGFloat kMinimumSpacing = kIPhonePortraitSpacing;
 // Estimated size of the Inactive Tabs headers.
 constexpr CGFloat kInactiveTabsHeaderEstimatedHeight = 100;
+// Bottom inset of the section containing the inactive tabs button.
+constexpr CGFloat kInactiveTabsSectionBottomInset = 10;
+// Estimated size of the Tab Group headers.
+constexpr CGFloat kTabGroupHeaderEstimatedHeight = 70;
 // Estimated size of the Search headers.
 constexpr CGFloat kSearchHeaderEstimatedHeight = 50;
 // Estimated size of the SuggestedActions item.
-constexpr CGFloat kSuggestedActionsEstimatedHeight = 150;
+constexpr CGFloat kSuggestedActionsEstimatedHeight = 100;
+constexpr CGFloat kLegacySuggestedActionsEstimatedHeight = 150;
 // Different width thresholds for determining the columns count.
 constexpr CGFloat kSmallWidthThreshold = 500;
 constexpr CGFloat kLargeWidthThreshold = 1000;
@@ -78,8 +84,7 @@ NSInteger ColumnsCount(id<NSCollectionLayoutEnvironment> layout_environment) {
 
 // Returns the aspect ratio (height / width) of an item based on the layout
 // environment.
-CGFloat ItemAspectRatio(id<NSCollectionLayoutEnvironment> layout_environment,
-                        TabGridMode mode) {
+CGFloat ItemAspectRatio(id<NSCollectionLayoutEnvironment> layout_environment) {
   const CGFloat width = layout_environment.container.effectiveContentSize.width;
   const CGFloat height =
       layout_environment.container.effectiveContentSize.height;
@@ -92,11 +97,8 @@ CGFloat ItemAspectRatio(id<NSCollectionLayoutEnvironment> layout_environment,
   // smaller than the height, but design-wise, a landscape aspect ratio should
   // be preferred. Pad a bit the width with a magic constant before comparing to
   // the height.
-  // This is not needed in Tab Group mode because the grid is not laid out the
-  // same way (it is not laid out underneath the top bar but below it), and
-  // already has the correct aspect ratio.
-  CGFloat padding = mode == TabGridModeGroup ? 0 : kMagicPadding;
-  return width + padding > height ? screen_aspect_ratio : kPortraitAspectRatio;
+  return width + kMagicPadding > height ? screen_aspect_ratio
+                                        : kPortraitAspectRatio;
 }
 
 // Returns the spacing based on the layout environment.
@@ -152,19 +154,69 @@ NSCollectionLayoutBoundarySupplementaryItem* AnimatingOutHeader() {
                                     alignment:NSRectAlignmentTopLeading];
 }
 
+// Returns a header layout item to add to the Open Tabs section as needed.
+NSCollectionLayoutBoundarySupplementaryItem* TabGroupHeader() {
+  NSCollectionLayoutDimension* height_dimension =
+      EstimatedDimension(kTabGroupHeaderEstimatedHeight);
+  NSCollectionLayoutSize* header_size =
+      [NSCollectionLayoutSize sizeWithWidthDimension:FractionalWidth(1.)
+                                     heightDimension:height_dimension];
+  return [NSCollectionLayoutBoundarySupplementaryItem
+      boundarySupplementaryItemWithLayoutSize:header_size
+                                  elementKind:
+                                      UICollectionElementKindSectionHeader
+                                    alignment:NSRectAlignmentTopLeading];
+}
+
+// Returns a compositional layout grid section for the Inactive Tab button.
+NSCollectionLayoutSection* InactiveTabButtonSection(
+    id<NSCollectionLayoutEnvironment> layout_environment,
+    NSDirectionalEdgeInsets section_insets) {
+  // Use the same estimated height for the item and the group.
+  NSCollectionLayoutDimension* estimated_height_dimension =
+      EstimatedDimension(kInactiveTabsHeaderEstimatedHeight);
+
+  // Configure the layout item.
+  NSCollectionLayoutSize* item_size = [NSCollectionLayoutSize
+      sizeWithWidthDimension:FractionalWidth(1.)
+             heightDimension:estimated_height_dimension];
+  NSCollectionLayoutItem* item =
+      [NSCollectionLayoutItem itemWithLayoutSize:item_size];
+
+  // Configure the layout group.
+  NSCollectionLayoutSize* group_size = [NSCollectionLayoutSize
+      sizeWithWidthDimension:FractionalWidth(1.)
+             heightDimension:estimated_height_dimension];
+  NSCollectionLayoutGroup* group =
+      [NSCollectionLayoutGroup horizontalGroupWithLayoutSize:group_size
+                                                    subitems:@[ item ]];
+
+  // Configure the layout section.
+  NSCollectionLayoutSection* section =
+      [NSCollectionLayoutSection sectionWithGroup:group];
+  const CGFloat spacing = Spacing(layout_environment);
+  section_insets.top += spacing;
+  section_insets.leading += spacing;
+  section_insets.bottom += kInactiveTabsSectionBottomInset;
+  section_insets.trailing += spacing;
+  section.contentInsets = section_insets;
+  section.contentInsetsReference = UIContentInsetsReferenceNone;
+
+  return section;
+}
+
 // Returns a compositional layout grid section for opened tabs.
 NSCollectionLayoutSection* TabsSection(
     id<NSCollectionLayoutEnvironment> layout_environment,
     TabsSectionHeaderType tabs_section_header_type,
-    NSDirectionalEdgeInsets section_insets,
-    TabGridMode mode) {
+    NSDirectionalEdgeInsets section_insets) {
   // Determine the number of columns.
   NSInteger count = ColumnsCount(layout_environment);
 
   // Configure the layout item.
   NSCollectionLayoutDimension* item_width_dimension =
       FractionalWidth(1. / count);
-  const CGFloat item_aspect_ratio = ItemAspectRatio(layout_environment, mode);
+  const CGFloat item_aspect_ratio = ItemAspectRatio(layout_environment);
   NSCollectionLayoutDimension* item_height_dimension =
       FractionalWidth(item_aspect_ratio / count);
   NSCollectionLayoutSize* item_size =
@@ -181,19 +233,10 @@ NSCollectionLayoutSection* TabsSection(
   NSCollectionLayoutSize* group_size =
       [NSCollectionLayoutSize sizeWithWidthDimension:FractionalWidth(1.)
                                      heightDimension:group_height_dimension];
-  NSCollectionLayoutGroup* group;
-  if (@available(iOS 16, *)) {
-    group = [NSCollectionLayoutGroup horizontalGroupWithLayoutSize:group_size
-                                                  repeatingSubitem:item
-                                                             count:count];
-  }
-#if !defined(__IPHONE_16_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_16_0
-  else {
-    group = [NSCollectionLayoutGroup horizontalGroupWithLayoutSize:group_size
-                                                           subitem:item
-                                                             count:count];
-  }
-#endif
+  NSCollectionLayoutGroup* group =
+      [NSCollectionLayoutGroup horizontalGroupWithLayoutSize:group_size
+                                            repeatingSubitem:item
+                                                       count:count];
   const CGFloat spacing = Spacing(layout_environment);
   group.interItemSpacing = [NSCollectionLayoutSpacing fixedSpacing:spacing];
 
@@ -221,6 +264,9 @@ NSCollectionLayoutSection* TabsSection(
     case TabsSectionHeaderType::kAnimatingOut:
       section.boundarySupplementaryItems = @[ AnimatingOutHeader() ];
       break;
+    case TabsSectionHeaderType::kTabGroup:
+      section.boundarySupplementaryItems = @[ TabGroupHeader() ];
+      break;
   }
 
   return section;
@@ -238,8 +284,11 @@ NSCollectionLayoutSection* SuggestedActionsSection(
       [NSCollectionLayoutItem itemWithLayoutSize:item_size];
 
   // Configure the layout group.
+  CGFloat estimated_height = IsTabGroupSyncEnabled()
+                                 ? kSuggestedActionsEstimatedHeight
+                                 : kLegacySuggestedActionsEstimatedHeight;
   NSCollectionLayoutDimension* group_height_dimension =
-      EstimatedDimension(kSuggestedActionsEstimatedHeight);
+      EstimatedDimension(estimated_height);
   NSCollectionLayoutSize* group_size =
       [NSCollectionLayoutSize sizeWithWidthDimension:FractionalWidth(1.)
                                      heightDimension:group_height_dimension];
@@ -270,7 +319,7 @@ NSCollectionLayoutSection* SuggestedActionsSection(
   NSArray<NSIndexPath*>* _indexPathsOfInsertingItems;
 }
 
-- (instancetype)initWithTabGridMode:(TabGridMode)mode {
+- (instancetype)init {
   // Use a `futureSelf` variable as the super init requires a closure, and as
   // `self` is not instantiated yet, it can't be used.
   __block __typeof(self) futureSelf;
@@ -283,7 +332,6 @@ NSCollectionLayoutSection* SuggestedActionsSection(
   futureSelf = self;
   if (self) {
     _animatesItemUpdates = YES;
-    _mode = mode;
   }
   return self;
 }
@@ -365,10 +413,9 @@ NSCollectionLayoutSection* SuggestedActionsSection(
   if (![_indexPathsOfInsertingItems containsObject:itemIndexPath]) {
     return attributes;
   }
-  // TODO(crbug.com/820410) : Polish the animation, and put constants where they
-  // belong.
-  // Cells being inserted start faded out, scaled down, and drop downwards
-  // slightly.
+  // TODO(crbug.com/40566436) : Polish the animation, and put constants where
+  // they belong. Cells being inserted start faded out, scaled down, and drop
+  // downwards slightly.
   attributes.alpha = 0.0;
   CGAffineTransform transform =
       CGAffineTransformScale(attributes.transform, /*sx=*/0.9, /*sy=*/0.9);
@@ -394,25 +441,20 @@ NSCollectionLayoutSection* SuggestedActionsSection(
 - (NSCollectionLayoutSection*)sectionAtIndex:(NSInteger)sectionIndex
                            layoutEnvironment:(id<NSCollectionLayoutEnvironment>)
                                                  layoutEnvironment {
-  if (sectionIndex == 0) {
+  NSString* sectionIdentifier =
+      [self.diffableDataSource sectionIdentifierForIndex:sectionIndex];
+  if ([sectionIdentifier isEqualToString:kInactiveTabButtonSectionIdentifier]) {
+    return InactiveTabButtonSection(layoutEnvironment, self.sectionInsets);
+  } else if ([sectionIdentifier
+                 isEqualToString:kGridOpenTabsSectionIdentifier]) {
     return TabsSection(layoutEnvironment, self.tabsSectionHeaderType,
-                       self.sectionInsets, self.mode);
-  }
-  if (IsTabGroupInGridEnabled()) {
-    if (sectionIndex == 1) {
-      return TabsSection(layoutEnvironment, self.tabsSectionHeaderType,
-                         self.sectionInsets, self.mode);
-    }
-    if (sectionIndex == 2) {
-      return SuggestedActionsSection(layoutEnvironment, self.sectionInsets);
-    }
-  } else {
-    if (sectionIndex == 1) {
-      return SuggestedActionsSection(layoutEnvironment, self.sectionInsets);
-    }
+                       self.sectionInsets);
+  } else if ([sectionIdentifier
+                 isEqualToString:kSuggestedActionsSectionIdentifier]) {
+    return SuggestedActionsSection(layoutEnvironment, self.sectionInsets);
   }
 
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 @end

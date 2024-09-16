@@ -79,15 +79,14 @@ class EmbeddedA11yManagerLacros
   void OnProfileAdded(Profile* profile) override;
   void OnProfileManagerDestroying() override;
 
-  void UpdatePdfOcrEnabledOnAllProfiles();
-  void UpdatePdfOcrEnabledOnProfile(Profile* profile);
+  void UpdateOverscrollHistoryNavigationEnabled();
 
   void OnChromeVoxEnabledChanged(base::Value value);
   void OnSelectToSpeakEnabledChanged(base::Value value);
   void OnSwitchAccessEnabledChanged(base::Value value);
   void OnFocusHighlightEnabledChanged(base::Value value);
-  void OnPdfOcrAlwaysActiveChanged(base::Value value);
   void OnReducedAnimationsEnabledChanged(base::Value value);
+  void OnOverscrollHistoryNavigationEnabledChanged(base::Value value);
 
   // Called when focus highlight feature is active and the focused node
   // changed.
@@ -101,15 +100,16 @@ class EmbeddedA11yManagerLacros
   std::unique_ptr<CrosapiPrefObserver> select_to_speak_enabled_observer_;
   std::unique_ptr<CrosapiPrefObserver> switch_access_enabled_observer_;
   std::unique_ptr<CrosapiPrefObserver> focus_highlight_enabled_observer_;
-  std::unique_ptr<CrosapiPrefObserver> pdf_ocr_always_active_observer_;
   std::unique_ptr<CrosapiPrefObserver> reduced_animations_enabled_observer_;
+  std::unique_ptr<CrosapiPrefObserver>
+      overscroll_history_navigation_enabled_observer_;
 
   // The current state of Ash features.
   bool chromevox_enabled_ = false;
   bool select_to_speak_enabled_ = false;
   bool switch_access_enabled_ = false;
   bool reading_mode_enabled_ = false;
-  std::optional<bool> pdf_ocr_always_active_enabled_;
+  std::optional<bool> overscroll_history_navigation_enabled_;
 
   base::RepeatingClosure speak_selected_text_callback_for_test_;
   base::RepeatingCallback<void(gfx::Rect)> focus_changed_callback_for_test_;

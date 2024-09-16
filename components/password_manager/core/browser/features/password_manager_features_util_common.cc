@@ -2,15 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "components/password_manager/core/browser/features/password_manager_features_util.h"
-
 #include "base/notreached.h"
 #include "build/build_config.h"
 #include "components/password_manager/core/browser/features/password_features.h"
+#include "components/password_manager/core/browser/features/password_manager_features_util.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/signin/public/base/signin_pref_names.h"
-#include "components/signin/public/base/signin_switches.h"
 #include "components/sync/base/features.h"
 #include "components/sync/service/sync_service.h"
 #include "components/sync/service/sync_user_settings.h"
@@ -79,15 +77,7 @@ bool IsUserEligibleForAccountStorage(const PrefService* pref_service,
 
   switch (sync_service->GetTransportState()) {
     case syncer::SyncService::TransportState::DISABLED:
-      return false;
     case syncer::SyncService::TransportState::PAUSED:
-      if (switches::IsExplicitBrowserSigninUIOnDesktopEnabled(
-              switches::ExplicitBrowserSigninPhase::kFull) &&
-          // `prefs::kExplicitBrowserSignin` is false for users who signed in
-          // implicitly through the Dice web signin in a previous run.
-          pref_service->GetBoolean(::prefs::kExplicitBrowserSignin)) {
-        break;
-      }
       return false;
     case syncer::SyncService::TransportState::START_DEFERRED:
     case syncer::SyncService::TransportState::INITIALIZING:
@@ -129,7 +119,7 @@ bool CanCreateAccountStore(const PrefService* pref_service) {
     case UseUpmLocalAndSeparateStoresState::kOn:
       return true;
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 #else
   return true;
 #endif

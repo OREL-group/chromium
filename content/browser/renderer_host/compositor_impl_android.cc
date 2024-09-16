@@ -36,7 +36,6 @@
 #include "cc/input/input_handler.h"
 #include "cc/layers/layer.h"
 #include "cc/metrics/begin_main_frame_metrics.h"
-#include "cc/metrics/web_vital_metrics.h"
 #include "cc/mojo_embedder/async_layer_tree_frame_sink.h"
 #include "cc/resources/ui_resource_manager.h"
 #include "cc/slim/frame_sink.h"
@@ -86,7 +85,6 @@
 #include "ui/display/screen.h"
 #include "ui/gfx/ca_layer_params.h"
 #include "ui/gfx/swap_result.h"
-#include "ui/latency/latency_tracker.h"
 
 namespace content {
 
@@ -105,12 +103,9 @@ gpu::SharedMemoryLimits GetCompositorContextSharedMemoryLimits(
   return gpu::SharedMemoryLimits::ForDisplayCompositor(screen_size);
 }
 
-gpu::ContextCreationAttribs GetCompositorContextAttributes(
-    const gfx::ColorSpace& display_color_space,
-    bool requires_alpha_channel) {
+gpu::ContextCreationAttribs GetCompositorContextAttributes() {
   gpu::ContextCreationAttribs attributes;
   attributes.bind_generates_resource = false;
-  attributes.need_alpha = requires_alpha_channel;
 
   attributes.enable_raster_interface = true;
   attributes.enable_gles2_interface = false;
@@ -411,7 +406,7 @@ void CompositorImpl::SetVisible(bool visible) {
 
 void CompositorImpl::TearDownDisplayAndUnregisterRootFrameSink() {
   // Make a best effort to try to complete pending readbacks.
-  // TODO(crbug.com/637035): Consider doing this in a better way,
+  // TODO(crbug.com/40480324): Consider doing this in a better way,
   // ideally with the guarantee of readbacks completing.
   if (display_private_ && pending_readbacks_) {
     // Note that while this is not a Sync IPC, the call to
@@ -568,9 +563,7 @@ void CompositorImpl::OnGpuChannelEstablished(
                std::string("CompositorContextProvider")),
           automatic_flushes, support_locking,
           GetCompositorContextSharedMemoryLimits(root_window_),
-          GetCompositorContextAttributes(
-              display_color_spaces_.GetRasterColorSpace(),
-              requires_alpha_channel_),
+          GetCompositorContextAttributes(),
           viz::command_buffer_metrics::ContextType::BROWSER_COMPOSITOR);
   auto result = context_provider->BindToCurrentSequence();
 
@@ -627,6 +620,10 @@ void CompositorImpl::DidSubmitCompositorFrame() {
   TRACE_EVENT0("compositor", "CompositorImpl::DidSubmitCompositorFrame");
   pending_frames_++;
   has_submitted_frame_since_became_visible_ = true;
+
+  for (auto& observer : frame_submission_observers_) {
+    observer.DidSubmitCompositorFrame();
+  }
 }
 
 void CompositorImpl::DidReceiveCompositorFrameAck() {
@@ -859,7 +856,7 @@ void CompositorImpl::OnFatalOrSurfaceContextCreationFailure(
 }
 
 void CompositorImpl::OnFirstSurfaceActivation(const viz::SurfaceInfo& info) {
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 void CompositorImpl::CacheBackBufferForCurrentSurface() {
@@ -944,6 +941,16 @@ void CompositorImpl::MaybeUpdateObserveBeginFrame() {
       GetUIThreadTaskRunner({BrowserTaskType::kUserInput}));
   display_private_->SetStandaloneBeginFrameObserver(
       host_begin_frame_observer_->GetBoundRemote());
+}
+
+void CompositorImpl::AddFrameSubmissionObserver(
+    FrameSubmissionObserver* observer) {
+  frame_submission_observers_.AddObserver(observer);
+}
+
+void CompositorImpl::RemoveFrameSubmissionObserver(
+    FrameSubmissionObserver* observer) {
+  frame_submission_observers_.RemoveObserver(observer);
 }
 
 }  // namespace content

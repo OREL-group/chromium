@@ -337,7 +337,7 @@ class ASH_EXPORT SplitViewController : public aura::WindowObserver,
   void OnOverviewModeEnded() override;
 
   // display::DisplayObserver:
-  void OnDisplayRemoved(const display::Display& old_display) override;
+  void OnDisplaysRemoved(const display::Displays& removed_displays) override;
   void OnDisplayMetricsChanged(const display::Display& display,
                                uint32_t metrics) override;
   void OnDisplayTabletStateChanged(display::TabletState state) override;
@@ -355,7 +355,7 @@ class ASH_EXPORT SplitViewController : public aura::WindowObserver,
                          aura::Window* lost_active) override;
 
   // LayoutDividerController:
-  aura::Window* GetRootWindow() override;
+  aura::Window* GetRootWindow() const override;
   void StartResizeWithDivider(const gfx::Point& location_in_screen) override;
   void UpdateResizeWithDivider(const gfx::Point& location_in_screen) override;
   bool EndResizeWithDivider(const gfx::Point& location_in_screen) override;
@@ -369,6 +369,8 @@ class ASH_EXPORT SplitViewController : public aura::WindowObserver,
       bool account_for_divider_width) const override;
   SnapPosition GetPositionOfSnappedWindow(
       const aura::Window* window) const override;
+
+  static void SetUseFastResizeForTesting(bool val);
 
  private:
   friend class SplitViewControllerTest;
@@ -386,12 +388,21 @@ class ASH_EXPORT SplitViewController : public aura::WindowObserver,
     kWindowDragged,
     kWindowFloated,
     kWindowMovedToAnotherDisplay,
+    kAddedToSnapGroup,
   };
 
-  // These functions return |primary_window_| and |secondary_window_|, swapped
-  // in nonprimary screen orientations. Note that they may return null.
-  aura::Window* GetPhysicalLeftOrTopWindow();
-  aura::Window* GetPhysicalRightOrBottomWindow();
+  // These functions return the snapped window in the specified snap position
+  // (left/top or right/bottom) based on the display's orientation.
+  //
+  // In primary screen orientation:
+  //  - `GetPhysicallyLeftOrTopWindow()` returns the `primary_window_`;
+  //  - `GetPhysicallyRightOrBottomWindow()` returns the `secondary_window_`.
+  //
+  // In non-primary screen orientation:
+  //  - `GetPhysicallyLeftOrTopWindow()` returns the `secondary_window_`;
+  //  - `GetPhysicallyRightOrBottomWindow()` returns the `primary_window_`.
+  aura::Window* GetPhysicallyLeftOrTopWindow();
+  aura::Window* GetPhysicallyRightOrBottomWindow();
 
   // Starts observing |window|.
   void StartObserving(aura::Window* window);
@@ -410,10 +421,6 @@ class ASH_EXPORT SplitViewController : public aura::WindowObserver,
 
   // Notifies observers that the windows are swappped.
   void NotifyWindowSwapped();
-
-  // Creates a snap group and ends split view. Returns true if a snap group was
-  // created, false otherwise.
-  bool MaybeCreateSnapGroup();
 
   // Updates the black scrim layer's bounds and opacity while dragging the
   // divider. The opacity increases as the split divider gets closer to the edge
@@ -491,7 +498,7 @@ class ASH_EXPORT SplitViewController : public aura::WindowObserver,
   // be moved to `chromeos::kOneThirdSnapRatio` or
   // `chromeos::kTwoThirdSnapRatio` depends on the minimum size of current
   // snapped windows.
-  void ModifyPositionRatios(std::vector<float>* out_position_ratios);
+  void ModifyPositionRatios(std::vector<float>& out_position_ratios);
 
   // Restores |window| transform to identity transform if applicable.
   void RestoreTransformIfApplicable(aura::Window* window);

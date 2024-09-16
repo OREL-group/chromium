@@ -11,10 +11,10 @@
 #include "base/values.h"
 #include "chrome/browser/ash/login/test/login_manager_mixin.h"
 #include "chrome/browser/ash/login/test/session_manager_state_waiter.h"
-#include "chrome/browser/ash/login/ui/login_display_host.h"
 #include "chrome/browser/ash/login/wizard_controller.h"
 #include "chrome/browser/ash/policy/core/user_policy_test_helper.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
+#include "chrome/browser/ui/ash/login/login_display_host.h"
 #include "chrome/browser/ui/webui/ash/login/gaia_screen_handler.h"
 #include "chromeos/ash/components/login/auth/public/user_context.h"
 #include "components/policy/core/common/cloud/test/policy_builder.h"
@@ -45,7 +45,7 @@ constexpr char kAccountGaiaId[] = "user-example-com-test-gaia-id";
 LoginPolicyTestBase::LoginPolicyTestBase()
     : account_id_(AccountId::FromUserEmailGaiaId(kAccountId, kAccountGaiaId)) {
   set_open_about_blank_on_browser_launch(false);
-  login_manager_.set_should_launch_browser(true);
+  login_manager_.SetShouldLaunchBrowser(true);
 }
 
 LoginPolicyTestBase::~LoginPolicyTestBase() = default;

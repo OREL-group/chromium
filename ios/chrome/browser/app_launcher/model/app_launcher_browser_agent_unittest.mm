@@ -21,7 +21,7 @@
 #import "ios/chrome/browser/overlays/model/public/web_content_area/app_launcher_overlay.h"
 #import "ios/chrome/browser/shared/coordinator/scene/scene_state.h"
 #import "ios/chrome/browser/shared/model/browser/test/test_browser.h"
-#import "ios/chrome/browser/shared/model/browser_state/test_chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_opener.h"
 #import "ios/web/public/test/fakes/fake_navigation_manager.h"
@@ -123,6 +123,7 @@ class AppLauncherBrowserAgentTest : public PlatformTest {
     FakeAppLauncherAbuseDetector* abuse_detector =
         [[FakeAppLauncherAbuseDetector alloc] init];
     abuse_detectors_[web_state] = abuse_detector;
+    OverlayRequestQueue::CreateForWebState(web_state);
     FakeAppLauncherTabHelper::CreateForWebState(web_state, abuse_detector,
                                                 incognito);
     app_launcher_tab_helper_browser_presentation_provider_ = OCMProtocolMock(

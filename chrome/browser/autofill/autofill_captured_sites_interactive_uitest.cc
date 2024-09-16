@@ -30,9 +30,10 @@
 #include "chrome/browser/autofill/automated_tests/cache_replayer.h"
 #include "chrome/browser/autofill/captured_sites_test_utils.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/autofill/autofill_popup_controller_impl.h"
+#include "chrome/browser/ui/autofill/autofill_popup_controller_impl_test_api.h"
 #include "chrome/browser/ui/autofill/autofill_suggestion_controller.h"
 #include "chrome/browser/ui/autofill/chrome_autofill_client.h"
-#include "chrome/browser/ui/autofill/payments/test_card_unmask_prompt_waiter.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/translate/translate_bubble_test_utils.h"
 #include "chrome/common/chrome_features.h"
@@ -40,7 +41,6 @@
 #include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/autofill/content/browser/content_autofill_driver.h"
-#include "components/autofill/content/browser/content_autofill_driver_factory.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/browser_autofill_manager.h"
 #include "components/autofill/core/browser/browser_autofill_manager_test_delegate.h"
@@ -69,7 +69,6 @@ using captured_sites_test_utils::TestRecipeReplayer;
 using captured_sites_test_utils::WebPageReplayServerWrapper;
 
 namespace autofill {
-
 namespace {
 
 // The timeout for actions like bringing up the Autofill popup or showing the
@@ -160,7 +159,6 @@ class MetricsScraper {
   const base::HistogramTester histogram_tester_;
 };
 
-}  // namespace
 
 class AutofillCapturedSitesInteractiveTest
     : public AutofillUiTest,
@@ -177,8 +175,7 @@ class AutofillCapturedSitesInteractiveTest
     content::WebContents* web_contents =
         content::WebContents::FromRenderFrameHost(frame);
     auto& autofill_manager = static_cast<BrowserAutofillManager&>(
-        ContentAutofillDriverFactory::FromWebContents(web_contents)
-            ->DriverForFrame(frame->GetMainFrame())
+        ContentAutofillDriver::GetForRenderFrameHost(frame->GetMainFrame())
             ->GetAutofillManager());
     test_delegate()->Observe(autofill_manager);
 
@@ -202,8 +199,8 @@ class AutofillCapturedSitesInteractiveTest
       translate::test_utils::CloseCurrentBubble(browser());
       TryToCloseAllPrompts(web_contents);
 
-      autofill_manager.client().HideAutofillPopup(
-          autofill::PopupHidingReason::kViewDestroyed);
+      autofill_manager.client().HideAutofillSuggestions(
+          autofill::SuggestionHidingReason::kViewDestroyed);
 
       testing::AssertionResult suggestions_shown = ShowAutofillSuggestion(
           focus_element_css_selector, iframe_path, frame);
@@ -230,29 +227,22 @@ class AutofillCapturedSitesInteractiveTest
       // If CVC is available in the Action Recorder receipts and this is a
       // payment form, this means it's running the test with a server card. So
       // the "Enter CVC" dialog will pop up for card autofill.
+      // TODO(crbug.com/333815150): Fix the TestCardUnmaskPromptWaiter.
       bool is_credit_card_field =
           triggered_field_type.has_value() &&
           GroupTypeOfFieldType(triggered_field_type.value()) ==
               FieldTypeGroup::kCreditCard;
       bool should_cvc_dialog_pop_up = is_credit_card_field && cvc;
+      CHECK(!should_cvc_dialog_pop_up)
+          << "Tests with CVC dialogs are currently not supported due to "
+             "crbug.com/333815150. See crrev.com/c/5458703 for the code to "
+             "bring back the TestCardUnmaskPromptWaiter.";
 
       // Press the enter key to invoke autofill using the first suggestion.
       test_delegate()->SetExpectations({ObservedUiEvents::kFormDataFilled,
                                         ObservedUiEvents::kSuggestionsHidden},
                                        kAutofillWaitForFillInterval);
-      TestCardUnmaskPromptWaiter test_card_unmask_prompt_waiter(web_contents);
       SendKeyToPopup(frame, ui::DomKey::ENTER);
-
-      if (should_cvc_dialog_pop_up) {
-        if (!test_card_unmask_prompt_waiter.Wait()) {
-          LOG(WARNING) << "\"Enter CVC\" dialog did not pop up.";
-        } else {
-          VLOG(1) << "CVC to be filled is: " << *cvc;
-          if (test_card_unmask_prompt_waiter.EnterAndAcceptCvcDialog(*cvc)) {
-            VLOG(1) << "\"Enter CVC\" dialog popped up and closed.";
-          }
-        }
-      }
       testing::AssertionResult form_filled = test_delegate()->Wait();
       if (!form_filled) {
         LOG(WARNING) << "Failed to fill the form: " << form_filled.message();
@@ -262,8 +252,8 @@ class AutofillCapturedSitesInteractiveTest
       return true;
     }
 
-    autofill_manager.client().HideAutofillPopup(
-        autofill::PopupHidingReason::kViewDestroyed);
+    autofill_manager.client().HideAutofillSuggestions(
+        autofill::SuggestionHidingReason::kViewDestroyed);
     ADD_FAILURE() << "Failed to autofill the form!";
     return false;
   }
@@ -300,6 +290,8 @@ class AutofillCapturedSitesInteractiveTest
     recipe_replayer_ =
         std::make_unique<captured_sites_test_utils::TestRecipeReplayer>(
             browser(), this);
+    profile_controller_ =
+        std::make_unique<captured_sites_test_utils::ProfileDataController>();
 
     SetServerUrlLoader(std::make_unique<test::ServerUrlLoader>(
         std::make_unique<test::ServerCacheReplayer>(
@@ -350,8 +342,6 @@ class AutofillCapturedSitesInteractiveTest
                                {}},
                               {features::test::kAutofillShowTypePredictions,
                                {}},
-                              {features::kAutofillParsingPatternProvider,
-                               {{"prediction_source", "nextgen"}}},
                               {features::test::
                                    kAutofillCapturedSiteTestsUseAutofillFlow,
                                {}}},
@@ -359,6 +349,11 @@ class AutofillCapturedSitesInteractiveTest
                                features::kAutofillSkipPreFilledFields});
     command_line->AppendSwitchASCII(
         variations::switches::kVariationsOverrideCountry, "us");
+    // SelectParserRelaxation affects the results from the test data because the
+    // test data may have unclosed <select> tags. Since SelectParserRelaxation
+    // is not enabled by default, we are disabling it for these tests.
+    command_line->AppendSwitchASCII("disable-blink-features",
+                                    "SelectParserRelaxation");
     AutofillUiTest::SetUpCommandLine(command_line);
     SetUpHostResolverRules(command_line);
     captured_sites_test_utils::TestRecipeReplayer::SetUpCommandLine(
@@ -387,7 +382,8 @@ class AutofillCapturedSitesInteractiveTest
       CHECK_NE(client, nullptr);
       if (base::WeakPtr<AutofillSuggestionController> controller =
               client->suggestion_controller_for_testing()) {
-        controller->DisableThresholdForTesting(true);
+        test_api(static_cast<AutofillPopupControllerImpl&>(*controller))
+            .DisableThreshold(true);
       }
     };
     // First, automation should focus on the frame containing the autofill
@@ -436,13 +432,16 @@ class AutofillCapturedSitesInteractiveTest
     // If CVC is available in the Action Recorder receipts and this is a
     // payment form, this means it's running the test with a server card. So
     // the "Enter CVC" dialog will pop up for card autofill.
+    // TODO(crbug.com/333815150): Fix the TestCardUnmaskPromptWaiter.
     bool is_credit_card_field =
         triggered_field_type.has_value() &&
         GroupTypeOfFieldType(triggered_field_type.value()) ==
             FieldTypeGroup::kCreditCard;
     bool should_cvc_dialog_pop_up = is_credit_card_field && cvc;
-
-    TestCardUnmaskPromptWaiter test_card_unmask_prompt_waiter(web_contents);
+    CHECK(!should_cvc_dialog_pop_up)
+        << "Tests with CVC dialogs are currently not supported due to "
+           "crbug.com/333815150. See crrev.com/c/5458703 for the code to bring "
+           "back the TestCardUnmaskPromptWaiter.";
 
     // Use AutofillFlow library to trigger the autofill behavior. Try both ways.
     testing::AssertionResult autofill_assertion_by_arrow =
@@ -471,25 +470,13 @@ class AutofillCapturedSitesInteractiveTest
         return false;
       }
     }
-
-    if (should_cvc_dialog_pop_up) {
-      if (!test_card_unmask_prompt_waiter.Wait()) {
-        LOG(WARNING) << "\"Enter CVC\" dialog did not pop up.";
-      } else {
-        VLOG(1) << "CVC to be filled is: " << *cvc;
-        if (test_card_unmask_prompt_waiter.EnterAndAcceptCvcDialog(*cvc)) {
-          VLOG(1) << "\"Enter CVC\" dialog popped up and closed.";
-        }
-      }
-    }
     return true;
   }
 
   std::unique_ptr<captured_sites_test_utils::TestRecipeReplayer>
       recipe_replayer_;
   std::unique_ptr<captured_sites_test_utils::ProfileDataController>
-      profile_controller_ =
-          std::make_unique<captured_sites_test_utils::ProfileDataController>();
+      profile_controller_;
 
   base::test::ScopedFeatureList feature_list_;
   std::unique_ptr<test::ServerUrlLoader> server_url_loader_;
@@ -636,4 +623,5 @@ INSTANTIATE_TEST_SUITE_P(
     testing::ValuesIn(GetCapturedSites(GetReplayFilesRootDirectory())),
     captured_sites_test_utils::GetParamAsString());
 
+}  // namespace
 }  // namespace autofill

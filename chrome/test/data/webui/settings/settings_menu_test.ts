@@ -7,7 +7,7 @@
 // clang-format off
 import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 import type {SettingsMenuElement, SettingsRoutes} from 'chrome://settings/settings.js';
-import {buildRouter, loadTimeData, pageVisibility, Router} from 'chrome://settings/settings.js';
+import {resetRouterForTesting, loadTimeData, pageVisibility, Router} from 'chrome://settings/settings.js';
 import {assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {isVisible} from 'chrome://webui-test/test_util.js';
 import {flushTasks} from 'chrome://webui-test/polymer_test_util.js';
@@ -48,31 +48,27 @@ suite('SettingsMenu', function() {
     Router.getInstance().navigateTo(routes.RESET);
     const selector = settingsMenu.$.menu;
     assertTrue(!!selector.selected);
-    const path = new window.URL(selector.selected.toString()).pathname;
-    assertEquals('/reset', path);
+    assertEquals('/reset', selector.selected.toString());
   });
 
   test('navigateToAnotherSection', function() {
     Router.getInstance().navigateTo(routes.RESET);
     const selector = settingsMenu.$.menu;
     assertTrue(!!selector.selected);
-    let path = new window.URL(selector.selected.toString()).pathname;
-    assertEquals('/reset', path);
+    assertEquals('/reset', selector.selected.toString());
 
     Router.getInstance().navigateTo(routes.PEOPLE);
     flush();
 
     assertTrue(!!selector.selected);
-    path = new window.URL(selector.selected.toString()).pathname;
-    assertEquals('/people', path);
+    assertEquals('/people', selector.selected.toString());
   });
 
   test('navigateToBasic', function() {
     Router.getInstance().navigateTo(routes.RESET);
     const selector = settingsMenu.$.menu;
     assertTrue(!!selector.selected);
-    const path = new window.URL(selector.selected.toString()).pathname;
-    assertEquals('/reset', path);
+    assertEquals('/reset', selector.selected.toString());
 
     Router.getInstance().navigateTo(routes.BASIC);
     flush();
@@ -81,25 +77,9 @@ suite('SettingsMenu', function() {
     assertFalse(!!selector.selected);
   });
 
-  // <if expr="_google_chrome">
-  test('navigateToGetMostChrome', function() {
-    loadTimeData.overrideValues({showGetTheMostOutOfChromeSection: true});
-    Router.resetInstanceForTesting(buildRouter());
-    createSettingsMenu();
-    Router.getInstance().navigateTo(routes.GET_MOST_CHROME);
-    flush();
-
-    // GET_MOST_CHROME should select the 'About Chrome' entry.
-    const selector = settingsMenu.$.menu;
-    assertTrue(!!selector.selected);
-    const path = new window.URL(selector.selected.toString()).pathname;
-    assertEquals('/help', path);
-  });
-  // </if>
-
   test('noExperimental', async function() {
     loadTimeData.overrideValues({showAdvancedFeaturesMainControl: false});
-    Router.resetInstanceForTesting(buildRouter());
+    resetRouterForTesting();
     createSettingsMenu();
     await flushTasks();
 
@@ -110,7 +90,7 @@ suite('SettingsMenu', function() {
 
   test('navigateToExperimental', async function() {
     loadTimeData.overrideValues({showAdvancedFeaturesMainControl: true});
-    Router.resetInstanceForTesting(buildRouter());
+    resetRouterForTesting();
     createSettingsMenu();
     Router.getInstance().navigateTo(routes.AI);
     await flushTasks();
@@ -121,8 +101,7 @@ suite('SettingsMenu', function() {
 
     const selector = settingsMenu.$.menu;
     assertTrue(!!selector.selected);
-    const path = new window.URL(selector.selected.toString()).pathname;
-    assertEquals('/ai', path);
+    assertEquals('/ai', selector.selected.toString());
   });
 
   test('pageVisibility', function() {

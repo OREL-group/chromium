@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/modules/encoding/text_encoder_stream.h"
 
 #include <stdint.h>
@@ -29,7 +34,7 @@ namespace blink {
 class TextEncoderStream::Transformer final : public TransformStreamTransformer {
  public:
   explicit Transformer(ScriptState* script_state)
-      : encoder_(NewTextCodec(WTF::TextEncoding("utf-8"))),
+      : encoder_(NewTextCodec(WTF::UTF8Encoding())),
         script_state_(script_state) {}
 
   Transformer(const Transformer&) = delete;
@@ -37,16 +42,17 @@ class TextEncoderStream::Transformer final : public TransformStreamTransformer {
 
   // Implements the "encode and enqueue a chunk" algorithm. For efficiency, only
   // the characters at the end of chunks are special-cased.
-  ScriptPromiseUntyped Transform(v8::Local<v8::Value> chunk,
-                                 TransformStreamDefaultController* controller,
-                                 ExceptionState& exception_state) override {
+  ScriptPromise<IDLUndefined> Transform(
+      v8::Local<v8::Value> chunk,
+      TransformStreamDefaultController* controller,
+      ExceptionState& exception_state) override {
     V8StringResource<> input_resource{script_state_->GetIsolate(), chunk};
     if (!input_resource.Prepare(exception_state)) {
-      return ScriptPromiseUntyped();
+      return EmptyPromise();
     }
     const String input = input_resource;
     if (input.empty())
-      return ScriptPromiseUntyped::CastUndefined(script_state_.Get());
+      return ToResolvedUndefinedPromise(script_state_.Get());
 
     const std::optional<UChar> high_surrogate = pending_high_surrogate_;
     pending_high_surrogate_ = std::nullopt;
@@ -64,7 +70,7 @@ class TextEncoderStream::Transformer final : public TransformStreamTransformer {
       bool have_output =
           Encode16BitString(input, high_surrogate, &prefix, &result);
       if (!have_output)
-        return ScriptPromiseUntyped::CastUndefined(script_state_.Get());
+        return ToResolvedUndefinedPromise(script_state_.Get());
     }
 
     DOMUint8Array* array =
@@ -72,27 +78,25 @@ class TextEncoderStream::Transformer final : public TransformStreamTransformer {
     controller->enqueue(script_state_, ScriptValue::From(script_state_, array),
                         exception_state);
 
-    return ScriptPromiseUntyped::CastUndefined(script_state_.Get());
+    return ToResolvedUndefinedPromise(script_state_.Get());
   }
 
   // Implements the "encode and flush" algorithm.
-  ScriptPromiseUntyped Flush(TransformStreamDefaultController* controller,
-                             ExceptionState& exception_state) override {
+  ScriptPromise<IDLUndefined> Flush(
+      TransformStreamDefaultController* controller,
+      ExceptionState& exception_state) override {
     if (!pending_high_surrogate_.has_value())
-      return ScriptPromiseUntyped::CastUndefined(script_state_.Get());
+      return ToResolvedUndefinedPromise(script_state_.Get());
 
     const std::string replacement_character = ReplacementCharacterInUtf8();
-    const uint8_t* u8buffer =
-        reinterpret_cast<const uint8_t*>(replacement_character.c_str());
     controller->enqueue(
         script_state_,
-        ScriptValue::From(script_state_,
-                          DOMUint8Array::Create(
-                              u8buffer, static_cast<unsigned int>(
-                                            replacement_character.length()))),
+        ScriptValue::From(
+            script_state_,
+            DOMUint8Array::Create(base::as_byte_span(replacement_character))),
         exception_state);
 
-    return ScriptPromiseUntyped::CastUndefined(script_state_.Get());
+    return ToResolvedUndefinedPromise(script_state_.Get());
   }
 
   ScriptState* GetScriptState() override { return script_state_.Get(); }

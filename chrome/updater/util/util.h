@@ -7,6 +7,7 @@
 
 #include <cmath>
 #include <concepts>
+#include <limits>
 #include <optional>
 #include <ostream>
 #include <string>
@@ -43,6 +44,16 @@ inline std::ostream& operator<<(std::ostream& os, const std::optional<T>& opt) {
 namespace updater {
 
 struct RegistrationRequest;
+
+// Converts an unsigned integral to a signed one. Returns -1 if the value is
+// out of the range of the target type.
+template <std::unsigned_integral T>
+[[nodiscard]] auto ToSignedIntegral(T value) {
+  using Result = std::make_signed_t<T>;
+  return value <= std::numeric_limits<Result>::max()
+             ? static_cast<Result>(value)
+             : -1;
+}
 
 // Inserts an enum value as the underlying type.
 template <typename T>
@@ -231,6 +242,11 @@ template <typename T>
 [[nodiscard]] constexpr T CeilingDivide(T m, T n) {
   return std::ceil(static_cast<double>(m) / n);
 }
+
+// Returns a value in the [0, 100] range or -1 if the progress could not
+// be computed.
+[[nodiscard]] int GetDownloadProgress(int64_t downloaded_bytes,
+                                      int64_t total_bytes);
 
 }  // namespace updater
 

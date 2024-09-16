@@ -55,7 +55,6 @@ class CORE_EXPORT WebSettingsImpl final : public WebSettings {
   void SetAutoplayPolicy(mojom::blink::AutoplayPolicy) override;
   void SetRequireTransientActivationForGetDisplayMedia(bool) override;
   void SetRequireTransientActivationForShowFileOrDirectoryPicker(bool) override;
-  void SetRequireTransientActivationForHtmlFullscreen(bool) override;
   void SetLCDTextPreference(LCDTextPreference) override;
   void SetAccessibilityPasswordValuesEnabled(bool) override;
   void SetAllowFileAccessFromFileURLs(bool) override;
@@ -222,14 +221,14 @@ class CORE_EXPORT WebSettingsImpl final : public WebSettings {
 
   void SetForceDarkModeEnabled(bool) override;
   void SetInForcedColors(bool) override;
-  void SetBrowserPreferredColorScheme(
+  void SetIsForcedColorsDisabled(bool) override;
+  void SetPreferredRootScrollbarColorScheme(
       mojom::blink::PreferredColorScheme) override;
   void SetPreferredColorScheme(mojom::blink::PreferredColorScheme) override;
   void SetPreferredContrast(mojom::blink::PreferredContrast) override;
   void SetNavigationControls(NavigationControls) override;
 
   void SetAriaModalPrunesAXTree(bool) override;
-  void SetUseAXMenuList(bool) override;
   void SetSelectionClipboardBufferAvailable(bool) override;
   void SetAccessibilityIncludeSvgGElement(bool) override;
   void SetWebXRImmersiveArAllowed(bool webxr_immersive_ar_allowed) override;

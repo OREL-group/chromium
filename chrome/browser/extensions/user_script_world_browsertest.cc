@@ -137,8 +137,7 @@ class UserScriptWorldBrowserTest : public ExtensionApiTest {
     scoped_refptr<const Extension> extension =
         ExtensionBuilder("extension")
             .SetManifestVersion(3)
-            .SetManifestKey("host_permissions",
-                            base::Value::List().Append(host_permission))
+            .AddHostPermission(host_permission)
             .Build();
     extension_service()->AddExtension(extension.get());
     EXPECT_TRUE(
@@ -227,8 +226,8 @@ IN_PROC_BROWSER_TEST_F(UserScriptWorldBrowserTest,
                            "OnRestartRequiredReason", "PlatformArch",
                            "PlatformNaclArch", "PlatformOs",
                            "RequestUpdateCheckStatus",
-                           "connect", "id", "onConnect", "onMessage",
-                           "sendMessage"]
+                           "connect", "dynamicId", "id", "onConnect",
+                           "onMessage", "sendMessage"]
          })";
   EXPECT_THAT(script_result, base::test::IsJson(kExpectedJson));
 }

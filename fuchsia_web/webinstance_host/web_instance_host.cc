@@ -50,8 +50,8 @@ constexpr char kCollectionName[] = "web_instances";
 // The package URL for the current component cannot be obtained programmatically
 // (see fxbug.dev/51490), and this should always work in production, which is
 // when this is needed.
-// TODO(crbug.com/1211174): Remove when a different mechanism is available.
-// TODO(crbug.com/1395054): Replace with constant once `with_webui` is removed.
+// TODO(crbug.com/42050282): Remove when a different mechanism is available.
+// TODO(crbug.com/40248894): Replace with constant once `with_webui` is removed.
 std::string GetAbsoluteWebEnginePackageUrl(bool with_webui) {
   return base::StrCat({"fuchsia-pkg://fuchsia.com/",
                        (with_webui ? "web_engine_with_webui" : "web_engine")});
@@ -214,7 +214,7 @@ class InstanceBuilder {
   // be offered statically to the `web_instances` collection.
   void ServeOptionalDirectory(
       OptionalDirectory directory,
-      std::unique_ptr<vfs::internal::Directory> fs_directory,
+      std::unique_ptr<vfs::Node> fs_directory,
       fuchsia::io::Operations rights);
 
   // Offers the directory `directory` from `void`.
@@ -223,7 +223,7 @@ class InstanceBuilder {
   // Serves the directory `name` as `offer` in the instance's subtree as a
   // read-only or a read-write (if `writeable`) directory.
   void ServeDirectory(std::string_view name,
-                      std::unique_ptr<vfs::internal::Directory> fs_directory,
+                      std::unique_ptr<vfs::Node> fs_directory,
                       fuchsia::io::Operations rights);
 
   const raw_ref<sys::OutgoingDirectory> outgoing_directory_;
@@ -466,7 +466,7 @@ std::string_view InstanceBuilder::GetDirectoryName(
 
 void InstanceBuilder::ServeOptionalDirectory(
     OptionalDirectory directory,
-    std::unique_ptr<vfs::internal::Directory> fs_directory,
+    std::unique_ptr<vfs::Node> fs_directory,
     fuchsia::io::Operations rights) {
   DCHECK(instance_dir_);
   DCHECK(!is_directory_served(directory));
@@ -491,7 +491,7 @@ void InstanceBuilder::OfferOptionalDirectoryFromVoid(
 
 void InstanceBuilder::ServeDirectory(
     std::string_view name,
-    std::unique_ptr<vfs::internal::Directory> fs_directory,
+    std::unique_ptr<vfs::Node> fs_directory,
     fuchsia::io::Operations rights) {
   DCHECK(instance_dir_);
   zx_status_t status =
@@ -617,7 +617,7 @@ zx_status_t WebInstanceHost::CreateInstanceForContextWithCopiedArgsAndUrl(
     return ZX_ERR_INVALID_ARGS;
   }
 
-  // TODO(crbug.com/1395774): Replace this with normal routing of tmp from
+  // TODO(crbug.com/40882309): Replace this with normal routing of tmp from
   // web_engine_shell's parent down to web_instance.
   if (tmp_dir_.is_valid()) {
     builder->ServeTmpDirectory(std::move(tmp_dir_));
@@ -646,7 +646,7 @@ zx_status_t WebInstanceHost::CreateInstanceForContextWithCopiedArgsAndUrl(
     // programmatically (see fxbug.dev/51490). Use the default absolute package
     // URL for WebEngine; this should always work in production, which is
     // when registration is needed.
-    // TODO(crbug.com/1211174): Remove when a different mechanism is available.
+    // TODO(crbug.com/42050282): Remove when a different mechanism is available.
     component_url_to_register =
         MakeWebInstanceComponentUrl(false, with_webui, component_name);
   }

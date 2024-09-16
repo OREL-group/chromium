@@ -6,6 +6,7 @@
 
 #include <functional>
 #include <optional>
+#include <string_view>
 #include <variant>
 
 #include "base/functional/callback_forward.h"
@@ -57,7 +58,7 @@ InteractiveViewsTestApi::InteractiveViewsTestApi(
 InteractiveViewsTestApi::~InteractiveViewsTestApi() = default;
 
 ui::InteractionSequence::StepBuilder InteractiveViewsTestApi::NameView(
-    base::StringPiece name,
+    std::string_view name,
     AbsoluteViewSpecifier spec) {
   return NameViewRelative(kInteractiveTestPivotElementId, name,
                           GetFindViewCallback(std::move(spec)));
@@ -66,7 +67,7 @@ ui::InteractionSequence::StepBuilder InteractiveViewsTestApi::NameView(
 // static
 ui::InteractionSequence::StepBuilder InteractiveViewsTestApi::NameChildView(
     ElementSpecifier parent,
-    base::StringPiece name,
+    std::string_view name,
     ChildViewSpecifier spec) {
   return std::move(
       NameViewRelative(parent, name, GetFindViewCallback(std::move(spec)))
@@ -77,7 +78,7 @@ ui::InteractionSequence::StepBuilder InteractiveViewsTestApi::NameChildView(
 // static
 ui::InteractionSequence::StepBuilder
 InteractiveViewsTestApi::NameDescendantView(ElementSpecifier parent,
-                                            base::StringPiece name,
+                                            std::string_view name,
                                             ViewMatcher matcher) {
   return std::move(
       NameViewRelative(
@@ -107,6 +108,7 @@ InteractiveViewsTestApi::StepBuilder InteractiveViewsTestApi::ScrollIntoView(
 InteractiveViewsTestApi::StepBuilder InteractiveViewsTestApi::MoveMouseTo(
     ElementSpecifier reference,
     RelativePositionSpecifier position) {
+  RequireInteractiveTest();
   StepBuilder step;
   step.SetDescription("MoveMouseTo()");
   SpecifyElement(step, reference);
@@ -137,6 +139,7 @@ InteractiveViewsTestApi::StepBuilder InteractiveViewsTestApi::MoveMouseTo(
 InteractiveViewsTestApi::StepBuilder InteractiveViewsTestApi::ClickMouse(
     ui_controls::MouseButton button,
     bool release) {
+  RequireInteractiveTest();
   StepBuilder step;
   step.SetDescription("ClickMouse()");
   step.SetElementID(kInteractiveTestPivotElementId);
@@ -164,6 +167,7 @@ InteractiveViewsTestApi::StepBuilder InteractiveViewsTestApi::DragMouseTo(
     ElementSpecifier reference,
     RelativePositionSpecifier position,
     bool release) {
+  RequireInteractiveTest();
   StepBuilder step;
   step.SetDescription("DragMouseTo()");
   SpecifyElement(step, reference);
@@ -196,6 +200,7 @@ InteractiveViewsTestApi::StepBuilder InteractiveViewsTestApi::DragMouseTo(
 
 InteractiveViewsTestApi::StepBuilder InteractiveViewsTestApi::ReleaseMouse(
     ui_controls::MouseButton button) {
+  RequireInteractiveTest();
   StepBuilder step;
   step.SetDescription("ReleaseMouse()");
   step.SetElementID(kInteractiveTestPivotElementId);

@@ -54,7 +54,7 @@ namespace media {
 
 BASE_FEATURE(kMediaFoundationVideoCaptureForwardSampleTimestamps,
              "MediaFoundationVideoCaptureForwardSampleTimestamps",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 ULONGLONG CaptureModeToExtendedPlatformFlags(
     mojom::EyeGazeCorrectionMode mode) {
@@ -67,7 +67,7 @@ ULONGLONG CaptureModeToExtendedPlatformFlags(
       return KSCAMERA_EXTENDEDPROP_EYEGAZECORRECTION_ON |
              KSCAMERA_EXTENDEDPROP_EYEGAZECORRECTION_STARE;
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 mojom::EyeGazeCorrectionMode ExtendedPlatformFlagsToCaptureMode(
@@ -2767,9 +2767,6 @@ void VideoCaptureDeviceMFWin::OnCameraInUseReport(bool in_use,
 
   // Default action for no reports received can be only "camera not in use".
   DCHECK(!in_use || !is_default_action);
-
-  base::UmaHistogramBoolean("Media.VideoCapture.Win.ActivityReportProcessed",
-                            is_default_action);
 
   if (in_use) {
     OnError(VideoCaptureError::kWinMediaFoundationCameraBusy, FROM_HERE,

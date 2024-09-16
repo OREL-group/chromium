@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "base/strings/cstring_view.h"
 #include "base/time/clock.h"
 #include "base/time/default_clock.h"
 #include "chrome/browser/dips/dips_utils.h"
@@ -22,6 +23,16 @@
 // Encapsulates an SQL database that holds DIPS info.
 class DIPSDatabase {
  public:
+  // Version number of the database schema.
+  // NOTE: When changing the version, add a new golden file for the new version
+  // at `//chrome/test/data/dips/v<N>.sql`.
+  static constexpr int kLatestSchemaVersion = 7;
+
+  // The minimum database schema version this Chrome code is compatible with.
+  static constexpr int kMinCompatibleSchemaVersion = 6;
+
+  static constexpr char kPrepopulatedKey[] = "prepopulated";
+
   // The length of time that will be waited between emitting db health metrics.
   static const base::TimeDelta kMetricsInterval;
 
@@ -40,34 +51,6 @@ class DIPSDatabase {
 
   DIPSDatabase(const DIPSDatabase&) = delete;
   DIPSDatabase& operator=(const DIPSDatabase&) = delete;
-
-  // Updates `db_` to use the latest schema. Returns whether the migration was
-  // successful.
-  bool MigrateAsNeeded();
-
-  // Migrates from v1 to v2 of the DIPS database schema. This migration:
-  // - Makes all timestamp columns nullable instead of using base::Time() as
-  // default.
-  // - Replaces both the first and last stateless bounce columns to track the
-  // first and last bounce times instead.
-  bool MigrateToVersion2();
-
-  // Migrates from v2 to v3 of the DIPS database schema. This migration adds two
-  // extra columns for recording the first and last time a web authn assertion
-  // was called.
-  bool MigrateToVersion3();
-
-  // Migrates from v3 to v4 of the DIPS database schema. This migration adds a
-  // Popups table for recording popups with a current or prior user interaction.
-  bool MigrateToVersion4();
-
-  // Migrates from v4 to v5 of the DIPS database schema. This migration adds an
-  // `is_current_interaction` field to the Popups table.
-  bool MigrateToVersion5();
-
-  // Migrates from v5 to v6 of the DIPS database schema. This migration adds a
-  // Config table for storing key-value configuration data.
-  bool MigrateToVersion6();
 
   // DIPS Bounce table functions -----------------------------------------------
   bool Write(const std::string& site,
@@ -224,15 +207,6 @@ class DIPSDatabase {
   // Checks that the internal SQLite database is initialized.
   bool CheckDBInit();
 
-  // Marks meta_table_'s `prepopulated` field as true.
-  //
-  // Called once this database has finished prepopulating with information from
-  // the SiteEngagement service. Returns whether this operation was successful.
-  bool MarkAsPrepopulated();
-
-  // Whether the database was prepopulated using the SiteEngagement service.
-  bool IsPrepopulated();
-
   size_t GetMaxEntries() const { return max_entries_; }
   size_t GetPurgeEntries() const { return purge_entries_; }
 
@@ -243,7 +217,7 @@ class DIPSDatabase {
   void SetMaxEntriesForTesting(size_t entries) { max_entries_ = entries; }
   void SetPurgeEntriesForTesting(size_t entries) { purge_entries_ = entries; }
   void SetClockForTesting(base::Clock* clock) { clock_ = clock; }
-  bool ExecuteSqlForTesting(const char* sql);
+  bool ExecuteSqlForTesting(const base::cstring_view sql);
 
   bool SetConfigValueForTesting(std::string_view name, int64_t value) {
     return SetConfigValue(name, value);

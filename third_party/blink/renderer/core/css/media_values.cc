@@ -29,6 +29,7 @@
 #include "third_party/blink/renderer/platform/graphics/color_space_gamut.h"
 #include "third_party/blink/renderer/platform/network/network_state_notifier.h"
 #include "third_party/blink/renderer/platform/widget/frame_widget.h"
+#include "ui/base/mojom/window_show_state.mojom-blink.h"
 #include "ui/display/screen_info.h"
 
 namespace blink {
@@ -40,7 +41,7 @@ ForcedColors CSSValueIDToForcedColors(CSSValueID id) {
     case CSSValueID::kNone:
       return ForcedColors::kNone;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return ForcedColors::kNone;
   }
 }
@@ -53,7 +54,7 @@ mojom::blink::PreferredColorScheme CSSValueIDToPreferredColorScheme(
     case CSSValueID::kDark:
       return mojom::blink::PreferredColorScheme::kDark;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return mojom::blink::PreferredColorScheme::kLight;
   }
 }
@@ -69,7 +70,7 @@ mojom::blink::PreferredContrast CSSValueIDToPreferredContrast(CSSValueID id) {
     case CSSValueID::kCustom:
       return mojom::blink::PreferredContrast::kCustom;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return mojom::blink::PreferredContrast::kNoPreference;
   }
 }
@@ -86,6 +87,20 @@ std::optional<double> MediaValues::BlockSize() const {
     return Height();
   }
   return Width();
+}
+
+bool MediaValues::SnappedBlock() const {
+  if (blink::IsHorizontalWritingMode(GetWritingMode())) {
+    return SnappedY();
+  }
+  return SnappedX();
+}
+
+bool MediaValues::SnappedInline() const {
+  if (blink::IsHorizontalWritingMode(GetWritingMode())) {
+    return SnappedX();
+  }
+  return SnappedY();
 }
 
 MediaValues* MediaValues::CreateDynamicIfFrameExists(LocalFrame* frame) {
@@ -294,20 +309,21 @@ mojom::blink::DisplayMode MediaValues::CalculateDisplayMode(LocalFrame* frame) {
   return widget->DisplayMode();
 }
 
-ui::WindowShowState MediaValues::CalculateWindowShowState(LocalFrame* frame) {
+ui::mojom::blink::WindowShowState MediaValues::CalculateWindowShowState(
+    LocalFrame* frame) {
   DCHECK(frame);
 
-  ui::WindowShowState show_state =
+  ui::mojom::blink::WindowShowState show_state =
       frame->GetPage()->GetSettings().GetWindowShowState();
   // Initial state set in /third_party/blink/renderer/core/frame/settings.json5
   // should match with this.
-  if (show_state != ui::WindowShowState::SHOW_STATE_DEFAULT) {
+  if (show_state != ui::mojom::blink::WindowShowState::kDefault) {
     return show_state;
   }
 
   FrameWidget* widget = frame->GetWidgetForLocalRoot();
   if (!widget) {  // Is null in non-ordinary Pages.
-    return ui::SHOW_STATE_DEFAULT;
+    return ui::mojom::blink::WindowShowState::kDefault;
   }
 
   return widget->WindowShowState();

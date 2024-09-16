@@ -28,6 +28,11 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/core/animation/keyframe_effect_model.h"
 
 #include <limits>
@@ -66,19 +71,28 @@ PropertyHandleSet KeyframeEffectModelBase::Properties() const {
   return result;
 }
 
-PropertyHandleSet KeyframeEffectModelBase::DynamicProperties() const {
-  if (!RuntimeEnabledFeatures::StaticAnimationOptimizationEnabled()) {
-    return Properties();
+const PropertyHandleSet& KeyframeEffectModelBase::EnsureDynamicProperties() const {
+  if (dynamic_properties_) {
+    return *dynamic_properties_;
   }
 
-  PropertyHandleSet result;
+  dynamic_properties_ = std::make_unique<PropertyHandleSet>();
   EnsureKeyframeGroups();
-  for (const auto& entry : *keyframe_groups_) {
-    if (!entry.value->IsStatic()) {
-      result.insert(entry.key);
+  if (!RuntimeEnabledFeatures::StaticAnimationOptimizationEnabled()) {
+    // Unless the static optimization is enabled, all properties are considered
+    // dynamic.
+    for (const auto& entry : *keyframe_groups_) {
+      dynamic_properties_->insert(entry.key);
+    }
+  } else {
+    for (const auto& entry : *keyframe_groups_) {
+      if (!entry.value->IsStatic()) {
+        dynamic_properties_->insert(entry.key);
+      }
     }
   }
-  return result;
+
+  return *dynamic_properties_;
 }
 
 bool KeyframeEffectModelBase::HasStaticProperty() const {
@@ -113,6 +127,7 @@ void KeyframeEffectModelBase::SetComposite(CompositeOperation composite) {
 bool KeyframeEffectModelBase::Sample(
     int iteration,
     double fraction,
+    TimingFunction::LimitDirection limit_direction,
     AnimationTimeDelta iteration_duration,
     HeapVector<Member<Interpolation>>& result) const {
   DCHECK_GE(iteration, 0);
@@ -124,7 +139,8 @@ bool KeyframeEffectModelBase::Sample(
   last_iteration_ = iteration;
   last_fraction_ = fraction;
   last_iteration_duration_ = iteration_duration;
-  interpolation_effect_->GetActiveInterpolations(fraction, result);
+  interpolation_effect_->GetActiveInterpolations(fraction, limit_direction,
+                                                 result);
   return changed;
 }
 
@@ -387,14 +403,12 @@ bool KeyframeEffectModelBase::IsTransformRelatedEffect() const {
 }
 
 bool KeyframeEffectModelBase::SetLogicalPropertyResolutionContext(
-    TextDirection text_direction,
-    WritingMode writing_mode) {
+    WritingDirectionMode writing_direction) {
   bool changed = false;
   for (wtf_size_t i = 0; i < keyframes_.size(); i++) {
     if (auto* string_keyframe = DynamicTo<StringKeyframe>(*keyframes_[i])) {
       if (string_keyframe->HasLogicalProperty()) {
-        string_keyframe->SetLogicalPropertyResolutionContext(text_direction,
-                                                             writing_mode);
+        string_keyframe->SetLogicalPropertyResolutionContext(writing_direction);
         changed = true;
       }
     }
@@ -457,15 +471,13 @@ void KeyframeEffectModelBase::EnsureKeyframeGroups() const {
 }
 
 bool KeyframeEffectModelBase::RequiresPropertyNode() const {
-  for (const auto& keyframe : keyframes_) {
-    for (const auto& property : keyframe->Properties()) {
-      if (!property.IsCSSProperty() ||
-          (property.GetCSSProperty().PropertyID() != CSSPropertyID::kVariable &&
-           property.GetCSSProperty().PropertyID() !=
-               CSSPropertyID::kBackgroundColor &&
-           property.GetCSSProperty().PropertyID() != CSSPropertyID::kClipPath))
-        return true;
-    }
+  for (const auto& property : EnsureDynamicProperties()) {
+    if (!property.IsCSSProperty() ||
+        (property.GetCSSProperty().PropertyID() != CSSPropertyID::kVariable &&
+         property.GetCSSProperty().PropertyID() !=
+             CSSPropertyID::kBackgroundColor &&
+         property.GetCSSProperty().PropertyID() != CSSPropertyID::kClipPath))
+      return true;
   }
   return false;
 }
@@ -568,6 +580,7 @@ bool KeyframeEffectModelBase::ResolveTimelineOffsets(
 
 void KeyframeEffectModelBase::ClearCachedData() {
   keyframe_groups_ = nullptr;
+  dynamic_properties_.reset();
   interpolation_effect_->Clear();
   last_fraction_ = std::numeric_limits<double>::quiet_NaN();
   needs_compositor_keyframes_snapshot_ = true;

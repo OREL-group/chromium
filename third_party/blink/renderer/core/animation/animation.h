@@ -57,6 +57,7 @@ namespace blink {
 class AnimationTimeline;
 class Element;
 class PaintArtifactCompositor;
+class StyleChangeReasonForTracing;
 class TreeScope;
 class TimelineRange;
 
@@ -281,6 +282,7 @@ class CORE_EXPORT Animation : public EventTarget,
 
   // Pausing via this method is not reflected in the value returned by
   // paused() and must never overlap with pausing via pause().
+  // Deprecated: Do not use in new tests.
   void PauseForTesting(AnimationTimeDelta pause_time);
   void DisableCompositedAnimationForTesting();
 
@@ -302,7 +304,18 @@ class CORE_EXPORT Animation : public EventTarget,
   void RestartAnimationOnCompositor();
   void CancelIncompatibleAnimationsOnCompositor();
   bool HasActiveAnimationsOnCompositor();
-  void SetCompositorPending(bool effect_changed = false);
+
+  enum class CompositorPendingReason {
+    kPendingUpdate,        // Update due to an API call that may affect
+                           // play state or start time.
+    kPendingEffectChange,  // Update that changes the animation effect
+                           // including keyframes or active interval.
+    kPendingCancel,        // Animation has been canceled, but could restart
+                           // conditions permitting.
+    kPendingRestart        // Animation is to be restarted.
+  };
+  void SetCompositorPending(CompositorPendingReason reason);
+
   void NotifyReady(AnimationTimeDelta ready_time);
   void CommitPendingPlay(AnimationTimeDelta ready_time);
   void CommitPendingPause(AnimationTimeDelta ready_time);
@@ -333,13 +346,18 @@ class CORE_EXPORT Animation : public EventTarget,
   bool EffectSuppressed() const override { return effect_suppressed_; }
   void SetEffectSuppressed(bool);
 
-  void InvalidateKeyframeEffect(const TreeScope&);
+  void InvalidateKeyframeEffect(const TreeScope&,
+                                const StyleChangeReasonForTracing&);
   void InvalidateEffectTargetStyle();
   void InvalidateNormalizedTiming();
 
   void Trace(Visitor*) const override;
 
   bool CompositorPending() const { return compositor_pending_; }
+  bool CompositorPendingCancel() const {
+    return compositor_state_ &&
+           compositor_state_->pending_action == CompositorAction::kCancel;
+  }
 
   // Methods for handling removal and persistence of animations.
   bool IsReplaceable();
@@ -573,7 +591,7 @@ class CORE_EXPORT Animation : public EventTarget,
 
   // TODO(crbug.com/960944): Consider reintroducing kPause and cleanup use of
   // mutually exclusive pending_play_ and pending_pause_ flags.
-  enum class CompositorAction { kNone, kStart };
+  enum class CompositorAction { kNone, kStart, kCancel };
 
   class CompositorState {
     USING_FAST_MALLOC(CompositorState);
@@ -591,7 +609,6 @@ class CORE_EXPORT Animation : public EventTarget,
                               animation.hold_time_.value().InSecondsF())
                         : std::nullopt),
           playback_rate(animation.EffectivePlaybackRate()),
-          effect_changed(false),
           pending_action(animation.start_time_ ? CompositorAction::kNone
                                                : CompositorAction::kStart) {}
     CompositorState(const CompositorState&) = delete;
@@ -600,14 +617,8 @@ class CORE_EXPORT Animation : public EventTarget,
     std::optional<double> start_time;
     std::optional<double> hold_time;
     double playback_rate;
-    bool effect_changed;
+    bool effect_changed = false;
     CompositorAction pending_action;
-  };
-
-  enum CompositorPendingChange {
-    kSetCompositorPending,
-    kSetCompositorPendingWithEffectChanged,
-    kDoNotSetCompositorPending,
   };
 
   // CompositorAnimation objects need to eagerly sever their connection to their

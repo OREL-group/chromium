@@ -13,6 +13,7 @@
 #include "components/history/core/browser/visit_delegate.h"
 #include "components/visitedlink/browser/partitioned_visitedlink_writer.h"
 #include "components/visitedlink/browser/visitedlink_delegate.h"
+#include "components/visitedlink/core/visited_link.h"
 
 namespace content {
 class BrowserContext;
@@ -25,6 +26,8 @@ class Origin;
 namespace visitedlink {
 class VisitedLinkWriter;
 }
+
+using VisitedLink = visitedlink::VisitedLink;
 
 namespace history {
 
@@ -47,6 +50,9 @@ class ContentVisitDelegate : public VisitDelegate,
   void AddURLs(const std::vector<GURL>& urls) override;
   void DeleteURLs(const std::vector<GURL>& urls) override;
   void DeleteAllURLs() override;
+  void AddVisitedLink(const VisitedLink& link) override;
+  void DeleteVisitedLinks(const std::vector<VisitedLink>& links) override;
+  void DeleteAllVisitedLinks() override;
   std::optional<uint64_t> GetOrAddOriginSalt(
       const url::Origin& origin) override;
 
@@ -65,13 +71,16 @@ class ContentVisitDelegate : public VisitDelegate,
   // ensure that only one writer (partitioned or unpartitioned) is constructed
   // and initialized at a time.
   //
-  // If `kPartitionVisitedLinkDatabase` is not enabled, `visitedlink_writer_` is
-  // constructed and initialized, while `partitioned_writer_` is
-  // nullopt. This state is referred to as "unpartitioned".
+  // If neither `kPartitionVisitedLinkDatabase` nor
+  // `kPartitionVisitedLinkDatabaseWithSelfLinks` is enabled,
+  // `visitedlink_writer_` is constructed and initialized, while
+  // `partitioned_writer_` is nullopt. This state is referred to as
+  // "unpartitioned".
   //
-  // If `kPartitionVisitedLinkDatabase` is enabled, `visitedlink_writer_` is
-  // nullopt, while `partitioned_writer_` is constructed and
-  // initialized. This state is referred to as "partitioned".
+  // If either `kPartitionVisitedLinkDatabase` or
+  // `kPartitionVisitedLinkDatabaseWithSelfLinks` is enabled,
+  // `visitedlink_writer_` is nullopt, while `partitioned_writer_` is
+  // constructed and initialized. This state is referred to as "partitioned".
   std::unique_ptr<visitedlink::PartitionedVisitedLinkWriter>
       partitioned_writer_;
   std::unique_ptr<visitedlink::VisitedLinkWriter> visitedlink_writer_;

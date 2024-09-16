@@ -7,6 +7,7 @@
 #include <string>
 
 #include "ash/constants/ash_features.h"
+#include "ash/public/cpp/ash_view_ids.h"
 #include "ash/public/cpp/message_center/arc_notification_constants.h"
 #include "ash/public/cpp/metrics_util.h"
 #include "ash/system/notification_center/message_center_constants.h"
@@ -92,7 +93,8 @@ NotificationListView::NotificationListView(
     : views::AnimationDelegateViews(this),
       message_center_view_(message_center_view),
       animation_(std::make_unique<gfx::LinearAnimation>(this)),
-      message_view_width_(kTrayMenuWidth - (2 * kMessageCenterPadding)) {
+      message_view_width_(GetNotificationInMessageCenterWidth()) {
+  SetID(VIEW_ID_NOTIFICATION_BUBBLE_NOTIFICATION_LIST);
   if (!features::IsNotificationCenterControllerEnabled()) {
     message_center_observation_.Observe(MessageCenter::Get());
   }
@@ -278,8 +280,6 @@ double NotificationListView::GetCurrentAnimationValue() const {
     case State::IDLE:
       // No animations are used for State::IDLE.
       NOTREACHED();
-      tween = gfx::Tween::LINEAR;
-      break;
     case State::CLEAR_ALL_STACKED:
     case State::MOVE_DOWN:
       tween = gfx::Tween::FAST_OUT_SLOW_IN;
@@ -391,7 +391,8 @@ gfx::Rect NotificationListView::GetNotificationBoundsBelowY(
   return (it == children().cend()) ? gfx::Rect() : (*it)->bounds();
 }
 
-gfx::Size NotificationListView::CalculatePreferredSize() const {
+gfx::Size NotificationListView::CalculatePreferredSize(
+    const views::SizeBounds& available_size) const {
   if (state_ == State::IDLE) {
     return gfx::Size(message_view_width_, target_height_);
   }
@@ -743,7 +744,7 @@ void NotificationListView::UpdateBounds() {
     // Height is taken from preferred size, which is calculated based on the
     // tween and animation state when animations are occurring. So views which
     // are animating will provide the correct interpolated height here.
-    const int height = view->GetHeightForWidth(message_view_width_);
+    const int height = view->CalculateHeight();
     const int direction = view->GetSlideDirection();
 
     if (y > 0) {

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "mojo/public/cpp/base/big_buffer.h"
 
 #include "base/check.h"
@@ -129,7 +134,6 @@ const uint8_t* BigBuffer::data() const {
       return nullptr;
     default:
       NOTREACHED();
-      return nullptr;
   }
 }
 
@@ -143,7 +147,6 @@ size_t BigBuffer::size() const {
       return 0;
     default:
       NOTREACHED();
-      return 0;
   }
 }
 

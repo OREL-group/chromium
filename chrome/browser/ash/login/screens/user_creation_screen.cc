@@ -6,8 +6,8 @@
 
 #include "ash/public/cpp/login_screen.h"
 #include "chrome/browser/ash/login/error_screens_histogram_helper.h"
-#include "chrome/browser/ash/login/ui/login_display_host.h"
 #include "chrome/browser/ash/login/wizard_context.h"
+#include "chrome/browser/ui/ash/login/login_display_host.h"
 #include "chrome/browser/ui/webui/ash/login/error_screen_handler.h"
 #include "chrome/browser/ui/webui/ash/login/user_creation_screen_handler.h"
 #include "chromeos/ash/components/install_attributes/install_attributes.h"
@@ -37,6 +37,7 @@ UserCreationScreen::UserCreationScreenExitTestDelegate* test_exit_delegate =
 
 // static
 std::string UserCreationScreen::GetResultString(Result result) {
+  // LINT.IfChange(UsageMetrics)
   switch (result) {
     case Result::SIGNIN:
       return "SignIn";
@@ -57,6 +58,7 @@ std::string UserCreationScreen::GetResultString(Result result) {
     case Result::SKIPPED:
       return BaseScreen::kNotApplicable;
   }
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/oobe/histograms.xml)
 }
 
 UserCreationScreen::UserCreationScreen(base::WeakPtr<UserCreationView> view,

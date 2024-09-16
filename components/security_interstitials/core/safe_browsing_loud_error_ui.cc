@@ -10,6 +10,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "components/feature_engagement/public/feature_list.h"
 #include "components/google/core/common/google_util.h"
 #include "components/grit/components_resources.h"
 #include "components/safe_browsing/core/common/features.h"
@@ -41,7 +42,6 @@ void RecordExtendedReportingPrefChanged(bool report) {
 
 SafeBrowsingLoudErrorUI::SafeBrowsingLoudErrorUI(
     const GURL& request_url,
-    const GURL& main_frame_url,
     SBInterstitialReason reason,
     const SBErrorDisplayOptions& display_options,
     const std::string& app_locale,
@@ -49,7 +49,6 @@ SafeBrowsingLoudErrorUI::SafeBrowsingLoudErrorUI(
     ControllerClient* controller,
     bool created_prior_to_navigation)
     : BaseSafeBrowsingErrorUI(request_url,
-                              main_frame_url,
                               reason,
                               display_options,
                               app_locale,
@@ -262,11 +261,7 @@ void SafeBrowsingLoudErrorUI::PopulateMalwareLoadTimeData(
                                              IDS_MALWARE_V3_PRIMARY_PARAGRAPH));
   load_time_data.Set(
       "explanationParagraph",
-      is_subresource()
-          ? l10n_util::GetStringFUTF16(
-                IDS_MALWARE_V3_EXPLANATION_PARAGRAPH_SUBRESOURCE,
-                common_string_util::GetFormattedHostName(request_url()))
-          : l10n_util::GetStringUTF16(IDS_MALWARE_V3_EXPLANATION_PARAGRAPH));
+      l10n_util::GetStringUTF16(IDS_MALWARE_V3_EXPLANATION_PARAGRAPH));
   load_time_data.Set("finalParagraph", l10n_util::GetStringUTF16(
                                            IDS_MALWARE_V3_PROCEED_PARAGRAPH));
 }
@@ -280,11 +275,7 @@ void SafeBrowsingLoudErrorUI::PopulateHarmfulLoadTimeData(
                                              IDS_HARMFUL_V3_PRIMARY_PARAGRAPH));
   load_time_data.Set(
       "explanationParagraph",
-      is_subresource()
-          ? l10n_util::GetStringFUTF16(
-                IDS_HARMFUL_V3_EXPLANATION_PARAGRAPH_SUBRESOURCE,
-                common_string_util::GetFormattedHostName(request_url()))
-          : l10n_util::GetStringUTF16(IDS_HARMFUL_V3_EXPLANATION_PARAGRAPH));
+      l10n_util::GetStringUTF16(IDS_HARMFUL_V3_EXPLANATION_PARAGRAPH));
   load_time_data.Set("finalParagraph", l10n_util::GetStringUTF16(
                                            IDS_HARMFUL_V3_PROCEED_PARAGRAPH));
 }
@@ -299,11 +290,7 @@ void SafeBrowsingLoudErrorUI::PopulatePhishingLoadTimeData(
       l10n_util::GetStringUTF16(IDS_PHISHING_V4_PRIMARY_PARAGRAPH));
   load_time_data.Set(
       "explanationParagraph",
-      is_subresource()
-          ? l10n_util::GetStringFUTF16(
-                IDS_PHISHING_V4_EXPLANATION_PARAGRAPH_SUBRESOURCE,
-                common_string_util::GetFormattedHostName(request_url()))
-          : l10n_util::GetStringUTF16(IDS_PHISHING_V4_EXPLANATION_PARAGRAPH));
+      l10n_util::GetStringUTF16(IDS_PHISHING_V4_EXPLANATION_PARAGRAPH));
   load_time_data.Set("finalParagraph", l10n_util::GetStringUTF16(
                                            IDS_PHISHING_V4_PROCEED_PARAGRAPH));
 }
@@ -377,6 +364,9 @@ void SafeBrowsingLoudErrorUI::UpdateInterstitialInteractionData(
 }
 
 int SafeBrowsingLoudErrorUI::GetHTMLTemplateId() const {
+  if (base::FeatureList::IsEnabled(safe_browsing::kEnhancedSafeBrowsingPromo)) {
+    return IDR_SECURITY_INTERSTITIAL_WITHOUT_PROMO_HTML;
+  }
   return IDR_SECURITY_INTERSTITIAL_HTML;
 }
 

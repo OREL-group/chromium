@@ -33,6 +33,11 @@ class HttpResponseHeaders;
 
 class NET_EXPORT HttpUtil {
  public:
+  // Generates a request line that is used for text-based HTTP messaging.
+  static std::string GenerateRequestLine(std::string_view method,
+                                         GURL url,
+                                         bool is_for_get_to_http_proxy);
+
   // Returns the absolute URL, to be used for the http request. This url is
   // made up of the protocol, host, [port], path, [query]. Everything else
   // is stripped (username, password, reference).
@@ -201,7 +206,7 @@ class NET_EXPORT HttpUtil {
   // within the headers themselves, it will be stripped. This is a workaround to
   // avoid later code from incorrectly interpreting it as a line terminator.
   //
-  // TODO(crbug.com/671799): Should remove or internalize this to
+  // TODO(crbug.com/40496844): Should remove or internalize this to
   //                         HttpResponseHeaders.
   static std::string AssembleRawHeaders(std::string_view buf);
 

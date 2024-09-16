@@ -12,25 +12,21 @@ source_set("utils") {
     "utils/editor_types.h",
     "utils/focus_search.cc",
     "utils/focus_search.h",
-    "utils/icon.cc",
-    "utils/icon.h",
     "utils/mojo.cc",
     "utils/mojo.h",
     "utils/pre_target_handler.cc",
     "utils/pre_target_handler.h",
     "utils/pre_target_handler_view.cc",
     "utils/pre_target_handler_view.h",
-    "utils/preset_text_query.cc",
-    "utils/preset_text_query.h",
     "utils/utils.cc",
     "utils/utils.h",
   ]
 
   deps = [
     "//base",
-    "//chrome/browser/ui/views/editor_menu/vector_icons",
+    "//chrome/browser:browser_process",
+    "//chromeos/components/editor_menu/public/cpp",
     "//chromeos/crosapi/mojom",
-    "//components/vector_icons",
     "//ui/aura",
     "//ui/display",
     "//ui/events",
@@ -54,7 +50,10 @@ source_set("editor_menu") {
     "//ash/webui/settings/public/constants:mojom",
     "//base",
     "//chrome/browser/profiles:profile",
+    "//chrome/browser/ui/chromeos/read_write_cards",
     "//chromeos/components/editor_menu/public/cpp",
+    "//chromeos/components/magic_boost/public/cpp",
+    "//chromeos/constants:constants",
     "//chromeos/crosapi/mojom",
     "//content/public/browser:browser",
     "//ui/gfx",
@@ -67,7 +66,7 @@ source_set("editor_menu") {
       "editor_manager_ash.h",
     ]
 
-    deps += [ "//chrome/browser/ash" ]
+    deps += [ "//chrome/browser/ash/input_method" ]
   }
 
   if (is_chromeos_lacros) {
@@ -100,9 +99,11 @@ source_set("views") {
   deps = [
     ":utils",
     "//base",
-    "//chrome/browser/ui/views/editor_menu/vector_icons",
+    "//chrome/browser:browser_process",
+    "//chromeos/components/editor_menu/public/cpp",
     "//chromeos/constants:constants",
     "//chromeos/strings:strings_grit",
+    "//chromeos/ui/vector_icons",
     "//components/vector_icons",
     "//ui/aura",
     "//ui/base",

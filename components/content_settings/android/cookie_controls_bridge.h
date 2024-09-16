@@ -49,19 +49,30 @@ class CookieControlsBridge : public CookieControlsObserver {
 
   void OnEntryPointAnimated(JNIEnv* env);
 
+  static base::android::ScopedJavaLocalRef<jobject> CreateTpFeaturesList(
+      JNIEnv* env);
+
+  static void CreateTpFeatureAndAddToList(
+      JNIEnv* env,
+      base::android::ScopedJavaLocalRef<jobject> jfeatures,
+      TrackingProtectionFeature feature);
+
   // CookieControlsObserver:
-  void OnStatusChanged(bool controls_visible,
-                       bool protections_on,
-                       CookieControlsEnforcement enforcement,
-                       CookieBlocking3pcdStatus blocking_status,
-                       base::Time expiration) override;
-  void OnSitesCountChanged(int allowed_third_party_sites_count,
-                           int blocked_third_party_sites_count) override;
+  void OnStatusChanged(
+      bool controls_visible,
+      bool protections_on,
+      CookieControlsEnforcement enforcement,
+      CookieBlocking3pcdStatus blocking_status,
+      base::Time expiration,
+      std::vector<TrackingProtectionFeature> features) override;
+
   void OnCookieControlsIconStatusChanged(
       bool icon_visible,
       bool protections_on,
       CookieBlocking3pcdStatus blocking_status,
       bool should_highlight) override;
+
+  void OnReloadThresholdExceeded() override;
 
  private:
   base::android::ScopedJavaGlobalRef<jobject> jobject_;
@@ -70,10 +81,6 @@ class CookieControlsBridge : public CookieControlsObserver {
   CookieControlsEnforcement enforcement_ =
       CookieControlsEnforcement::kNoEnforcement;
   std::optional<base::Time> expiration_;
-  std::optional<int> blocked_cookies_;
-  std::optional<int> allowed_cookies_;
-  std::optional<int> blocked_third_party_sites_count_;
-  std::optional<int> allowed_third_party_sites_count_;
   std::unique_ptr<CookieControlsController> controller_;
   base::ScopedObservation<CookieControlsController, CookieControlsObserver>
       observation_{this};

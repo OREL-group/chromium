@@ -526,7 +526,13 @@ IN_PROC_BROWSER_TEST_P(SoftNavigationTest, MAYBE_LargestContentfulPaint) {
   EXPECT_EQ(std::next(source_id_to_lcp_request_priority.cbegin())->second, 2u);
 }
 
-IN_PROC_BROWSER_TEST_P(SoftNavigationTest, NoSoftNavigation) {
+// TODO(crbug.com/334416161): Re-enable this test.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_NoSoftNavigation DISABLED_NoSoftNavigation
+#else
+#define MAYBE_NoSoftNavigation NoSoftNavigation
+#endif
+IN_PROC_BROWSER_TEST_P(SoftNavigationTest, MAYBE_NoSoftNavigation) {
   auto waiter = std::make_unique<page_load_metrics::PageLoadMetricsTestWaiter>(
       web_contents());
 
@@ -547,7 +553,13 @@ INSTANTIATE_TEST_SUITE_P(All,
                          SoftNavigationTest,
                          ::testing::Values(false, true));
 
-IN_PROC_BROWSER_TEST_P(SoftNavigationTest, INP_ClickWithPresentation) {
+// TODO(crbug.com/338061920, crbug.com/333963663): Flaky on Win.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_INP_ClickWithPresentation DISABLED_INP_ClickWithPresentation
+#else
+#define MAYBE_INP_ClickWithPresentation INP_ClickWithPresentation
+#endif  //  BUILDFLAG(IS_WIN)
+IN_PROC_BROWSER_TEST_P(SoftNavigationTest, MAYBE_INP_ClickWithPresentation) {
   // Add waiter to wait for the interaction is arrived in browser.
   auto waiter = std::make_unique<page_load_metrics::PageLoadMetricsTestWaiter>(
       web_contents());
@@ -590,7 +602,13 @@ IN_PROC_BROWSER_TEST_P(SoftNavigationTest, INP_ClickWithPresentation) {
   ASSERT_TRUE(VerifyInpUkmAndTraceData(*analyzer));
 }
 
-IN_PROC_BROWSER_TEST_P(SoftNavigationTest, LayoutShift) {
+// TODO(crbug.com/338061920): Flaky on win-asan.
+#if BUILDFLAG(IS_WIN) && defined(ADDRESS_SANITIZER)
+#define MAYBE_LayoutShift DISABLED_LayoutShift
+#else
+#define MAYBE_LayoutShift LayoutShift
+#endif  //  BUILDFLAG(IS_WIN) && defined(ADDRESS_SANITIZER)
+IN_PROC_BROWSER_TEST_P(SoftNavigationTest, MAYBE_LayoutShift) {
   auto waiter = std::make_unique<page_load_metrics::PageLoadMetricsTestWaiter>(
       web_contents());
 

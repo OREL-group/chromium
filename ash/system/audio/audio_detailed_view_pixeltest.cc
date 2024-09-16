@@ -24,10 +24,8 @@ constexpr uint64_t kInternalMicId = 10003;
 // Pixel tests for the quick settings audio detailed view.
 class AudioDetailedViewPixelTest : public AshTestBase {
  public:
-  AudioDetailedViewPixelTest() : scoped_features_() {
-    scoped_features_.InitWithFeatures({::features::kChromeRefresh2023,
-                                       ::features::kChromeRefreshSecondary2023,
-                                       ::features::kChromeRefresh2023NTB},
+  AudioDetailedViewPixelTest() {
+    scoped_features_.InitWithFeatures({features::kOnDeviceSpeechRecognition},
                                       {});
   }
 
@@ -47,9 +45,9 @@ TEST_F(AudioDetailedViewPixelTest, Basics) {
   AudioDevice output_device(FakeCrasAudioClient::Get()->node_list()[1]);
   AudioDevice input_device(FakeCrasAudioClient::Get()->node_list()[5]);
   audio_handler->SwitchToDevice(output_device, true,
-                                CrasAudioHandler::ACTIVATE_BY_USER);
+                                DeviceActivateType::kActivateByUser);
   audio_handler->SwitchToDevice(input_device, true,
-                                CrasAudioHandler::ACTIVATE_BY_USER);
+                                DeviceActivateType::kActivateByUser);
 
   UnifiedSystemTray* system_tray = GetPrimaryUnifiedSystemTray();
   system_tray->ShowBubble();
@@ -67,7 +65,7 @@ TEST_F(AudioDetailedViewPixelTest, Basics) {
 
   EXPECT_TRUE(GetPixelDiffer()->CompareUiComponentsOnPrimaryScreen(
       "qs_audio_detailed_view",
-      /*revision_number=*/12, detailed_view));
+      /*revision_number=*/14, detailed_view));
 }
 
 TEST_F(AudioDetailedViewPixelTest, ShowNoiseCancellationButton) {
@@ -84,7 +82,7 @@ TEST_F(AudioDetailedViewPixelTest, ShowNoiseCancellationButton) {
   client->SetNoiseCancellationSupported(true);
   audio_handler->RequestNoiseCancellationSupported(base::DoNothing());
   audio_handler->SwitchToDevice(AudioDevice(internal_mic_node), true,
-                                CrasAudioHandler::ACTIVATE_BY_USER);
+                                DeviceActivateType::kActivateByUser);
 
   UnifiedSystemTray* system_tray = GetPrimaryUnifiedSystemTray();
   system_tray->ShowBubble();

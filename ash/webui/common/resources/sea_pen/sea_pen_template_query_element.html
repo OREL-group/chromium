@@ -1,11 +1,12 @@
-<style include="common cros-button-style">
-  .main {
+<style include="common cros-button-style sea-pen">
+  #container {
     display: flex;
     flex-direction: column;
     height: auto;
     justify-content: center;
     margin-block-start: 32px;
     padding-inline: 40px;
+    transition: height 300ms cubic-bezier(0, 0, 0, 1);
   }
 
   #placeholder {
@@ -62,30 +63,6 @@
     outline: 2px solid var(--cros-sys-focus_ring);
   }
 
-  .underline {
-    border-bottom: 2px dotted;
-    grid-area: chip;
-    /* Add one pixel to move the underline below the border. */
-    height: calc(100% + 1px);
-    justify-self: center;
-    /* Subtract 8 pixels so as to not underline the padding from .chip-text. */
-    width: calc(100% - 8px);
-    z-index: -1;
-  }
-
-  #searchButtons {
-    align-items: center;
-    box-sizing: border-box;
-    display: flex;
-    justify-content: center;
-    margin-block: 24px;
-  }
-
-  #searchButtons cr-button {
-    margin: 0 4px;
-    padding-inline-end: 16px;
-  }
-
   #thumbnailsLoadingText {
     color: var(--cros-sys-on_primary_container);
     font: var(--cros-annotation-1-font);
@@ -94,11 +71,6 @@
   cr-button {
     font: var(--cros-button-2-font);
     padding: 0px 12px;
-  }
-
-  #inspireMeAnimation {
-    height: 20px;
-    width: 20px;
   }
 
   .dropdown-check {
@@ -114,19 +86,23 @@
     padding: 8px 32px 8px 16px;
   }
 
-  #inspire:not(:hover) #inspireMeAnimation,
-  #inspire:hover #inspireIcon {
-    display: none;
+  #freeformInfo {
+    display: flex;
+    flex-flow: row wrap;
+    justify-content: center;
+    padding-bottom: 24px;
+    white-space: pre;
   }
 
-  #inspire:hover #inspireMeAnimation,
-  #inspire:not(:hover) #inspireIcon {
-    display: block;
-  }
 </style>
-<div class="main">
-  <template is="dom-if" if="[[shouldShowOptions_(options_)]]">
+<div id="container" class="main">
+  <template is="dom-if" if="[[seaPenUseExptTemplateEnabled_]]">
+    <div id="nextTemplate">Using the experimental theme (if available)</div>
+  </template>
+  <template is="dom-if" if="[[shouldShowOptions_(options_)]]"
+      on-dom-change="onSeaPenOptionsDomChanged_">
     <sea-pen-options
+        class="fade-in-200ms"
         options="[[options_]]"
         selected-chip="[[selectedChip_]]"
         selected-options="{{selectedOptions_}}"
@@ -139,7 +115,6 @@
         <div class$="chip-container [[getChipClassName_(token, selectedChip_)]]"
             disabled$="[[thumbnailsLoading_]]">
           <template is="dom-if" if="[[!thumbnailsLoading_]]" restamp>
-            <div class="underline"></div>
             <sea-pen-chip-text
                 aria-label$="[[token.translation]]"
                 aria-description$="[[getTemplateAriaLabel_(templateTokens_)]]"
@@ -173,7 +148,7 @@
         [[i18n('seaPenThumbnailsLoading')]]
       </span>
     </template>
-    <template is="dom-if" if="[[!thumbnailsLoading_]]">
+    <template is="dom-if" if="[[!thumbnailsLoading_]]" restamp>
       <cr-button
           id="inspire"
           on-click="onClickInspire_"
@@ -200,4 +175,9 @@
       </cr-button>
     </template>
   </div>
+  <template is="dom-if" if="[[shouldShowFreeformNavigationInfo_()]]">
+    <div id="freeformInfo"
+        inner-h-t-m-l="[[i18nAdvanced('seaPenFreeformNavigationDescription')]]">
+    </div>
+  </template>
 </div>

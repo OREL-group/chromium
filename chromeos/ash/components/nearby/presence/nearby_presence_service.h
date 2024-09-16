@@ -10,11 +10,15 @@
 #include <vector>
 
 #include "base/functional/callback.h"
+#include "chromeos/ash/components/nearby/presence/enums/nearby_presence_enums.h"
+#include "chromeos/ash/services/nearby/public/cpp/nearby_process_manager.h"
 #include "chromeos/ash/services/nearby/public/mojom/nearby_presence.mojom.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "third_party/nearby/src/presence/presence_device.h"
 
 namespace ash::nearby::presence {
+
+class NearbyPresenceConnectionsManager;
 
 // This service implements Nearby Presence on top of the Nearby Presence .mojom
 // interface.
@@ -36,31 +40,6 @@ class NearbyPresenceService {
     kFastPairSass = 14,
     kTapToTransfer = 15,
     kLast
-  };
-
-  // This is a super set of the absl status code found in
-  // //mojo/public/mojom/base/absl_status.mojom with the only difference being
-  // the addition of kFailedToStartProcess. Any updates to absl_status should be
-  // reflected here.
-  enum class StatusCode {
-    kAbslOk = 0,
-    kAbslCancelled = 1,
-    kAbslUnknown = 2,
-    kAbslInvalidArgument = 3,
-    kAbslDeadlineExceeded = 4,
-    kAbslNotFound = 5,
-    kAbslAlreadyExists = 6,
-    kAbslPermissionDenied = 7,
-    kAbslResourceExhausted = 8,
-    kAbslFailedPrecondition = 9,
-    kAbslAborted = 10,
-    kAbslOutOfRange = 11,
-    kAbslUnimplemented = 12,
-    kAbslInternal = 13,
-    kAbslUnavailable = 14,
-    kAbslDataLoss = 15,
-    kAbslUnauthenticated = 16,
-    kFailedToStartProcess = 17,
   };
 
   struct ScanFilter {
@@ -102,7 +81,7 @@ class NearbyPresenceService {
   virtual void StartScan(
       ScanFilter scan_filter,
       ScanDelegate* scan_delegate,
-      base::OnceCallback<void(std::unique_ptr<ScanSession>, StatusCode)>
+      base::OnceCallback<void(std::unique_ptr<ScanSession>, enums::StatusCode)>
           on_start_scan_callback) = 0;
 
   virtual void Initialize(base::OnceClosure on_initialized_callback) = 0;
@@ -114,7 +93,15 @@ class NearbyPresenceService {
   //     2. Downloading remote devices' credentials from the NP server and
   //        saving them to the NP library.
   virtual void UpdateCredentials() = 0;
+
+  virtual std::unique_ptr<NearbyPresenceConnectionsManager>
+  CreateNearbyPresenceConnectionsManager() = 0;
 };
+
+// TODO(b/342473553): Migrate this function and implementation to
+// //chromeos/ash/components/nearby/presence/enums.
+std::ostream& operator<<(std::ostream& stream,
+                         const enums::StatusCode status_code);
 
 }  // namespace ash::nearby::presence
 

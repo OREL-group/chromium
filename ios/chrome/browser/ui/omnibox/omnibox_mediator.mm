@@ -324,6 +324,13 @@ using base::UserMetricsAction;
       updateSearchByImageSupported:self.searchEngineSupportsSearchByImage];
   [_consumer updateLensImageSupported:self.searchEngineSupportsLens];
 
+  if (self.templateURLService) {
+    if (const TemplateURL* searchProvider =
+            self.templateURLService->GetDefaultSearchProvider()) {
+      [self.consumer setSearchProviderName:searchProvider->short_name()];
+    }
+  }
+
   // Show Default Search Engine favicon.
   // Remember what is the Default Search Engine provider that the icon is
   // for, in case the user changes Default Search Engine while this is being
@@ -340,7 +347,6 @@ using base::UserMetricsAction;
   __weak __typeof(self) weakSelf = self;
   auto textCompletion =
       ^(__kindof id<NSItemProviderReading> providedItem, NSError* error) {
-        default_browser::NotifyOmniboxTextCopyPasteAndNavigate(self.tracker);
         dispatch_async(dispatch_get_main_queue(), ^{
           NSString* text = static_cast<NSString*>(providedItem);
           if (text) {
@@ -396,6 +402,7 @@ using base::UserMetricsAction;
     } else if ([itemProvider canLoadObjectOfClass:[NSString class]]) {
       RecordAction(
           UserMetricsAction("Mobile.OmniboxPasteButton.SearchCopiedText"));
+      default_browser::NotifyOmniboxTextCopyPasteAndNavigate(self.tracker);
       [itemProvider loadObjectOfClass:[NSString class]
                     completionHandler:textCompletion];
       break;

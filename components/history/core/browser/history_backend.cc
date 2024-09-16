@@ -61,7 +61,7 @@
 #include "components/history/core/browser/url_utils.h"
 #include "components/sync/base/features.h"
 #include "components/sync/base/report_unrecoverable_error.h"
-#include "components/sync/model/client_tag_based_model_type_processor.h"
+#include "components/sync/model/client_tag_based_data_type_processor.h"
 #include "components/url_formatter/url_formatter.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "sql/error_delegate_util.h"
@@ -84,7 +84,7 @@ using favicon::FaviconBitmapID;
 using favicon::FaviconBitmapIDSize;
 using favicon::FaviconBitmapType;
 using favicon::IconMapping;
-using syncer::ClientTagBasedModelTypeProcessor;
+using syncer::ClientTagBasedDataTypeProcessor;
 
 /* The HistoryBackend consists of two components:
 
@@ -162,10 +162,6 @@ const int kCommitIntervalSeconds = 10;
 // The maximum number of items we'll allow in the redirect list before
 // deleting some.
 const int kMaxRedirectCount = 32;
-
-// The number of days old a history entry can be before it is considered "old"
-// and is deleted.
-constexpr int kExpireDaysThreshold = 90;
 
 // The maximum number of days for which domain visit metrics are computed
 // each time HistoryBackend::GetDomainDiversity() is called.
@@ -248,8 +244,7 @@ bool CanAddForeignVisitToSegments(
     const std::string& local_device_originator_cache_guid,
     const SyncDeviceInfoMap& sync_device_info) {
 #if BUILDFLAG(IS_IOS)
-  if (!history::IsSyncSegmentsDataEnabled() ||
-      foreign_visit.originator_cache_guid.empty() ||
+  if (foreign_visit.originator_cache_guid.empty() ||
       !foreign_visit.consider_for_ntp_most_visited) {
     return false;
   }
@@ -415,7 +410,7 @@ void HistoryBackend::Init(
 
   history_sync_bridge_ = std::make_unique<HistorySyncBridge>(
       this, db_ ? db_->GetHistoryMetadataDB() : nullptr,
-      std::make_unique<ClientTagBasedModelTypeProcessor>(
+      std::make_unique<ClientTagBasedDataTypeProcessor>(
           syncer::HISTORY,
           base::BindRepeating(&syncer::ReportUnrecoverableError,
                               history_database_params.channel)));
@@ -443,9 +438,10 @@ void HistoryBackend::SetOnBackendDestroyTask(
 
 void HistoryBackend::Closing() {
   TRACE_EVENT0("browser", "HistoryBackend::Closing");
-  // Any scheduled commit will have a reference to us, we must make it
-  // release that reference before we can be destroyed.
+  // The history system is shutting down. Cancel any pending/scheduled work.
   CancelScheduledCommit();
+  queued_history_db_tasks_.clear();
+  posted_history_db_task_.Cancel();
 }
 
 #if BUILDFLAG(IS_IOS)
@@ -1212,6 +1208,8 @@ void HistoryBackend::AddPage(const HistoryAddPageArgs& request) {
                       last_visit_id);
   }
 
+  delegate_->NotifyVisitedLinksAdded(request);
+
   ScheduleCommit();
 }
 
@@ -1278,7 +1276,7 @@ void HistoryBackend::InitImpl(
       return;
     }
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 
   // Fill the in-memory database and send it back to the history service on the
@@ -1459,7 +1457,7 @@ std::pair<URLID, VisitID> HistoryBackend::AddPageVisit(
     visit_info.visited_link_id = visited_link_info.id;
   }
 
-  // TODO(crbug.com/1476511): any visit added via sync should not have a
+  // TODO(crbug.com/40280017): any visit added via sync should not have a
   // corresponding entry in the VisitedLinkDatabase.
   if (visit_source == VisitSource::SOURCE_SYNCED) {
     CHECK(visit_info.visited_link_id == kInvalidVisitedLinkID);
@@ -1834,7 +1832,7 @@ VisitID HistoryBackend::UpdateSyncedVisit(
   // existing row. It'll be updated below, if necessary.
   updated_row.segment_id = original_row.segment_id;
 
-  // TODO(crbug.com/1476511): any VisitedLinkID associated with `updated_row`
+  // TODO(crbug.com/40280017): any VisitedLinkID associated with `updated_row`
   // will be voided to avoid storing stale/incorrect VisitedLinkIDs once
   // elements of the VisitRow's partition key change (in this case the
   // referring_visit).
@@ -1885,7 +1883,7 @@ bool HistoryBackend::UpdateVisitReferrerOpenerIDs(VisitID visit_id,
   row.referring_visit = referrer_id;
   row.opener_visit = opener_id;
 
-  // TODO(crbug.com/1476511): any VisitedLinkID associated with `row`
+  // TODO(crbug.com/40280017): any VisitedLinkID associated with `row`
   // will be voided to avoid storing stale/incorrect VisitedLinkIDs once
   // elements of the VisitRow's partition key change (in this case the
   // referring_visit).
@@ -2012,7 +2010,7 @@ std::vector<QueryURLResult> HistoryBackend::QueryURLs(
   return results;
 }
 
-base::WeakPtr<syncer::ModelTypeControllerDelegate>
+base::WeakPtr<syncer::DataTypeControllerDelegate>
 HistoryBackend::GetHistorySyncControllerDelegate() {
   if (history_sync_bridge_) {
     return history_sync_bridge_->change_processor()->GetControllerDelegate();
@@ -2920,7 +2918,7 @@ void HistoryBackend::GetRedirectsFromSpecificVisit(VisitID cur_visit,
   visit_set.insert(cur_visit);
   while (db_->GetRedirectFromVisit(cur_visit, &cur_visit, &cur_url)) {
     if (visit_set.find(cur_visit) != visit_set.end()) {
-      NOTREACHED() << "Loop in visit chain, giving up";
+      DUMP_WILL_BE_NOTREACHED() << "Loop in visit chain, giving up";
       return;
     }
     visit_set.insert(cur_visit);
@@ -2941,7 +2939,7 @@ void HistoryBackend::GetRedirectsToSpecificVisit(VisitID cur_visit,
   visit_set.insert(cur_visit);
   while (db_->GetRedirectToVisit(cur_visit, &cur_visit, &cur_url)) {
     if (visit_set.find(cur_visit) != visit_set.end()) {
-      NOTREACHED() << "Loop in visit chain, giving up";
+      DUMP_WILL_BE_NOTREACHED() << "Loop in visit chain, giving up";
       return;
     }
     visit_set.insert(cur_visit);
@@ -3292,10 +3290,17 @@ void HistoryBackend::ProcessDBTaskImpl() {
     task->DoneRun();
   } else {
     // The task wants to run some more. Schedule it at the end of the current
-    // tasks, and process it after an invoke later.
+    // tasks.
     queued_history_db_tasks_.push_back(std::move(task));
-    task_runner_->PostTask(
-        FROM_HERE, base::BindOnce(&HistoryBackend::ProcessDBTaskImpl, this));
+  }
+
+  // If there are more tasks queued, schedule the next one.
+  // Note: Using PostTask() ensures the history sequence gets unblocked for
+  // other work.
+  if (!queued_history_db_tasks_.empty()) {
+    posted_history_db_task_.Reset(
+        base::BindOnce(&HistoryBackend::ProcessDBTaskImpl, this));
+    task_runner_->PostTask(FROM_HERE, posted_history_db_task_.callback());
   }
 }
 
@@ -3568,8 +3573,7 @@ void HistoryBackend::KillHistoryDatabase() {
   // transaction. Deleting the object causes the rollback in the destructor.
   singleton_transaction_.reset();
 
-  bool success = db_->Raze();
-  UMA_HISTOGRAM_BOOLEAN("History.KillHistoryDatabaseResult", success);
+  db_->Raze();
 
   // The expirer keeps tabs on the active databases. Tell it about the
   // databases which will be closed.
@@ -3656,10 +3660,23 @@ void HistoryBackend::NotifyVisitUpdated(const VisitRow& visit,
   }
 }
 
-void HistoryBackend::NotifyVisitDeleted(const VisitRow& visit) {
-  tracker_.RemoveVisitById(visit.visit_id);
-  for (HistoryBackendObserver& observer : observers_) {
-    observer.OnVisitDeleted(visit);
+void HistoryBackend::NotifyVisitsDeleted(
+    const std::vector<DeletedVisit>& visits) {
+  std::vector<DeletedVisitedLink> links;
+  for (const DeletedVisit& visit : visits) {
+    tracker_.RemoveVisitById(visit.visit_row.visit_id);
+    for (HistoryBackendObserver& observer : observers_) {
+      observer.OnVisitDeleted(visit.visit_row);
+    }
+    // Determine if a VisitedLink was deleted as a result of the deleted Visit.
+    if (visit.deleted_visited_link.has_value()) {
+      links.push_back(visit.deleted_visited_link.value());
+    }
+  }
+  // We want to avoid posting a new task for every VisitedLink deleted, so we
+  // notify the `delegate_` in a batch.
+  if (!links.empty()) {
+    delegate_->NotifyVisitedLinksDeleted(links);
   }
 }
 

@@ -9,6 +9,7 @@
 #include <variant>
 #include <vector>
 
+#include "base/feature_list.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
@@ -19,7 +20,6 @@
 #include "base/ranges/algorithm.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
@@ -32,6 +32,7 @@
 #include "base/test/with_feature_override.h"
 #include "base/thread_annotations.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/unguessable_token.h"
 #include "build/branding_buildflags.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
@@ -59,6 +60,8 @@
 #include "components/guest_view/browser/test_guest_view_manager.h"
 #include "components/metrics/content/subprocess_metrics_provider.h"
 #include "components/pdf/browser/pdf_frame_util.h"
+#include "components/pdf/common/constants.h"
+#include "components/pdf/common/pdf_util.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
 #include "components/policy/core/common/mock_configuration_policy_provider.h"
 #include "components/policy/core/common/policy_map.h"
@@ -107,6 +110,7 @@
 #include "third_party/blink/public/common/context_menu_data/untrustworthy_context_menu_params.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
 #include "third_party/blink/public/common/input/web_mouse_event.h"
+#include "third_party/blink/public/common/messaging/transferable_message.h"
 #include "ui/base/clipboard/clipboard.h"
 #include "ui/base/clipboard/clipboard_monitor.h"
 #include "ui/base/clipboard/clipboard_observer.h"
@@ -190,10 +194,11 @@ using PDFExtensionTestWithoutOopifOverride = PDFExtensionTestBase;
 
 class PDFExtensionTestWithPartialLoading : public PDFExtensionTest {
  protected:
-  std::vector<base::test::FeatureRef> GetEnabledFeatures() const override {
+  std::vector<base::test::FeatureRefAndParams> GetEnabledFeatures()
+      const override {
     auto enabled = PDFExtensionTest::GetEnabledFeatures();
-    enabled.push_back(chrome_pdf::features::kPdfIncrementalLoading);
-    enabled.push_back(chrome_pdf::features::kPdfPartialLoading);
+    enabled.push_back({chrome_pdf::features::kPdfIncrementalLoading, {}});
+    enabled.push_back({chrome_pdf::features::kPdfPartialLoading, {}});
     return enabled;
   }
 };
@@ -293,12 +298,10 @@ class InnerWebContentsAttachDelayer {
 // attaching an inner WebContents for a PDF, the inner WebContents can still
 // successfully complete its attachment and subsequent navigation.  See
 // https://crbug.com/1295431.
-IN_PROC_BROWSER_TEST_P(PDFExtensionTest, PdfExtensionLoadedWhileOldPdfCloses) {
-  // TODO(crbug.com/1445746): Remove this once the test passes for OOPIF PDF.
-  if (UseOopif()) {
-    GTEST_SKIP();
-  }
-
+// See PDFExtensionOopifTest.PdfExtensionLoadedWhileOldPdfCloses for the OOPIF
+// PDF version.
+IN_PROC_BROWSER_TEST_F(PDFExtensionTestWithoutOopifOverride,
+                       PdfExtensionLoadedWhileOldPdfCloses) {
   // Load test PDF in first tab.
   const GURL main_url(embedded_test_server()->GetURL("/pdf/test.pdf"));
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), main_url));
@@ -542,7 +545,8 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionBlobNavigationTest, NewTab) {
   ASSERT_EQ(browser()->tab_strip_model()->count(), 2);
   WebContents* new_tab_contents =
       browser()->tab_strip_model()->GetWebContentsAt(1);
-  EXPECT_TRUE(EnsureFullPagePDFHasLoadedWithValidFrameTree(new_tab_contents));
+  EXPECT_TRUE(EnsureFullPagePDFHasLoadedWithValidFrameTree(
+      new_tab_contents, /*allow_multiple_frames=*/false));
 }
 
 IN_PROC_BROWSER_TEST_P(PDFExtensionBlobNavigationTest, SameTab) {
@@ -550,12 +554,12 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionBlobNavigationTest, SameTab) {
       browser(),
       embedded_test_server()->GetURL("/pdf/blob_navigation_same_tab.html"),
       /*number_of_navigations=*/2));
-  EXPECT_TRUE(
-      EnsureFullPagePDFHasLoadedWithValidFrameTree(GetActiveWebContents()));
+  EXPECT_TRUE(EnsureFullPagePDFHasLoadedWithValidFrameTree(
+      GetActiveWebContents(), /*allow_multiple_frames=*/false));
 }
 
 IN_PROC_BROWSER_TEST_P(PDFExtensionTest, LoadInPlatformApp) {
-  // TODO(crbug.com/1445746): Remove this once the test passes for OOPIF PDF.
+  // TODO(crbug.com/40268279): Remove this once the test passes for OOPIF PDF.
   if (UseOopif()) {
     GTEST_SKIP();
   }
@@ -851,7 +855,7 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionTestWithPartialLoading,
   followup_response.Send("\r\n");
   followup_response.Done();
 
-  // TODO(crbug.com/1228987): Load success or failure is non-deterministic
+  // TODO(crbug.com/40189769): Load success or failure is non-deterministic
   // currently, due to races between viewport messages and loading. For this
   // test, we only care that loading terminated, not about success or failure.
   std::ignore = pdf_extension_test_util::EnsurePDFHasLoaded(contents);
@@ -898,13 +902,10 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionTest, EnsureCrossOriginRepliesBlocked) {
 }
 
 // Ensure same-origin replies do work for getSelectedText.
-IN_PROC_BROWSER_TEST_P(PDFExtensionTest, EnsureSameOriginRepliesAllowed) {
-  // The full page PDF embedder frame can't post messages to the PDF extension
-  // frame, so it can't post a getSelectedText message.
-  if (UseOopif()) {
-    GTEST_SKIP();
-  }
-
+// The full page PDF embedder frame can't post messages to the PDF extension
+// frame, so it can't post a getSelectedText message.
+IN_PROC_BROWSER_TEST_F(PDFExtensionTestWithoutOopifOverride,
+                       EnsureSameOriginRepliesAllowed) {
   content::RenderFrameHost* extension_host =
       LoadPdfGetExtensionHost(embedded_test_server()->GetURL("/pdf/test.pdf"));
   ASSERT_TRUE(extension_host);
@@ -912,7 +913,7 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionTest, EnsureSameOriginRepliesAllowed) {
   TestGetSelectedTextReply(extension_host, true);
 }
 
-// TODO(crbug.com/1004425): Should be allowed?
+// TODO(crbug.com/40647731): Should be allowed?
 IN_PROC_BROWSER_TEST_P(PDFExtensionTest, EnsureOpaqueOriginRepliesBlocked) {
   content::RenderFrameHost* extension_host =
       LoadPdfInFirstChildGetExtensionHost(
@@ -924,16 +925,15 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionTest, EnsureOpaqueOriginRepliesBlocked) {
 
 // Ensure that the PDF component extension cannot be loaded directly.
 IN_PROC_BROWSER_TEST_P(PDFExtensionTest, BlockDirectAccess) {
-  // TODO(crbug.com/1445746): Remove this once the test passes for OOPIF PDF.
-  if (UseOopif()) {
-    GTEST_SKIP();
-  }
+  const std::string pattern =
+      UseOopif()
+          ? "*Failed to get StreamContainer*"
+          : "*Streams are only available from a mime handler view guest.*";
 
   WebContents* web_contents = GetActiveWebContents();
 
   content::WebContentsConsoleObserver console_observer(web_contents);
-  console_observer.SetPattern(
-      "*Streams are only available from a mime handler view guest.*");
+  console_observer.SetPattern(pattern);
   GURL forbidden_url(
       "chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html?"
       "https://example.com/notrequested.pdf");
@@ -1048,6 +1048,64 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionTest, TabTitleWithEmbeddedPdf) {
   WebContents* web_contents = GetActiveWebContents();
 
   EXPECT_EQ(u"TabWithEmbeddedPdf", web_contents->GetTitle());
+}
+
+// Tests that PDF MIME type is not set for non-PDF `WebContents`.
+IN_PROC_BROWSER_TEST_P(PDFExtensionTest, IsContentsMimeTypePdfNonPdf) {
+  // Navigate to a non-PDF page.
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL("/title1.html")));
+
+  // Verify that MIME type associated with non-PDF `WebContents` is not
+  // `application/pdf`.
+  EXPECT_NE(pdf::kPDFMimeType, GetActiveWebContents()->GetContentsMimeType());
+}
+
+// Tests that PDF MIME type is not set for embedded PDF `WebContents`.
+IN_PROC_BROWSER_TEST_P(PDFExtensionTest, IsContentsMimeTypePdfEmbedPdf) {
+  // Load page with embedded PDF and make sure it succeeds.
+  ASSERT_TRUE(LoadPdfInFirstChild(
+      embedded_test_server()->GetURL("/pdf/pdf_embed.html")));
+
+  // Verify that MIME type associated with embedded PDF `WebContents` is not
+  // `application/pdf`.
+  EXPECT_NE(pdf::kPDFMimeType, GetEmbedderWebContents()->GetContentsMimeType());
+}
+
+// Tests that PDF MIME type is set for full-page PDF `WebContents`.
+IN_PROC_BROWSER_TEST_P(PDFExtensionTest, IsContentsMimeTypePdfFullPagePdf) {
+  // Load a full-page PDF and make sure it succeeds.
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL("/pdf/test.pdf")));
+
+  // Verify that MIME type associated with full-page PDF `WebContents` is
+  // `application/pdf`.
+  EXPECT_EQ(pdf::kPDFMimeType, GetEmbedderWebContents()->GetContentsMimeType());
+}
+
+// Tests that PDF MIME type is set for full-page PDF `WebContents` with MIME
+// type params.
+// NOTE: This test is not parameterized as PDF MIME type validation for OOPIF
+// variant is already being done in
+// PDFExtensionOopifTest.FindFullPagePdfExtensionHostFullPagePdfWithMimeTypeParam.
+IN_PROC_BROWSER_TEST_F(PDFExtensionTestWithoutOopifOverride,
+                       IsContentsMimeTypePdfFullPagePdfWithMimeTypeParam) {
+  // Load a full-page PDF with MIME type param and make sure it succeeds.
+  const char kPdfFullPageWithMimeTypeParam[] =
+      "data:application/pdf;charset=iso-8859-5;base64,"
+      "JVBERi0xLjcKJaDypPQKMSAwIG9iaiA8PAogIC9UeXBlIC9DYXRhbG9nCiAgL1BhZ2VzIDIg"
+      "MCBSCj4+CmVuZG9iagoyIDAgb2JqIDw8CiAgL1R5cGUgL1BhZ2VzCiAgL0NvdW50IDEKICAv"
+      "S2lkcyBbMyAwIFJdCiAgL1Jlc291cmNlcyA8PCA+Pgo+PgplbmRvYmoKMyAwIG9iaiA8PAog"
+      "IC9UeXBlIC9QYWdlIAogIC9QYXJlbnQgMiAwIFIKICAvTWVkaWFCb3ggWzAgMCAxMDAgNTBd"
+      "Cj4+CmVuZG9iagp4cmVmCjAgNAowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMTUgMDAw"
+      "MDAgbiAKMDAwMDAwMDA2OCAwMDAwMCBuIAowMDAwMDAwMTUwIDAwMDAwIG4gCnRyYWlsZXIg"
+      "PDwKICAvUm9vdCAxIDAgUgogIC9TaXplIDQKPj4Kc3RhcnR4cmVmCjIyNwolJUVPRgo=";
+  EXPECT_TRUE(LoadPdf(GURL(kPdfFullPageWithMimeTypeParam)));
+
+  // Verify that MIME type associated with full-page PDF `WebContents` is
+  // `application/pdf`, irrespective of MIME type params (Ex: charset in this
+  // test).
+  EXPECT_EQ(pdf::kPDFMimeType, GetEmbedderWebContents()->GetContentsMimeType());
 }
 
 // Flaky, http://crbug.com/767427
@@ -1450,11 +1508,12 @@ class PDFExtensionIsolatedContentTest
 
   bool UseOopif() const override { return std::get<1>(GetParam()); }
 
-  std::vector<base::test::FeatureRef> GetEnabledFeatures() const override {
-    std::vector<base::test::FeatureRef> enabled =
+  std::vector<base::test::FeatureRefAndParams> GetEnabledFeatures()
+      const override {
+    std::vector<base::test::FeatureRefAndParams> enabled =
         PDFExtensionTestWithoutOopifOverride::GetEnabledFeatures();
     if (site_isolated()) {
-      enabled.push_back(features::kSitePerProcess);
+      enabled.push_back({features::kSitePerProcess, {}});
     }
     return enabled;
   }
@@ -1520,7 +1579,9 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionIsolatedContentTest, PdfAndHtml) {
   EXPECT_EQ(plugin_frames[0]->GetLastCommittedOrigin(),
             iframe->GetLastCommittedOrigin());
   EXPECT_NE(plugin_frames[0]->GetProcess(), iframe->GetProcess());
-  EXPECT_FALSE(content::HasOriginKeyedProcess(plugin_frames[0]));
+  EXPECT_EQ(
+      content::SiteIsolationPolicy::AreOriginKeyedProcessesEnabledByDefault(),
+      content::HasOriginKeyedProcess(plugin_frames[0]));
 }
 
 IN_PROC_BROWSER_TEST_P(PDFExtensionIsolatedContentTest, DataNavigation) {
@@ -1698,13 +1759,13 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionLinkClickTest, ShiftLeft) {
   SimulateMouseClickAt(
       extension_host, GetEmbedderWebContents(), blink::WebInputEvent::kShiftKey,
       blink::WebMouseEvent::Button::kLeft, GetLinkPosition(extension_host));
-  Browser* browser = ui_test_utils::WaitForBrowserToOpen();
-  ui_test_utils::WaitForBrowserSetLastActive(browser);
+  Browser* new_browser = ui_test_utils::WaitForBrowserToOpen();
+  ui_test_utils::WaitUntilBrowserBecomeActive(new_browser);
 
   ASSERT_EQ(2U, chrome::GetTotalBrowserCount());
 
   WebContents* active_web_contents =
-      chrome::FindLastActive()->tab_strip_model()->GetActiveWebContents();
+      new_browser->tab_strip_model()->GetActiveWebContents();
   ASSERT_NE(web_contents, active_web_contents);
 
   const GURL& url = active_web_contents->GetVisibleURL();
@@ -1731,7 +1792,8 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionLinkClickTest, OpenPDFWithReplaceState) {
   const GURL& current_url = web_contents->GetLastCommittedURL();
   ASSERT_EQ("/pdf/test-link.pdf", current_url.path());
 
-  ASSERT_TRUE(EnsureFullPagePDFHasLoadedWithValidFrameTree(web_contents));
+  ASSERT_TRUE(EnsureFullPagePDFHasLoadedWithValidFrameTree(
+      web_contents, /*allow_multiple_frames=*/false));
 
   content::RenderFrameHost* extension_host =
       GetOnlyPdfExtensionHostEnsureValid();
@@ -1895,13 +1957,13 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionInternalLinkClickTest, ShiftLeft) {
   SimulateMouseClickAt(
       extension_host, GetEmbedderWebContents(), blink::WebInputEvent::kShiftKey,
       blink::WebMouseEvent::Button::kLeft, GetLinkPosition(extension_host));
-  Browser* browser = ui_test_utils::WaitForBrowserToOpen();
-  ui_test_utils::WaitForBrowserSetLastActive(browser);
+  Browser* new_browser = ui_test_utils::WaitForBrowserToOpen();
+  ui_test_utils::WaitUntilBrowserBecomeActive(new_browser);
 
   ASSERT_EQ(2U, chrome::GetTotalBrowserCount());
 
   WebContents* active_web_contents =
-      chrome::FindLastActive()->tab_strip_model()->GetActiveWebContents();
+      new_browser->tab_strip_model()->GetActiveWebContents();
   ASSERT_NE(web_contents, active_web_contents);
 
   const GURL& url = active_web_contents->GetVisibleURL();
@@ -2671,6 +2733,32 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionTest, DefaultFocusForNonEmbeddedPDF) {
   ASSERT_EQ(true, content::EvalJs(extension_host, script));
 }
 
+IN_PROC_BROWSER_TEST_P(PDFExtensionTest, PdfVisibility) {
+  GURL url = embedded_test_server()->GetURL("/pdf/pdf_embed.html");
+  EXPECT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
+  WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  EXPECT_EQ(content::Visibility::VISIBLE, web_contents->GetVisibility());
+
+  web_contents->WasHidden();
+  EXPECT_EQ(content::Visibility::HIDDEN, web_contents->GetVisibility());
+
+  auto inner_contents = web_contents->GetInnerWebContents();
+  if (base::FeatureList::IsEnabled(chrome_pdf::features::kPdfOopif)) {
+    // No inner WebContents, nothing to do.
+    EXPECT_EQ(0u, inner_contents.size());
+    return;
+  }
+
+  ASSERT_EQ(1u, inner_contents.size());
+  WebContents* inner = inner_contents[0];
+  EXPECT_EQ(content::Visibility::HIDDEN, inner->GetVisibility());
+
+  web_contents->WasShown();
+  EXPECT_EQ(content::Visibility::VISIBLE, web_contents->GetVisibility());
+  EXPECT_EQ(content::Visibility::VISIBLE, inner->GetVisibility());
+}
+
 // A helper for waiting for the first request for |url_to_intercept|.
 class RequestWaiter {
  public:
@@ -2765,35 +2853,41 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionTest, DidStopLoading) {
 // a new popup window when using document.write.  See also
 // https://crbug.com/1041880.
 IN_PROC_BROWSER_TEST_P(PDFExtensionTest, DocumentWriteIntoNewPopup) {
-  // TODO(crbug.com/1445746): Remove this once the test passes for OOPIF PDF.
-  if (UseOopif()) {
-    GTEST_SKIP();
-  }
-
   // Navigate to an empty/boring test page.
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
       browser(), embedded_test_server()->GetURL("/title1.html")));
 
   // Open a new popup and call document.write to add an embedded PDF.
+  const GURL pdf_url(embedded_test_server()->GetURL("/pdf/test.pdf"));
+
+  content::TestNavigationObserver navigation_observer(pdf_url);
+  navigation_observer.StartWatchingNewWebContents();
+
   WebContents* popup = nullptr;
   {
     const char kScriptTemplate[] = R"(
-        const url = $1;
-        const html = '<embed type="application/pdf" src="' + url + '">';
+      const url = $1;
+      const html = '<embed type="application/pdf" src="' + url + '">';
 
-        const popup = window.open('', '_blank');
-        popup.document.write(html);
-    )";
+      const popup = window.open('', '_blank');
+      popup.document.write(html);
+  )";
     content::WebContentsAddedObserver popup_observer;
-    ASSERT_TRUE(content::ExecJs(
-        GetActiveWebContents(),
-        content::JsReplace(kScriptTemplate,
-                           embedded_test_server()->GetURL("/pdf/test.pdf"))));
+    ASSERT_TRUE(content::ExecJs(GetActiveWebContents(),
+                                content::JsReplace(kScriptTemplate, pdf_url)));
     popup = popup_observer.GetWebContents();
   }
 
+  // Wait for the PDF navigation to finish.
+  navigation_observer.Wait();
+
   // Verify the PDF loaded successfully.
-  ASSERT_TRUE(pdf_extension_test_util::EnsurePDFHasLoaded(popup));
+  if (UseOopif()) {
+    EXPECT_TRUE(
+        GetTestPdfViewerStreamManager(popup)->WaitUntilPdfLoadedInFirstChild());
+  } else {
+    EXPECT_TRUE(pdf_extension_test_util::EnsurePDFHasLoaded(popup));
+  }
 }
 
 IN_PROC_BROWSER_TEST_P(PDFExtensionTest, LoadPdfFromExtension) {
@@ -2839,6 +2933,48 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionTest, Metrics) {
 
   // User actions.
   EXPECT_EQ(1, actions.GetActionCount("PDF.LoadSuccess"));
+}
+
+// Test that the PDF.LoadStatus2 metric is incremented correctly when the PDF is
+// loaded with PDFium.
+IN_PROC_BROWSER_TEST_P(PDFExtensionTest,
+                       MetricsPDFLoadStatusLoadedPdfWithPdfium) {
+  const char kPdfLoadStatusMetric[] = "PDF.LoadStatus2";
+  base::HistogramTester histograms;
+
+  histograms.ExpectBucketCount(kPdfLoadStatusMetric,
+                               PDFLoadStatus::kLoadedFullPagePdfWithPdfium, 0);
+  histograms.ExpectBucketCount(kPdfLoadStatusMetric,
+                               PDFLoadStatus::kLoadedEmbeddedPdfWithPdfium, 0);
+
+  EXPECT_TRUE(
+      LoadPdf(embedded_test_server()->GetURL("/pdf/combobox_form.pdf")));
+
+  histograms.ExpectBucketCount(kPdfLoadStatusMetric,
+                               PDFLoadStatus::kLoadedFullPagePdfWithPdfium, 1);
+  histograms.ExpectBucketCount(kPdfLoadStatusMetric,
+                               PDFLoadStatus::kLoadedEmbeddedPdfWithPdfium, 0);
+
+  EXPECT_TRUE(LoadPdfInFirstChild(
+      embedded_test_server()->GetURL("/pdf/pdf_embed.html")));
+
+  histograms.ExpectBucketCount(kPdfLoadStatusMetric,
+                               PDFLoadStatus::kLoadedFullPagePdfWithPdfium, 1);
+  histograms.ExpectBucketCount(kPdfLoadStatusMetric,
+                               PDFLoadStatus::kLoadedEmbeddedPdfWithPdfium, 1);
+
+  // All other buckets should not be incremented.
+  histograms.ExpectBucketCount(
+      kPdfLoadStatusMetric,
+      PDFLoadStatus::kShowedDisabledPluginPlaceholderForEmbeddedPdf, 0);
+  histograms.ExpectBucketCount(
+      kPdfLoadStatusMetric, PDFLoadStatus::kTriggeredNoGestureDriveByDownload,
+      0);
+  histograms.ExpectBucketCount(
+      kPdfLoadStatusMetric, PDFLoadStatus::kLoadedIframePdfWithNoPdfViewer, 0);
+  histograms.ExpectBucketCount(
+      kPdfLoadStatusMetric,
+      PDFLoadStatus::kViewPdfClickedInPdfPluginPlaceholder, 0);
 }
 
 // Flaky. See https://crbug.com/1101514.
@@ -2887,6 +3023,29 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionTest, DISABLED_TabInAndOutOfPDFPlugin) {
   EXPECT_EQ("\"zoom-out-button\"", press_tab_and_wait_for_message(true));
 }
 
+// Test that a PDF with COEP: require-corp header can load successfully.
+IN_PROC_BROWSER_TEST_P(PDFExtensionTest,
+                       CrossOriginEmbedderPolicyRequireCorpPdf) {
+  EXPECT_TRUE(LoadPdf(embedded_test_server()->GetURL("/pdf/test-coep.pdf")));
+}
+
+// Test that a PDF without the COEP: require-corp header fails to load when
+// embedded in a page that has the header.
+IN_PROC_BROWSER_TEST_P(PDFExtensionTest,
+                       CrossOriginEmbedderPolicyRequireCorpIframe) {
+  EXPECT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL("/pdf/test-coep-iframe.html")));
+
+  // The PDF failed to load if there aren't any PDF extension hosts or PDF
+  // plugin frames.
+  WebContents* web_contents = GetActiveWebContents();
+  EXPECT_TRUE(
+      pdf_extension_test_util::GetPdfExtensionHosts(web_contents).empty());
+  EXPECT_TRUE(
+      pdf_extension_test_util::GetPdfPluginFrames(web_contents).empty());
+  EXPECT_EQ(0u, pdf_extension_test_util::CountPdfPluginProcesses(browser()));
+}
+
 class PDFExtensionPrerenderTest : public PDFExtensionTest {
  public:
   void SetUpCommandLine(base::CommandLine* command_line) override {
@@ -2920,9 +3079,10 @@ class PDFExtensionPrerenderTest : public PDFExtensionTest {
   std::unique_ptr<content::test::PrerenderTestHelper> prerender_helper_;
 };
 
-// TODO(1205920): The PDF viewer cannot currently be prerendered correctly. This
-// tests that prerendering is cancelled. Once we're able to support this, this
-// test should be replaced with one that prerenders the PDF viewer.
+// TODO(crbug.com/40180674): The PDF viewer cannot currently be prerendered
+// correctly. This tests that prerendering is cancelled. Once we're able to
+// support this, this test should be replaced with one that prerenders the PDF
+// viewer.
 IN_PROC_BROWSER_TEST_P(PDFExtensionPrerenderTest, CancelPrerender) {
   const GURL initial_url =
       embedded_test_server()->GetURL("a.test", "/empty.html");
@@ -2940,13 +3100,14 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionPrerenderTest, CancelPrerender) {
 
   prerender_helper().NavigatePrimaryPage(pdf_url);
   ASSERT_EQ(web_contents->GetLastCommittedURL(), pdf_url);
-  EXPECT_TRUE(EnsureFullPagePDFHasLoadedWithValidFrameTree(web_contents));
+  EXPECT_TRUE(EnsureFullPagePDFHasLoadedWithValidFrameTree(
+      web_contents, /*allow_multiple_frames=*/false));
 }
 
-// TODO(1205920): The PDF viewer cannot currently be prerendered correctly. This
-// tests that prerendering is cancelled if a PDF is embedded in a prerendered
-// page. Once we're able to support this, this test should be replaced with one
-// that prerenders the PDF viewer.
+// TODO(crbug.com/40180674): The PDF viewer cannot currently be prerendered
+// correctly. This tests that prerendering is cancelled if a PDF is embedded in
+// a prerendered page. Once we're able to support this, this test should be
+// replaced with one that prerenders the PDF viewer.
 IN_PROC_BROWSER_TEST_P(PDFExtensionPrerenderTest,
                        CancelPrerenderWithEmbeddedPdf) {
   const GURL initial_url =
@@ -2977,11 +3138,6 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionPrerenderTest,
 // created until prerender activation.
 IN_PROC_BROWSER_TEST_P(PDFExtensionPrerenderTest,
                        PrerenderWithCrossSiteEmbeddedPdf) {
-  // TODO(crbug.com/1445746): Remove this once the test passes for OOPIF PDF.
-  if (UseOopif()) {
-    GTEST_SKIP();
-  }
-
   const GURL initial_url =
       embedded_test_server()->GetURL("a.test", "/empty.html");
   const GURL pdf_url = embedded_test_server()->GetURL(
@@ -2992,15 +3148,33 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionPrerenderTest,
   content::test::PrerenderHostRegistryObserver registry_observer(*web_contents);
   prerender_helper().AddPrerenderAsync(pdf_url);
   registry_observer.WaitForTrigger(pdf_url);
-  const auto host_id = prerender_helper().GetHostForUrl(pdf_url);
-  EXPECT_NE(host_id, content::RenderFrameHost::kNoFrameTreeNodeId);
+  const content::FrameTreeNodeId host_id =
+      prerender_helper().GetHostForUrl(pdf_url);
+  EXPECT_TRUE(host_id);
 
   content::test::PrerenderHostObserver prerender_observer(*web_contents,
                                                           host_id);
-  prerender_helper().NavigatePrimaryPage(pdf_url);
-  prerender_observer.WaitForActivation();
-  ASSERT_EQ(web_contents->GetLastCommittedURL(), pdf_url);
-  EXPECT_TRUE(GetGuestViewManager()->WaitForSingleGuestViewCreated());
+
+  if (UseOopif()) {
+    // There are two expected navigations in `web_contents`: the navigation to
+    // the webpage containing the iframe, and the cross-site navigation to the
+    // PDF in the iframe.
+    content::TestNavigationObserver navigation_observer(web_contents, 2);
+    prerender_helper().NavigatePrimaryPage(pdf_url);
+    prerender_observer.WaitForActivation();
+    navigation_observer.Wait();
+
+    ASSERT_EQ(web_contents->GetLastCommittedURL(), pdf_url);
+    ASSERT_TRUE(pdf::TestPdfViewerStreamManager::FromWebContents(web_contents));
+    EXPECT_TRUE(GetTestPdfViewerStreamManager(web_contents)
+                    ->WaitUntilPdfLoadedInFirstChild());
+  } else {
+    prerender_helper().NavigatePrimaryPage(pdf_url);
+    prerender_observer.WaitForActivation();
+
+    ASSERT_EQ(web_contents->GetLastCommittedURL(), pdf_url);
+    EXPECT_TRUE(GetGuestViewManager()->WaitForSingleGuestViewCreated());
+  }
 }
 
 class PDFExtensionSubmitFormTest : public PDFExtensionTest {
@@ -3081,11 +3255,11 @@ class PDFExtensionPrerenderAndFencedFrameTest : public PDFExtensionTest {
   std::unique_ptr<content::test::FencedFrameTestHelper> fenced_frame_helper_;
 };
 
-// TODO(1205920): The PDF viewer cannot currently be prerendered correctly. Once
-// this is supported, this test should be re-enabled.
+// TODO(crbug.com/40180674): The PDF viewer cannot currently be prerendered
+// correctly. Once this is supported, this test should be re-enabled for
+// GuestView PDF viewer and enabled for OOPIF PDF viewer.
 IN_PROC_BROWSER_TEST_P(PDFExtensionPrerenderAndFencedFrameTest,
                        DISABLED_LoadPDFInPrerender) {
-  // TODO(crbug.com/1445746): Remove this once the test passes for OOPIF PDF.
   if (UseOopif()) {
     GTEST_SKIP();
   }
@@ -3208,12 +3382,10 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionPrerenderAndFencedFrameTest,
 // cancels them, and posts a task to navigate to the original URL instead.
 // Triggering profile destruction after this task is posted but before it runs
 // has previously led to issues in https://crbug.com/1382761.
-IN_PROC_BROWSER_TEST_P(PDFExtensionTest, PdfNavigationDuringProfileShutdown) {
-  // TODO(crbug.com/1445746): Remove this once the test passes for OOPIF PDF.
-  if (UseOopif()) {
-    GTEST_SKIP();
-  }
-
+// See PDFExtensionOopifTest.PdfNavigationDuringProfileShutdown for the OOPIF
+// PDF version.
+IN_PROC_BROWSER_TEST_F(PDFExtensionTestWithoutOopifOverride,
+                       PdfNavigationDuringProfileShutdown) {
   // Open an Incognito window and navigate it to a page with a PDF embedded in
   // an iframe.
   Browser* incognito = CreateIncognitoBrowser();
@@ -3225,8 +3397,9 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionTest, PdfNavigationDuringProfileShutdown) {
 
   // Wait for the MimeHandleView guest to be created.  This should return
   // before the actual PDF navigation in the guest is started.
-  GuestViewBase* guest_view = GetGuestViewManager(incognito->profile())
-                                  ->WaitForSingleGuestViewCreated();
+  GuestViewBase* guest_view =
+      GetGuestViewManagerForProfile(incognito->profile())
+          ->WaitForSingleGuestViewCreated();
   ASSERT_TRUE(guest_view);
 
   // Look up the PDF stream URL to which the navigation will take place.
@@ -3272,12 +3445,10 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionTest, PdfNavigationDuringProfileShutdown) {
 
 // Ensure that extensions do not get multiple bound LocalMainFrames for guest
 // views. This is a regression test for crbug.com/1367582.
-IN_PROC_BROWSER_TEST_P(PDFExtensionTest, ExtensionsBindingLocalHost) {
-  // TODO(crbug.com/1445746): Remove this once the test passes for OOPIF PDF.
-  if (UseOopif()) {
-    GTEST_SKIP();
-  }
-
+// Not applicable to OOPIF PDF, since the bug was about iterating over a frame
+// twice because of the inner WebContents.
+IN_PROC_BROWSER_TEST_F(PDFExtensionTestWithoutOopifOverride,
+                       ExtensionsBindingLocalHost) {
   // Load test PDF in first tab.
   const GURL main_url(embedded_test_server()->GetURL("/pdf/test.pdf"));
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), main_url));
@@ -3340,7 +3511,7 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionIncognitoTest, IncognitoFullPage) {
       incognito_browser(), embedded_test_server()->GetURL("/pdf/test.pdf")));
 
   EXPECT_TRUE(EnsureFullPagePDFHasLoadedWithValidFrameTree(
-      GetIncognitoActiveWebContents()));
+      GetIncognitoActiveWebContents(), /*allow_multiple_frames=*/false));
 }
 
 // Test that an embed-embedded PDF viewer successfully loads in incognito.
@@ -3371,6 +3542,76 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionIncognitoTest, IncognitoIframe) {
                   ->WaitUntilPdfLoadedInFirstChild());
 }
 
+class PDFExtensionSameSiteProcessTest : public PDFExtensionTest {
+ public:
+  PDFExtensionSameSiteProcessTest() = default;
+  ~PDFExtensionSameSiteProcessTest() override = default;
+
+ protected:
+  // Same as `PDFExtensionTestBase::LoadPdfGetExtensionHost()`, but with the PDF
+  // content host instead of the PDF extension host.
+  content::RenderFrameHost* LoadPdfGetContentHost(const GURL& url) {
+    if (!LoadPdf(url)) {
+      ADD_FAILURE() << "Failed to load PDF";
+      return nullptr;
+    }
+
+    return pdf_extension_test_util::GetOnlyPdfPluginFrame(
+        GetActiveWebContents());
+  }
+
+  // Same as `PDFExtensionTestBase::LoadPdfInNewTabGetExtensionHost()`, but with
+  // the PDF content host instead of the PDF extension host.
+  content::RenderFrameHost* LoadPdfInNewTabGetContentHost(const GURL& url) {
+    if (!LoadPdfInNewTab(url)) {
+      ADD_FAILURE() << "Failed to load PDF";
+      return nullptr;
+    }
+
+    return pdf_extension_test_util::GetOnlyPdfPluginFrame(
+        GetActiveWebContents());
+  }
+};
+
+// Test that multiple tabs containing same-site PDFs don't share a process for
+// the PDF content frame when under the process limit.
+IN_PROC_BROWSER_TEST_P(PDFExtensionSameSiteProcessTest,
+                       SameSitePdfContentFramesInSeparateProcesses) {
+  const GURL same_pdf_url = embedded_test_server()->GetURL("/pdf/test.pdf");
+
+  content::RenderFrameHost* content_host1 = LoadPdfGetContentHost(same_pdf_url);
+  ASSERT_TRUE(content_host1);
+
+  content::RenderFrameHost* content_host2 =
+      LoadPdfInNewTabGetContentHost(same_pdf_url);
+  ASSERT_TRUE(content_host2);
+
+  // The content frames should be in separate processes.
+  EXPECT_NE(content_host1, content_host2);
+  EXPECT_NE(content_host1->GetProcess(), content_host2->GetProcess());
+}
+
+// Test that multiple tabs containing same-site PDFs share a process for the PDF
+// content frame when at the process limit.
+IN_PROC_BROWSER_TEST_P(PDFExtensionSameSiteProcessTest,
+                       SameSitePdfContentFramesInSameProcess) {
+  // Set the process limit to 1.
+  content::RenderProcessHost::SetMaxRendererProcessCount(1);
+
+  const GURL same_pdf_url = embedded_test_server()->GetURL("/pdf/test.pdf");
+
+  content::RenderFrameHost* content_host1 = LoadPdfGetContentHost(same_pdf_url);
+  ASSERT_TRUE(content_host1);
+
+  content::RenderFrameHost* content_host2 =
+      LoadPdfInNewTabGetContentHost(same_pdf_url);
+  ASSERT_TRUE(content_host2);
+
+  // The content frames should be in the same process.
+  EXPECT_NE(content_host1, content_host2);
+  EXPECT_EQ(content_host1->GetProcess(), content_host2->GetProcess());
+}
+
 // PDF extension tests for the OOPIF PDF viewer.
 class PDFExtensionOopifTest : public PDFExtensionTestWithoutOopifOverride {
  public:
@@ -3397,43 +3638,82 @@ IN_PROC_BROWSER_TEST_F(PDFExtensionOopifTest, OopifPdfPostMessageEmbed) {
   ASSERT_TRUE(pdf_extension_test_util::EnsurePDFHasLoaded(embedder_host));
 }
 
-// This test verifies the correctness of util `FindFullPagePdfExtensionHost`.
+// Tests that `FindFullPagePdfExtensionHost` fails to find the PDF extension
+// host on a non-PDF page.
 IN_PROC_BROWSER_TEST_F(PDFExtensionOopifTest,
-                       OopifPdfFindFullPagePdfExtensionHost) {
+                       FindFullPagePdfExtensionHostNonPdf) {
+  // Navigate to a non-PDF page.
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL("/title1.html")));
+
+  // Verify that there is no full-page pdf extension host on non-PDF page.
+  EXPECT_FALSE(
+      pdf_frame_util::FindFullPagePdfExtensionHost(GetActiveWebContents()));
+}
+
+// Tests that `FindFullPagePdfExtensionHost` fails to find the PDF extension
+// host on an embedded PDF.
+IN_PROC_BROWSER_TEST_F(PDFExtensionOopifTest,
+                       FindFullPagePdfExtensionHostEmbedPdf) {
+  // Load page with embedded PDF and make sure it succeeds.
+  ASSERT_TRUE(LoadPdfInFirstChild(
+      embedded_test_server()->GetURL("/pdf/pdf_embed.html")));
+
+  // Verify that there is no full-page pdf extension host on embedded PDF.
+  EXPECT_FALSE(
+      pdf_frame_util::FindFullPagePdfExtensionHost(GetActiveWebContents()));
+}
+
+// Tests that `FindFullPagePdfExtensionHost` finds the correct PDF extension
+// host on a full-page PDF.
+IN_PROC_BROWSER_TEST_F(PDFExtensionOopifTest,
+                       FindFullPagePdfExtensionHostFullPagePdf) {
+  // Load a full-page PDF and make sure it succeeds.
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL("/pdf/test.pdf")));
   auto* web_contents = GetActiveWebContents();
-  {
-    // Navigate to a non-PDF page.
-    ASSERT_TRUE(ui_test_utils::NavigateToURL(
-        browser(), embedded_test_server()->GetURL("/title1.html")));
+  ASSERT_TRUE(GetTestPdfViewerStreamManager(web_contents)
+                  ->WaitUntilPdfLoaded(web_contents->GetPrimaryMainFrame()));
 
-    // Verify that there is no full-page pdf extension host on non-PDF page.
-    EXPECT_FALSE(pdf_frame_util::FindFullPagePdfExtensionHost(web_contents));
-  }
+  content::RenderFrameHost* child_frame =
+      content::ChildFrameAt(web_contents->GetPrimaryMainFrame(), 0);
+  ASSERT_TRUE(child_frame);
 
-  {
-    // Load page with embedded PDF and make sure it succeeds.
-    ASSERT_TRUE(LoadPdfInFirstChild(
-        embedded_test_server()->GetURL("/pdf/pdf_embed.html")));
+  // Verify that `FindFullPagePdfExtensionHost` returns the correct frame.
+  EXPECT_EQ(child_frame,
+            pdf_frame_util::FindFullPagePdfExtensionHost(web_contents));
+}
 
-    // Verify that there is no full-page pdf extension host on embedded PDF.
-    EXPECT_FALSE(pdf_frame_util::FindFullPagePdfExtensionHost(web_contents));
-  }
+// Tests that `FindFullPagePdfExtensionHost` finds the correct PDF extension
+// host on a full-page PDF loaded with MIME type params.
+IN_PROC_BROWSER_TEST_F(
+    PDFExtensionOopifTest,
+    FindFullPagePdfExtensionHostFullPagePdfWithMimeTypeParam) {
+  // Load a full-page PDF with MIME type param and make sure it succeeds.
+  const char kPdfFullPageWithMimeTypeParam[] =
+      "data:application/pdf;charset=iso-8859-5;base64,"
+      "JVBERi0xLjcKJaDypPQKMSAwIG9iaiA8PAogIC9UeXBlIC9DYXRhbG9nCiAgL1BhZ2VzIDIg"
+      "MCBSCj4+CmVuZG9iagoyIDAgb2JqIDw8CiAgL1R5cGUgL1BhZ2VzCiAgL0NvdW50IDEKICAv"
+      "S2lkcyBbMyAwIFJdCiAgL1Jlc291cmNlcyA8PCA+Pgo+PgplbmRvYmoKMyAwIG9iaiA8PAog"
+      "IC9UeXBlIC9QYWdlIAogIC9QYXJlbnQgMiAwIFIKICAvTWVkaWFCb3ggWzAgMCAxMDAgNTBd"
+      "Cj4+CmVuZG9iagp4cmVmCjAgNAowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMTUgMDAw"
+      "MDAgbiAKMDAwMDAwMDA2OCAwMDAwMCBuIAowMDAwMDAwMTUwIDAwMDAwIG4gCnRyYWlsZXIg"
+      "PDwKICAvUm9vdCAxIDAgUgogIC9TaXplIDQKPj4Kc3RhcnR4cmVmCjIyNwolJUVPRgo=";
+  EXPECT_TRUE(LoadPdf(GURL(kPdfFullPageWithMimeTypeParam)));
 
-  {
-    // Load a full-page PDF and make sure it succeeds.
-    ASSERT_TRUE(ui_test_utils::NavigateToURL(
-        browser(), embedded_test_server()->GetURL("/pdf/test.pdf")));
-    ASSERT_TRUE(GetTestPdfViewerStreamManager(web_contents)
-                    ->WaitUntilPdfLoaded(web_contents->GetPrimaryMainFrame()));
+  auto* web_contents = GetActiveWebContents();
+  // Validate that the PDF page metadata is set correctly.
+  EXPECT_EQ(pdf::kPDFMimeType, web_contents->GetContentsMimeType());
+  EXPECT_EQ("ISO-8859-5", web_contents->GetEncoding());
 
-    content::RenderFrameHost* child_frame =
-        content::ChildFrameAt(web_contents->GetPrimaryMainFrame(), 0);
-    ASSERT_TRUE(child_frame);
+  content::RenderFrameHost* child_frame =
+      content::ChildFrameAt(web_contents->GetPrimaryMainFrame(), 0);
+  ASSERT_TRUE(child_frame);
 
-    // Verify that `FindFullPagePdfExtensionHost` returns the correct frame.
-    EXPECT_EQ(child_frame,
-              pdf_frame_util::FindFullPagePdfExtensionHost(web_contents));
-  }
+  // Verify that `FindFullPagePdfExtensionHost` returns the correct frame,
+  // irrespective of MIME type params (Ex: charset in this test).
+  EXPECT_EQ(child_frame,
+            pdf_frame_util::FindFullPagePdfExtensionHost(web_contents));
 }
 
 // Test that re-navigating to the same PDF successfully loads the PDF.
@@ -3656,7 +3936,276 @@ IN_PROC_BROWSER_TEST_F(PDFExtensionOopifTest, DocumentBodyAppendIframe) {
   EXPECT_TRUE(navigation_observer.last_navigation_succeeded());
 }
 
-class PDFExtensionOopifBlockNonPdfNavigationTest
+// Loading a PDF in a subframe without a corresponding FrameNavigationEntry
+// should not cause a crash. See https://crbug.com/358084015 and
+// https://crbug.com/40467594.
+IN_PROC_BROWSER_TEST_F(PDFExtensionOopifTest, SubframePDFMissingFrameEntry) {
+  WebContents* contents = GetActiveWebContents();
+
+  // Navigate to a test page, and then navigate same-document.
+  const GURL main_url(embedded_test_server()->GetURL("/title1.html"));
+  const GURL same_doc_url(embedded_test_server()->GetURL("/title1.html#foo"));
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), main_url));
+  content::TestNavigationObserver same_doc_observer(contents);
+  EXPECT_TRUE(content::ExecJs(contents, "location.href='#foo';"));
+  same_doc_observer.Wait();
+  EXPECT_EQ(same_doc_url, contents->GetLastCommittedURL());
+
+  // Append an iframe to the document.body.
+  content::TestNavigationObserver iframe_observer(contents);
+  EXPECT_TRUE(content::ExecJs(contents,
+                              "let iframe = document.createElement('iframe');"
+                              "iframe.src = 'title1.html';"
+                              "document.body.appendChild(iframe);"));
+  iframe_observer.Wait();
+
+  // Go back to the previous same-document entry. There will be no
+  // subframe FrameNavigationEntry even though the subframe continues to exist,
+  // due to https://crbug.com/40467594.
+  content::TestNavigationObserver back_observer(contents);
+  contents->GetController().GoBack();
+  back_observer.Wait();
+
+  // Loading a PDF in the subframe at this point should not crash.
+  content::TestNavigationObserver pdf_observer(contents);
+  EXPECT_TRUE(
+      content::ExecJs(contents, "frames[0].location.href='/pdf/test.pdf';"));
+  pdf_observer.Wait();
+  EXPECT_TRUE(EnsurePDFHasLoadedInFirstChildWithValidFrameTree(contents));
+}
+
+// Ensure that when the only other PDF instance closes in the middle of another
+// PDF's extension frame load, the PDF extension frame can still complete its
+// subsequent navigation. See https://crbug.com/1295431.
+IN_PROC_BROWSER_TEST_F(PDFExtensionOopifTest,
+                       PdfExtensionLoadedWhileOldPdfCloses) {
+  const GURL main_url(embedded_test_server()->GetURL("/pdf/test.pdf"));
+
+  // Load a test PDF in the first tab.
+  content::RenderFrameHost* extension_host1 = LoadPdfGetExtensionHost(main_url);
+  ASSERT_TRUE(extension_host1);
+  auto* embedder_host1 = GetActiveWebContents()->GetPrimaryMainFrame();
+  EXPECT_NE(embedder_host1, extension_host1);
+
+  // Verify the extension loaded.
+  const GURL extension_url(
+      "chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html");
+  EXPECT_EQ(extension_url, extension_host1->GetLastCommittedURL());
+  EXPECT_EQ(main_url, embedder_host1->GetLastCommittedURL());
+
+  // Open another tab and navigate it to a same-site non-PDF URL.
+  ui_test_utils::TabAddedWaiter add_tab1(browser());
+  chrome::NewTab(browser());
+  add_tab1.Wait();
+  ASSERT_EQ(2, browser()->tab_strip_model()->count());
+  WebContents* web_contents2 =
+      browser()->tab_strip_model()->GetWebContentsAt(1);
+  ASSERT_EQ(web_contents2, GetActiveWebContents());
+  const GURL non_pdf_url(embedded_test_server()->GetURL("/title1.html"));
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), non_pdf_url));
+
+  // Set up a delay for the PDF extension load.
+  CreateTestPdfViewerStreamManager(web_contents2);
+  auto* test_pdf_viewer_stream_manager2 =
+      GetTestPdfViewerStreamManager(web_contents2);
+  test_pdf_viewer_stream_manager2->DelayNextPdfExtensionNavigation();
+
+  // Navigate to the PDF URL. Pause before the PDF extension loads. Navigating
+  // with `ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP` only waits for the
+  // embedder frame to finish loading, but not the PDF extension frame.
+  ui_test_utils::NavigateToURLWithDisposition(
+      browser(), main_url, WindowOpenDisposition::CURRENT_TAB,
+      ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
+  content::RenderFrameHost* embedder_host2 =
+      web_contents2->GetPrimaryMainFrame();
+  test_pdf_viewer_stream_manager2->WaitUntilPdfExtensionNavigationStarted(
+      embedder_host2);
+
+  // Close the first tab, destroying the first PDF while the second PDF is in
+  // the middle of initialization. Historically, with GuestView PDF in
+  // https://crbug.com/1295431, the extension process exited here and caused a
+  // crash when the second PDF resumed.
+  ASSERT_EQ(2, browser()->tab_strip_model()->count());
+  content::WebContentsDestroyedWatcher destroyed_watcher(
+      browser()->tab_strip_model()->GetWebContentsAt(0));
+  browser()->tab_strip_model()->CloseWebContentsAt(
+      0, TabCloseTypes::CLOSE_USER_GESTURE);
+  destroyed_watcher.Wait();
+  ASSERT_EQ(1, browser()->tab_strip_model()->count());
+
+  // Resume the PDF load and ensure the second PDF loads without crashing.
+  test_pdf_viewer_stream_manager2->ResumePdfExtensionNavigation(embedder_host2);
+  ASSERT_TRUE(
+      test_pdf_viewer_stream_manager2->WaitUntilPdfLoaded(embedder_host2));
+
+  content::RenderFrameHost* extension_host2 =
+      pdf_extension_test_util::GetOnlyPdfExtensionHost(web_contents2);
+  ASSERT_TRUE(extension_host2);
+
+  // Verify the extension loaded.
+  EXPECT_EQ(extension_url, extension_host2->GetLastCommittedURL());
+  EXPECT_EQ(main_url, embedder_host2->GetLastCommittedURL());
+}
+
+// Test that the PDF embedder frame can't postMessage() to the PDF content
+// frame. OOPIF PDF only, since GuestView PDF's embedder frame doesn't have a
+// proxy host to the content frame.
+IN_PROC_BROWSER_TEST_F(PDFExtensionOopifTest,
+                       BlockPdfEmbedderFramePostMessageToContentFrame) {
+  ASSERT_TRUE(LoadPdf(embedded_test_server()->GetURL("/pdf/test.pdf")));
+
+  auto* web_contents = GetActiveWebContents();
+  content::RenderFrameHost* embedder_host = web_contents->GetPrimaryMainFrame();
+  content::RenderFrameHost* content_host =
+      pdf_extension_test_util::GetOnlyPdfPluginFrame(web_contents);
+  ASSERT_TRUE(content_host);
+
+  // The `content::RenderFrameProxyHost` is normally hidden by shadow DOM, but a
+  // compromised PDF embedder renderer could try to send a message event to the
+  // proxy host. If that occurs, the process hosting the compromised PDF
+  // embedder renderer should crash.
+  base::HistogramTester histograms;
+  content::RenderProcessHostWatcher crash_observer(
+      embedder_host->GetProcess(),
+      content::RenderProcessHostWatcher::WATCH_FOR_PROCESS_EXIT);
+
+  blink::TransferableMessage message;
+  message.sender_agent_cluster_id = base::UnguessableToken::Create();
+  content::SimulateProxyHostPostMessage(embedder_host, content_host,
+                                        blink::TransferableMessage());
+
+  crash_observer.Wait();
+  histograms.ExpectUniqueSample("Stability.BadMessageTerminated.Content", 319,
+                                1);
+}
+
+// Exercise a race condition where the profile is destroyed in the middle of a
+// PDF navigation and ensure that this doesn't crash.  Specifically,
+// `PdfNavigationThrottle` intercepts PDF navigations to PDF stream URLs,
+// cancels them, and posts a task to navigate to the original URL instead.
+// Triggering profile destruction after this task is posted but before it runs
+// has previously led to issues in https://crbug.com/1382761.
+// See PDFExtensionTestWithoutOopifOverride.PdfNavigationDuringProfileShutdown
+// for the GuestView PDF version.
+IN_PROC_BROWSER_TEST_F(PDFExtensionOopifTest,
+                       PdfNavigationDuringProfileShutdown) {
+  // Open an Incognito window.
+  Browser* incognito = CreateIncognitoBrowser();
+  content::WebContents* incognito_contents =
+      incognito->tab_strip_model()->GetActiveWebContents();
+
+  // Create the `pdf::TestPdfViewerStreamManager` before the PDF navigation,
+  // since the test needs to delay the PDF extension URL navigation.
+  CreateTestPdfViewerStreamManager(incognito_contents);
+  auto* test_pdf_viewer_stream_manager =
+      GetTestPdfViewerStreamManager(incognito_contents);
+  test_pdf_viewer_stream_manager->DelayNextPdfExtensionNavigation();
+
+  // Navigate the Incognito window to a page with a PDF embedded in an iframe.
+  content::TestNavigationObserver navigation_observer(incognito_contents);
+  incognito_contents->GetController().LoadURL(
+      embedded_test_server()->GetURL("/pdf/test-cross-site-iframe.html"),
+      content::Referrer(), ui::PAGE_TRANSITION_TYPED, std::string());
+
+  // Wait for the initial set of navigations to the page, the embedded PDF URL,
+  // and the PDF extension's about:blank navigation. The PDF extension URL
+  // navigation is delayed, so once the about:blank navigation finishes, the
+  // test will proceed.
+  navigation_observer.Wait();
+
+  content::RenderFrameHost* embedder_host =
+      content::ChildFrameAt(incognito_contents, 0);
+  ASSERT_TRUE(embedder_host);
+
+  // Look up the PDF stream URL to which the navigation will take place.
+  base::WeakPtr<extensions::StreamContainer> stream =
+      test_pdf_viewer_stream_manager->GetStreamContainer(embedder_host);
+  EXPECT_TRUE(stream);
+  GURL stream_url(stream->stream_url());
+
+  // Resume the PDF extension URL navigation.
+  test_pdf_viewer_stream_manager->ResumePdfExtensionNavigation(embedder_host);
+
+  // Use TestNavigationManager to wait for first yield after running
+  // DidStartNavigation throttles.  This should be precisely after the
+  // navigation to the stream URL gets canceled and the task to start a new
+  // navigation to the original URL is scheduled.
+  {
+    content::TestNavigationManager test_navigation_manager(incognito_contents,
+                                                           stream_url);
+    ASSERT_TRUE(
+        test_navigation_manager.WaitForFirstYieldAfterDidStartNavigation());
+  }
+
+  // Now, close Incognito and destroy its profile.  This is subtle: simply
+  // closing the Incognito window and waiting for browser destruction (e.g.,
+  // with `ui_test_utils::WaitForBrowserToClose(incognito)`) will trigger
+  // asynchronous profile destruction which will allow the PDF task to run
+  // before profile destruction is complete, sidestepping the bug in
+  // https://crbug.com/1382761.  Instead, use the hard shutdown/restart logic
+  // similar to that in `BrowserCloseManager::CloseBrowsers()`, which is used
+  // by `chrome::ExitIgnoreUnloadHandlers() and forces the `Browser` and its
+  // profile shutdown to complete synchronously, but only on the Incognito
+  // Browser object. Note that we can't just use
+  // `chrome::ExitIgnoreUnloadHandlers()` here, as that shuts down all Browser
+  // objects and the rest of the browser process and appears to be unsupported
+  // in tests.
+  chrome::CloseWindow(incognito);
+
+  // The `content::WebContents` needs to be deleted before the browser can be
+  // destroyed.
+  incognito->tab_strip_model()->DetachAndDeleteWebContentsAt(0);
+
+  BrowserView* incognito_view = static_cast<BrowserView*>(incognito->window());
+  incognito_view->DestroyBrowser();
+
+  // The test succeeds if it doesn't crash when the posted PDF task attempts to
+  // run (the task should be canceled/ignored), so wait for this to happen.
+  base::RunLoop().RunUntilIdle();
+}
+
+// Test that the PDF.LoadStatus2 metric is incremented only after the PDF fully
+// loads.
+IN_PROC_BROWSER_TEST_F(PDFExtensionOopifTest, MetricsPDFLoadStatusPartialLoad) {
+  const char kPdfLoadStatusMetric[] = "PDF.LoadStatus2";
+  base::HistogramTester histograms;
+
+  histograms.ExpectBucketCount(kPdfLoadStatusMetric,
+                               PDFLoadStatus::kLoadedFullPagePdfWithPdfium, 0);
+
+  auto* web_contents = GetActiveWebContents();
+  const GURL main_url(embedded_test_server()->GetURL("/pdf/combobox_form.pdf"));
+
+  // Delay the PDF extension navigation.
+  CreateTestPdfViewerStreamManager(web_contents);
+  auto* test_pdf_viewer_stream_manager =
+      GetTestPdfViewerStreamManager(web_contents);
+  test_pdf_viewer_stream_manager->DelayNextPdfExtensionNavigation();
+
+  // Navigate to the PDF URL and wait for the PDF extension navigation to start.
+  ui_test_utils::NavigateToURLWithDisposition(
+      browser(), main_url, WindowOpenDisposition::CURRENT_TAB,
+      ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
+  auto* primary_main_frame = web_contents->GetPrimaryMainFrame();
+  test_pdf_viewer_stream_manager->WaitUntilPdfExtensionNavigationStarted(
+      primary_main_frame);
+
+  // The PDF.LoadStatus2 metric should not be incremented yet.
+  histograms.ExpectBucketCount(kPdfLoadStatusMetric,
+                               PDFLoadStatus::kLoadedFullPagePdfWithPdfium, 0);
+
+  // Finish loading the PDF.
+  test_pdf_viewer_stream_manager->ResumePdfExtensionNavigation(
+      primary_main_frame);
+  EXPECT_TRUE(
+      test_pdf_viewer_stream_manager->WaitUntilPdfLoaded(primary_main_frame));
+
+  // The PDF.LoadStatus2 metric should be incremented.
+  histograms.ExpectBucketCount(kPdfLoadStatusMetric,
+                               PDFLoadStatus::kLoadedFullPagePdfWithPdfium, 1);
+}
+
+class PDFExtensionOopifBlockPdfFrameNavigationTest
     : public PDFExtensionOopifTest {
  public:
   // Override PDFExtensionTestBase::SetUpCommandLine() to enable
@@ -3673,22 +4222,22 @@ class PDFExtensionOopifBlockNonPdfNavigationTest
         /*disabled_features=*/{});
   }
 
-  // Test that non-PDF navigations fail in the extension host.
-  void TestBlockNonPdfNavigationInExtensionHost() {
+  // Test that navigating to `url` fails in the extension host. If `url` is
+  // empty, navigates to the same URL.
+  void TestBlockNavigationInExtensionHost(const GURL& url) {
     content::RenderFrameHost* extension_host =
         pdf_extension_test_util::GetOnlyPdfExtensionHost(
             GetActiveWebContents());
     ASSERT_TRUE(extension_host);
 
-    int frame_tree_node_id = extension_host->GetFrameTreeNodeId();
+    content::FrameTreeNodeId frame_tree_node_id =
+        extension_host->GetFrameTreeNodeId();
     content::RenderFrameHost* embedder_host = extension_host->GetParent();
 
-    // Navigate to a different HTML page.
+    // Navigate to `url`.
     content::TestFrameNavigationObserver extension_nav_observer(extension_host);
-    ASSERT_TRUE(content::ExecJs(
-        extension_host,
-        content::JsReplace("location = $1",
-                           embedded_test_server()->GetURL("/simple.html"))));
+    ASSERT_TRUE(content::ExecJs(extension_host,
+                                content::JsReplace("location = $1", url)));
     extension_nav_observer.Wait();
 
     EXPECT_FALSE(extension_nav_observer.last_navigation_succeeded());
@@ -3705,21 +4254,21 @@ class PDFExtensionOopifBlockNonPdfNavigationTest
     EXPECT_FALSE(GetPdfViewerStreamManager());
   }
 
-  // Test that non-PDF navigations fail in the content host.
-  void TestBlockNonPdfNavigationInContentHost() {
+  // Test that navigating to `url` fails in the content host.  If `url` is
+  // empty, navigates to the same URL.
+  void TestBlockNavigationInContentHost(const GURL& url) {
     content::RenderFrameHost* content_host =
         pdf_extension_test_util::GetOnlyPdfPluginFrame(GetActiveWebContents());
     ASSERT_TRUE(content_host);
 
-    int frame_tree_node_id = content_host->GetFrameTreeNodeId();
+    content::FrameTreeNodeId frame_tree_node_id =
+        content_host->GetFrameTreeNodeId();
     content::RenderFrameHost* extension_host = content_host->GetParent();
 
-    // Navigate to a different HTML page.
+    // Navigate to `url`.
     content::TestFrameNavigationObserver content_nav_observer(content_host);
-    ASSERT_TRUE(content::ExecJs(
-        content_host,
-        content::JsReplace("location = $1",
-                           embedded_test_server()->GetURL("/simple.html"))));
+    ASSERT_TRUE(content::ExecJs(content_host,
+                                content::JsReplace("location = $1", url)));
     content_nav_observer.Wait();
 
     EXPECT_FALSE(content_nav_observer.last_navigation_succeeded());
@@ -3742,44 +4291,98 @@ class PDFExtensionOopifBlockNonPdfNavigationTest
 
 // Test that navigations in the inner PDF frames fail if they aren't for PDF
 // viewer setup in a full page PDF.
-IN_PROC_BROWSER_TEST_F(PDFExtensionOopifBlockNonPdfNavigationTest, FullPage) {
+IN_PROC_BROWSER_TEST_F(PDFExtensionOopifBlockPdfFrameNavigationTest,
+                       NonPdfNavigationFullPage) {
   // Load a direct PDF URL full page.
   const GURL pdf_url = embedded_test_server()->GetURL("/pdf/test.pdf");
+  const GURL other_url = embedded_test_server()->GetURL("/simple.html");
 
   ASSERT_TRUE(LoadPdf(pdf_url));
-  TestBlockNonPdfNavigationInExtensionHost();
+  TestBlockNavigationInExtensionHost(other_url);
 
   ASSERT_TRUE(LoadPdf(pdf_url));
-  TestBlockNonPdfNavigationInContentHost();
+  TestBlockNavigationInContentHost(other_url);
 }
 
 // Test that navigations in the inner PDF frames fail if they aren't for PDF
 // viewer setup in an embed-embedded PDF.
-IN_PROC_BROWSER_TEST_F(PDFExtensionOopifBlockNonPdfNavigationTest, Embed) {
+IN_PROC_BROWSER_TEST_F(PDFExtensionOopifBlockPdfFrameNavigationTest,
+                       NonPdfNavigationEmbed) {
   // Load the HTML containing an embed embedding a PDF.
   const GURL url = embedded_test_server()->GetURL("/pdf/pdf_embed.html");
+  const GURL other_url = embedded_test_server()->GetURL("/simple.html");
 
   ASSERT_TRUE(LoadPdfInFirstChild(url));
-  TestBlockNonPdfNavigationInExtensionHost();
+  TestBlockNavigationInExtensionHost(other_url);
 
   ASSERT_TRUE(LoadPdfInFirstChild(url));
-  TestBlockNonPdfNavigationInContentHost();
+  TestBlockNavigationInContentHost(other_url);
 }
 
 // Test that navigations in the inner PDF frames fail if they aren't for PDF
 // viewer setup in an iframe-embedded PDF.
-IN_PROC_BROWSER_TEST_F(PDFExtensionOopifBlockNonPdfNavigationTest, Iframe) {
+IN_PROC_BROWSER_TEST_F(PDFExtensionOopifBlockPdfFrameNavigationTest,
+                       NonPdfNavigationIframe) {
+  // Load the HTML containing an iframe embedding a PDF.
+  const GURL url = embedded_test_server()->GetURL("/pdf/test-iframe.html");
+  const GURL other_url = embedded_test_server()->GetURL("/simple.html");
+
+  ASSERT_TRUE(LoadPdfInFirstChild(url));
+  TestBlockNavigationInExtensionHost(other_url);
+
+  ASSERT_TRUE(LoadPdfInFirstChild(url));
+  TestBlockNavigationInContentHost(other_url);
+}
+
+// Test that after the PDF load in a full page PDF, the PDF extension frame
+// cannot re-navigate to the PDF extension URL and the PDF content frame cannot
+// re-navigate to the PDF URL.
+IN_PROC_BROWSER_TEST_F(PDFExtensionOopifBlockPdfFrameNavigationTest,
+                       SameUrlNavigationFullPage) {
+  // Load a direct PDF URL full page.
+  const GURL pdf_url = embedded_test_server()->GetURL("/pdf/test.pdf");
+
+  // Using an empty `GURL` will trigger a navigation to the same URL.
+  ASSERT_TRUE(LoadPdf(pdf_url));
+  TestBlockNavigationInExtensionHost(GURL());
+
+  ASSERT_TRUE(LoadPdf(pdf_url));
+  TestBlockNavigationInContentHost(GURL());
+}
+
+// Test that after the PDF load in an embed-embedded PDF, the PDF extension
+// frame cannot re-navigate to the PDF extension URL and the PDF content frame
+// cannot re-navigate to the PDF URL.
+IN_PROC_BROWSER_TEST_F(PDFExtensionOopifBlockPdfFrameNavigationTest,
+                       SameUrlNavigationEmbed) {
+  // Load the HTML containing an embed embedding a PDF.
+  const GURL url = embedded_test_server()->GetURL("/pdf/pdf_embed.html");
+
+  // Using an empty `GURL` will trigger a navigation to the same URL.
+  ASSERT_TRUE(LoadPdfInFirstChild(url));
+  TestBlockNavigationInExtensionHost(GURL());
+
+  ASSERT_TRUE(LoadPdfInFirstChild(url));
+  TestBlockNavigationInContentHost(GURL());
+}
+
+// Test that after the PDF load in an iframe-embedded PDF, the PDF extension
+// frame cannot re-navigate to the PDF extension URL and the PDF content frame
+// cannot re-navigate to the PDF URL.
+IN_PROC_BROWSER_TEST_F(PDFExtensionOopifBlockPdfFrameNavigationTest,
+                       SameUrlNavigationIframe) {
   // Load the HTML containing an iframe embedding a PDF.
   const GURL url = embedded_test_server()->GetURL("/pdf/test-iframe.html");
 
+  // Using an empty `GURL` will trigger a navigation to the same URL.
   ASSERT_TRUE(LoadPdfInFirstChild(url));
-  TestBlockNonPdfNavigationInExtensionHost();
+  TestBlockNavigationInExtensionHost(GURL());
 
   ASSERT_TRUE(LoadPdfInFirstChild(url));
-  TestBlockNonPdfNavigationInContentHost();
+  TestBlockNavigationInContentHost(GURL());
 }
 
-// TODO(crbug.com/1445746): Stop testing both modes after OOPIF PDF viewer
+// TODO(crbug.com/40268279): Stop testing both modes after OOPIF PDF viewer
 // launches.
 INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(PDFExtensionTest);
 INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(PDFExtensionBlobNavigationTest);
@@ -3797,3 +4400,4 @@ INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(PDFExtensionSubmitFormTest);
 INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(
     PDFExtensionPrerenderAndFencedFrameTest);
 INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(PDFExtensionIncognitoTest);
+INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(PDFExtensionSameSiteProcessTest);

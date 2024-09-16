@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_ASH_PICKER_PICKER_FILE_SUGGESTER_H_
 #define CHROME_BROWSER_UI_ASH_PICKER_PICKER_FILE_SUGGESTER_H_
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -24,11 +25,23 @@ class PickerFileSuggester {
   };
 
   struct DriveFile {
+    DriveFile(std::optional<std::string> id,
+              std::u16string title,
+              base::FilePath local_path,
+              GURL url);
+    ~DriveFile();
+    DriveFile(const DriveFile&);
+    DriveFile(DriveFile&&);
+    DriveFile& operator=(const DriveFile&);
+    DriveFile& operator=(DriveFile&&);
+
+    std::optional<std::string> id;
     std::u16string title;
+    base::FilePath local_path;
     GURL url;
   };
 
-  using RecentLocalFilesCallback =
+  using RecentLocalImagesCallback =
       base::OnceCallback<void(std::vector<LocalFile>)>;
   using RecentDriveFilesCallback =
       base::OnceCallback<void(std::vector<DriveFile>)>;
@@ -39,12 +52,14 @@ class PickerFileSuggester {
   PickerFileSuggester& operator=(const PickerFileSuggester&) = delete;
 
   // Any in-flight requests are cancelled when this object is destroyed.
-  void GetRecentLocalFiles(RecentLocalFilesCallback callback);
-  void GetRecentDriveFiles(RecentDriveFilesCallback callback);
+  void GetRecentLocalImages(size_t max_files,
+                            base::TimeDelta now_delta,
+                            RecentLocalImagesCallback callback);
+  void GetRecentDriveFiles(size_t max_files, RecentDriveFilesCallback callback);
 
  private:
-  void OnGetRecentLocalFiles(RecentLocalFilesCallback callback,
-                             const std::vector<ash::RecentFile>& recent_files);
+  void OnGetRecentLocalImages(RecentLocalImagesCallback callback,
+                              const std::vector<ash::RecentFile>& recent_files);
   void OnGetRecentDriveFiles(RecentDriveFilesCallback callback,
                              const std::vector<ash::RecentFile>& recent_files);
 

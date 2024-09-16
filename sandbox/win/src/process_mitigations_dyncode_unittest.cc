@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <windows.h>
 
 #include <string>
@@ -412,7 +417,7 @@ SBOX_TESTS_COMMAND int TestWin10DynamicCodeWithOptOut(int argc,
 // This test validates that setting the MITIGATION_DYNAMIC_CODE_DISABLE
 // mitigation enables the setting on a process.
 TEST(ProcessMitigationsTest, CheckWin81DynamicCodePolicySuccess) {
-// TODO(crbug.com/805414): Windows ASan hotpatching requires dynamic code.
+// TODO(crbug.com/40559699): Windows ASan hotpatching requires dynamic code.
 #if !defined(ADDRESS_SANITIZER)
   std::wstring test_command = L"CheckPolicy ";
   test_command += std::to_wstring(TESTPOLICY_DYNAMICCODE);
@@ -481,7 +486,7 @@ TEST(ProcessMitigationsTest, CheckWin10DynamicCodeOptOutPolicySuccess) {
   if (base::win::GetVersion() < base::win::Version::WIN10_RS1)
     return;
 
-// TODO(crbug.com/805414): Windows ASan hotpatching requires dynamic code.
+// TODO(crbug.com/40559699): Windows ASan hotpatching requires dynamic code.
 #if !defined(ADDRESS_SANITIZER)
   std::wstring test_command = L"CheckPolicy ";
   test_command += std::to_wstring(TESTPOLICY_DYNAMICCODEOPTOUT);

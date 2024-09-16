@@ -23,10 +23,12 @@
 #include "base/time/time.h"
 #include "base/types/pass_key.h"
 #include "base/values.h"
+#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_apply_update_command.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_storage_location.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_update_apply_task.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_update_apply_waiter.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_update_discovery_task.h"
+#include "chrome/browser/web_applications/isolated_web_apps/key_distribution/iwa_key_distribution_info_provider.h"
 #include "chrome/browser/web_applications/web_app_install_manager_observer.h"
 #include "components/webapps/common/web_app_id.h"
 
@@ -47,16 +49,39 @@ namespace {
 constexpr base::TimeDelta kDefaultUpdateDiscoveryFrequency = base::Hours(5);
 }
 
+// This enum lists the error types that can occur during the update of an
+// isolated web apps.
+//
+// These values are persisted to logs and the values match the entries of
+// `enum IsolatedWebAppUpdateError` in
+// `tools/metrics/histograms/metadata/webapps/enums.xml`.
+// Entries should not be renumbered and numeric values should never be reused.
+enum class IsolatedWebAppUpdateError {
+  kCantCalculateIsolatedWebAppUrlInfo = 1,
+  kUpdateManifestDownloadFailed = 2,
+  kUpdateManifestInvalidJson = 3,
+  kUpdateManifestInvalidManifest = 4,
+  kUpdateManifestNoApplicableVersion = 5,
+  kIwaNotInstalled = 6,
+  kDownloadPathCreationFailed = 7,
+  kBundleDownloadError = 8,
+  kUpdateDryRunFailed = 9,
+  kUpdateApplyFailed = 10,
+  kMaxValue = kUpdateApplyFailed
+};
+
 // The `IsolatedWebAppUpdateManager` is responsible for discovery, download, and
 // installation of Isolated Web App updates. Currently, it is only updating
 // policy-installed IWAs on ChromeOS.
 //
-// TODO(crbug.com/1459160): Implement updates for unmanaged IWAs once we have
+// TODO(crbug.com/40274186): Implement updates for unmanaged IWAs once we have
 // designed that process.
 //
 // TODO(crbug.com/40274187): Consider only executing update discovery tasks when
 // the user is not on a metered/paid internet connection.
-class IsolatedWebAppUpdateManager : public WebAppInstallManagerObserver {
+class IsolatedWebAppUpdateManager
+    : public WebAppInstallManagerObserver,
+      public IwaKeyDistributionInfoProvider::Observer {
  public:
   explicit IsolatedWebAppUpdateManager(
       Profile& profile,
@@ -134,6 +159,16 @@ class IsolatedWebAppUpdateManager : public WebAppInstallManagerObserver {
     return next_update_discovery_check_.GetScheduledTime();
   }
 
+  void TrackResultOfUpdateDiscoveryTaskForTesting(
+      IsolatedWebAppUpdateDiscoveryTask::CompletionStatus status) const {
+    TrackResultOfUpdateDiscoveryTask(status);
+  }
+
+  void TrackResultOfUpdateApplyTaskForTesting(
+      IsolatedWebAppUpdateApplyTask::CompletionStatus status) const {
+    TrackResultOfUpdateApplyTask(status);
+  }
+
  private:
   // This queue manages update discovery and apply tasks. Tasks can be added to
   // the queue via its `Push` methods. The queue will never start a new task on
@@ -169,7 +204,7 @@ class IsolatedWebAppUpdateManager : public WebAppInstallManagerObserver {
     // Removes all tasks for the provided `app_id` that haven't yet started from
     // the queue.
     //
-    // TODO(crbug.com/1444407): Ideally, we'd also cancel tasks that have
+    // TODO(crbug.com/40267691): Ideally, we'd also cancel tasks that have
     // already started, especially update discovery tasks, but the task
     // implementation currently does not support cancellation of ongoing tasks.
     void ClearNonStartedTasksOfApp(const webapps::AppId& app_id);
@@ -211,6 +246,10 @@ class IsolatedWebAppUpdateManager : public WebAppInstallManagerObserver {
         update_apply_tasks_;
     base::Value::List update_apply_results_log_;
   };
+
+  // IwaKeyDistributionInfoProvider::Observer:
+  void OnComponentUpdateSuccess(
+      const base::Version& component_version) override;
 
   bool IsAnyIwaInstalled();
 
@@ -313,11 +352,24 @@ class IsolatedWebAppUpdateManager : public WebAppInstallManagerObserver {
   base::ScopedObservation<WebAppInstallManager, WebAppInstallManagerObserver>
       install_manager_observation_{this};
 
+  base::ScopedObservation<IwaKeyDistributionInfoProvider,
+                          IwaKeyDistributionInfoProvider::Observer>
+      key_distribution_info_observation_{this};
+
   class LocalDevModeUpdateDiscoverer;
   std::unique_ptr<LocalDevModeUpdateDiscoverer>
       local_dev_mode_update_discoverer_;
 
   base::WeakPtrFactory<IsolatedWebAppUpdateManager> weak_factory_{this};
+
+  IsolatedWebAppUpdateError FromDiscoveryTaskError(
+      const IsolatedWebAppUpdateDiscoveryTask::Error& error) const;
+
+  void TrackResultOfUpdateDiscoveryTask(
+      IsolatedWebAppUpdateDiscoveryTask::CompletionStatus status) const;
+
+  void TrackResultOfUpdateApplyTask(
+      IsolatedWebAppUpdateApplyTask::CompletionStatus status) const;
 };
 
 }  // namespace web_app

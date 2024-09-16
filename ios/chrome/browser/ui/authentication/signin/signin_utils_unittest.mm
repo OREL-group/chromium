@@ -22,9 +22,9 @@
 #import "components/sync_preferences/pref_service_syncable.h"
 #import "ios/chrome/browser/policy/model/policy_util.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
-#import "ios/chrome/browser/shared/model/browser_state/test_chrome_browser_state.h"
 #import "ios/chrome/browser/shared/model/prefs/browser_prefs.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
+#import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/chrome/browser/signin/model/authentication_service.h"
 #import "ios/chrome/browser/signin/model/authentication_service_factory.h"
 #import "ios/chrome/browser/signin/model/chrome_account_manager_service_factory.h"
@@ -53,7 +53,7 @@ class SigninUtilsTest : public PlatformTest {
         AuthenticationServiceFactory::GetDefaultFactory());
     builder.AddTestingFactory(SyncServiceFactory::GetInstance(),
                               SyncServiceFactory::GetDefaultFactory());
-    chrome_browser_state_ = builder.Build();
+    chrome_browser_state_ = std::move(builder).Build();
     AuthenticationServiceFactory::CreateAndInitializeForBrowserState(
         chrome_browser_state_.get(),
         std::make_unique<FakeAuthenticationServiceDelegate>());
@@ -81,7 +81,13 @@ class SigninUtilsTest : public PlatformTest {
     return prefs;
   }
 
-  PrefService* GetLocalState() { return scoped_testing_local_state_.Get(); }
+  PrefService* GetLocalState() {
+    return GetApplicationContext()->GetLocalState();
+  }
+
+  PrefService* GetProfilePrefs() {
+    return chrome_browser_state_.get()->GetPrefs();
+  }
 
   FakeSystemIdentityManager* fake_system_identity_manager() {
     return FakeSystemIdentityManager::FromSystemIdentityManager(
@@ -97,64 +103,82 @@ class SigninUtilsTest : public PlatformTest {
 
 // Should show the sign-in upgrade for the first time, after FRE.
 TEST_F(SigninUtilsTest, TestWillNotDisplay) {
-  fake_system_identity_manager()->AddIdentities(@[ @"foo", @"bar" ]);
+  FakeSystemIdentity* fake_identity1 = [FakeSystemIdentity fakeIdentity1];
+  fake_system_identity_manager()->AddIdentity(fake_identity1);
+  FakeSystemIdentity* fake_identity2 = [FakeSystemIdentity fakeIdentity2];
+  fake_system_identity_manager()->AddIdentity(fake_identity2);
   const base::Version version_1_0("1.0");
   EXPECT_FALSE(signin::ShouldPresentUserSigninUpgrade(
-      chrome_browser_state_.get(), GetLocalState(), version_1_0));
+      chrome_browser_state_.get(), version_1_0));
 }
 
 // Should not show the sign-in upgrade twice on the same version.
 TEST_F(SigninUtilsTest, TestWillNotDisplaySameVersion) {
-  fake_system_identity_manager()->AddIdentities(@[ @"foo", @"bar" ]);
+  FakeSystemIdentity* fake_identity1 = [FakeSystemIdentity fakeIdentity1];
+  fake_system_identity_manager()->AddIdentity(fake_identity1);
+  FakeSystemIdentity* fake_identity2 = [FakeSystemIdentity fakeIdentity2];
+  fake_system_identity_manager()->AddIdentity(fake_identity2);
   const base::Version version_1_0("1.0");
   signin::RecordUpgradePromoSigninStarted(account_manager_service_,
                                           version_1_0);
   EXPECT_FALSE(signin::ShouldPresentUserSigninUpgrade(
-      chrome_browser_state_.get(), GetLocalState(), version_1_0));
+      chrome_browser_state_.get(), version_1_0));
 }
 
 // Should not show the sign-in upgrade twice until two major version after.
 TEST_F(SigninUtilsTest, TestWillNotDisplayOneMinorVersion) {
-  fake_system_identity_manager()->AddIdentities(@[ @"foo", @"bar" ]);
+  FakeSystemIdentity* fake_identity1 = [FakeSystemIdentity fakeIdentity1];
+  fake_system_identity_manager()->AddIdentity(fake_identity1);
+  FakeSystemIdentity* fake_identity2 = [FakeSystemIdentity fakeIdentity2];
+  fake_system_identity_manager()->AddIdentity(fake_identity2);
   const base::Version version_1_0("1.0");
   const base::Version version_1_1("1.1");
   signin::RecordUpgradePromoSigninStarted(account_manager_service_,
                                           version_1_0);
   EXPECT_FALSE(signin::ShouldPresentUserSigninUpgrade(
-      chrome_browser_state_.get(), GetLocalState(), version_1_1));
+      chrome_browser_state_.get(), version_1_1));
 }
 
 // Should not show the sign-in upgrade twice until two major version after.
 TEST_F(SigninUtilsTest, TestWillNotDisplayTwoMinorVersions) {
-  fake_system_identity_manager()->AddIdentities(@[ @"foo", @"bar" ]);
+  FakeSystemIdentity* fake_identity1 = [FakeSystemIdentity fakeIdentity1];
+  fake_system_identity_manager()->AddIdentity(fake_identity1);
+  FakeSystemIdentity* fake_identity2 = [FakeSystemIdentity fakeIdentity2];
+  fake_system_identity_manager()->AddIdentity(fake_identity2);
   const base::Version version_1_0("1.0");
   const base::Version version_1_2("1.2");
   signin::RecordUpgradePromoSigninStarted(account_manager_service_,
                                           version_1_0);
   EXPECT_FALSE(signin::ShouldPresentUserSigninUpgrade(
-      chrome_browser_state_.get(), GetLocalState(), version_1_2));
+      chrome_browser_state_.get(), version_1_2));
 }
 
 // Should not show the sign-in upgrade twice until two major version after.
 TEST_F(SigninUtilsTest, TestWillNotDisplayOneMajorVersion) {
-  fake_system_identity_manager()->AddIdentities(@[ @"foo", @"bar" ]);
+  FakeSystemIdentity* fake_identity1 = [FakeSystemIdentity fakeIdentity1];
+  fake_system_identity_manager()->AddIdentity(fake_identity1);
+  FakeSystemIdentity* fake_identity2 = [FakeSystemIdentity fakeIdentity2];
+  fake_system_identity_manager()->AddIdentity(fake_identity2);
   const base::Version version_1_0("1.0");
   const base::Version version_2_0("2.0");
   signin::RecordUpgradePromoSigninStarted(account_manager_service_,
                                           version_1_0);
   EXPECT_FALSE(signin::ShouldPresentUserSigninUpgrade(
-      chrome_browser_state_.get(), GetLocalState(), version_2_0));
+      chrome_browser_state_.get(), version_2_0));
 }
 
 // Should show the sign-in upgrade a second time, 2 version after.
 TEST_F(SigninUtilsTest, TestWillDisplayTwoMajorVersions) {
-  fake_system_identity_manager()->AddIdentities(@[ @"foo", @"bar" ]);
+  FakeSystemIdentity* fake_identity1 = [FakeSystemIdentity fakeIdentity1];
+  fake_system_identity_manager()->AddIdentity(fake_identity1);
+  FakeSystemIdentity* fake_identity2 = [FakeSystemIdentity fakeIdentity2];
+  fake_system_identity_manager()->AddIdentity(fake_identity2);
   const base::Version version_1_0("1.0");
   const base::Version version_3_0("3.0");
   signin::RecordUpgradePromoSigninStarted(account_manager_service_,
                                           version_1_0);
   EXPECT_TRUE(signin::ShouldPresentUserSigninUpgrade(
-      chrome_browser_state_.get(), GetLocalState(), version_3_0));
+      chrome_browser_state_.get(), version_3_0));
 }
 
 // Show the sign-in upgrade on version 1.0.
@@ -162,7 +186,10 @@ TEST_F(SigninUtilsTest, TestWillDisplayTwoMajorVersions) {
 // Move to version 5.0.
 // Expected: should not show the sign-in upgrade.
 TEST_F(SigninUtilsTest, TestWillShowTwoTimesOnly) {
-  fake_system_identity_manager()->AddIdentities(@[ @"foo", @"bar" ]);
+  FakeSystemIdentity* fake_identity1 = [FakeSystemIdentity fakeIdentity1];
+  fake_system_identity_manager()->AddIdentity(fake_identity1);
+  FakeSystemIdentity* fake_identity2 = [FakeSystemIdentity fakeIdentity2];
+  fake_system_identity_manager()->AddIdentity(fake_identity2);
   const base::Version version_1_0("1.0");
   const base::Version version_3_0("3.0");
   const base::Version version_5_0("5.0");
@@ -171,7 +198,7 @@ TEST_F(SigninUtilsTest, TestWillShowTwoTimesOnly) {
   signin::RecordUpgradePromoSigninStarted(account_manager_service_,
                                           version_3_0);
   EXPECT_FALSE(signin::ShouldPresentUserSigninUpgrade(
-      chrome_browser_state_.get(), GetLocalState(), version_5_0));
+      chrome_browser_state_.get(), version_5_0));
 }
 
 // Show the sign-in upgrade on version 1.0.
@@ -187,9 +214,10 @@ TEST_F(SigninUtilsTest, TestWillShowForNewAccountAdded) {
                                           version_1_0);
   signin::RecordUpgradePromoSigninStarted(account_manager_service_,
                                           version_3_0);
-  fake_system_identity_manager()->AddIdentities(@[ @"foo1" ]);
+  FakeSystemIdentity* fake_identity = [FakeSystemIdentity fakeIdentity1];
+  fake_system_identity_manager()->AddIdentity(fake_identity);
   EXPECT_TRUE(signin::ShouldPresentUserSigninUpgrade(
-      chrome_browser_state_.get(), GetLocalState(), version_5_0));
+      chrome_browser_state_.get(), version_5_0));
 }
 
 // Add new account.
@@ -202,26 +230,16 @@ TEST_F(SigninUtilsTest, TestWillNotShowWithAccountRemoved) {
   const base::Version version_1_0("1.0");
   const base::Version version_3_0("3.0");
   const base::Version version_5_0("5.0");
-  NSString* newAccountGaiaId = @"foo1";
-  fake_system_identity_manager()->AddIdentities(@[ newAccountGaiaId ]);
+  FakeSystemIdentity* fake_identity = [FakeSystemIdentity fakeIdentity1];
+  fake_system_identity_manager()->AddIdentity(fake_identity);
   signin::RecordUpgradePromoSigninStarted(account_manager_service_,
                                           version_1_0);
   signin::RecordUpgradePromoSigninStarted(account_manager_service_,
                                           version_3_0);
-  NSArray<id<SystemIdentity>>* allIdentities =
-      account_manager_service_->GetAllIdentities();
-  id<SystemIdentity> foo1Identity = nil;
-  for (id<SystemIdentity> identity in allIdentities) {
-    if ([identity.userFullName isEqualToString:newAccountGaiaId]) {
-      ASSERT_EQ(nil, foo1Identity);
-      foo1Identity = identity;
-    }
-  }
-  ASSERT_NE(nil, foo1Identity);
-  fake_system_identity_manager()->ForgetIdentity(foo1Identity,
+  fake_system_identity_manager()->ForgetIdentity(fake_identity,
                                                  base::DoNothing());
   EXPECT_FALSE(signin::ShouldPresentUserSigninUpgrade(
-      chrome_browser_state_.get(), GetLocalState(), version_5_0));
+      chrome_browser_state_.get(), version_5_0));
 }
 
 // Show the sign-in upgrade on version 1.0.
@@ -237,9 +255,10 @@ TEST_F(SigninUtilsTest, TestWillNotShowNewAccountUntilTwoVersion) {
                                           version_1_0);
   signin::RecordUpgradePromoSigninStarted(account_manager_service_,
                                           version_3_0);
-  fake_system_identity_manager()->AddIdentities(@[ @"foo1" ]);
+  FakeSystemIdentity* fake_identity = [FakeSystemIdentity fakeIdentity1];
+  fake_system_identity_manager()->AddIdentity(fake_identity);
   EXPECT_FALSE(signin::ShouldPresentUserSigninUpgrade(
-      chrome_browser_state_.get(), GetLocalState(), version_4_0));
+      chrome_browser_state_.get(), version_4_0));
 }
 
 // Show the sign-in upgrade on version 1.0.
@@ -252,9 +271,10 @@ TEST_F(SigninUtilsTest, TestWillNotShowNewAccountUntilTwoVersionBis) {
   const base::Version version_2_0("2.0");
   signin::RecordUpgradePromoSigninStarted(account_manager_service_,
                                           version_1_0);
-  fake_system_identity_manager()->AddIdentities(@[ @"foo1" ]);
+  FakeSystemIdentity* fake_identity = [FakeSystemIdentity fakeIdentity1];
+  fake_system_identity_manager()->AddIdentity(fake_identity);
   EXPECT_FALSE(signin::ShouldPresentUserSigninUpgrade(
-      chrome_browser_state_.get(), GetLocalState(), version_2_0));
+      chrome_browser_state_.get(), version_2_0));
 }
 
 // Should not show the sign-in upgrade for first run after post restore.
@@ -263,16 +283,17 @@ TEST_F(SigninUtilsTest, TestWillNotShowIfFirstRunAfterPostRestore) {
   const base::Version version_3_0("3.0");
   signin::RecordUpgradePromoSigninStarted(account_manager_service_,
                                           version_1_0);
-  fake_system_identity_manager()->AddIdentities(@[ @"foo1" ]);
+  FakeSystemIdentity* fake_identity = [FakeSystemIdentity fakeIdentity1];
+  fake_system_identity_manager()->AddIdentity(fake_identity);
   ASSERT_TRUE(signin::ShouldPresentUserSigninUpgrade(
-      chrome_browser_state_.get(), GetLocalState(), version_3_0));
+      chrome_browser_state_.get(), version_3_0));
 
   AccountInfo accountInfo;
   accountInfo.email = "foo@bar.com";
-  StorePreRestoreIdentity(GetLocalState(), accountInfo,
+  StorePreRestoreIdentity(GetProfilePrefs(), accountInfo,
                           /*history_sync_enabled=*/false);
   EXPECT_FALSE(signin::ShouldPresentUserSigninUpgrade(
-      chrome_browser_state_.get(), GetLocalState(), version_3_0));
+      chrome_browser_state_.get(), version_3_0));
 }
 
 // Should not show the sign-in upgrade if sign-in is disabled by policy.
@@ -281,20 +302,18 @@ TEST_F(SigninUtilsTest, TestWillNotShowIfDisabledByPolicy) {
   const base::Version version_3_0("3.0");
   signin::RecordUpgradePromoSigninStarted(account_manager_service_,
                                           version_1_0);
-  fake_system_identity_manager()->AddIdentities(@[ @"foo1" ]);
+  FakeSystemIdentity* fake_identity = [FakeSystemIdentity fakeIdentity1];
+  fake_system_identity_manager()->AddIdentity(fake_identity);
   GetLocalState()->SetInteger(prefs::kBrowserSigninPolicy,
                               static_cast<int>(BrowserSigninMode::kDisabled));
 
   EXPECT_FALSE(signin::ShouldPresentUserSigninUpgrade(
-      chrome_browser_state_.get(), GetLocalState(), version_3_0));
+      chrome_browser_state_.get(), version_3_0));
 }
 
 // Should show if the user is signed-in without history opt-in.
 TEST_F(SigninUtilsTest, TestWillShowIfSignedInWithoutHistoryOptIn) {
-  FakeSystemIdentity* identity =
-      [FakeSystemIdentity identityWithEmail:@"foo1@gmail.com"
-                                     gaiaID:@"foo1ID"
-                                       name:@"Fake Foo 1"];
+  FakeSystemIdentity* identity = [FakeSystemIdentity fakeIdentity1];
   fake_system_identity_manager()->AddIdentity(identity);
   AuthenticationService* authentication_service =
       AuthenticationServiceFactory::GetForBrowserState(
@@ -307,15 +326,12 @@ TEST_F(SigninUtilsTest, TestWillShowIfSignedInWithoutHistoryOptIn) {
   signin::RecordUpgradePromoSigninStarted(account_manager_service_,
                                           version_1_0);
   EXPECT_TRUE(signin::ShouldPresentUserSigninUpgrade(
-      chrome_browser_state_.get(), GetLocalState(), version_3_0));
+      chrome_browser_state_.get(), version_3_0));
 }
 
 // Should not show if the user is signed-in with history opt-in.
 TEST_F(SigninUtilsTest, TestWillNotShowIfSignedInWithHistoryOptIn) {
-  FakeSystemIdentity* identity =
-      [FakeSystemIdentity identityWithEmail:@"foo1@gmail.com"
-                                     gaiaID:@"foo1ID"
-                                       name:@"Fake Foo 1"];
+  FakeSystemIdentity* identity = [FakeSystemIdentity fakeIdentity1];
   fake_system_identity_manager()->AddIdentity(identity);
   AuthenticationService* authentication_service =
       AuthenticationServiceFactory::GetForBrowserState(
@@ -336,7 +352,7 @@ TEST_F(SigninUtilsTest, TestWillNotShowIfSignedInWithHistoryOptIn) {
   signin::RecordUpgradePromoSigninStarted(account_manager_service_,
                                           version_1_0);
   EXPECT_FALSE(signin::ShouldPresentUserSigninUpgrade(
-      chrome_browser_state_.get(), GetLocalState(), version_3_0));
+      chrome_browser_state_.get(), version_3_0));
 }
 
 // signin::GetPrimaryIdentitySigninState for a signed-out user should
@@ -350,10 +366,7 @@ TEST_F(SigninUtilsTest, TestGetPrimaryIdentitySigninStateSignedOut) {
 // signin::GetPrimaryIdentitySigninState for a signed-in user should
 // return the signed-in, sync disabled state.
 TEST_F(SigninUtilsTest, TestGetPrimaryIdentitySigninStateSignedInSyncDisabled) {
-  FakeSystemIdentity* identity =
-      [FakeSystemIdentity identityWithEmail:@"foo1@gmail.com"
-                                     gaiaID:@"foo1ID"
-                                       name:@"Fake Foo 1"];
+  FakeSystemIdentity* identity = [FakeSystemIdentity fakeIdentity1];
   fake_system_identity_manager()->AddIdentity(identity);
   AuthenticationService* authentication_service =
       AuthenticationServiceFactory::GetForBrowserState(
@@ -370,10 +383,7 @@ TEST_F(SigninUtilsTest, TestGetPrimaryIdentitySigninStateSignedInSyncDisabled) {
 // completed the sync setup should return the signed-in, sync enabled state.
 TEST_F(SigninUtilsTest,
        TestGetPrimaryIdentitySigninStateSyncGrantedSetupComplete) {
-  FakeSystemIdentity* identity =
-      [FakeSystemIdentity identityWithEmail:@"foo1@gmail.com"
-                                     gaiaID:@"foo1ID"
-                                       name:@"Fake Foo 1"];
+  FakeSystemIdentity* identity = [FakeSystemIdentity fakeIdentity1];
   fake_system_identity_manager()->AddIdentity(identity);
   AuthenticationService* authentication_service =
       AuthenticationServiceFactory::GetForBrowserState(

@@ -79,13 +79,13 @@ class BLINK_EXPORT AnchorElementInteractionTracker
   explicit AnchorElementInteractionTracker(Document& document);
   ~AnchorElementInteractionTracker();
 
-  static bool IsFeatureEnabled();
-  static bool IsMouseMotionEstimatorEnabled();
   static base::TimeDelta GetHoverDwellTime();
 
   void OnMouseMoveEvent(const WebMouseEvent& mouse_event);
   void OnPointerEvent(EventTarget& target, const PointerEvent& pointer_event);
   void OnClickEvent(HTMLAnchorElement& anchor, const MouseEvent& click_event);
+  void OnScrollEnd();
+
   void HoverTimerFired(TimerBase*);
   void Trace(Visitor* visitor) const;
   void SetTaskRunnerForTesting(

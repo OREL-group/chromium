@@ -15,6 +15,7 @@
 #include "base/time/default_clock.h"
 #include "components/optimization_guide/core/hints_processing_util.h"
 #include "components/optimization_guide/core/optimization_guide_common.mojom.h"
+#include "components/optimization_guide/core/optimization_guide_constants.h"
 #include "components/optimization_guide/core/optimization_guide_features.h"
 #include "components/optimization_guide/core/optimization_guide_logger.h"
 #include "components/optimization_guide/core/optimization_guide_prefs.h"
@@ -48,7 +49,7 @@ std::string GetStringNameForRequestContext(
   switch (request_context) {
     case proto::RequestContext::CONTEXT_UNSPECIFIED:
     case proto::RequestContext::CONTEXT_BATCH_UPDATE_MODELS:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return "Unknown";
     case proto::RequestContext::CONTEXT_PAGE_NAVIGATION:
       return "PageNavigation";
@@ -69,7 +70,7 @@ std::string GetStringNameForRequestContext(
     case proto::RequestContext::CONTEXT_SHOPPING:
       return "Shopping";
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return std::string();
 }
 
@@ -80,6 +81,18 @@ void RecordRequestStatusHistogram(proto::RequestContext request_context,
       "OptimizationGuide.HintsFetcher.GetHintsRequest.RequestStatus." +
           GetStringNameForRequestContext(request_context),
       status);
+}
+
+// Appends override headers as specified by the command line arguments.
+void AppendOverrideHeadersIfNeeded(network::ResourceRequest& request) {
+  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kOptimizationGuideLanguageOverride)) {
+    return;
+  }
+  request.headers.SetHeaderIfMissing(
+      kOptimizationGuideLanguageOverrideHeaderKey,
+      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+          switches::kOptimizationGuideLanguageOverride));
 }
 
 }  // namespace
@@ -302,6 +315,7 @@ bool HintsFetcher::FetchOptimizationGuideServiceHints(
     PopulateAuthorizationRequestHeader(resource_request.get(), access_token);
   }
 
+  AppendOverrideHeadersIfNeeded(*resource_request);
   active_url_loader_ = variations::CreateSimpleURLLoaderWithVariationsHeader(
       std::move(resource_request),
       // This is always InIncognito::kNo as the OptimizationGuideKeyedService
@@ -417,8 +431,9 @@ void HintsFetcher::UpdateHostsSuccessfullyFetched(
   // Remove any expired hosts.
   std::vector<std::string> entries_to_remove;
   for (auto it : *hosts_fetched_list) {
-    if (base::Time::FromDeltaSinceWindowsEpoch(
-            base::Seconds(it.second.GetDouble())) < time_clock_->Now()) {
+    auto seconds = it.second.GetIfDouble();
+    if (!seconds || base::Time::FromDeltaSinceWindowsEpoch(
+                        base::Seconds(*seconds)) < time_clock_->Now()) {
       entries_to_remove.emplace_back(it.first);
     }
   }

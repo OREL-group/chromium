@@ -47,9 +47,16 @@ TrackerFactory::TrackerFactory()
           "feature_engagement::Tracker",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kRedirectedToOriginal)
-              // TODO(crbug.com/1418376): Check if this service is needed in
+              // TODO(crbug.com/40257657): Check if this service is needed in
               // Guest mode.
               .WithGuest(ProfileSelection::kRedirectedToOriginal)
+              // The service is needed by the System Profile OTR (that manages
+              // the Profile Picker) to track elements for IPHs displayed in
+              // the Profile Picker.
+              .WithSystem(ProfileSelection::kOffTheRecordOnly)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kRedirectedToOriginal)
               .Build()) {}
 
 TrackerFactory::~TrackerFactory() = default;

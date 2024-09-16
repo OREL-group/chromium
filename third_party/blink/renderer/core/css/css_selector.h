@@ -20,6 +20,11 @@
  * Boston, MA 02110-1301, USA.
  */
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSS_SELECTOR_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSS_SELECTOR_H_
 
@@ -110,6 +115,27 @@ class CORE_EXPORT CSSSelector {
   DISALLOW_NEW();
 
  public:
+  /* how the attribute value has to match.... Default is Exact */
+  enum MatchType {
+    kUnknown,
+    kInvalidList,       // Used as a marker in CSSSelectorList.
+    kTag,               // Example: div
+    kId,                // Example: #id
+    kClass,             // Example: .class
+    kPseudoClass,       // Example: :nth-child(2)
+    kPseudoElement,     // Example: ::first-line
+    kPagePseudoClass,   // Example: @page :right
+    kAttributeExact,    // Example: E[foo="bar"]
+    kAttributeSet,      // Example: E[foo]
+    kAttributeHyphen,   // Example: E[foo|="bar"]
+    kAttributeList,     // Example: E[foo~="bar"]
+    kAttributeContain,  // css3: E[foo*="bar"]
+    kAttributeBegin,    // css3: E[foo^="bar"]
+    kAttributeEnd,      // css3: E[foo$="bar"]
+    kFirstAttributeSelectorMatch = kAttributeExact,
+  };
+  enum class AttributeMatchType;
+
   CSSSelector();
 
   // NOTE: Will not deep-copy the selector list, if any.
@@ -117,12 +143,24 @@ class CORE_EXPORT CSSSelector {
 
   CSSSelector(CSSSelector&&);
   explicit CSSSelector(const QualifiedName&, bool tag_is_implicit = false);
+  explicit CSSSelector(MatchType match_type,
+                       const QualifiedName& attribute,
+                       AttributeMatchType case_sensitivity);
+  explicit CSSSelector(MatchType match_type,
+                       const QualifiedName& attribute,
+                       AttributeMatchType case_sensitivity,
+                       const AtomicString& value);
   explicit CSSSelector(const StyleRule* parent_rule, bool is_implicit);
   explicit CSSSelector(const AtomicString& pseudo_name, bool is_implicit);
 
   ~CSSSelector();
 
   String SelectorText() const;
+  // Like `SelectorText`, but replaces any '&' selectors
+  // with ':is(<parent rule selector list>)'. This is needed
+  // by the :has() cache, because it uses the serialization of
+  // the selector as a key.
+  String SelectorTextExpandingPseudoParent() const;
   String SimpleSelectorTextForDebug() const;
 
   CSSSelector& operator=(const CSSSelector&) = delete;
@@ -144,26 +182,6 @@ class CORE_EXPORT CSSSelector {
   unsigned Specificity() const;
   // Returns specificity components in decreasing order of significance.
   std::array<uint8_t, 3> SpecificityTuple() const;
-
-  /* how the attribute value has to match.... Default is Exact */
-  enum MatchType {
-    kUnknown,
-    kInvalidList,       // Used as a marker in CSSSelectorList.
-    kTag,               // Example: div
-    kId,                // Example: #id
-    kClass,             // Example: .class
-    kPseudoClass,       // Example: :nth-child(2)
-    kPseudoElement,     // Example: ::first-line
-    kPagePseudoClass,   // ??
-    kAttributeExact,    // Example: E[foo="bar"]
-    kAttributeSet,      // Example: E[foo]
-    kAttributeHyphen,   // Example: E[foo|="bar"]
-    kAttributeList,     // Example: E[foo~="bar"]
-    kAttributeContain,  // css3: E[foo*="bar"]
-    kAttributeBegin,    // css3: E[foo^="bar"]
-    kAttributeEnd,      // css3: E[foo$="bar"]
-    kFirstAttributeSelectorMatch = kAttributeExact,
-  };
 
   enum RelationType {
     // No combinator. Used between simple selectors within the same compound.
@@ -231,6 +249,7 @@ class CORE_EXPORT CSSSelector {
     kPseudoBefore,
     kPseudoChecked,
     kPseudoCornerPresent,
+    kPseudoCurrent,
     kPseudoDecrement,
     kPseudoDefault,
     kPseudoDetailsContent,
@@ -291,7 +310,10 @@ class CORE_EXPORT CSSSelector {
     kPseudoScrollbarThumb,
     kPseudoScrollbarTrack,
     kPseudoScrollbarTrackPiece,
-    kPseudoSelectDatalist,
+    kPseudoSearchText,
+    kPseudoSelectFallbackButton,
+    kPseudoSelectFallbackButtonText,
+    kPseudoPicker,
     kPseudoSelection,
     kPseudoSelectorFragmentAnchor,
     kPseudoSingleButton,
@@ -334,6 +356,8 @@ class CORE_EXPORT CSSSelector {
     // Pseudo elements in UA ShadowRoots. Available only in UA stylesheets.
     kPseudoBlinkInternalElement,
     kPseudoClosed,
+    // Pseudo element for fragment styling
+    kPseudoColumn,
     kPseudoCue,
     kPseudoDefined,
     kPseudoDir,
@@ -344,7 +368,7 @@ class CORE_EXPORT CSSSelector {
     kPseudoHighlight,
     kPseudoHost,
     kPseudoHostContext,
-    kPseudoHostHasAppearance,
+    kPseudoHostHasNonAutoAppearance,
     kPseudoIsHtml,
     kPseudoListBox,
     kPseudoMultiSelectFocus,
@@ -373,7 +397,10 @@ class CORE_EXPORT CSSSelector {
     kPseudoViewTransitionOld,
     // Scroll markers pseudos for Carousel
     kPseudoScrollMarker,
-    kPseudoScrollMarkers,
+    kPseudoScrollMarkerGroup,
+    // Scroll button pseudos for Carousel
+    kPseudoScrollNextButton,
+    kPseudoScrollPrevButton,
   };
 
   enum class AttributeMatchType : int {
@@ -406,6 +433,8 @@ class CORE_EXPORT CSSSelector {
   //
   // Note that :true is always implicit (see IsImplicit).
   void SetTrue();
+  // Sets this CSSSelector to a :where() class with the specified argument.
+  void SetWhere(CSSSelectorList*);
   void UpdatePseudoPage(const AtomicString&, const Document*);
   static PseudoType NameToPseudoType(const AtomicString&,
                                      bool has_arguments,
@@ -416,7 +445,7 @@ class CORE_EXPORT CSSSelector {
   // within this simple selector (including inner selector lists).
   //
   // See also StyleRule::Reparent().
-  void Reparent(StyleRule* old_parent, StyleRule* new_parent);
+  void Reparent(StyleRule* new_parent);
 
   // Selectors are kept in an array by CSSSelectorList. The next component of
   // the selector is the next item in the array.
@@ -478,7 +507,6 @@ class CORE_EXPORT CSSSelector {
 
   bool IsASCIILower(const AtomicString& value);
   void SetValue(const AtomicString&, bool match_lower_case);
-  void SetAttribute(const QualifiedName&, AttributeMatchType);
   void SetArgument(const AtomicString&);
   void SetSelectorList(CSSSelectorList*);
   void SetIdentList(std::unique_ptr<Vector<AtomicString>>);
@@ -577,64 +605,6 @@ class CORE_EXPORT CSSSelector {
   // position like :first-of-type and :nth-child().
   bool IsChildIndexedSelector() const;
 
-  // Signaling Rules
-  // ================
-  //
-  // Signaling rules are style rules whose declarations trigger
-  // a certain use-counter. The use-counter is triggered by StyleCascade
-  // when a signaling declaration satisfies all of the following:
-  //
-  //  - The declaration is added to the cascade map.
-  //  - Adding the declaration to the map actually changed the value,
-  //    i.e. the cascaded value before/after isn't the same.
-  //  - The declaration ultimately won the cascade, i.e. nothing else
-  //    overwrote it.
-  //
-  // Note: the final goal of signaling rules is to hopefully unblock
-  // the following CSSWG issues:
-  //
-  //  - https://github.com/w3c/csswg-drafts/issues/8738
-  //  - https://github.com/w3c/csswg-drafts/issues/9492
-  //
-  // TODO(crbug.com/1517290): Remove signaling rules when we're done
-  // use-counting.
-
-  enum class Signal {
-    kNone = 0,
-
-    // WebFeature::kCSSBareDeclarationShift
-    kBareDeclarationShift = 1,
-
-    // WebFeature::kCSSNestedGroupRuleSpecificity
-    kNestedGroupRuleSpecificity = 2,
-
-    kMax = kNestedGroupRuleSpecificity,
-  };
-
-  void SetSignal(Signal signal) {
-    bits_.set<SignalField>(static_cast<unsigned>(signal));
-  }
-  Signal GetSignal() const {
-    return static_cast<Signal>(bits_.get<SignalField>());
-  }
-
-  // Invisible Rules
-  // ===============
-  //
-  // Invisible rules are rules which exist internally for use-counting
-  // purposes, but don't have any author-visible effect on the cascade,
-  // and are not otherwise reachable through APIs.
-  //
-  // Invisible rules are useful when used in conjunction with signaling rules
-  // (above), because it makes it possible to check if a given rule has
-  // any impact in the presence of some alternative/hypothetical rule.
-  //
-  // TODO(crbug.com/1517290): Remove invisible rules when we're done
-  // use-counting.
-
-  void SetInvisible() { bits_.set<IsInvisibleField>(true); }
-  bool IsInvisible() const { return bits_.get<IsInvisibleField>(); }
-
   void Trace(Visitor* visitor) const;
 
   static String FormatPseudoTypeForDebugging(PseudoType);
@@ -678,9 +648,14 @@ class CORE_EXPORT CSSSelector {
   // RuleData (by calling MarkAsCoveredByBucketing()).
   using IsCoveredByBucketingField =
       IsImplicitlyAddedField::DefineNextValue<bool, 1>;
-  using SignalField = IsCoveredByBucketingField::DefineNextValue<unsigned, 2>;
-  using IsInvisibleField = SignalField::DefineNextValue<bool, 1>;
+  // Used for attribute selector (with value). Real type is AttributeMatchType.
+  using AttributeMatchField =
+      IsCoveredByBucketingField::DefineNextValue<unsigned, 2>;
+  using IsCaseSensitiveAttributeField =
+      AttributeMatchField::DefineNextValue<bool, 1>;
+  // 4 free bits here.
   BitField bits_;
+  // 32 padding bits here (on 64-bit platforms).
 
   void SetPseudoType(PseudoType pseudo_type) {
     bits_.set<PseudoTypeField>(pseudo_type);
@@ -689,8 +664,19 @@ class CORE_EXPORT CSSSelector {
 
   unsigned SpecificityForOneSelector() const;
   unsigned SpecificityForPage() const;
+
+  template <bool expand_pseudo_parent>
   bool SerializeSimpleSelector(WTF::StringBuilder& builder) const;
+
+  template <bool expand_pseudo_parent>
   const CSSSelector* SerializeCompound(WTF::StringBuilder&) const;
+
+  template <bool expand_pseudo_parent>
+  static void SerializeSelectorList(const CSSSelectorList* selector_list,
+                                    WTF::StringBuilder& builder);
+
+  template <bool expand_pseudo_parent>
+  String SelectorTextInternal() const;
 
   struct RareData : public GarbageCollected<RareData> {
     explicit RareData(const AtomicString& value);
@@ -707,12 +693,6 @@ class CORE_EXPORT CSSSelector {
         int a_;  // Used for :nth-*
         int b_;  // Used for :nth-*
       } nth_;
-
-      struct {
-        AttributeMatchType
-            attribute_match_;  // used for attribute selector (with value)
-        bool is_case_sensitive_attribute_;
-      } attr_;
 
       struct {
         // Used for :has() with pseudos in its argument. e.g. :has(:hover)
@@ -741,7 +721,9 @@ class CORE_EXPORT CSSSelector {
   // variables in the containing CSSSelector using the following rules.
   //
   //  if (Match() == kTag) {
-  //     /* data_.tag_q_name_ is valid */
+  //     /* data_.tag_q_name_or_attribute_ is valid (is tag_q_name) */
+  //  } else if (Match() == kAttributeSet) {
+  //     /* data_.tag_q_name_or_attribute_ is valid (is attribute) */
   //  } else if (Match() == kPseudoClass && GetPseudoType() == kPseudoParent) {
   //     /* data_.parent_rule_ is valid */
   //  } else if (HasRareData()) {
@@ -768,16 +750,23 @@ class CORE_EXPORT CSSSelector {
     // the attribute of an attribute selector (without the brackets), etc.
     explicit DataUnion(const AtomicString& value) : value_(value) {}
 
-    explicit DataUnion(const QualifiedName& tag_q_name)
-        : tag_q_name_(tag_q_name) {}
+    explicit DataUnion(const QualifiedName& tag_q_name_or_attribute)
+        : tag_q_name_or_attribute_(tag_q_name_or_attribute) {}
 
     explicit DataUnion(const StyleRule* parent_rule)
         : parent_rule_(parent_rule) {}
 
+    explicit DataUnion(Member<RareData> rare_data) : rare_data_(rare_data) {}
+
     ~DataUnion() {}
 
     AtomicString value_;
-    QualifiedName tag_q_name_;
+
+    // For kTag, used for tag_q_name. For kAttributeSet, used for the attribute
+    // selector if and only if it's a value-less match (for other kAttribute*,
+    // no room, and we have to store attribute + value in RareData).
+    QualifiedName tag_q_name_or_attribute_;
+
     Member<RareData> rare_data_;
     Member<const StyleRule> parent_rule_;  // For & (parent in nest).
   } data_;
@@ -785,20 +774,22 @@ class CORE_EXPORT CSSSelector {
 
 inline const QualifiedName& CSSSelector::Attribute() const {
   DCHECK(IsAttributeSelector());
-  DCHECK(HasRareData());
-  return data_.rare_data_->attribute_;
+  if (HasRareData()) {
+    return data_.rare_data_->attribute_;
+  } else {
+    DCHECK_EQ(Match(), kAttributeSet);
+    return data_.tag_q_name_or_attribute_;
+  }
 }
 
 inline CSSSelector::AttributeMatchType CSSSelector::AttributeMatch() const {
   DCHECK(IsAttributeSelector());
-  DCHECK(HasRareData());
-  return data_.rare_data_->bits_.attr_.attribute_match_;
+  return static_cast<AttributeMatchType>(bits_.get<AttributeMatchField>());
 }
 
 inline bool CSSSelector::IsCaseSensitiveAttribute() const {
   DCHECK(IsAttributeSelector());
-  DCHECK(HasRareData());
-  return data_.rare_data_->bits_.attr_.is_case_sensitive_attribute_;
+  return bits_.get<IsCaseSensitiveAttributeField>();
 }
 
 inline bool CSSSelector::IsASCIILower(const AtomicString& value) {
@@ -835,8 +826,8 @@ inline CSSSelector::CSSSelector()
             HasRareDataField::encode(false) | IsForPageField::encode(false) |
             IsImplicitlyAddedField::encode(false) |
             IsCoveredByBucketingField::encode(false) |
-            SignalField::encode(static_cast<unsigned>(Signal::kNone)) |
-            IsInvisibleField::encode(false)),
+            AttributeMatchField::encode(0) |
+            IsCaseSensitiveAttributeField::encode(false)),
       data_(DataUnion::kConstructEmptyValue) {}
 
 inline CSSSelector::CSSSelector(const QualifiedName& tag_q_name,
@@ -848,8 +839,8 @@ inline CSSSelector::CSSSelector(const QualifiedName& tag_q_name,
             HasRareDataField::encode(false) | IsForPageField::encode(false) |
             IsImplicitlyAddedField::encode(tag_is_implicit) |
             IsCoveredByBucketingField::encode(false) |
-            SignalField::encode(static_cast<unsigned>(Signal::kNone)) |
-            IsInvisibleField::encode(false)),
+            AttributeMatchField::encode(0) |
+            IsCaseSensitiveAttributeField::encode(false)),
       data_(tag_q_name) {}
 
 inline CSSSelector::CSSSelector(const StyleRule* parent_rule, bool is_implicit)
@@ -861,8 +852,8 @@ inline CSSSelector::CSSSelector(const StyleRule* parent_rule, bool is_implicit)
             HasRareDataField::encode(false) | IsForPageField::encode(false) |
             IsImplicitlyAddedField::encode(is_implicit) |
             IsCoveredByBucketingField::encode(false) |
-            SignalField::encode(static_cast<unsigned>(Signal::kNone)) |
-            IsInvisibleField::encode(false)),
+            AttributeMatchField::encode(0) |
+            IsCaseSensitiveAttributeField::encode(false)),
       data_(parent_rule) {}
 
 inline CSSSelector::CSSSelector(const AtomicString& pseudo_name,
@@ -877,14 +868,15 @@ inline CSSSelector::CSSSelector(const AtomicString& pseudo_name,
             HasRareDataField::encode(false) | IsForPageField::encode(false) |
             IsImplicitlyAddedField::encode(is_implicit) |
             IsCoveredByBucketingField::encode(false) |
-            SignalField::encode(static_cast<unsigned>(Signal::kNone)) |
-            IsInvisibleField::encode(false)),
+            AttributeMatchField::encode(0) |
+            IsCaseSensitiveAttributeField::encode(false)),
       data_(pseudo_name) {}
 
 inline CSSSelector::CSSSelector(const CSSSelector& o)
     : bits_(o.bits_), data_(DataUnion::kConstructUninitialized) {
-  if (o.Match() == kTag) {
-    new (&data_.tag_q_name_) QualifiedName(o.data_.tag_q_name_);
+  if (o.Match() == kTag || o.Match() == kAttributeSet) {
+    new (&data_.tag_q_name_or_attribute_)
+        QualifiedName(o.data_.tag_q_name_or_attribute_);
   } else if (o.Match() == kPseudoClass && o.GetPseudoType() == kPseudoParent) {
     data_.parent_rule_ = o.data_.parent_rule_;
   } else if (o.HasRareData()) {
@@ -905,8 +897,8 @@ inline CSSSelector::CSSSelector(CSSSelector&& o)
 }
 
 inline CSSSelector::~CSSSelector() {
-  if (Match() == kTag) {
-    data_.tag_q_name_.~QualifiedName();
+  if (Match() == kTag || Match() == kAttributeSet) {
+    data_.tag_q_name_or_attribute_.~QualifiedName();
   } else if (Match() == kPseudoClass && GetPseudoType() == kPseudoParent)
     ;  // Nothing to do.
   else if (HasRareData())
@@ -924,7 +916,7 @@ inline CSSSelector& CSSSelector::operator=(CSSSelector&& other) {
 
 inline const QualifiedName& CSSSelector::TagQName() const {
   DCHECK_EQ(Match(), static_cast<unsigned>(kTag));
-  return data_.tag_q_name_;
+  return data_.tag_q_name_or_attribute_;
 }
 
 inline const StyleRule* CSSSelector::ParentRule() const {

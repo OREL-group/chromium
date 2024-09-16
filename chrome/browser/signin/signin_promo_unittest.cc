@@ -6,15 +6,19 @@
 
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
+#include "chrome/browser/signin/chrome_signin_pref_names.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/signin/identity_test_environment_profile_adaptor.h"
 #include "chrome/browser/signin/signin_promo_util.h"
 #include "chrome/common/webui_url_constants.h"
-#include "chrome/test/base/browser_with_test_window_test.h"
 #include "components/signin/public/base/consent_level.h"
+#include "components/signin/public/base/signin_metrics.h"
+#include "components/signin/public/base/signin_prefs.h"
 #include "components/signin/public/base/signin_switches.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/signin/public/identity_manager/identity_test_utils.h"
+#include "components/sync/base/command_line_switches.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -94,51 +98,80 @@ class ShowPromoTest : public testing::Test {
       identity_test_env_adaptor_;
 };
 
-// Tests for ShouldShowPromo.
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
-TEST_F(ShowPromoTest, ShowPromoWithNoAccount) {
-  EXPECT_TRUE(ShouldShowPromo(*profile(), ConsentLevel::kSync));
-}
-
-TEST_F(ShowPromoTest, ShowPromoWithSignedInAccount) {
-  MakePrimaryAccountAvailable(identity_manager(), "test@email.com",
-                              ConsentLevel::kSignin);
-  EXPECT_TRUE(ShouldShowPromo(*profile(), ConsentLevel::kSync));
-}
-
-TEST_F(ShowPromoTest, DoNotShowPromoWithSyncingAccount) {
-  MakePrimaryAccountAvailable(identity_manager(), "test@email.com",
-                              ConsentLevel::kSync);
-  EXPECT_FALSE(ShouldShowPromo(*profile(), ConsentLevel::kSync));
-}
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
-
-// Tests for ShouldShowSignInPromo.
 TEST_F(ShowPromoTest, DoNotShowSignInPromoWithoutExplicitBrowserSignin) {
   base::test::ScopedFeatureList feature_list;
   feature_list.InitAndDisableFeature(
       switches::kExplicitBrowserSigninUIOnDesktop);
 
-  EXPECT_FALSE(ShouldShowSignInPromo(*profile(),
-                                     SignInAutofillBubblePromoType::Passwords));
+  EXPECT_FALSE(ShouldShowSignInPromo(
+      *profile(), signin_metrics::AccessPoint::ACCESS_POINT_PASSWORD_BUBBLE));
 }
+
+#if !BUILDFLAG(IS_ANDROID)
+class ShowSyncPromoTest : public ShowPromoTest {
+ protected:
+  void DisableSync() {
+    base::CommandLine::ForCurrentProcess()->AppendSwitch(syncer::kDisableSync);
+  }
+};
+
+// Verifies that ShouldShowSyncPromo returns false if sync is disabled by
+// policy.
+TEST_F(ShowSyncPromoTest, ShouldShowSyncPromoSyncDisabled) {
+  DisableSync();
+  EXPECT_FALSE(ShouldShowSyncPromo(*profile()));
+}
+
+// Verifies that ShouldShowSyncPromo returns true if all conditions to
+// show the promo are met.
+TEST_F(ShowSyncPromoTest, ShouldShowSyncPromoSyncEnabled) {
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  // No sync promo on Ash.
+  EXPECT_FALSE(ShouldShowSyncPromo(*profile()));
+#else
+  EXPECT_TRUE(ShouldShowSyncPromo(*profile()));
+#endif
+}
+#endif  // !BUILDFLAG(IS_ANDROID)
+
+#if !BUILDFLAG(IS_CHROMEOS_ASH)
+TEST_F(ShowSyncPromoTest, ShowPromoWithSignedInAccount) {
+  MakePrimaryAccountAvailable(identity_manager(), "test@email.com",
+                              ConsentLevel::kSignin);
+  EXPECT_TRUE(ShouldShowSyncPromo(*profile()));
+}
+
+TEST_F(ShowSyncPromoTest, DoNotShowPromoWithSyncingAccount) {
+  MakePrimaryAccountAvailable(identity_manager(), "test@email.com",
+                              ConsentLevel::kSync);
+  EXPECT_FALSE(ShouldShowSyncPromo(*profile()));
+}
+#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
 
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
 class ShowSigninPromoTestExplicitBrowserSignin : public ShowPromoTest {
+ public:
+  std::string gaia_id() {
+    return identity_manager()
+        ->GetPrimaryAccountInfo(ConsentLevel::kSignin)
+        .gaia;
+  }
+
+ private:
   base::test::ScopedFeatureList feature_list{
       switches::kExplicitBrowserSigninUIOnDesktop};
 };
 
 TEST_F(ShowSigninPromoTestExplicitBrowserSignin, ShowPromoWithNoAccount) {
-  EXPECT_TRUE(ShouldShowSignInPromo(*profile(),
-                                    SignInAutofillBubblePromoType::Payments));
+  EXPECT_TRUE(ShouldShowSignInPromo(
+      *profile(), signin_metrics::AccessPoint::ACCESS_POINT_PASSWORD_BUBBLE));
 }
 
 TEST_F(ShowSigninPromoTestExplicitBrowserSignin,
        ShowPromoWithWebSignedInAccount) {
   MakeAccountAvailable(identity_manager(), "test@email.com");
-  EXPECT_TRUE(ShouldShowSignInPromo(*profile(),
-                                    SignInAutofillBubblePromoType::Addresses));
+  EXPECT_TRUE(ShouldShowSignInPromo(
+      *profile(), signin_metrics::AccessPoint::ACCESS_POINT_PASSWORD_BUBBLE));
 }
 
 TEST_F(ShowSigninPromoTestExplicitBrowserSignin,
@@ -149,34 +182,81 @@ TEST_F(ShowSigninPromoTestExplicitBrowserSignin,
       identity_manager(), info.account_id,
       GoogleServiceAuthError(
           GoogleServiceAuthError::State::USER_NOT_SIGNED_UP));
-  EXPECT_TRUE(ShouldShowSignInPromo(*profile(),
-                                    SignInAutofillBubblePromoType::Passwords));
+  EXPECT_TRUE(ShouldShowSignInPromo(
+      *profile(), signin_metrics::AccessPoint::ACCESS_POINT_PASSWORD_BUBBLE));
 }
 
 TEST_F(ShowSigninPromoTestExplicitBrowserSignin,
        DoNotShowPromoWithAlreadySignedInAccount) {
   MakePrimaryAccountAvailable(identity_manager(), "test@email.com",
                               ConsentLevel::kSignin);
-  EXPECT_FALSE(ShouldShowSignInPromo(*profile(),
-                                     SignInAutofillBubblePromoType::Payments));
+  EXPECT_FALSE(ShouldShowSignInPromo(
+      *profile(), signin_metrics::AccessPoint::ACCESS_POINT_PASSWORD_BUBBLE));
 }
 
 TEST_F(ShowSigninPromoTestExplicitBrowserSignin,
        DoNotShowPromoWithAlreadySyncingAccount) {
   MakePrimaryAccountAvailable(identity_manager(), "test@email.com",
                               ConsentLevel::kSync);
-  EXPECT_FALSE(ShouldShowSignInPromo(*profile(),
-                                     SignInAutofillBubblePromoType::Addresses));
+  EXPECT_FALSE(ShouldShowSignInPromo(
+      *profile(), signin_metrics::AccessPoint::ACCESS_POINT_PASSWORD_BUBBLE));
 }
 
 TEST_F(ShowSigninPromoTestExplicitBrowserSignin,
+       DoNotShowPromoWithOffTheRecordProfile) {
+  EXPECT_FALSE(ShouldShowSignInPromo(
+      *profile()->GetPrimaryOTRProfile(/*create_if_needed=*/true),
+      signin_metrics::AccessPoint::ACCESS_POINT_PASSWORD_BUBBLE));
+}
+
+TEST_F(ShowSigninPromoTestExplicitBrowserSignin,
+       DoNotShowPromoWithNonAutofillAccessPoint) {
+  EXPECT_FALSE(ShouldShowSignInPromo(
+      *profile(), signin_metrics::AccessPoint::ACCESS_POINT_SETTINGS));
+}
+
+// TODO (crbug.com/319411636): Add the same test for addresses.
+TEST_F(ShowSigninPromoTestExplicitBrowserSignin,
        DoNotShowPromoAfterFiveTimesShown) {
-  // TODO (crbug.com/319411728): Implement a counter and test it.
+  EXPECT_TRUE(ShouldShowSignInPromo(
+      *profile(), signin_metrics::AccessPoint::ACCESS_POINT_PASSWORD_BUBBLE));
+
+  profile()->GetPrefs()->SetInteger(
+      prefs::kPasswordSignInPromoShownCountPerProfile, 5);
+
+  EXPECT_FALSE(ShouldShowSignInPromo(
+      *profile(), signin_metrics::AccessPoint::ACCESS_POINT_PASSWORD_BUBBLE));
+  EXPECT_TRUE(ShouldShowSignInPromo(
+      *profile(), signin_metrics::AccessPoint::ACCESS_POINT_ADDRESS_BUBBLE));
 }
 
 TEST_F(ShowSigninPromoTestExplicitBrowserSignin,
        DoNotShowPromoAfterTwoTimesDismissed) {
-  // TODO (crbug.com/319411728): Implement a counter and test it.
+  EXPECT_TRUE(ShouldShowSignInPromo(
+      *profile(), signin_metrics::AccessPoint::ACCESS_POINT_PASSWORD_BUBBLE));
+  EXPECT_TRUE(ShouldShowSignInPromo(
+      *profile(), signin_metrics::AccessPoint::ACCESS_POINT_ADDRESS_BUBBLE));
+
+  profile()->GetPrefs()->SetInteger(
+      prefs::kAutofillSignInPromoDismissCountPerProfile, 2);
+
+  EXPECT_FALSE(ShouldShowSignInPromo(
+      *profile(), signin_metrics::AccessPoint::ACCESS_POINT_PASSWORD_BUBBLE));
+  EXPECT_FALSE(ShouldShowSignInPromo(
+      *profile(), signin_metrics::AccessPoint::ACCESS_POINT_ADDRESS_BUBBLE));
+}
+
+TEST_F(ShowSigninPromoTestExplicitBrowserSignin,
+       ShowPromoAfterTwoTimesDismissedByDifferentAccounts) {
+  profile()->GetPrefs()->SetInteger(
+      prefs::kAutofillSignInPromoDismissCountPerProfile, 1);
+  SigninPrefs prefs(*profile()->GetPrefs());
+  prefs.IncrementAutofillSigninPromoDismissCount("gaia_id");
+
+  EXPECT_TRUE(ShouldShowSignInPromo(
+      *profile(), signin_metrics::AccessPoint::ACCESS_POINT_PASSWORD_BUBBLE));
+  EXPECT_TRUE(ShouldShowSignInPromo(
+      *profile(), signin_metrics::AccessPoint::ACCESS_POINT_ADDRESS_BUBBLE));
 }
 #endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 

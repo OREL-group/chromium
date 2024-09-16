@@ -6,20 +6,18 @@
 
 #import "base/notreached.h"
 #import "base/strings/sys_string_conversions.h"
-#import "ios/chrome/browser/push_notification/model/push_notification_client_id.h"
-#import "ios/chrome/browser/push_notification/model/push_notification_settings_util.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
-#import "ios/chrome/browser/shared/ui/symbols/symbols.h"
 #import "ios/chrome/browser/shared/ui/util/rtl_geometry.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
 #import "ios/chrome/browser/ui/content_suggestions/cells/content_suggestions_tile_layout_util.h"
+#import "ios/chrome/browser/ui/content_suggestions/cells/most_visited_tiles_config.h"
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_collection_utils.h"
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_constants.h"
 #import "ios/chrome/browser/ui/content_suggestions/magic_stack/magic_stack_constants.h"
 #import "ios/chrome/browser/ui/content_suggestions/magic_stack/magic_stack_module.h"
 #import "ios/chrome/browser/ui/content_suggestions/magic_stack/magic_stack_module_container_delegate.h"
+#import "ios/chrome/browser/ui/content_suggestions/magic_stack/magic_stack_module_content_view_delegate.h"
 #import "ios/chrome/browser/ui/content_suggestions/magic_stack/magic_stack_module_contents_factory.h"
-#import "ios/chrome/browser/ui/content_suggestions/magic_stack/most_visited_tiles_config.h"
 #import "ios/chrome/browser/ui/content_suggestions/safety_check/safety_check_state.h"
 #import "ios/chrome/browser/ui/content_suggestions/safety_check/utils.h"
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
@@ -53,11 +51,7 @@ const CGFloat kSeparatorHeight = 0.5;
 
 }  // namespace
 
-@interface MagicStackModuleContainer () <UIContextMenuInteractionDelegate>
-
-// Redefined as ReadWrite.
-@property(nonatomic, assign, readwrite) ContentSuggestionsModuleType type;
-
+@interface MagicStackModuleContainer () <MagicStackModuleContentViewDelegate>
 @end
 
 @implementation MagicStackModuleContainer {
@@ -65,14 +59,16 @@ const CGFloat kSeparatorHeight = 0.5;
   UILabel* _subtitle;
   BOOL _isPlaceholder;
   UIButton* _seeMoreButton;
+  UIButton* _notificationsOptInButton;
   UIView* _contentView;
   UIView* _separator;
   UIStackView* _stackView;
   UIImageView* _placeholderImage;
   UIStackView* _titleStackView;
-    MagicStackModuleContentsFactory* _magicStackModuleContentsFactory;
-    NSLayoutConstraint* _containerHeightAnchor;
-    NSLayoutConstraint* _contentStackViewBottomMarginAnchor;
+  MagicStackModuleContentsFactory* _magicStackModuleContentsFactory;
+  NSLayoutConstraint* _containerHeightAnchor;
+  NSLayoutConstraint* _contentStackViewBottomMarginAnchor;
+  ContentSuggestionsModuleType _type;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -80,11 +76,6 @@ const CGFloat kSeparatorHeight = 0.5;
   if (self) {
     self.maximumContentSizeCategory = UIContentSizeCategoryAccessibilityMedium;
     _magicStackModuleContentsFactory = [[MagicStackModuleContentsFactory alloc] init];
-
-    self.contentView.backgroundColor = [UIColor colorNamed:kBackgroundColor];
-    self.contentView.layer.cornerRadius = kCornerRadius;
-    self.contentView.clipsToBounds = YES;
-    self.layer.cornerRadius = kCornerRadius;
 
     _titleStackView = [[UIStackView alloc] init];
     _titleStackView.alignment = UIStackViewAlignmentTop;
@@ -99,7 +90,7 @@ const CGFloat kSeparatorHeight = 0.5;
     _title.font = [self fontForTitle];
     _title.textColor = [UIColor colorNamed:kTextPrimaryColor];
     _title.numberOfLines = 1;
-    _title.lineBreakMode = NSLineBreakByWordWrapping;
+    _title.lineBreakMode = NSLineBreakByTruncatingTail;
     _title.accessibilityTraits |= UIAccessibilityTraitHeader;
     [_title setContentHuggingPriority:UILayoutPriorityDefaultLow
                               forAxis:UILayoutConstraintAxisHorizontal];
@@ -119,41 +110,26 @@ const CGFloat kSeparatorHeight = 0.5;
       [_title.bottomAnchor constraintEqualToAnchor:_titleStackView.bottomAnchor]
     ]];
 
-    _seeMoreButton = [[UIButton alloc] init];
-    UIButtonConfiguration* buttonConfiguration =
-        [UIButtonConfiguration plainButtonConfiguration];
-    buttonConfiguration.contentInsets = NSDirectionalEdgeInsetsZero;
-    buttonConfiguration.titleLineBreakMode = NSLineBreakByWordWrapping;
-    NSDictionary* attributes = @{
-      NSFontAttributeName :
-          [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote]
-    };
-    NSAttributedString* attributedTitle = [[NSAttributedString alloc]
-        initWithString:l10n_util::GetNSString(IDS_IOS_MAGIC_STACK_SEE_MORE)
-            attributes:attributes];
-    buttonConfiguration.attributedTitle = attributedTitle;
-    _seeMoreButton.configuration = buttonConfiguration;
-    [_seeMoreButton setTitleColor:[UIColor colorNamed:kBlueColor]
-                         forState:UIControlStateNormal];
-    _seeMoreButton.titleLabel.numberOfLines = 2;
-    _seeMoreButton.titleLabel.adjustsFontForContentSizeCategory = YES;
-    _seeMoreButton.contentHorizontalAlignment =
-        UIControlContentHorizontalAlignmentTrailing;
-    [_seeMoreButton
-        setContentCompressionResistancePriority:UILayoutPriorityRequired
-                                        forAxis:
-                                            UILayoutConstraintAxisHorizontal];
+    _seeMoreButton = [self
+        actionButton:l10n_util::GetNSString(IDS_IOS_MAGIC_STACK_SEE_MORE)];
+    _seeMoreButton.hidden = YES;
     [_seeMoreButton addTarget:self
                        action:@selector(seeMoreButtonWasTapped:)
              forControlEvents:UIControlEventTouchUpInside];
-    [_seeMoreButton setContentHuggingPriority:UILayoutPriorityDefaultHigh
-                                      forAxis:UILayoutConstraintAxisHorizontal];
-    _seeMoreButton.pointerInteractionEnabled = YES;
     [_titleStackView addArrangedSubview:_seeMoreButton];
-    _seeMoreButton.accessibilityIdentifier = _seeMoreButton.titleLabel.text;
-    _seeMoreButton.hidden = YES;
+
+    _notificationsOptInButton =
+        [self actionButton:l10n_util::GetNSString(
+                               IDS_IOS_MAGIC_STACK_TURN_ON_NOTIFICATIONS)];
+    _notificationsOptInButton.hidden = YES;
+    [_notificationsOptInButton
+               addTarget:self
+                  action:@selector(notificationsOptInButtonWasTapped:)
+        forControlEvents:UIControlEventTouchUpInside];
+    [_titleStackView addArrangedSubview:_notificationsOptInButton];
 
     _subtitle = [[UILabel alloc] init];
+    _subtitle.hidden = YES;
     _subtitle.font = [MagicStackModuleContainer fontForSubtitle];
     _subtitle.textColor = [UIColor colorNamed:kTextSecondaryColor];
     _subtitle.numberOfLines = 0;
@@ -196,7 +172,7 @@ const CGFloat kSeparatorHeight = 0.5;
         [self.heightAnchor constraintEqualToConstant:kModuleMaxHeight];
     [NSLayoutConstraint activateConstraints:@[ _containerHeightAnchor ]];
 
-    [self.contentView addSubview:_stackView];
+    [self addSubview:_stackView];
     AddSameConstraintsToSidesWithInsets(
         _stackView, self,
         (LayoutSides::kTop | LayoutSides::kLeading | LayoutSides::kTrailing),
@@ -207,18 +183,80 @@ const CGFloat kSeparatorHeight = 0.5;
                                                 constant:-kContentBottomInset];
     [NSLayoutConstraint
         activateConstraints:@[ _contentStackViewBottomMarginAnchor ]];
+
+    if (@available(iOS 17, *)) {
+      NSArray<UITrait>* traits = TraitCollectionSetForTraits(
+          @[ UITraitPreferredContentSizeCategory.self ]);
+      __weak __typeof(self) weakSelf = self;
+      UITraitChangeHandler handler = ^(id<UITraitEnvironment> traitEnvironment,
+                                       UITraitCollection* previousCollection) {
+        __strong __typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) {
+          return;
+        }
+        strongSelf->_title.font = [strongSelf fontForTitle];
+      };
+      [self registerForTraitChanges:traits withHandler:handler];
+    }
   }
   return self;
 }
 
+- (void)dealloc {
+  [self resetView];
+}
+
+// Creates a button with the specified `title` positioned in the module's
+// top-right corner.
+//
+// NOTE: This helper method does not associate an action with the generated
+// button. Use `-addTarget:action:forControlEvents:` to attach an action.
+- (UIButton*)actionButton:(NSString*)title {
+  UIButton* button = [[UIButton alloc] init];
+
+  UIButtonConfiguration* buttonConfiguration =
+      [UIButtonConfiguration plainButtonConfiguration];
+
+  buttonConfiguration.contentInsets = NSDirectionalEdgeInsetsZero;
+  buttonConfiguration.titleLineBreakMode = NSLineBreakByWordWrapping;
+  buttonConfiguration.attributedTitle = [[NSAttributedString alloc]
+      initWithString:title
+          attributes:@{
+            NSFontAttributeName :
+                [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote]
+          }];
+  button.configuration = buttonConfiguration;
+
+  [button setTitleColor:[UIColor colorNamed:kBlueColor]
+               forState:UIControlStateNormal];
+  button.titleLabel.numberOfLines = 2;
+  button.titleLabel.adjustsFontForContentSizeCategory = YES;
+
+  button.contentHorizontalAlignment =
+      UIControlContentHorizontalAlignmentTrailing;
+  [button
+      setContentCompressionResistancePriority:UILayoutPriorityRequired
+                                      forAxis:UILayoutConstraintAxisHorizontal];
+
+  [button setContentHuggingPriority:UILayoutPriorityDefaultHigh
+                            forAxis:UILayoutConstraintAxisHorizontal];
+  button.pointerInteractionEnabled = YES;
+  button.accessibilityIdentifier = button.titleLabel.text;
+
+  return button;
+}
+
 - (void)configureWithConfig:(MagicStackModule*)config {
-  [self resetCell];
+  [self resetView];
   // Ensures that the modules conforms to a height of kModuleMaxHeight. For
   // the MVT when it lives outside of the Magic Stack to stay as close to its
   // intrinsic size as possible, the constraint is configured to be less than
   // or equal to.
   if (config.type == ContentSuggestionsModuleType::kMostVisited &&
       !ShouldPutMostVisitedSitesInMagicStack()) {
+    self.backgroundColor = [UIColor colorNamed:kBackgroundColor];
+    self.layer.cornerRadius = kCornerRadius;
+    self.clipsToBounds = YES;
     _containerHeightAnchor.active = NO;
     _containerHeightAnchor = [self.heightAnchor
         constraintLessThanOrEqualToConstant:kModuleMaxHeight];
@@ -237,10 +275,6 @@ const CGFloat kSeparatorHeight = 0.5;
     return;
   }
   _type = config.type;
-  if ([self allowsLongPress]) {
-    [self addInteraction:[[UIContextMenuInteraction alloc]
-                             initWithDelegate:self]];
-  }
 
   _title.text = [MagicStackModuleContainer titleStringForModule:_type];
   _title.accessibilityIdentifier =
@@ -248,13 +282,19 @@ const CGFloat kSeparatorHeight = 0.5;
 
   _seeMoreButton.hidden = !config.shouldShowSeeMore;
 
+  // The "See More" button takes precedence over the notifications opt-in
+  // button.
+  _notificationsOptInButton.hidden =
+      config.shouldShowSeeMore || !config.showNotificationsOptIn;
+
   if ([self shouldShowSubtitle]) {
-    // TODO(crbug.com/1474992): Update MagicStackModuleContainer to take an id
+    // TODO(crbug.com/40279482): Update MagicStackModuleContainer to take an id
     // config in its initializer so the container can build itself from a
     // passed config/state object.
     NSString* subtitle = [self subtitleStringForConfig:config];
     _subtitle.text = subtitle;
     _subtitle.accessibilityIdentifier = subtitle;
+    _subtitle.hidden = NO;
   }
 
   if ([_title.text length] == 0) {
@@ -263,7 +303,10 @@ const CGFloat kSeparatorHeight = 0.5;
 
   _separator.hidden = ![self shouldShowSeparator];
 
-  _contentView = [_magicStackModuleContentsFactory contentViewForConfig:config traitCollection:self.traitCollection];
+  _contentView = [_magicStackModuleContentsFactory
+      contentViewForConfig:config
+           traitCollection:self.traitCollection
+       contentViewDelegate:self];
   [_stackView addArrangedSubview:_contentView];
 
   // Configures `contentView` to be the view willing to expand if needed to
@@ -278,11 +321,27 @@ const CGFloat kSeparatorHeight = 0.5;
       [[NSMutableArray alloc] initWithObjects:_title, nil];
   if (config.shouldShowSeeMore) {
     [accessibilityElements addObject:_seeMoreButton];
+  } else if (config.showNotificationsOptIn) {
+    [accessibilityElements addObject:_notificationsOptInButton];
   } else if ([self shouldShowSubtitle]) {
     [accessibilityElements addObject:_subtitle];
   }
   [accessibilityElements addObject:_contentView];
   self.accessibilityElements = accessibilityElements;
+}
+
+- (void)resetView {
+  _title.text = nil;
+  _subtitle.text = nil;
+  _isPlaceholder = NO;
+  if (_placeholderImage) {
+    [_placeholderImage removeFromSuperview];
+    _placeholderImage = nil;
+  }
+  if (_contentView) {
+    [_contentView removeFromSuperview];
+    _contentView = nil;
+  }
 }
 
 // Returns the module's title, if any, given the Magic Stack module `type`.
@@ -311,8 +370,11 @@ const CGFloat kSeparatorHeight = 0.5;
     case ContentSuggestionsModuleType::kParcelTracking:
       return l10n_util::GetNSString(
           IDS_IOS_CONTENT_SUGGESTIONS_PARCEL_TRACKING_MODULE_TITLE);
+    case ContentSuggestionsModuleType::kPriceTrackingPromo:
+      // Price Tracking Promo design does not use title.
+      return @"";
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return @"";
   }
 }
@@ -325,7 +387,7 @@ const CGFloat kSeparatorHeight = 0.5;
       return kMagicStackContentSuggestionsModuleTabResumptionAccessibilityIdentifier;
 
     default:
-      // TODO(crbug.com/1506038): the code should use constants for
+      // TODO(crbug.com/40946679): the code should use constants for
       // accessibility identifiers, and not localized strings.
       return [self titleStringForModule:type];
   }
@@ -365,131 +427,54 @@ const CGFloat kSeparatorHeight = 0.5;
   }
 }
 
-#pragma mark UICollectionViewCell Overrides
-
-- (void)prepareForReuse {
-  [super prepareForReuse];
-  [self resetCell];
-}
-
 #pragma mark - UITraitEnvironment
 
+#if !defined(__IPHONE_17_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_17_0
 - (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection {
   [super traitCollectionDidChange:previousTraitCollection];
+  if (@available(iOS 17, *)) {
+    return;
+  }
+
   if (previousTraitCollection.preferredContentSizeCategory !=
       self.traitCollection.preferredContentSizeCategory) {
     _title.font = [self fontForTitle];
   }
 }
+#endif
 
-#pragma mark - UIContextMenuInteractionDelegate
+#pragma mark - MagicStackModuleContentViewDelegate
 
-- (UIContextMenuConfiguration*)contextMenuInteraction:
-                                   (UIContextMenuInteraction*)interaction
-                       configurationForMenuAtLocation:(CGPoint)location {
-  CHECK([self allowsLongPress]);
-  __weak MagicStackModuleContainer* weakSelf = self;
-  UIContextMenuActionProvider actionProvider =
-      ^(NSArray<UIMenuElement*>* suggestedActions) {
-        return [UIMenu menuWithTitle:[weakSelf contextMenuTitle]
-                            children:[weakSelf contextMenuActions]];
-      };
-  return
-      [UIContextMenuConfiguration configurationWithIdentifier:nil
-                                              previewProvider:nil
-                                               actionProvider:actionProvider];
+- (void)setSubtitle:(NSString*)subtitle {
+  _subtitle.text = subtitle;
+  _subtitle.accessibilityIdentifier = subtitle;
 }
 
 #pragma mark - Helpers
 
-// Returns the list of actions for the long-press /  context menu.
-- (NSArray<UIAction*>*)contextMenuActions {
-  NSMutableArray<UIAction*>* actions = [[NSMutableArray alloc] init];
-
-  if (IsSetUpListModuleType(self.type) && IsIOSTipsNotificationsEnabled()) {
-    [actions addObject:[self toggleTipsNotificationsAction]];
-  }
-  [actions addObject:[self hideAction]];
-  return actions;
-}
-
-// Returns the menu action to hide this module type.
-- (UIAction*)hideAction {
-  __weak __typeof(self) weakSelf = self;
-  UIAction* hideAction = [UIAction
-      actionWithTitle:[self contextMenuHideDescription]
-                image:DefaultSymbolWithPointSize(kHideActionSymbol, 18)
-           identifier:nil
-              handler:^(UIAction* action) {
-                [weakSelf.delegate neverShowModuleType:weakSelf.type];
-              }];
-  hideAction.attributes = UIMenuElementAttributesDestructive;
-  return hideAction;
-}
-
-// Returns the menu action to opt-in to Tips Notifications.
-- (UIAction*)toggleTipsNotificationsAction {
-  BOOL optedIn = [self optedInToTipsNotifications];
-  __weak __typeof(self) weakSelf = self;
-  NSString* title;
-  NSString* symbol;
-  if (optedIn) {
-    title = l10n_util::GetNSStringF(
-        IDS_IOS_TIPS_NOTIFICATIONS_CONTEXT_MENU_ITEM_OFF,
-        l10n_util::GetStringUTF16(
-            content_suggestions::SetUpListTitleStringID()));
-    symbol = kBellSlashSymbol;
-  } else {
-    title = l10n_util::GetNSStringF(
-        IDS_IOS_TIPS_NOTIFICATIONS_CONTEXT_MENU_ITEM,
-        l10n_util::GetStringUTF16(
-            content_suggestions::SetUpListTitleStringID()));
-    symbol = kBellSymbol;
-  }
-  return [UIAction
-      actionWithTitle:title
-                image:DefaultSymbolWithPointSize(symbol, 18)
-           identifier:nil
-              handler:^(UIAction* action) {
-                if (optedIn) {
-                  [weakSelf.delegate disableNotifications:weakSelf.type];
-                } else {
-                  [weakSelf.delegate enableNotifications:weakSelf.type];
-                }
-              }];
-}
-
+// Handles taps on the "See More" button.
 - (void)seeMoreButtonWasTapped:(UIButton*)button {
   [_delegate seeMoreWasTappedForModuleType:_type];
 }
 
-// YES if this container should show a context menu when the user performs a
-// long-press gesture.
-- (BOOL)allowsLongPress {
-  switch (_type) {
-    case ContentSuggestionsModuleType::kTabResumption:
-    case ContentSuggestionsModuleType::kSafetyCheck:
-    case ContentSuggestionsModuleType::kSetUpListSync:
-    case ContentSuggestionsModuleType::kSetUpListDefaultBrowser:
-    case ContentSuggestionsModuleType::kSetUpListAutofill:
-    case ContentSuggestionsModuleType::kSetUpListNotifications:
-    case ContentSuggestionsModuleType::kCompactedSetUpList:
-    case ContentSuggestionsModuleType::kParcelTracking:
-      return YES;
-    default:
-      return NO;
-  }
+// Handles taps on the notifications opt-in button.
+- (void)notificationsOptInButtonWasTapped:(UIButton*)button {
+  [_delegate enableNotifications:_type];
 }
 
-// Based on ContentSuggestionsModuleType, returns YES if the module should show
-// a subtitle.
+// Determines if a subtitle should be displayed based on the
+// `ContentSuggestionsModuleType`. Returns `NO` if a Magic Stack module action
+// button is currently displayed.
 - (BOOL)shouldShowSubtitle {
-  switch (_type) {
-    case ContentSuggestionsModuleType::kSafetyCheck:
-      return YES;
-    default:
-      return NO;
+  if (!_seeMoreButton.isHidden || !_notificationsOptInButton.isHidden) {
+    return NO;
   }
+
+  if (_type == ContentSuggestionsModuleType::kSafetyCheck) {
+    return YES;
+  }
+
+  return NO;
 }
 
 // Returns the module's subtitle, if any, given the Magic Stack module `type`.
@@ -514,81 +499,12 @@ const CGFloat kSeparatorHeight = 0.5;
     case ContentSuggestionsModuleType::kSetUpListAllSet:
     case ContentSuggestionsModuleType::kSetUpListNotifications:
     case ContentSuggestionsModuleType::kSafetyCheck:
-    case ContentSuggestionsModuleType::kTabResumption:
       return YES;
+    case ContentSuggestionsModuleType::kTabResumption:
+      return !IsTabResumption1_5Enabled();
     default:
       return NO;
   }
 }
 
-// Title string for the context menu of this container.
-- (NSString*)contextMenuTitle {
-  switch (_type) {
-    case ContentSuggestionsModuleType::kTabResumption:
-      return l10n_util::GetNSString(IDS_IOS_TAB_RESUMPTION_CONTEXT_MENU_TITLE);
-    case ContentSuggestionsModuleType::kSafetyCheck:
-      return l10n_util::GetNSString(IDS_IOS_SAFETY_CHECK_CONTEXT_MENU_TITLE);
-    case ContentSuggestionsModuleType::kSetUpListSync:
-    case ContentSuggestionsModuleType::kSetUpListDefaultBrowser:
-    case ContentSuggestionsModuleType::kSetUpListAutofill:
-    case ContentSuggestionsModuleType::kCompactedSetUpList:
-    case ContentSuggestionsModuleType::kSetUpListNotifications:
-      return l10n_util::GetNSString(
-          IDS_IOS_SET_UP_LIST_HIDE_MODULE_CONTEXT_MENU_TITLE);
-    case ContentSuggestionsModuleType::kParcelTracking:
-      return l10n_util::GetNSString(IDS_IOS_PARCEL_TRACKING_CONTEXT_MENU_TITLE);
-    default:
-      NOTREACHED_NORETURN();
-  }
-}
-
-// Descriptor string for hide action of the context menu of this container.
-- (NSString*)contextMenuHideDescription {
-  switch (_type) {
-    case ContentSuggestionsModuleType::kTabResumption:
-      return l10n_util::GetNSString(
-          IDS_IOS_TAB_RESUMPTION_CONTEXT_MENU_DESCRIPTION);
-    case ContentSuggestionsModuleType::kSafetyCheck:
-      return l10n_util::GetNSString(
-          IDS_IOS_SAFETY_CHECK_CONTEXT_MENU_DESCRIPTION);
-    case ContentSuggestionsModuleType::kSetUpListSync:
-    case ContentSuggestionsModuleType::kSetUpListDefaultBrowser:
-    case ContentSuggestionsModuleType::kSetUpListAutofill:
-    case ContentSuggestionsModuleType::kSetUpListNotifications:
-    case ContentSuggestionsModuleType::kCompactedSetUpList:
-      return l10n_util::GetNSStringF(
-          IDS_IOS_SET_UP_LIST_HIDE_MODULE_CONTEXT_MENU_DESCRIPTION,
-          l10n_util::GetStringUTF16(
-              content_suggestions::SetUpListTitleStringID()));
-    case ContentSuggestionsModuleType::kParcelTracking:
-      return l10n_util::GetNSStringF(
-          IDS_IOS_PARCEL_TRACKING_CONTEXT_MENU_DESCRIPTION,
-          base::SysNSStringToUTF16(l10n_util::GetNSString(
-              IDS_IOS_CONTENT_SUGGESTIONS_PARCEL_TRACKING_MODULE_TITLE)));
-    default:
-      NOTREACHED_NORETURN();
-  }
-}
-
-// Reset the main configurations of the cell.
-- (void)resetCell {
-  _title.text = nil;
-  _subtitle.text = nil;
-  _isPlaceholder = NO;
-  if (_placeholderImage) {
-    [_placeholderImage removeFromSuperview];
-    _placeholderImage = nil;
-  }
-  if (_contentView) {
-    [_contentView removeFromSuperview];
-    _contentView = nil;
-  }
-}
-
-// Returns YES if the user has already opted-in to Tips Notifications.
-- (BOOL)optedInToTipsNotifications {
-  return push_notification_settings::
-      GetMobileNotificationPermissionStatusForClient(
-          PushNotificationClientId::kTips, "");
-}
 @end

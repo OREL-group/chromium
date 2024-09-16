@@ -15,10 +15,9 @@
 #include "content/public/test/browser_test.h"
 
 namespace autofill {
-
 namespace {
+
 const int kDefaultOtpLength = 6;
-}  // namespace
 
 class CardUnmaskOtpInputDialogBrowserTest
     : public DialogBrowserTest,
@@ -71,7 +70,7 @@ IN_PROC_BROWSER_TEST_P(CardUnmaskOtpInputDialogBrowserTest,
 
   ShowAndVerifyUi();
 
-  // TODO(crbug.com/1243475): Move this logging to controller unittest as well.
+  // TODO(crbug.com/40195445): Move this logging to controller unittest as well.
   // Right now the view is created but not injected. Need to change this when
   // moving this logging.
   histogram_tester.ExpectUniqueSample(
@@ -128,4 +127,5 @@ INSTANTIATE_TEST_SUITE_P(
     testing::Values(CardUnmaskChallengeOptionType::kSmsOtp,
                     CardUnmaskChallengeOptionType::kEmailOtp));
 
+}  // namespace
 }  // namespace autofill

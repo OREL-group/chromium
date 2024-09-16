@@ -51,19 +51,31 @@ public class AutofillSaveCardBottomSheetBridge
      * BottomSheetController#requestShowContent}
      *
      * @param uiInfo An object providing text and images to the bottom sheet view.
+     * @param skipLoadingForFixFlow When true, loading is skipped due to the fix flow.
      */
     @CalledByNative
-    public void requestShowContent(AutofillSaveCardUiInfo uiInfo) {
+    public void requestShowContent(AutofillSaveCardUiInfo uiInfo, boolean skipLoadingForFixFlow) {
         if (mNativeAutofillSaveCardBottomSheetBridge == 0) return;
         mCoordinator =
                 new AutofillSaveCardBottomSheetCoordinator(
                         mContext,
+                        uiInfo,
+                        skipLoadingForFixFlow,
                         mBottomSheetController,
                         mLayoutStateProvider,
                         mTabModel,
-                        uiInfo,
-                        /* bridge= */ this);
+                        /* delegate= */ this);
         mCoordinator.requestShowContent();
+    }
+
+    /**
+     * Requests to hide the bottom sheet if showing. The hide reason
+     * BottomSheetController.StateChangeReason.INTERACTION_COMPLETE will be used.
+     */
+    @CalledByNative
+    public void hide() {
+        if (mNativeAutofillSaveCardBottomSheetBridge == 0) return;
+        mCoordinator.hide(BottomSheetController.StateChangeReason.INTERACTION_COMPLETE);
     }
 
     /** Called when the bottom sheet has been shown. */
@@ -103,7 +115,7 @@ public class AutofillSaveCardBottomSheetBridge
     /*package*/ void destroy() {
         mNativeAutofillSaveCardBottomSheetBridge = 0;
         if (mCoordinator == null) return;
-        mCoordinator.destroy();
+        mCoordinator.hide(BottomSheetController.StateChangeReason.NONE);
         mCoordinator = null;
     }
 

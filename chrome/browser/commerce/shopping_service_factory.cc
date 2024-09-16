@@ -59,9 +59,12 @@ ShoppingServiceFactory::ShoppingServiceFactory()
           "ShoppingService",
           ProfileSelections::Builder()
               .WithRegular(ProfileSelection::kRedirectedToOriginal)
-              // TODO(crbug.com/1418376): Check if this service is needed in
+              // TODO(crbug.com/40257657): Check if this service is needed in
               // Guest mode.
               .WithGuest(ProfileSelection::kRedirectedToOriginal)
+              // TODO(crbug.com/41488885): Check if this service is needed for
+              // Ash Internals.
+              .WithAshInternals(ProfileSelection::kRedirectedToOriginal)
               .Build()) {
   DependsOn(BookmarkModelFactory::GetInstance());
   DependsOn(IdentityManagerFactory::GetInstance());
@@ -89,7 +92,7 @@ ShoppingServiceFactory::BuildServiceInstanceForBrowserContext(
       GetCurrentCountryCode(g_browser_process->variations_service()),
       g_browser_process->GetApplicationLocale(),
       BookmarkModelFactory::GetInstance()->GetForBrowserContext(context),
-      nullptr, OptimizationGuideKeyedServiceFactory::GetForProfile(profile),
+      OptimizationGuideKeyedServiceFactory::GetForProfile(profile),
       profile->GetPrefs(), IdentityManagerFactory::GetForProfile(profile),
       SyncServiceFactory::GetForProfile(profile),
       profile->GetDefaultStoragePartition()

@@ -25,7 +25,7 @@ export class FakeReadingMode {
 
   // Current audio settings values.
   speechRate: number = 1;
-  highlightGranularity: number = 1;
+  highlightGranularity: number = 0;
 
   // Enum values for various visual theme changes.
   standardLineSpacing: number = 0;
@@ -39,7 +39,13 @@ export class FakeReadingMode {
   darkTheme: number = 8;
   yellowTheme: number = 9;
   blueTheme: number = 10;
-  highlightOn: number = 0;
+
+  // Enum values for highlight granularity.
+  autoHighlighting: number = 0;
+  wordHighlighting: number = 1;
+  phraseHighlighting: number = 2;
+  sentenceHighlighting: number = 3;
+  noHighlighting: number = 4;
 
   // Whether the WebUI toolbar feature flag is enabled.
   isWebUIToolbarVisible: boolean = true;
@@ -56,7 +62,19 @@ export class FakeReadingMode {
   // The base language code that should be used for speech synthesis voices.
   baseLanguageForSpeech: string = '';
 
+  // The fallback language, corresponding to the browser language, that
+  // should only be used when baseLanguageForSpeech is unavailable.
+  defaultLanguageForSpeech: string = '';
+
+  // TTS voice language preferences saved in database
+  savedLanguagePref: Set<string> = new Set<string>();
+
   private maxNodeId: number = 5;
+
+  // Returns whether the reading highlight is currently on.
+  isHighlightOn(): boolean {
+    return this.highlightGranularity !== this.noHighlighting;
+  }
 
   // Returns the stored user voice preference for the current language.
   getStoredVoice(): string {
@@ -128,6 +146,9 @@ export class FakeReadingMode {
   // shortcuts.
   onCopy() {}
 
+  // Called when speech is paused or played.
+  onSpeechPlayingStateChanged(_isSpeechActive: boolean) {}
+
   // Called when the Read Anything panel is scrolled.
   onScroll(_onSelection: boolean) {}
 
@@ -136,14 +157,8 @@ export class FakeReadingMode {
   onLinkClicked(_nodeId: number) {}
 
   // Called when the line spacing is changed via the webui toolbar.
-  onStandardLineSpacing() {
-    this.lineSpacing = this.standardLineSpacing;
-  }
-  onLooseLineSpacing() {
-    this.lineSpacing = this.looseLineSpacing;
-  }
-  onVeryLooseLineSpacing() {
-    this.lineSpacing = this.veryLooseLineSpacing;
+  onLineSpacingChange(value: number) {
+    this.lineSpacing = value;
   }
 
   // Called when a user makes a font size change via the webui toolbar.
@@ -154,37 +169,38 @@ export class FakeReadingMode {
     this.fontSize = 0;
   }
 
+  onHighlightGranularityChanged(value: number) {
+    this.highlightGranularity = value;
+  }
+
+  // Called when a user toggles a switch in the language menu
+  onLanguagePrefChange(lang: string, enabled: boolean) {
+    if(enabled) {
+      this.savedLanguagePref.add(lang);
+    } else {
+      this.savedLanguagePref.delete(lang);
+    }
+  }
+
+
   // Called when a user toggles links via the webui toolbar.
   onLinksEnabledToggled() {
     this.linksEnabled = !this.linksEnabled;
   }
 
   // Called when the letter spacing is changed via the webui toolbar.
-  onStandardLetterSpacing() {
-    this.letterSpacing = this.standardLetterSpacing;
-  }
-  onWideLetterSpacing() {
-    this.letterSpacing = this.wideLetterSpacing;
-  }
-  onVeryWideLetterSpacing() {
-    this.letterSpacing = this.veryWideLetterSpacing;
+  onLetterSpacingChange(value: number) {
+    this.letterSpacing = value;
   }
 
   // Called when the color theme is changed via the webui toolbar.
-  onDefaultTheme() {
-    this.colorTheme = this.defaultTheme;
+  onThemeChange(value: number) {
+    this.colorTheme = value;
   }
-  onLightTheme() {
-    this.colorTheme = this.lightTheme;
-  }
-  onDarkTheme() {
-    this.colorTheme = this.darkTheme;
-  }
-  onYellowTheme() {
-    this.colorTheme = this.yellowTheme;
-  }
-  onBlueTheme() {
-    this.colorTheme = this.blueTheme;
+
+  // Returns the css name of the given font, or the default if it's not valid.
+  getValidatedFontName(font: string) {
+    return font;
   }
 
   // Called when the font is changed via the webui toolbar.
@@ -200,12 +216,16 @@ export class FakeReadingMode {
   // Called when the voice used for speech is changed via the webui toolbar.
   onVoiceChange(_voice: string, _lang: string) {}
 
+  // Called when a tracked count-based metric is incremented.
+  incrementMetricCount(_metric: string) {}
+
   // Called when the highlight granularity is changed via the webui toolbar.
   turnedHighlightOn() {
-    this.highlightGranularity = 1;
+    this.highlightGranularity = this.autoHighlighting;
   }
+
   turnedHighlightOff() {
-    this.highlightGranularity = 0;
+    this.highlightGranularity = this.noHighlighting;
   }
 
   // Returns the actual spacing value to use based on the given lineSpacing
@@ -220,6 +240,11 @@ export class FakeReadingMode {
     return letterSpacing;
   }
 
+  // Returns the actual enabled languages in preference
+  getLanguagesEnabledInPref(): string[] {
+    return [...this.savedLanguagePref.values()];
+  }
+
   // Called when a user makes a selection change. AnchorNodeID and
   // focusAXNodeID are AXNodeIDs which identify the anchor and focus AXNodes
   // in the main pane. The selection can either be forward or backwards.
@@ -230,6 +255,8 @@ export class FakeReadingMode {
   // Called when a user collapses the selection. This is usually accomplished
   // by clicking.
   onCollapseSelection() {}
+
+  sendGetVoicePackInfoRequest(_: string) {}
 
   // Set the content. Used by tests only.
   // SnapshotLite is a data structure which resembles an AXTreeUpdate. E.g.:
@@ -286,6 +313,12 @@ export class FakeReadingMode {
   // toolbar and are ready to consume.
   updateTheme() {}
 
+  // Called with the response of sendGetVoicePackInfoRequest()
+  updateVoicePackStatus(_lang: string, _status: string) {}
+
+  // Called with the response of sendInstallVoicePackRequest()
+  updateVoicePackStatusFromInstallResponse() {}
+
   // Ping that the theme choices of the user have been retrieved from
   // preferences and can be used to set up the page.
   restoreSettingsFromPrefs() {}
@@ -326,6 +359,9 @@ export class FakeReadingMode {
   // refer to the previous granularity.
   movePositionToPreviousGranularity(): void {}
 
+  // Signal that the page language has changed.
+  languageChanged(): void {}
+
   // Returns the index of the next sentence of the given text, such that the
   // next sentence is equivalent to text.substr(0, <returned_index>).
   // If the sentence exceeds the maximum text length, the sentence will be
@@ -343,5 +379,7 @@ export class FakeReadingMode {
     return '';
   }
 
-  logMetric(_time: number, _metricName: string) : void {}
+  // Begins processing the speech segments on the current page to be used by
+  // Read Aloud.
+  preprocessTextForSpeech() {}
 }

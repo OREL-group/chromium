@@ -5,7 +5,6 @@
 #ifndef COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_MOCK_PASSWORD_FORM_MANAGER_FOR_UI_H_
 #define COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_MOCK_PASSWORD_FORM_MANAGER_FOR_UI_H_
 
-#include "base/memory/raw_ptr.h"
 #include "components/password_manager/core/browser/password_form_manager_for_ui.h"
 #include "components/password_manager/core/browser/password_store/statistics_table.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -27,7 +26,7 @@ class MockPasswordFormManagerForUI : public PasswordFormManagerForUI {
               GetBestMatches,
               (),
               (const override));
-  MOCK_METHOD((std::vector<raw_ptr<const PasswordForm, VectorExperimental>>),
+  MOCK_METHOD((base::span<const PasswordForm>),
               GetFederatedMatches,
               (),
               (const override));
@@ -41,14 +40,13 @@ class MockPasswordFormManagerForUI : public PasswordFormManagerForUI {
               GetInteractionsStats,
               (),
               (const override));
-  MOCK_METHOD((std::vector<raw_ptr<const PasswordForm, VectorExperimental>>),
+  MOCK_METHOD((base::span<const PasswordForm>),
               GetInsecureCredentials,
               (),
               (const override));
   MOCK_METHOD(bool, IsBlocklisted, (), (const override));
   MOCK_METHOD(bool, IsMovableToAccountStore, (), (const override));
   MOCK_METHOD(void, Save, (), (override));
-  MOCK_METHOD(void, Update, (const PasswordForm&), (override));
   MOCK_METHOD(bool,
               IsUpdateAffectingPasswordsStoredInTheGoogleAccount,
               (),
@@ -68,6 +66,10 @@ class MockPasswordFormManagerForUI : public PasswordFormManagerForUI {
   MOCK_METHOD(void, OnPasswordsRevealed, (), (override));
   MOCK_METHOD(void, MoveCredentialsToAccountStore, (), (override));
   MOCK_METHOD(void, BlockMovingCredentialsToAccountStore, (), (override));
+  MOCK_METHOD(PasswordForm::Store,
+              GetPasswordStoreForSaving,
+              (const PasswordForm& password_form),
+              (const override));
 };
 
 }  // namespace password_manager

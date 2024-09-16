@@ -31,6 +31,16 @@ if (headless_enable_commands) {
       "'headless_enable_commands' is not compatible with 'headless_use_embedded_resources'.")
 }
 
+bundle_hyphen_data = (is_linux || is_win) && !headless_use_embedded_resources
+should_strip_binary = is_chrome_for_testing && is_linux
+
+if (should_strip_binary) {
+  import("//build/linux/strip_binary.gni")
+}
+
+# If supported, field trials need to be enabled by --enable-field-trial-config switch.
+headless_support_field_trials = headless_use_prefs
+
 # Headless defines config applied to every target below.
 config("headless_defines_config") {
   defines = []
@@ -49,6 +59,10 @@ config("headless_defines_config") {
 
   if (headless_mode_policy_supported) {
     defines += [ "HEADLESS_MODE_POLICY_SUPPORTED" ]
+  }
+
+  if (headless_support_field_trials) {
+    defines += [ "HEADLESS_SUPPORT_FIELD_TRIALS" ]
   }
 }
 
@@ -244,6 +258,8 @@ component("headless_non_renderer") {
     "lib/browser/headless_platform_event_source.h",
     "lib/browser/headless_request_context_manager.cc",
     "lib/browser/headless_request_context_manager.h",
+    "lib/browser/headless_screen.cc",
+    "lib/browser/headless_screen.h",
     "lib/browser/headless_web_contents_impl.cc",
     "lib/browser/headless_web_contents_impl.h",
     "lib/browser/headless_window_tree_host.h",
@@ -266,7 +282,6 @@ component("headless_non_renderer") {
     "lib/renderer/allowlist.h",
     "lib/renderer/headless_content_renderer_client.cc",
     "lib/renderer/headless_content_renderer_client.h",
-    "lib/switches.cc",
     "lib/utility/headless_content_utility_client.cc",
     "lib/utility/headless_content_utility_client.h",
     "public/headless_browser.h",
@@ -300,8 +315,6 @@ component("headless_non_renderer") {
       "lib/browser/headless_browser_impl_aura.cc",
       "lib/browser/headless_focus_client.cc",
       "lib/browser/headless_focus_client.h",
-      "lib/browser/headless_screen.cc",
-      "lib/browser/headless_screen.h",
       "lib/browser/headless_window_parenting_client.cc",
       "lib/browser/headless_window_parenting_client.h",
       "lib/browser/headless_window_tree_host.cc",
@@ -387,6 +400,18 @@ component("headless_non_renderer") {
     ]
   }
 
+  if (headless_support_field_trials) {
+    sources += [
+      "lib/browser/headless_field_trials.cc",
+      "lib/browser/headless_field_trials.h",
+    ]
+    deps += [
+      "//components/metrics",
+      "//components/variations",
+      "//components/variations/service",
+    ]
+  }
+
   if (enable_printing) {
     deps += [
       "//components/printing/browser",
@@ -416,7 +441,6 @@ component("headless_non_renderer") {
 
   if (is_component_build) {
     deps += [
-      "//components/crash/core/common",
       "//components/security_state/content",
       "//gin",
       "//third_party/blink/public:blink",
@@ -450,7 +474,10 @@ component("headless_non_renderer") {
   }
 
   if (is_win) {
-    deps += [ "//sandbox" ]
+    deps += [
+      "//components/crash/core/app:crash_export_thunks",
+      "//sandbox",
+    ]
   }
 
   if (is_linux || is_chromeos) {
@@ -464,7 +491,8 @@ component("headless_non_renderer") {
     if (use_v8_context_snapshot) {
       data += [ "$root_out_dir/$v8_context_snapshot_filename" ]
       data_deps += [ "//tools/v8_context_snapshot" ]
-    } else {
+    }
+    if (!use_v8_context_snapshot || include_both_v8_snapshots) {
       data += [ "$root_out_dir/snapshot_blob.bin" ]
     }
   }
@@ -542,10 +570,6 @@ test("headless_unittests") {
     "//ui/gfx:test_support",
   ]
 
-  if (is_win) {
-    deps += [ "//components/crash/core/app:crash_export_thunks" ]
-  }
-
   if (enable_printing) {
     deps += [
       "//components/printing/browser",
@@ -605,7 +629,7 @@ test("headless_browsertests") {
     sources += [ "test/headless_command_browsertest.cc" ]
   }
 
-  # TODO(crbug.com/1318548): Enable on Fuchsia when no longer flakily timeout.
+  # TODO(crbug.com/40222911): Enable on Fuchsia when no longer flakily timeout.
   if (!is_fuchsia) {
     sources += [
       "test/headless_compositor_browsertest.cc",
@@ -625,6 +649,10 @@ test("headless_browsertests") {
     "//third_party/pywebsocket3/",
   ]
 
+  if (bundle_hyphen_data) {
+    data += [ "$root_out_dir/hyphen-data/hyph-en-us.hyb" ]
+  }
+
   data_deps = []
 
   if (headless_enable_commands) {
@@ -636,7 +664,7 @@ test("headless_browsertests") {
     additional_manifest_fragments = [
       "//build/config/fuchsia/test/fonts.shard.test-cml",
 
-      # TODO(https://crbug.com/1185811): Investigate removing the requirement
+      # TODO(crbug.com/40055105): Investigate removing the requirement
       # for VmexResource.
       "//build/config/fuchsia/test/mark_vmo_executable.shard.test-cml",
       "//build/config/fuchsia/test/network.shard.test-cml",
@@ -650,6 +678,10 @@ test("headless_browsertests") {
 
   defines = [ "HAS_OUT_OF_PROC_TEST_RUNNER" ]
 
+  if (headless_use_embedded_resources) {
+    defines += [ "HEADLESS_USE_EMBEDDED_RESOURCES" ]
+  }
+
   deps = [
     ":headless_shell_lib",
     "//base",
@@ -660,6 +692,8 @@ test("headless_browsertests") {
     "//components/embedder_support:embedder_support",
     "//components/headless/select_file_dialog",
     "//components/headless/test",
+    "//components/infobars/content",
+    "//components/infobars/core",
     "//components/policy/core/browser",
     "//components/security_state/content",
     "//components/version_info",
@@ -711,6 +745,10 @@ test("headless_browsertests") {
     ]
   }
 
+  if (bundle_hyphen_data) {
+    deps += [ "//third_party/hyphenation-patterns:bundle_hyphen_data" ]
+  }
+
   configs += [ ":headless_defines_config" ]
 }
 
@@ -724,6 +762,7 @@ if (is_win) {
     ]
     deps = [
       ":headless_non_renderer",
+      "//base/version_info",
       "//build:branding_buildflags",
       "//components/crash/core/app:app",
       "//components/crash/core/app:run_as_crashpad_handler",
@@ -774,6 +813,7 @@ static_library("headless_shell_lib") {
   }
 
   deps = [
+    "//base/version_info",
     "//build:branding_buildflags",
     "//components/devtools/simple_devtools_protocol_client",
     "//components/embedder_support",
@@ -796,10 +836,6 @@ static_library("headless_shell_lib") {
 
   if (!is_component_build) {
     public_deps += [ ":headless_non_renderer" ]
-  }
-
-  if (!is_fuchsia) {
-    deps += [ "//components/crash/content/browser" ]
   }
 
   if (enable_printing) {
@@ -838,7 +874,7 @@ static_library("headless_shell_lib") {
   }
 
   if (is_win || (is_posix && !is_mac)) {
-    deps += [ "//components/crash/core/app" ]
+    deps += [ "//components/crash/core/app:switches" ]
   }
 
   configs += [
@@ -859,6 +895,17 @@ action("generate_headless_shell_license_file") {
     ".",
   ]
   outputs = [ _license_path ]
+}
+
+if (should_strip_binary) {
+  strip_binary("strip_headless_shell_binary") {
+    binary_input = "$root_out_dir/headless_shell"
+    deps = [ ":headless_shell" ]
+  }
+
+  group("strip_chrome_for_testing_linux_files") {
+    deps = [ ":strip_headless_shell_binary" ]
+  }
 }
 
 executable("headless_shell") {
@@ -891,6 +938,10 @@ executable("headless_shell") {
 
   if (is_mac) {
     deps += [ "//sandbox/mac:seatbelt" ]
+  }
+
+  if (bundle_hyphen_data) {
+    deps += [ "//third_party/hyphenation-patterns:bundle_hyphen_data" ]
   }
 
   configs += [

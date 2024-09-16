@@ -15,7 +15,7 @@
 #include "media/cast/common/sender_encoded_frame.h"
 #include "media/cast/encoding/audio_encoder.h"
 #include "media/cast/sender/frame_sender.h"
-#include "third_party/openscreen/src/cast/streaming/sender.h"
+#include "third_party/openscreen/src/cast/streaming/public/sender.h"
 
 namespace media::cast {
 namespace {
@@ -43,7 +43,7 @@ AudioSender::AudioSender(scoped_refptr<CastEnvironment> cast_environment,
   if (!audio_config.use_hardware_encoder) {
     audio_encoder_ = std::make_unique<AudioEncoder>(
         std::move(cast_environment), audio_config.channels, rtp_timebase_,
-        audio_config.max_bitrate, audio_config.codec,
+        audio_config.max_bitrate, audio_config.audio_codec(),
         base::BindRepeating(&AudioSender::OnEncodedAudioFrame, AsWeakPtr()));
   }
 

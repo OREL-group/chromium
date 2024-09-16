@@ -4,6 +4,11 @@
 //
 // This file defines utility functions for fetching localized resources.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/installer/util/l10n_string_util.h"
 
 #include <windows.h>
@@ -134,7 +139,7 @@ std::wstring GetLocalizedString(int base_message_id) {
   DEBUG_ALIAS_FOR_WCHARCSTR(selected_translation,
                             language_selector.selected_translation().c_str(),
                             16);
-  NOTREACHED() << "Unable to find resource id " << message_id;
+  NOTREACHED_IN_MIGRATION() << "Unable to find resource id " << message_id;
 
   return std::wstring();
 }

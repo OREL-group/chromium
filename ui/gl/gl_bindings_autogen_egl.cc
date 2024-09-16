@@ -10,6 +10,7 @@
 
 #include <string>
 
+#include "base/containers/span.h"
 #include "base/trace_event/trace_event.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_context.h"
@@ -23,10 +24,13 @@ namespace gl {
 DriverEGL g_driver_egl;  // Exists in .bss
 
 void DriverEGL::InitializeStaticBindings() {
+#if DCHECK_IS_ON()
   // Ensure struct has been zero-initialized.
-  char* this_bytes = reinterpret_cast<char*>(this);
-  DCHECK(this_bytes[0] == 0);
-  DCHECK(memcmp(this_bytes, this_bytes + 1, sizeof(*this) - 1) == 0);
+  auto bytes = base::byte_span_from_ref(*this);
+  for (auto byte : bytes) {
+    DCHECK_EQ(0, byte);
+  };
+#endif
 
   fn.eglAcquireExternalContextANGLEFn =
       reinterpret_cast<eglAcquireExternalContextANGLEProc>(
@@ -215,6 +219,9 @@ void DriverEGL::InitializeStaticBindings() {
   fn.eglSetBlobCacheFuncsANDROIDFn =
       reinterpret_cast<eglSetBlobCacheFuncsANDROIDProc>(
           GetGLProcAddress("eglSetBlobCacheFuncsANDROID"));
+  fn.eglSetValidationEnabledANGLEFn =
+      reinterpret_cast<eglSetValidationEnabledANGLEProc>(
+          GetGLProcAddress("eglSetValidationEnabledANGLE"));
   fn.eglStreamAttribKHRFn = reinterpret_cast<eglStreamAttribKHRProc>(
       GetGLProcAddress("eglStreamAttribKHR"));
   fn.eglStreamConsumerAcquireKHRFn =
@@ -267,6 +274,7 @@ void ClientExtensionsEGL::InitializeClientExtensionSettings() {
       gfx::HasExtension(extensions, "EGL_ANGLE_display_power_preference");
   b_EGL_ANGLE_feature_control =
       gfx::HasExtension(extensions, "EGL_ANGLE_feature_control");
+  b_EGL_ANGLE_no_error = gfx::HasExtension(extensions, "EGL_ANGLE_no_error");
   b_EGL_ANGLE_platform_angle =
       gfx::HasExtension(extensions, "EGL_ANGLE_platform_angle");
   b_EGL_ANGLE_platform_angle_d3d =
@@ -338,6 +346,7 @@ void DisplayExtensionsEGL::InitializeExtensionSettings(EGLDisplay display) {
       gfx::HasExtension(extensions, "EGL_ANGLE_keyed_mutex");
   b_EGL_ANGLE_metal_shared_event_sync =
       gfx::HasExtension(extensions, "EGL_ANGLE_metal_shared_event_sync");
+  b_EGL_ANGLE_no_error = gfx::HasExtension(extensions, "EGL_ANGLE_no_error");
   b_EGL_ANGLE_power_preference =
       gfx::HasExtension(extensions, "EGL_ANGLE_power_preference");
   b_EGL_ANGLE_query_surface_pointer =
@@ -416,7 +425,8 @@ void DisplayExtensionsEGL::InitializeExtensionSettings(EGLDisplay display) {
 }
 
 void DriverEGL::ClearBindings() {
-  memset(this, 0, sizeof(*this));
+  auto bytes = base::byte_span_from_ref(*this);
+  std::ranges::fill(bytes, 0);
 }
 
 void EGLApiBase::eglAcquireExternalContextANGLEFn(EGLDisplay dpy,
@@ -920,6 +930,10 @@ void EGLApiBase::eglSetBlobCacheFuncsANDROIDFn(EGLDisplay dpy,
                                                EGLSetBlobFuncANDROID set,
                                                EGLGetBlobFuncANDROID get) {
   driver_->fn.eglSetBlobCacheFuncsANDROIDFn(dpy, set, get);
+}
+
+void EGLApiBase::eglSetValidationEnabledANGLEFn(EGLBoolean validationState) {
+  driver_->fn.eglSetValidationEnabledANGLEFn(validationState);
 }
 
 EGLBoolean EGLApiBase::eglStreamAttribKHRFn(EGLDisplay dpy,
@@ -1621,6 +1635,12 @@ void TraceEGLApi::eglSetBlobCacheFuncsANDROIDFn(EGLDisplay dpy,
   TRACE_EVENT_BINARY_EFFICIENT0("gpu",
                                 "TraceEGLAPI::eglSetBlobCacheFuncsANDROID");
   egl_api_->eglSetBlobCacheFuncsANDROIDFn(dpy, set, get);
+}
+
+void TraceEGLApi::eglSetValidationEnabledANGLEFn(EGLBoolean validationState) {
+  TRACE_EVENT_BINARY_EFFICIENT0("gpu",
+                                "TraceEGLAPI::eglSetValidationEnabledANGLE");
+  egl_api_->eglSetValidationEnabledANGLEFn(validationState);
 }
 
 EGLBoolean TraceEGLApi::eglStreamAttribKHRFn(EGLDisplay dpy,
@@ -2617,6 +2637,12 @@ void LogEGLApi::eglSetBlobCacheFuncsANDROIDFn(EGLDisplay dpy,
                  << "(" << dpy << ", " << reinterpret_cast<const void*>(set)
                  << ", " << reinterpret_cast<const void*>(get) << ")");
   egl_api_->eglSetBlobCacheFuncsANDROIDFn(dpy, set, get);
+}
+
+void LogEGLApi::eglSetValidationEnabledANGLEFn(EGLBoolean validationState) {
+  GL_SERVICE_LOG("eglSetValidationEnabledANGLE" << "(" << validationState
+                                                << ")");
+  egl_api_->eglSetValidationEnabledANGLEFn(validationState);
 }
 
 EGLBoolean LogEGLApi::eglStreamAttribKHRFn(EGLDisplay dpy,

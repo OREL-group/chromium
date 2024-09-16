@@ -219,7 +219,7 @@ void CategorizedWorkerPoolImpl::Start(int max_concurrency_foreground) {
       std::end(kBackgroundThreadPriorityCategories)};
 
   base::SimpleThread::Options thread_options;
-// TODO(1326996): Figure out whether !IS_MAC can be lifted here.
+// TODO(crbug.com/40226019): Figure out whether !IS_MAC can be lifted here.
 #if !BUILDFLAG(IS_MAC)
   thread_options.thread_type = base::ThreadType::kBackground;
 #endif
@@ -307,11 +307,6 @@ void CategorizedWorkerPoolImpl::Run(
       // We are no longer running tasks, which may allow another category to
       // start running. Signal other worker threads.
       SignalHasReadyToRunTasksWithLockAcquired();
-
-      // Make sure the END of the last trace event emitted before going idle
-      // is flushed to perfetto.
-      // TODO(crbug.com/1021571): Remove this once fixed.
-      PERFETTO_INTERNAL_ADD_EMPTY_EVENT();
 
       // Exit when shutdown is set and no more tasks are pending.
       if (shutdown_) {

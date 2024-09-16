@@ -34,17 +34,16 @@ namespace base {
 class SingleThreadTaskRunner;
 }  // namespace base
 
-namespace WTF {
-class String;
-}  // namespace WTF
-
 namespace blink {
 
+class AgentGroupScheduler;
 class Document;
-class ExecutionContext;
 class FetchParameters;
+class IsolatedSVGDocumentHost;
 class KURL;
 class SVGResourceDocumentObserver;
+
+struct SVGResourceTarget;
 
 // Representation of an SVG resource document. Fed from an SVGDocumentResource
 // that update loading status and provide the document text content. Thus the
@@ -52,12 +51,20 @@ class SVGResourceDocumentObserver;
 // document. The load cycle of the complete content document can differ from
 // that of the underlying resource if the content document itself has (data
 // URL) subresources.
+//
+// Calling SVGResourceDocumentContent::Fetch() - the expected way of creating an
+// SVGResourceDocumentContent - will return an instance that has its lifetime
+// managed by the SVGResourceDocumentCache. The cache is responsible for
+// disposing the instance when it is unused. The criteria for "is unused" is
+// that no observers are registered with the SVGResourceDocumentContent
+// instance. _If_ an instance is created directly, Dispose() _must_ be called
+// before dropping the reference to the instance.
 class CORE_EXPORT SVGResourceDocumentContent final
     : public GarbageCollected<SVGResourceDocumentContent> {
  public:
   static SVGResourceDocumentContent* Fetch(FetchParameters&, Document&);
 
-  SVGResourceDocumentContent(ExecutionContext*,
+  SVGResourceDocumentContent(AgentGroupScheduler&,
                              scoped_refptr<base::SingleThreadTaskRunner>);
   ~SVGResourceDocumentContent();
 
@@ -69,30 +76,47 @@ class CORE_EXPORT SVGResourceDocumentContent final
 
   void NotifyStartLoad();
 
+  enum class UpdateResult {
+    kCompleted,
+    kAsync,
+    kError,
+  };
   // Update the contained document using the text data in `content`, using
-  // `request_url` as the document URL.
-  void UpdateDocument(const WTF::String& content, const KURL& request_url);
+  // `request_url` as the document URL. Returns `kAsync` if the document's
+  // 'load' event has not been dispatched.
+  UpdateResult UpdateDocument(scoped_refptr<SharedBuffer> data,
+                              const KURL& request_url);
   void ClearDocument();
+  void Dispose();
 
+  ResourceStatus GetStatus() const { return status_; }
   void UpdateStatus(ResourceStatus new_status);
 
   const KURL& Url() const;
 
+  bool HasObservers() const { return !observers_.empty(); }
   void AddObserver(SVGResourceDocumentObserver*);
   void RemoveObserver(SVGResourceDocumentObserver*);
   void NotifyObservers();
 
+  SVGResourceTarget* GetResourceTarget(const AtomicString& element_id);
   void Trace(Visitor*) const;
 
  private:
   void NotifyObserver(SVGResourceDocumentObserver*);
+  void ContentChanged();
+  void LoadingFinished();
+  void AsyncLoadingFinished();
 
-  Member<Document> document_;
-  Member<ExecutionContext> context_;
+  class ChromeClient;
+
+  Member<IsolatedSVGDocumentHost> document_host_;
+  Member<AgentGroupScheduler> agent_group_scheduler_;
   HeapHashSet<WeakMember<SVGResourceDocumentObserver>> observers_;
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
   KURL url_;
   ResourceStatus status_ = ResourceStatus::kNotStarted;
+  bool was_disposed_ = false;
 };
 
 }  // namespace blink

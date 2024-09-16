@@ -15,6 +15,7 @@
 #include "content/browser/loader/response_head_update_params.h"
 #include "content/browser/navigation_subresource_loader_params.h"
 #include "content/common/content_export.h"
+#include "content/public/browser/frame_tree_node_id.h"
 #include "content/public/browser/global_request_id.h"
 #include "content/public/browser/ssl_status.h"
 #include "content/public/browser/weak_document_ptr.h"
@@ -93,7 +94,7 @@ class CONTENT_EXPORT NavigationURLLoaderImpl
 
   // Creates a URLLoaderFactory for a navigation. The factory uses
   // `header_client`. This should have the same settings as the factory from
-  // the URLLoaderFactoryGetter. Called on the UI thread.
+  // the ReconnectableURLLoaderFactoryForIOThread. Called on the UI thread.
   static mojo::PendingRemote<network::mojom::URLLoaderFactory>
   CreateURLLoaderFactoryWithHeaderClient(
       mojo::PendingRemote<network::mojom::TrustedURLLoaderHeaderClient>
@@ -133,9 +134,9 @@ class CONTENT_EXPORT NavigationURLLoaderImpl
   // chain. This is rare because non-network schemes basically don't redirect,
   // but can actually happen e.g. in extension scheme's dynamic URLs (see
   // `DynamicOriginBrowserTest.DynamicUrl` unit test).
-  // TODO(crbug.com/1403746): Consider removing the caching, as caches are often
-  // source of bug. The caching mechanism is left here to keep the existing
-  // behavior.
+  // TODO(crbug.com/40251638): Consider removing the caching, as caches are
+  // often source of bug. The caching mechanism is left here to keep the
+  // existing behavior.
   scoped_refptr<network::SharedURLLoaderFactory>
   GetOrCreateNonNetworkLoaderFactory();
 
@@ -164,6 +165,11 @@ class CONTENT_EXPORT NavigationURLLoaderImpl
   void MaybeStartLoader(
       size_t next_interceptor_index,
       std::optional<NavigationLoaderInterceptor::Result> interceptor_result);
+
+  // Called from `MaybeStartLoader` when the request is elected to be
+  // intercepted. Intercepts the request with `single_request_factory`.
+  void StartInterceptedRequest(
+      scoped_refptr<network::SharedURLLoaderFactory> single_request_factory);
 
   // Start a loader with the default behavior. This should be used when no
   // interceptors have elected to handle the request in the first place.
@@ -255,9 +261,14 @@ class CONTENT_EXPORT NavigationURLLoaderImpl
       const net::HttpRequestHeaders& modified_headers,
       const net::HttpRequestHeaders& modified_cors_exempt_headers) override;
   bool SetNavigationTimeout(base::TimeDelta timeout) override;
+  void CancelNavigationTimeout() override;
 
   // Records UKM for the navigation load.
   void RecordReceivedResponseUkmForOutermostMainFrame();
+
+  // Record static routing API evaluation related results.
+  void RecordServiceWorkerRouterEvaluationResults(
+      network::mojom::ServiceWorkerRouterInfo* router_info);
 
   raw_ptr<NavigationURLLoaderDelegate, DanglingUntriaged> delegate_;
   raw_ptr<BrowserContext> browser_context_;
@@ -270,7 +281,7 @@ class CONTENT_EXPORT NavigationURLLoaderImpl
   // Current URL that is being navigated, updated after redirection.
   GURL url_;
 
-  const int frame_tree_node_id_;
+  const FrameTreeNodeId frame_tree_node_id_;
   const GlobalRequestID global_request_id_;
   net::RedirectInfo redirect_info_;
   int redirect_limit_ = net::URLRequest::kMaxRedirects;

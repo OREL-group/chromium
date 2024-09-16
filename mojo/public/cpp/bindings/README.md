@@ -75,6 +75,8 @@ You can include the above generated header in your sources in order to use the
 definitions therein:
 
 ``` cpp
+#include <string_view>
+
 #include "services/business/public/mojom/factory.mojom.h"
 
 class TableImpl : public db::mojom::Table {
@@ -721,7 +723,8 @@ LOG(INFO) << "Value is " << value->get_string_value();  // DCHECK!
 Mojom `feature` generates a `base::Feature` with the given `name` and
 `default_state` (`true` => `ENABLED_BY_DEFAULT`). The feature can be accessed
 and tested in C++ using the mapped name even if it is not used to mark any
-interfaces or methods.
+[interfaces](#runtimefeature-on-interfaces) or
+[methods](#runtimefeature-on-methods).
 
 ```mojom
 module experiment.mojom;
@@ -1490,11 +1493,11 @@ returning a read-only view of the data in the accessor is recommended to
 avoid copying. It is safe because the input object is guaranteed to
 outlive the usage of the result returned by the accessor method.
 
-The following example uses `StringPiece` to return a view of the GURL's
+The following example uses `std::string_view` to return a view of the GURL's
 data (`//url/mojom/url_gurl_mojom_traits.h`):
 
 ``` cpp
-#include "base/strings/string_piece.h"
+
 #include "url/gurl.h"
 #include "url/mojom/url.mojom.h"
 #include "url/url_constants.h"
@@ -1644,7 +1647,7 @@ to valid getter return types:
 | `FooEnum`                    | Value of any type that has an appropriate `EnumTraits` specialization defined. By default this includes only the generated `FooEnum` type.
 | `FooStruct`                  | Value or reference to any type that has an appropriate `StructTraits` specialization defined. By default this includes only the generated `FooStructPtr` type.
 | `FooUnion`                   | Value of reference to any type that has an appropriate `UnionTraits` specialization defined. By default this includes only the generated `FooUnionPtr` type.
-| `Foo?`                       | `absl::optional<CppType>`, where `CppType` is the value type defined by the appropriate traits class specialization (e.g. `StructTraits`, `mojo::MapTraits`, etc.). This may be customized by the [typemapping](#Enabling-a-New-Type-Mapping).
+| `Foo?`                       | `std::optional<CppType>`, where `CppType` is the value type defined by the appropriate traits class specialization (e.g. `StructTraits`, `mojo::MapTraits`, etc.). This may be customized by the [typemapping](#Enabling-a-New-Type-Mapping).
 
 ### Using Generated DataView Types
 
@@ -1872,6 +1875,13 @@ enum Department {
   kResearch,
 };
 ```
+
+*** note
+**NOTE**: The `[Default]` enumerator value is distinct from the automatically
+populated enum value used when a non-nullable enum field is not defined in an
+older client's versioned struct definition
+([the enumerator value corresponding to `0`](/mojo/public/tools/bindings/README.md#ensuring-backward-compatible-behavior)).
+***
 
 ### Using Mojo Bindings in Chrome
 

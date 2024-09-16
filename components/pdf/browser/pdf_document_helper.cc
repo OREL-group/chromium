@@ -6,7 +6,6 @@
 
 #include <utility>
 
-#include "base/feature_list.h"
 #include "base/memory/ptr_util.h"
 #include "base/notreached.h"
 #include "components/pdf/browser/pdf_document_helper_client.h"
@@ -16,6 +15,7 @@
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/referrer_type_converters.h"
+#include "pdf/mojom/pdf.mojom.h"
 #include "pdf/pdf_features.h"
 #include "ui/base/pointer/touch_editing_controller.h"
 #include "ui/base/ui_base_types.h"
@@ -71,7 +71,7 @@ void PDFDocumentHelper::SetListener(
   }
 
   content::RenderFrameHost* pdf_host;
-  if (base::FeatureList::IsEnabled(chrome_pdf::features::kPdfOopif)) {
+  if (chrome_pdf::features::IsOopifPdfEnabled()) {
     pdf_host = &render_frame_host();
   } else {
     content::RenderFrameHost* main_frame =
@@ -202,16 +202,25 @@ void PDFDocumentHelper::SelectBetweenCoordinates(const gfx::PointF& base,
                                          ConvertFromRoot(extent));
 }
 
+void PDFDocumentHelper::GetPdfBytes(
+    pdf::mojom::PdfListener::GetPdfBytesCallback callback) {
+  if (!remote_pdf_client_) {
+    std::move(callback).Run(std::vector<uint8_t>());
+    return;
+  }
+  remote_pdf_client_->GetPdfBytes(std::move(callback));
+}
+
 void PDFDocumentHelper::OnSelectionEvent(ui::SelectionEventType event) {
   // Should be handled by `TouchSelectionControllerClientAura`.
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 void PDFDocumentHelper::OnDragUpdate(
     const ui::TouchSelectionDraggable::Type type,
     const gfx::PointF& position) {
   // Should be handled by `TouchSelectionControllerClientAura`.
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 std::unique_ptr<ui::TouchHandleDrawable> PDFDocumentHelper::CreateDrawable() {
@@ -252,7 +261,7 @@ void PDFDocumentHelper::ExecuteCommand(int command_id, int event_flags) {
 
 void PDFDocumentHelper::RunContextMenu() {
   content::RenderFrameHost* focused_frame;
-  if (base::FeatureList::IsEnabled(chrome_pdf::features::kPdfOopif)) {
+  if (chrome_pdf::features::IsOopifPdfEnabled()) {
     focused_frame = &render_frame_host();
   } else {
     focused_frame = GetWebContents().GetFocusedFrame();
@@ -331,7 +340,7 @@ void PDFDocumentHelper::SaveUrlAs(const GURL& url,
 
   // Save using the PDF embedder host.
   content::RenderFrameHost* rfh =
-      base::FeatureList::IsEnabled(chrome_pdf::features::kPdfOopif)
+      chrome_pdf::features::IsOopifPdfEnabled()
           ? pdf_frame_util::GetEmbedderHost(&render_frame_host())
           : GetWebContents().GetOuterWebContentsFrame();
   if (!rfh) {

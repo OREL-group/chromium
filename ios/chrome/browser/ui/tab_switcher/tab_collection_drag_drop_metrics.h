@@ -14,6 +14,7 @@ extern NSString* const kUmaTabStripViewDragDropTabsEvent;
 extern NSString* const kUmaTabStripViewDragDropGroupsEvent;
 extern const char kUmaGridViewDragDropTabsEvent[];
 extern const char kUmaGridViewDragDropGroupsEvent[];
+extern const char kUmaGridViewDragDropMultiSelectEvent[];
 extern const char kUmaPinnedViewDragDropTabsEvent[];
 
 // Key of UMA DragOrigin histograms.
@@ -47,7 +48,7 @@ enum class DragDropItem {
 enum class DragItemOrigin {
   kSameCollection = 0,
   kSameBrowser = 1,
-  kOtherBrwoser = 2,
+  kOtherBrowser = 2,
   kOther = 3,
   kMaxValue = kOther
 };

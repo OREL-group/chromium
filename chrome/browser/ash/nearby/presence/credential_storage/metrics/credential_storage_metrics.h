@@ -26,12 +26,26 @@ void RecordCredentialStorageSaveLocalPublicCredentialsResult(bool success);
 void RecordCredentialStorageSaveRemotePublicCredentialsResult(bool success);
 void RecordCredentialStorageSavePrivateCredentialsResult(bool success);
 
+void RecordCredentialStorageRetrieveLocalPublicCredentialsResult(bool success);
+void RecordCredentialStorageRetrieveRemotePublicCredentialsResult(bool success);
+void RecordCredentialStorageRetrievePrivateCredentialsResult(bool success);
+
 void RecordCredentialStorageRetrieveLocalPublicCredentialsDuration(
     base::TimeDelta duration);
 void RecordCredentialStorageRetrieveRemotePublicCredentialsDuration(
     base::TimeDelta duration);
 void RecordCredentialStorageRetrievePrivateCredentialsDuration(
     base::TimeDelta duration);
+
+// Note: RecordNumberOfLocalCredentials is intentionally not captured:
+// the number is constant across all devices (6).
+void RecordNumberOfLocalSharedCredentials(int number_of_credentials);
+void RecordNumberOfRemoteSharedCredentials(int number_of_credentials);
+
+// Note: RecordSizeOfLocalCredentials is intentionally not captured:
+// the size is constant across all devices.
+void RecordSizeOfLocalSharedCredentials(size_t credentials_size_in_bytes);
+void RecordSizeOfRemoteSharedCredentials(size_t credentials_size_in_bytes);
 
 }  // namespace ash::nearby::presence::metrics
 

@@ -59,7 +59,8 @@ bool isRowlessTable(AXNode* node) {
       return isRowlessTable(child);
     } else if (IsTableRow(child->GetRole())) {
       return false;
-    } else if (child->GetRole() == ax::mojom::Role::kCell) {
+    } else if (child->GetRole() == ax::mojom::Role::kCell ||
+               child->GetRole() == ax::mojom::Role::kGridCell) {
       // A row will always be reached before a cell if the table is not rowless.
       return true;
     }
@@ -98,7 +99,7 @@ void FindRows(AXNode* node,
 // 2-dimensional array.
 void FindCells(std::vector<raw_ptr<AXNode, VectorExperimental>>* row_node_list,
                std::vector<std::vector<AXNode*>>* cell_nodes_per_row) {
-  for (ui::AXNode* row : *row_node_list) {
+  for (AXNode* row : *row_node_list) {
     cell_nodes_per_row->emplace_back();
     FindCellsInRow(row, &cell_nodes_per_row->back());
   }
@@ -645,7 +646,7 @@ AXNode* AXTableInfo::CreateExtraMacTableHeaderNode() {
 }
 
 void AXTableInfo::UpdateExtraMacColumnNodeAttributes(size_t col_index) {
-  ui::AXNodeData data = extra_mac_nodes[col_index]->data();
+  AXNodeData data = extra_mac_nodes[col_index]->data();
   data.int_attributes.clear();
 
   // Update the column index.

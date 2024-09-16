@@ -6,6 +6,7 @@
 
 #import <UIKit/UIKit.h>
 
+#import "ios/chrome/browser/signin/model/fake_system_identity.h"
 #import "ios/chrome/browser/signin/model/fake_system_identity_manager.h"
 #import "ios/chrome/browser/signin/model/test_constants.h"
 #import "ios/public/provider/chrome/browser/signin/signin_error_api.h"
@@ -150,6 +151,11 @@ BOOL gUsingUnknownCapabilities;
                                  completion:(SigninCompletionBlock)completion {
   DCHECK(completion);
   _lastStartAuthActivityUserEmail = userEmail;
+  if (userEmail.length) {
+    [FakeSystemIdentityInteractionManager
+                    setIdentity:[FakeSystemIdentity identityWithEmail:userEmail]
+        withUnknownCapabilities:NO];
+  }
   _signinCompletion = completion;
   _authActivityViewController =
       [[FakeAuthActivityViewController alloc] initWithManager:self];

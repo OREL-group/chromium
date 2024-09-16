@@ -8,8 +8,8 @@
 #include "base/run_loop.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "chrome/browser/ssl/security_state_tab_helper.h"
 #include "chrome/common/chrome_features.h"
+#include "components/security_state/content/security_state_tab_helper.h"
 #include "components/security_state/core/security_state.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/navigation_entry.h"
@@ -132,7 +132,7 @@ void SecurityStateWebContentsObserver::DidChangeVisibleSecurityState() {
 }
 
 bool UsingBuiltinCertVerifier() {
-#if BUILDFLAG(IS_FUCHSIA) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || \
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || \
     BUILDFLAG(CHROME_ROOT_STORE_SUPPORTED)
   return true;
 #else

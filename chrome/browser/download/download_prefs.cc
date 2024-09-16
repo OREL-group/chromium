@@ -56,10 +56,6 @@
 #include "chrome/common/chrome_paths_lacros.h"
 #endif
 
-#if BUILDFLAG(IS_WIN)
-#include "chrome/browser/ui/pdf/adobe_reader_info_win.h"
-#endif
-
 #if BUILDFLAG(IS_ANDROID)
 #include "chrome/browser/flags/android/chrome_feature_list.h"
 #endif
@@ -81,7 +77,7 @@ bool DownloadPathIsDangerous(const base::FilePath& download_path) {
   }
 #endif
 
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA)
+#if BUILDFLAG(IS_ANDROID)
   // Neither Fuchsia nor Android have a desktop dir.
   return false;
 #else
@@ -211,9 +207,7 @@ DownloadPrefs::DownloadPrefs(Profile* profile) : profile_(profile) {
   prompt_for_download_android_.Init(prefs::kPromptForDownloadAndroid, prefs);
   RecordDownloadPromptStatus(
       static_cast<DownloadPromptStatus>(*prompt_for_download_android_));
-  if (base::FeatureList::IsEnabled(chrome::android::kOpenDownloadDialog)) {
-    auto_open_pdf_enabled_.Init(prefs::kAutoOpenPdfEnabled, prefs);
-  }
+  auto_open_pdf_enabled_.Init(prefs::kAutoOpenPdfEnabled, prefs);
 #endif
   download_path_.Init(prefs::kDownloadDefaultDirectory, prefs);
   save_file_path_.Init(prefs::kSaveFileDefaultDirectory, prefs);
@@ -319,9 +313,9 @@ void DownloadPrefs::RegisterProfilePrefs(
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
 
   registry->RegisterBooleanPref(prefs::kShowMissingSdCardErrorAndroid, true);
-  if (base::FeatureList::IsEnabled(chrome::android::kOpenDownloadDialog)) {
-    registry->RegisterBooleanPref(prefs::kAutoOpenPdfEnabled, false);
-  }
+  registry->RegisterBooleanPref(prefs::kAutoOpenPdfEnabled, false);
+  registry->RegisterListPref(prefs::kDownloadAppVerificationPromptTimestamps,
+                             {});
 #endif
 }
 
@@ -483,12 +477,6 @@ void DownloadPrefs::SetShouldOpenPdfInSystemReader(bool should_open) {
 }
 
 bool DownloadPrefs::ShouldOpenPdfInSystemReader() const {
-#if BUILDFLAG(IS_WIN)
-  if (IsAdobeReaderDefaultPDFViewer() &&
-      !DownloadTargetDeterminer::IsAdobeReaderUpToDate()) {
-      return false;
-  }
-#endif
 #if BUILDFLAG(IS_CHROMEOS)
   // On ChromeOS, there is always an "app" to handle PDF files. E.g., a "View"
   // app which configures a file handler to open in a browser tab. However,
@@ -518,9 +506,6 @@ void DownloadPrefs::SkipSanitizeDownloadTargetPathForTesting() {
 
 #if BUILDFLAG(IS_ANDROID)
 bool DownloadPrefs::IsAutoOpenPdfEnabled() {
-  if (!base::FeatureList::IsEnabled(chrome::android::kOpenDownloadDialog)) {
-    return false;
-  }
   return *auto_open_pdf_enabled_;
 }
 #endif
@@ -670,11 +655,11 @@ base::FilePath DownloadPrefs::SanitizeDownloadTargetPath(
     return path;
   }
 
-  // Allow paths under one drive mount point if the feature flag is enabled.
-  auto odfs_path = ash::cloud_upload::GetODFSFuseboxMount(profile_);
+  // Allow paths under /tmp if the feature flag is enabled.
+  base::FilePath temp_path;
   if (base::FeatureList::IsEnabled(features::kSkyVault) &&
-      ash::cloud_upload::IsODFSMounted(profile_) &&
-      ((odfs_path == path) || odfs_path.IsParent(path))) {
+      base::GetTempDir(&temp_path) &&
+      ((temp_path == path) || temp_path.IsParent(path))) {
     return path;
   }
 

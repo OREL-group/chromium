@@ -4,9 +4,12 @@
 
 #include "ash/system/focus_mode/focus_mode_tray.h"
 
+#include <optional>
+
 #include "ash/accessibility/accessibility_controller.h"
-#include "ash/api/tasks/tasks_types.h"
+#include "ash/api/tasks/fake_tasks_client.h"
 #include "ash/constants/ash_features.h"
+#include "ash/glanceables/common/glanceables_util.h"
 #include "ash/root_window_controller.h"
 #include "ash/screen_util.h"
 #include "ash/shelf/shelf.h"
@@ -16,6 +19,7 @@
 #include "ash/system/focus_mode/focus_mode_controller.h"
 #include "ash/system/focus_mode/focus_mode_countdown_view.h"
 #include "ash/system/focus_mode/focus_mode_ending_moment_view.h"
+#include "ash/system/focus_mode/focus_mode_task_test_utils.h"
 #include "ash/system/focus_mode/focus_mode_util.h"
 #include "ash/system/progress_indicator/progress_indicator.h"
 #include "ash/system/status_area_widget_test_helper.h"
@@ -23,11 +27,13 @@
 #include "ash/system/tray/tray_container.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/time/time.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/compositor/layer_animator.h"
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/button/image_button.h"
 #include "url/gurl.h"
 
@@ -49,6 +55,17 @@ class FocusModeTrayTest : public AshTestBase {
   // AshTestBase:
   void SetUp() override {
     AshTestBase::SetUp();
+
+    // `g_network_handler` is null in tests, we need to manually set the network
+    // connected state. Also, the button and the label under the task item view
+    // will be enabled only when the user is online.
+    glanceables_util::SetIsNetworkConnectedForTest(true);
+
+    auto& tasks_client =
+        CreateFakeTasksClient(AccountId::FromUserEmail("user0@tray"));
+    tasks_client.set_http_error(google_apis::ApiErrorCode::HTTP_SUCCESS);
+    AddFakeTaskList(tasks_client, "default");
+    AddFakeTask(tasks_client, "default", "task1", "Task 1");
 
     focus_mode_tray_ =
         StatusAreaWidgetTestHelper::GetStatusAreaWidget()->focus_mode_tray();
@@ -96,6 +113,10 @@ class FocusModeTrayTest : public AshTestBase {
         ->time_remaining_label_;
   }
 
+  std::optional<TaskId> GetSelectedTask() {
+    return focus_mode_tray_->selected_task_;
+  }
+
   bool IsCountdownViewVisible() const {
     return focus_mode_tray_->countdown_view_for_testing()->GetVisible();
   }
@@ -112,6 +133,10 @@ class FocusModeTrayTest : public AshTestBase {
             Shell::GetPrimaryRootWindow());
     event_generator->MoveMouseTo(work_area.CenterPoint());
     event_generator->ClickLeftButton();
+  }
+
+  void HandleCompleteTaskButton() {
+    focus_mode_tray_->HandleCompleteTaskButton();
   }
 
  protected:
@@ -186,16 +211,13 @@ TEST_F(FocusModeTrayTest, MarkTaskAsCompleted) {
   ui::ScopedAnimationDurationScaleMode duration(
       ui::ScopedAnimationDurationScaleMode::NON_ZERO_DURATION);
 
+  FocusModeTask task;
+  task.task_id = {.list_id = "default", .id = "task1"};
+  task.title = "make a travel plan";
+  task.updated = base::Time::Now();
+
   FocusModeController* controller = FocusModeController::Get();
-  controller->SetSelectedTask(
-      std::make_unique<api::Task>(
-          /*id=*/base::NumberToString(0), "make a travel plan",
-          /*due=*/std::nullopt, /*completed=*/false, /*has_subtasks=*/false,
-          /*has_email_link=*/false,
-          /*has_notes=*/false,
-          /*updated=*/base::Time::Now(),
-          /*web_view_link=*/GURL())
-          .get());
+  controller->SetSelectedTask(task);
 
   //  Start focus mode and click the tray to activate the button.
   controller->ToggleFocusMode();
@@ -211,7 +233,7 @@ TEST_F(FocusModeTrayTest, MarkTaskAsCompleted) {
   // Click the radio button to mark the selected task as completed.
   LeftClickOn(radio_button);
 
-  task_environment()->FastForwardBy(kStartAnimationDelay);
+  AdvanceClock(kStartAnimationDelay);
 
   auto* bubble_view = GetBubbleView();
   ui::Layer* bubble_view_layer = bubble_view->layer();
@@ -222,6 +244,130 @@ TEST_F(FocusModeTrayTest, MarkTaskAsCompleted) {
                   ui::LayerAnimationElement::AnimatableProperty::BOUNDS));
   // Layer top edge animates down.
   EXPECT_GT(bubble_view_layer->bounds().y(), bubble_view->y());
+  // `task_item_view` will be removed at the start of the animation.
+  EXPECT_FALSE(GetTaskItemView());
+}
+
+// Tests that when the user double clicks the radio button to mark a selected
+// task as completed, there is no crash from `AnimateBubbleResize()` getting run
+// multiple times in succession.
+// Regression test for b/363291923.
+TEST_F(FocusModeTrayTest, MarkTaskAsCompletedDoubleClick) {
+  // Enable animations.
+  ui::ScopedAnimationDurationScaleMode duration(
+      ui::ScopedAnimationDurationScaleMode::NON_ZERO_DURATION);
+
+  FocusModeTask task;
+  task.task_id = {.list_id = "default", .id = "task1"};
+  task.title = "make a travel plan";
+  task.updated = base::Time::Now();
+
+  FocusModeController* controller = FocusModeController::Get();
+  controller->SetSelectedTask(task);
+
+  //  Start focus mode and click the tray to activate the button.
+  controller->ToggleFocusMode();
+  LeftClickOn(focus_mode_tray_);
+  EXPECT_TRUE(focus_mode_tray_->is_active());
+
+  // A `TaskItemView` will be created because we have a selected task.
+  EXPECT_TRUE(GetSelectedTask());
+  EXPECT_TRUE(GetTaskItemView());
+
+  const auto* const radio_button = focus_mode_tray_->GetRadioButtonForTesting();
+  EXPECT_TRUE(radio_button);
+
+  // Double click the radio button to mark the selected task as completed.
+  // Theoretically only the first one should do anything, since the second click
+  // should return early since `selected_task_` has been reset.
+  LeftClickOn(radio_button);
+  EXPECT_FALSE(GetSelectedTask());
+  LeftClickOn(radio_button);
+
+  AdvanceClock(kStartAnimationDelay);
+
+  // `task_item_view` will be removed at the start of the animation.
+  EXPECT_FALSE(GetTaskItemView());
+}
+
+// Tests that there is no crash if the user clicks the radio button to mark a
+// selected task as completed immediately before the model is attempting to
+// update the tray.
+// Regression test for b/363291923.
+TEST_F(FocusModeTrayTest, MarkTaskAsCompletedBeforeModelUpdate) {
+  // Enable animations.
+  ui::ScopedAnimationDurationScaleMode duration(
+      ui::ScopedAnimationDurationScaleMode::NON_ZERO_DURATION);
+
+  FocusModeTask task;
+  task.task_id = {.list_id = "default", .id = "task1"};
+  task.title = "make a travel plan";
+  task.updated = base::Time::Now();
+
+  FocusModeController* controller = FocusModeController::Get();
+  controller->SetSelectedTask(task);
+
+  //  Start focus mode and click the tray to activate the button.
+  controller->ToggleFocusMode();
+  LeftClickOn(focus_mode_tray_);
+  EXPECT_TRUE(focus_mode_tray_->is_active());
+
+  // A `TaskItemView` will be created because we have a selected task.
+  EXPECT_TRUE(GetSelectedTask());
+  EXPECT_TRUE(GetTaskItemView());
+
+  const auto* const radio_button = focus_mode_tray_->GetRadioButtonForTesting();
+  EXPECT_TRUE(radio_button);
+
+  // Simulate the case where the button is triggered immediately before the
+  // model has updated the task as completed.
+  HandleCompleteTaskButton();
+  focus_mode_tray_->OnTaskCompleted(task);
+  focus_mode_tray_->OnSelectedTaskChanged(std::nullopt);
+
+  AdvanceClock(kStartAnimationDelay);
+
+  // `task_item_view` will be removed at the start of the animation.
+  EXPECT_FALSE(GetTaskItemView());
+}
+
+// Tests that there is no crash if the user clicks the radio button to mark a
+// selected task as completed immediately after the model has updated the tray.
+// Regression test for b/363291923.
+TEST_F(FocusModeTrayTest, MarkTaskAsCompletedAfterModelUpdate) {
+  // Enable animations.
+  ui::ScopedAnimationDurationScaleMode duration(
+      ui::ScopedAnimationDurationScaleMode::NON_ZERO_DURATION);
+
+  FocusModeTask task;
+  task.task_id = {.list_id = "default", .id = "task1"};
+  task.title = "make a travel plan";
+  task.updated = base::Time::Now();
+
+  FocusModeController* controller = FocusModeController::Get();
+  controller->SetSelectedTask(task);
+
+  //  Start focus mode and click the tray to activate the button.
+  controller->ToggleFocusMode();
+  LeftClickOn(focus_mode_tray_);
+  EXPECT_TRUE(focus_mode_tray_->is_active());
+
+  // A `TaskItemView` will be created because we have a selected task.
+  EXPECT_TRUE(GetSelectedTask());
+  EXPECT_TRUE(GetTaskItemView());
+
+  const auto* const radio_button = focus_mode_tray_->GetRadioButtonForTesting();
+  EXPECT_TRUE(radio_button);
+
+  // Simulate the case where the button is triggered immediately after the
+  // model has updated the task as completed and the UI hasn't had a chance to
+  // update yet.
+  focus_mode_tray_->OnTaskCompleted(task);
+  focus_mode_tray_->OnSelectedTaskChanged(std::nullopt);
+  HandleCompleteTaskButton();
+
+  AdvanceClock(kStartAnimationDelay);
+
   // `task_item_view` will be removed at the start of the animation.
   EXPECT_FALSE(GetTaskItemView());
 }
@@ -291,20 +437,18 @@ TEST_F(FocusModeTrayTest, BubbleTabbingAndAccessibility) {
   EXPECT_TRUE(accessibility_controller->spoken_feedback().enabled());
 
   FocusModeController* controller = FocusModeController::Get();
-  const std::string task_name = "Podcast interview script";
+  const std::string task_name = "Task 1";
   const base::TimeDelta session_duration = base::Minutes(40);
   const std::u16string time_remaining = focus_mode_util::GetDurationString(
       session_duration, /*digital_format=*/false);
   controller->SetInactiveSessionDuration(session_duration);
-  controller->SetSelectedTask(std::make_unique<api::Task>(
-                                  /*id=*/base::NumberToString(1), task_name,
-                                  /*due=*/std::nullopt, /*completed=*/false,
-                                  /*has_subtasks=*/false,
-                                  /*has_email_link=*/false,
-                                  /*has_notes=*/false,
-                                  /*updated=*/base::Time::Now(),
-                                  /*web_view_link=*/GURL())
-                                  .get());
+
+  FocusModeTask task;
+  task.task_id = {.list_id = "default", .id = "task1"};
+  task.title = task_name;
+  task.updated = base::Time::Now();
+
+  controller->SetSelectedTask(task);
   controller->ToggleFocusMode();
 
   LeftClickOn(focus_mode_tray_);
@@ -319,19 +463,22 @@ TEST_F(FocusModeTrayTest, BubbleTabbingAndAccessibility) {
   EXPECT_EQ(
       l10n_util::GetStringUTF16(
           IDS_ASH_STATUS_TRAY_FOCUS_MODE_TOGGLE_END_BUTTON_ACCESSIBLE_NAME),
-      focus_manager->GetFocusedView()->GetAccessibleName());
+      focus_manager->GetFocusedView()->GetViewAccessibility().GetCachedName());
 
   PressAndReleaseKey(ui::VKEY_TAB, ui::EF_NONE);
   EXPECT_EQ(
       l10n_util::GetStringUTF16(
           IDS_ASH_STATUS_TRAY_FOCUS_MODE_INCREASE_TEN_MINUTES_BUTTON_ACCESSIBLE_NAME),
-      focus_manager->GetFocusedView()->GetAccessibleName());
+      focus_manager->GetFocusedView()->GetViewAccessibility().GetCachedName());
 
   PressAndReleaseKey(ui::VKEY_TAB, ui::EF_NONE);
-  EXPECT_EQ(l10n_util::GetStringFUTF16(
-                IDS_ASH_STATUS_TRAY_FOCUS_MODE_TRAY_RADIO_BUTTON,
-                base::UTF8ToUTF16(task_name)),
-            focus_manager->GetFocusedView()->GetAccessibleName());
+  views::ViewAccessibility& focused_view_a11y =
+      focus_manager->GetFocusedView()->GetViewAccessibility();
+  EXPECT_EQ(l10n_util::GetStringUTF16(
+                IDS_ASH_STATUS_TRAY_FOCUS_MODE_TASK_VIEW_RADIO_BUTTON),
+            focused_view_a11y.GetCachedName());
+  EXPECT_EQ(base::UTF8ToUTF16(task_name),
+            focused_view_a11y.GetCachedDescription());
 }
 
 // Tests basic ending moment functionality. If the time expires for the ending
@@ -362,6 +509,8 @@ TEST_F(FocusModeTrayTest, EndingMoment) {
 // Tests that if the tray bubble is open during the ending moment, that the
 // bubble will persist until user action terminates it.
 TEST_F(FocusModeTrayTest, EndingMomentPersists) {
+  base::HistogramTester histogram_tester;
+
   // Start a focus session.
   FocusModeController* controller = FocusModeController::Get();
   controller->ToggleFocusMode();
@@ -389,6 +538,13 @@ TEST_F(FocusModeTrayTest, EndingMomentPersists) {
   EXPECT_FALSE(focus_mode_tray_->is_active());
   EXPECT_FALSE(focus_mode_tray_->GetVisible());
   EXPECT_FALSE(controller->in_ending_moment());
+
+  // Verify the histogram.
+  histogram_tester.ExpectBucketCount(
+      /*name=*/focus_mode_histogram_names::kEndingMomentBubbleActionHistogram,
+      /*sample=*/
+      focus_mode_histogram_names::EndingMomentBubbleClosedReason::kOpended,
+      /*expected_count=*/1);
 }
 
 // Verifies that the tray contents are updated between an in-session state and

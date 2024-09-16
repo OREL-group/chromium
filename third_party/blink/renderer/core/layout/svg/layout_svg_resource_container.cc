@@ -19,6 +19,7 @@
 
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_resource_container.h"
 
+#include "third_party/blink/renderer/core/layout/svg/svg_layout_info.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_resources.h"
 #include "third_party/blink/renderer/core/style/reference_clip_path_operation.h"
 #include "third_party/blink/renderer/core/style/style_mask_source_image.h"
@@ -70,13 +71,14 @@ LayoutSVGResourceContainer::LayoutSVGResourceContainer(SVGElement* node)
 
 LayoutSVGResourceContainer::~LayoutSVGResourceContainer() = default;
 
-void LayoutSVGResourceContainer::UpdateSVGLayout() {
+SVGLayoutResult LayoutSVGResourceContainer::UpdateSVGLayout(
+    const SVGLayoutInfo& layout_info) {
   NOT_DESTROYED();
   // TODO(fs): This is only here to clear the invalidation mask, without that
   // we wouldn't need to override LayoutSVGHiddenContainer::UpdateSVGLayout().
   DCHECK(NeedsLayout());
-  LayoutSVGHiddenContainer::UpdateSVGLayout();
   ClearInvalidationMask();
+  return LayoutSVGHiddenContainer::UpdateSVGLayout(layout_info);
 }
 
 gfx::RectF LayoutSVGResourceContainer::ResolveRectangle(
@@ -87,7 +89,8 @@ gfx::RectF LayoutSVGResourceContainer::ResolveRectangle(
     const SVGLength& x,
     const SVGLength& y,
     const SVGLength& width,
-    const SVGLength& height) {
+    const SVGLength& height,
+    const std::optional<gfx::SizeF>& override_viewport) {
   // Convert SVGLengths to Lengths (preserves percentages).
   const LengthPoint point(x.ConvertToLength(conversion_data),
                           y.ConvertToLength(conversion_data));
@@ -110,9 +113,11 @@ gfx::RectF LayoutSVGResourceContainer::ResolveRectangle(
     DCHECK_EQ(type, SVGUnitTypes::kSvgUnitTypeUserspaceonuse);
     // Determine the viewport to use for resolving the Lengths to user units.
     gfx::SizeF viewport_size_for_resolve;
-    if (size.Width().IsPercentOrCalc() || size.Height().IsPercentOrCalc() ||
-        point.X().IsPercentOrCalc() || point.Y().IsPercentOrCalc()) {
-      viewport_size_for_resolve = viewport_resolver.ResolveViewport();
+    if (size.Width().MayHavePercentDependence() ||
+        size.Height().MayHavePercentDependence() || point.X().HasPercent() ||
+        point.Y().HasPercent()) {
+      viewport_size_for_resolve =
+          override_viewport.value_or(viewport_resolver.ResolveViewport());
     }
     // Resolve the Lengths to user units.
     resolved_rect =
@@ -129,7 +134,8 @@ gfx::RectF LayoutSVGResourceContainer::ResolveRectangle(
     const SVGLength& x,
     const SVGLength& y,
     const SVGLength& width,
-    const SVGLength& height) {
+    const SVGLength& height,
+    const std::optional<gfx::SizeF>& override_viewport) {
   const ComputedStyle* style =
       SVGLengthContext::ComputedStyleForLengthResolving(context_element);
   if (!style) {
@@ -138,7 +144,8 @@ gfx::RectF LayoutSVGResourceContainer::ResolveRectangle(
   const SVGViewportResolver viewport_resolver(context_element);
   const SVGLengthConversionData conversion_data(context_element, *style);
   return ResolveRectangle(viewport_resolver, conversion_data, type,
-                          reference_box, x, y, width, height);
+                          reference_box, x, y, width, height,
+                          override_viewport);
 }
 
 gfx::RectF LayoutSVGResourceContainer::ResolveRectangle(
@@ -323,11 +330,11 @@ void LayoutSVGResourceContainer::InvalidateCache() {
 static inline void RemoveFromCacheAndInvalidateDependencies(
     LayoutObject& object,
     bool needs_layout) {
-  // TODO(fs): Do we still need this? (If bounds are invalidated on a leaf
-  // LayoutObject, we will propagate that during the required layout and
-  // invalidate effects of self and any ancestors at that time.)
-  if (object.IsSVG())
-    SVGResourceInvalidator(object).InvalidateEffects();
+  if (!RuntimeEnabledFeatures::SvgTransformOptimizationEnabled()) {
+    if (object.IsSVG()) {
+      SVGResourceInvalidator(object).InvalidateEffects();
+    }
+  }
 
   LayoutSVGResourceContainer::InvalidateDependentElements(object, needs_layout);
 }

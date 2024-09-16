@@ -8,9 +8,11 @@
 #include <vector>
 
 #include "base/bits.h"
+#include "base/containers/span.h"
 #include "base/files/file_util.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/rand_util.h"
 #include "base/run_loop.h"
 #include "base/test/bind.h"
@@ -25,8 +27,9 @@
 #include "gpu/config/gpu_feature_info.h"
 #include "media/gpu/chromeos/chromeos_compressed_gpu_memory_buffer_video_frame_utils.h"
 #include "media/gpu/chromeos/image_processor_factory.h"
+#include "media/gpu/chromeos/perf_test_util.h"
 #include "media/gpu/chromeos/platform_video_frame_utils.h"
-#include "media/gpu/chromeos/vulkan_image_processor.h"
+#include "media/gpu/chromeos/vulkan_overlay_adaptor.h"
 #include "media/gpu/test/image.h"
 #include "media/gpu/test/video_test_environment.h"
 #include "media/gpu/video_frame_mapper_factory.h"
@@ -86,15 +89,6 @@ const char* help_msg =
     "                        execution directory if not specified.\n"
     "   -v                   enable verbose mode, e.g. -v=2.\n"
     "  --vmodule             enable verbose mode for the specified module.\n";
-
-media::test::VideoTestEnvironment* g_env;
-
-// Default output folder used to store performance metrics.
-base::FilePath g_output_directory =
-    base::FilePath(base::FilePath::kCurrentDirectory);
-
-base::FilePath g_source_directory =
-    base::FilePath(base::FilePath::kCurrentDirectory);
 
 base::FilePath BuildSourceFilePath(const base::FilePath& filename) {
   return media::g_source_directory.Append(filename);
@@ -179,44 +173,44 @@ scoped_refptr<VideoFrame> CreateRandomMM21Frame(const gfx::Size& size,
     mapped_frame = frame;
   }
 
-  uint8_t* y_plane = mapped_frame->GetWritableVisibleData(VideoFrame::kYPlane);
-  uint8_t* uv_plane =
-      mapped_frame->GetWritableVisibleData(VideoFrame::kUVPlane);
-  const auto y_plane_stride = mapped_frame->stride(VideoFrame::kYPlane);
-  for (int row = 0; row < size.height(); row++, y_plane += y_plane_stride) {
-    base::RandBytes(y_plane, size.width());
-  }
+  uint8_t* y_plane_ptr =
+      mapped_frame->GetWritableVisibleData(VideoFrame::Plane::kY);
+  const auto y_plane_stride = mapped_frame->stride(VideoFrame::Plane::kY);
+  base::span<uint8_t> y_plane =
+      // TODO(crbug.com/338570700): VideoFrame should return spans instead of
+      // unbounded pointers.
+      UNSAFE_TODO(base::span(
+          y_plane_ptr,
+          y_plane_stride *
+              base::checked_cast<size_t>(mapped_frame->coded_size().height())));
 
-  const auto uv_plane_stride = mapped_frame->stride(VideoFrame::kUVPlane);
-  for (int row = 0; row < size.height() / 2;
-       row++, uv_plane += uv_plane_stride) {
-    base::RandBytes(uv_plane, size.width());
+  uint8_t* uv_plane_ptr =
+      mapped_frame->GetWritableVisibleData(VideoFrame::Plane::kUV);
+  const auto uv_plane_stride = mapped_frame->stride(VideoFrame::Plane::kUV);
+  base::span<uint8_t> uv_plane =
+      // TODO(crbug.com/338570700): VideoFrame should return spans instead of
+      // unbounded pointers. Note: Elsewhere the `height / 2` is rounded up, but
+      // here it is not.
+      UNSAFE_TODO(base::span(
+          uv_plane_ptr,
+          uv_plane_stride *
+              base::checked_cast<size_t>(mapped_frame->coded_size().height()) /
+              2u));
+  const auto width =
+      base::checked_cast<size_t>(mapped_frame->coded_size().width());
+
+  for (int row = 0; row < size.height(); row++) {
+    auto [row_bytes, rem] = y_plane.split_at(y_plane_stride);
+    base::RandBytes(row_bytes.first(width));
+    y_plane = rem;
+  }
+  for (int row = 0; row < size.height() / 2; row++) {
+    auto [row_bytes, rem] = uv_plane.split_at(uv_plane_stride);
+    base::RandBytes(row_bytes.first(width));
+    uv_plane = rem;
   }
 
   return frame;
-}
-
-void WriteJsonResult(std::vector<std::pair<std::string, double>> data) {
-  base::Value::Dict metrics;
-  for (auto i : data) {
-    metrics.Set(i.first, i.second);
-  }
-
-  const auto output_folder_path = base::FilePath(g_output_directory);
-  std::string metrics_str;
-  ASSERT_TRUE(base::JSONWriter::WriteWithOptions(
-      metrics, base::JSONWriter::OPTIONS_PRETTY_PRINT, &metrics_str));
-  const base::FilePath metrics_file_path = output_folder_path.Append(
-      g_env->GetTestOutputFilePath().AddExtension(FILE_PATH_LITERAL(".json")));
-  // Make sure that the directory into which json is saved is created.
-  LOG_ASSERT(base::CreateDirectory(metrics_file_path.DirName()));
-  base::File metrics_output_file(
-      base::FilePath(metrics_file_path),
-      base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_WRITE);
-  const int bytes_written = metrics_output_file.WriteAtCurrentPos(
-      metrics_str.data(), metrics_str.length());
-  ASSERT_EQ(bytes_written, static_cast<int>(metrics_str.length()));
-  LOG(INFO) << "Wrote performance metrics to: " << metrics_file_path;
 }
 
 class ImageProcessorPerfTest : public ::testing::Test {
@@ -862,156 +856,6 @@ TEST_F(ImageProcessorPerfTest, LibYUVNV12UpscalingTest) {
                    {"FramesPerSecond", fps}});
 }
 
-#if BUILDFLAG(ENABLE_VULKAN)
-
-class VulkanImageProcessorPerfTest
-    : public ImageProcessorPerfTest,
-      public testing::WithParamInterface<TiledImageFormat> {
- public:
-  VulkanImageProcessorPerfTest() = default;
-  ~VulkanImageProcessorPerfTest() = default;
-
-  struct PrintToStringParamName {
-    template <class ParamType>
-    std::string operator()(
-        const testing::TestParamInfo<ParamType>& info) const {
-      return base::StringPrintf("%s", (info.param == kMM21) ? "MM21" : "MT2T");
-    }
-  };
-};
-
-TEST_P(VulkanImageProcessorPerfTest, Detile) {
-  const bool is_10bit = GetParam() == kMT2T;
-  const size_t bpp_numerator = is_10bit ? 5 : 1;
-  const size_t bpp_denom = is_10bit ? 4 : 1;
-  const VideoPixelFormat out_video_format =
-      is_10bit ? VideoPixelFormat::PIXEL_FORMAT_XR30
-               : VideoPixelFormat::PIXEL_FORMAT_ARGB;
-  const viz::SharedImageFormat out_viz_format =
-      is_10bit ? viz::SinglePlaneFormat::kBGRA_1010102
-               : viz::SinglePlaneFormat::kRGBA_8888;
-
-  // Initialize shared image infrastructure.
-  auto share_group = base::MakeRefCounted<gl::GLShareGroup>();
-  auto surface =
-      gl::init::CreateOffscreenGLSurface(gl::GetDefaultDisplay(), gfx::Size());
-  auto context = gl::init::CreateGLContext(share_group.get(), surface.get(),
-                                           gl::GLContextAttribs());
-  context->MakeCurrent(surface.get());
-  auto context_state = base::MakeRefCounted<gpu::SharedContextState>(
-      share_group, surface, context, false, base::DoNothing(),
-      gpu::GpuPreferences().gr_context_type);
-  gpu::SharedImageManager shared_image_manager;
-  gpu::GpuPreferences gpu_preferences;
-  gpu::GpuDriverBugWorkarounds gpu_workarounds;
-  gpu::GpuFeatureInfo gpu_info;
-  gpu::SharedImageFactory shared_image_factory(
-      gpu_preferences, gpu_workarounds, gpu_info, context_state.get(),
-      &shared_image_manager, nullptr, false);
-
-  gfx::Size test_image_size(kTestImageWidth, kTestImageHeight);
-  gfx::Size test_coded_size(base::bits::AlignUpDeprecatedDoNotUse(
-                                test_image_size.width(), kMM21TileWidth),
-                            base::bits::AlignUpDeprecatedDoNotUse(
-                                test_image_size.height(), kMM21TileHeight));
-  std::vector<scoped_refptr<VideoFrame>> input_frames(kNumberOfTestFrames);
-  std::vector<scoped_refptr<VideoFrame>> output_frames(kNumberOfTestFrames);
-  std::vector<gpu::Mailbox> input_mailboxes(kNumberOfTestFrames);
-  std::vector<gpu::Mailbox> output_mailboxes(kNumberOfTestFrames);
-
-  constexpr base::TimeDelta kNullTimestamp;
-  viz::SharedImageFormat format_nv12 = viz::SharedImageFormat::MultiPlane(
-      viz::SharedImageFormat::PlaneConfig::kY_UV,
-      viz::SharedImageFormat::Subsampling::k420,
-      viz::SharedImageFormat::ChannelFormat::k8);
-  format_nv12.SetPrefersExternalSampler();
-  for (size_t i = 0; i < kNumberOfTestFrames; i++) {
-    input_frames[i] = CreateRandomMM21Frame(
-        gfx::Size(test_image_size.width(),
-                  test_image_size.height() * bpp_numerator / bpp_denom),
-        VideoFrame::STORAGE_DMABUFS);
-    input_mailboxes[i] = gpu::Mailbox::GenerateForSharedImage();
-    auto input_gmb = CreateGpuMemoryBufferHandle(input_frames[i].get());
-    shared_image_factory.CreateSharedImage(
-        input_mailboxes[i], format_nv12, input_frames[i]->coded_size(),
-        gfx::ColorSpace::CreateSRGB(), kTopLeft_GrSurfaceOrigin,
-        kOpaque_SkAlphaType,
-        gpu::SharedImageUsage::SHARED_IMAGE_USAGE_DISPLAY_READ, "TestLabel",
-        std::move(input_gmb));
-
-    output_frames[i] = CreateGpuMemoryBufferVideoFrame(
-        out_video_format, test_coded_size, gfx::Rect(test_image_size),
-        test_coded_size, kNullTimestamp,
-        gfx::BufferUsage::SCANOUT_CPU_READ_WRITE);
-    output_mailboxes[i] = gpu::Mailbox::GenerateForSharedImage();
-    auto output_gmb = CreateGpuMemoryBufferHandle(output_frames[i].get());
-    shared_image_factory.CreateSharedImage(
-        output_mailboxes[i], out_viz_format, test_coded_size,
-        gfx::ColorSpace::CreateSRGB(), kTopLeft_GrSurfaceOrigin,
-        kUnpremul_SkAlphaType,
-        gpu::SharedImageUsage::SHARED_IMAGE_USAGE_DISPLAY_WRITE, "TestLabel",
-        std::move(output_gmb));
-  }
-
-  auto vulkan_image_processor = VulkanImageProcessor::Create(GetParam());
-  ASSERT_TRUE(vulkan_image_processor);
-
-  auto start_time = base::TimeTicks::Now();
-  for (int i = 0; i < kNumberOfTestCycles; i++) {
-    auto input_representation = shared_image_manager.ProduceVulkan(
-        input_mailboxes[i % kNumberOfTestFrames], nullptr,
-        vulkan_image_processor->GetVulkanDeviceQueue(),
-        vulkan_image_processor->GetVulkanImplementation());
-    auto output_representation = shared_image_manager.ProduceVulkan(
-        output_mailboxes[i % kNumberOfTestFrames], nullptr,
-        vulkan_image_processor->GetVulkanDeviceQueue(),
-        vulkan_image_processor->GetVulkanImplementation());
-
-    {
-      std::vector<VkSemaphore> begin_semaphores;
-      std::vector<VkSemaphore> end_semaphores;
-      auto input_access = input_representation->BeginScopedAccess(
-          gpu::RepresentationAccessMode::kRead, begin_semaphores,
-          end_semaphores);
-      auto output_access = output_representation->BeginScopedAccess(
-          gpu::RepresentationAccessMode::kWrite, begin_semaphores,
-          end_semaphores);
-
-      // TODO(b/251458823): Add tests for more interesting crop and rotation
-      // parameters. Preliminary testing indicates that rotation in particular
-      // might have a substantial impact on performance.
-      vulkan_image_processor->Process(
-          input_access->GetVulkanImage(), test_image_size,
-          output_access->GetVulkanImage(),
-          gfx::RectF(static_cast<float>(test_coded_size.width()),
-                     static_cast<float>(test_coded_size.height())),
-          gfx::RectF(1.0f, 1.0f), gfx::OVERLAY_TRANSFORM_NONE, begin_semaphores,
-          end_semaphores);
-    }
-  }
-  // This implicitly waits for all semaphores to signal.
-  vulkan_image_processor->GetVulkanDeviceQueue()
-      ->GetFenceHelper()
-      ->PerformImmediateCleanup();
-  auto end_time = base::TimeTicks::Now();
-
-  base::TimeDelta delta_time = end_time - start_time;
-  // Preventing integer division inaccuracies with |delta_time|.
-  const double fps = (kNumberOfTestCycles / delta_time.InSecondsF());
-
-  WriteJsonResult({{"FramesDecoded", kNumberOfTestCycles},
-                   {"TotalDurationMs", delta_time.InMicrosecondsF()},
-                   {"FramesPerSecond", fps}});
-}
-
-INSTANTIATE_TEST_SUITE_P(
-    ,
-    VulkanImageProcessorPerfTest,
-    testing::Values(kMM21, kMT2T),
-    VulkanImageProcessorPerfTest::PrintToStringParamName());
-
-#endif
-
 }  // namespace
 }  // namespace media
 
@@ -1063,8 +907,7 @@ int main(int argc, char** argv) {
 #endif
 
   gl::GLSurfaceTestSupport::InitializeOneOffImplementation(
-      gl::GLImplementationParts(gl::kGLImplementationEGLGLES2),
-      /*fallback_to_software_gl=*/false);
+      gl::GLImplementationParts(gl::kGLImplementationEGLGLES2));
 
   return RUN_ALL_TESTS();
 }

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "content/browser/devtools/protocol/webauthn_handler.h"
 
 #include <map>
@@ -118,7 +123,7 @@ std::unique_ptr<WebAuthn::Credential> BuildCredentialFromRegistration(
     base::span<const uint8_t> id,
     const device::VirtualFidoDevice::RegistrationData* registration) {
   auto credential = WebAuthn::Credential::Create()
-                        .SetCredentialId(Binary::fromSpan(id.data(), id.size()))
+                        .SetCredentialId(Binary::fromSpan(id))
                         .SetPrivateKey(Binary::fromVector(
                             registration->private_key->GetPKCS8PrivateKey()))
                         .SetSignCount(registration->counter)
@@ -246,7 +251,7 @@ Response WebAuthnHandler::AddVirtualAuthenticator(
           options->GetDefaultBackupState(/*defaultValue=*/false);
       break;
     case device::ProtocolVersion::kUnknown:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
   }
 

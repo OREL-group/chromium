@@ -52,7 +52,6 @@ std::string GetPrefPath(AppListNudgeController::NudgeType type) {
       return prefs::kAppListReorderNudge;
     default:
       NOTREACHED();
-      return "";
   }
 }
 

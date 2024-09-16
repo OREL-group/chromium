@@ -18,6 +18,7 @@
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/color/color_provider.h"
 #include "ui/gfx/image/image_skia.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/background.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
@@ -57,7 +58,7 @@ class AuthenticatorQRViewCentered : public views::View {
     qr_code_image_->SetImageSize(qrCodeImageSize());
     qr_code_image_->SetPreferredSize(qrCodeImageSize() +
                                      gfx::Size(kQrCodeMargin, kQrCodeMargin));
-    qr_code_image_->SetAccessibleName(
+    qr_code_image_->GetViewAccessibility().SetName(
         l10n_util::GetStringUTF16(IDS_WEBAUTHN_QR_CODE_ALT_TEXT));
 
     // TODO(https://crbug.com/325664342): Audit if `QuietZone::kIncluded`
@@ -66,7 +67,7 @@ class AuthenticatorQRViewCentered : public views::View {
     // absence of a quiet zone may interfere with decoding of QR codes even for
     // small codes (for examples see #comment8, #comment9 and #comment6 in the
     // bug).
-    auto qr_code = qr_code_generator::GenerateBitmap(
+    auto qr_code = qr_code_generator::GenerateImage(
         base::as_byte_span(qr_string), qr_code_generator::ModuleStyle::kCircles,
         qr_code_generator::LocatorStyle::kRounded,
         qr_code_generator::CenterImage::kPasskey,
@@ -76,8 +77,7 @@ class AuthenticatorQRViewCentered : public views::View {
     // than QR code limits.
     CHECK(qr_code.has_value(), base::NotFatalUntil::M124);
 
-    qr_code_image_->SetImage(ui::ImageModel::FromImageSkia(
-        gfx::ImageSkia::CreateFrom1xBitmap(qr_code.value())));
+    qr_code_image_->SetImage(ui::ImageModel::FromImageSkia(qr_code.value()));
     qr_code_image_->SetVisible(true);
   }
 
@@ -131,31 +131,43 @@ AuthenticatorQRSheetView::BuildStepSpecificContent() {
   container->AddChildView(
       std::make_unique<AuthenticatorQRViewCentered>(qr_string_));
 
-  if (sheet_model->ShowSecurityKeyLabel()) {
-    auto* label_container =
+  const std::vector<std::u16string> labels =
+      sheet_model->GetSecurityKeyLabels();
+  if (!labels.empty()) {
+    auto* security_key_container =
         container->AddChildView(std::make_unique<views::TableLayoutView>());
-    label_container->AddColumn(
+    security_key_container->AddColumn(
         views::LayoutAlignment::kStretch, views::LayoutAlignment::kStretch,
         views::TableLayout::kFixedSize,
         views::TableLayout::ColumnSize::kUsePreferred, 0, 0);
-    label_container->AddPaddingColumn(
+    security_key_container->AddPaddingColumn(
         views::TableLayout::kFixedSize,
         views::LayoutProvider::Get()->GetDistanceMetric(
             views::DISTANCE_RELATED_LABEL_HORIZONTAL));
-    label_container->AddColumn(
+    security_key_container->AddColumn(
         views::LayoutAlignment::kStretch, views::LayoutAlignment::kStretch,
         /*horizontal_resize=*/1, views::TableLayout::ColumnSize::kUsePreferred,
         0, 0);
-    label_container->AddRows(1, views::TableLayout::kFixedSize);
-    label_container->AddChildView(
+    security_key_container->AddRows(labels.size(),
+                                    views::TableLayout::kFixedSize);
+    security_key_container->AddChildView(
         std::make_unique<views::ImageView>(ui::ImageModel::FromVectorIcon(
             kUsbSecurityKeyIcon, ui::kColorIcon, kSecurityKeyIconSize)));
-    auto* label = label_container->AddChildView(
-        std::make_unique<views::Label>(sheet_model->GetSecurityKeyLabel(),
-                                       views::style::CONTEXT_DIALOG_BODY_TEXT));
-    label->SetMultiLine(true);
-    label->SetAllowCharacterBreak(true);
-    label->SetHorizontalAlignment(gfx::HorizontalAlignment::ALIGN_LEFT);
+    auto* label_container = security_key_container->AddChildView(
+        std::make_unique<views::BoxLayoutView>());
+    label_container->SetOrientation(views::BoxLayout::Orientation::kVertical);
+    label_container->SetBetweenChildSpacing(
+        views::LayoutProvider::Get()->GetDistanceMetric(
+            views::DISTANCE_RELATED_CONTROL_VERTICAL));
+
+    for (const std::u16string& label_str : labels) {
+      auto* label =
+          label_container->AddChildView(std::make_unique<views::Label>(
+              label_str, views::style::CONTEXT_DIALOG_BODY_TEXT));
+      label->SetMultiLine(true);
+      label->SetAllowCharacterBreak(true);
+      label->SetHorizontalAlignment(gfx::HorizontalAlignment::ALIGN_LEFT);
+    }
   }
   return std::make_pair(std::move(container), AutoFocus::kNo);
 }

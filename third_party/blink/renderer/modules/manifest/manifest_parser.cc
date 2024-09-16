@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/modules/manifest/manifest_parser.h"
 
 #include <string>
@@ -29,7 +34,6 @@
 #include "third_party/blink/renderer/core/css/media_values.h"
 #include "third_party/blink/renderer/core/css/media_values_cached.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser.h"
-#include "third_party/blink/renderer/core/css/parser/css_parser_token_range.h"
 #include "third_party/blink/renderer/core/css_value_keywords.h"
 #include "third_party/blink/renderer/core/permissions_policy/permissions_policy_parser.h"
 #include "third_party/blink/renderer/modules/navigatorcontentutils/navigator_content_utils.h"
@@ -178,8 +182,8 @@ std::optional<std::vector<liburlpattern::Part>> ParsePatternInitField(
 
   StringUTF8Adaptor utf8(value);
   auto parse_result = liburlpattern::Parse(
-      absl::string_view(utf8.data(), utf8.size()),
-      [](absl::string_view input) { return std::string(input); });
+      utf8.AsStringView(),
+      [](std::string_view input) { return std::string(input); });
 
   if (parse_result.ok()) {
     std::vector<liburlpattern::Part> part_list;
@@ -292,6 +296,8 @@ bool ManifestParser::Parse() {
     return false;
   }
 
+  manifest_->manifest_url = manifest_url_;
+  manifest_->dir = ParseDir(root_object.get());
   manifest_->name = ParseName(root_object.get());
   manifest_->short_name = ParseShortName(root_object.get());
   manifest_->description = ParseDescription(root_object.get());
@@ -351,24 +357,6 @@ bool ManifestParser::Parse() {
 
   if (RuntimeEnabledFeatures::WebAppTranslationsEnabled(execution_context_)) {
     manifest_->translations = ParseTranslations(root_object.get());
-  }
-
-  if (RuntimeEnabledFeatures::WebAppDarkModeEnabled(execution_context_)) {
-    manifest_->user_preferences = ParseUserPreferences(root_object.get());
-
-    std::optional<RGBA32> dark_theme_color =
-        ParseDarkColorOverride(root_object.get(), "theme_colors");
-    manifest_->has_dark_theme_color = dark_theme_color.has_value();
-    if (manifest_->has_dark_theme_color) {
-      manifest_->dark_theme_color = *dark_theme_color;
-    }
-
-    std::optional<RGBA32> dark_background_color =
-        ParseDarkColorOverride(root_object.get(), "background_colors");
-    manifest_->has_dark_background_color = dark_background_color.has_value();
-    if (manifest_->has_dark_background_color) {
-      manifest_->dark_background_color = *dark_background_color;
-    }
   }
 
   if (RuntimeEnabledFeatures::WebAppTabStripCustomizationsEnabled(
@@ -558,7 +546,7 @@ KURL ManifestParser::ParseURL(const JSONObject* object,
       return resolved;
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return KURL();
 }
 
@@ -606,6 +594,25 @@ Enum ManifestParser::ParseFirstValidEnum(const JSONObject* object,
   }
 
   return invalid_value;
+}
+
+mojom::blink::Manifest::TextDirection ManifestParser::ParseDir(
+    const JSONObject* object) {
+  using TextDirection = mojom::blink::Manifest::TextDirection;
+
+  std::optional<String> dir = ParseString(object, "dir", Trim(true));
+  if (!dir.has_value()) {
+    return TextDirection::kAuto;
+  }
+
+  std::optional<TextDirection> textDirection =
+      TextDirectionFromString(dir->Utf8());
+  if (!textDirection.has_value()) {
+    AddErrorInfo("unknown 'dir' value ignored.");
+    return TextDirection::kAuto;
+  }
+
+  return *textDirection;
 }
 
 String ManifestParser::ParseName(const JSONObject* object) {
@@ -689,6 +696,9 @@ KURL ManifestParser::ParseScope(const JSONObject* object,
         "of scope URL.");
     return KURL(default_value.BaseAsString());
   }
+
+  scope.RemoveFragmentIdentifier();
+  scope.SetQuery(String());
 
   DCHECK(scope.IsValid());
   DCHECK(SecurityOrigin::AreSameOrigin(scope, document_url_));
@@ -1449,7 +1459,7 @@ HashMap<String, Vector<String>> ManifestParser::ParseFileHandlerAccept(
     int extension_overflow =
         total_file_handler_extension_count_ - kExtensionLimit;
     if (extension_overflow > 0) {
-      auto* erase_iter = extensions.end() - extension_overflow;
+      auto erase_iter = extensions.end() - extension_overflow;
       AddErrorInfo(
           "property 'accept': too many total file extensions, ignoring "
           "extensions starting from \"" +
@@ -2135,10 +2145,6 @@ Vector<String> ManifestParser::ParseOriginAllowlist(
 
 mojom::blink::ManifestLaunchHandlerPtr ManifestParser::ParseLaunchHandler(
     const JSONObject* object) {
-  if (!RuntimeEnabledFeatures::WebAppLaunchHandlerEnabled(execution_context_)) {
-    return nullptr;
-  }
-
   const JSONValue* launch_handler_value = object->Get("launch_handler");
   if (!launch_handler_value) {
     return nullptr;
@@ -2217,133 +2223,6 @@ ManifestParser::ParseTranslations(const JSONObject* object) {
   return result;
 }
 
-mojom::blink::ManifestUserPreferenceOverridesPtr
-ManifestParser::ParsePreferenceOverrides(const JSONObject* object,
-                                         const String& preference) {
-  auto user_preference_overrides =
-      mojom::blink::ManifestUserPreferenceOverrides::New();
-
-  if (!object->Get(preference)) {
-    return nullptr;
-  }
-
-  JSONObject* overrides = object->GetJSONObject(preference);
-  if (!overrides) {
-    AddErrorInfo("preference '" + preference + "' ignored, object expected.");
-    return nullptr;
-  }
-
-  std::optional<RGBA32> theme_color = ParseThemeColor(overrides);
-  user_preference_overrides->has_theme_color = theme_color.has_value();
-  if (user_preference_overrides->has_theme_color) {
-    user_preference_overrides->theme_color = *theme_color;
-  }
-
-  std::optional<RGBA32> background_color = ParseBackgroundColor(overrides);
-  user_preference_overrides->has_background_color =
-      background_color.has_value();
-  if (user_preference_overrides->has_background_color) {
-    user_preference_overrides->background_color = *background_color;
-  }
-
-  // All of the fields that can be overridden by user_preferences are
-  // optional. If no overrides are supplied, skip the preference.
-  if (!user_preference_overrides->has_theme_color &&
-      !user_preference_overrides->has_background_color) {
-    return nullptr;
-  }
-  return user_preference_overrides;
-}
-
-mojom::blink::ManifestUserPreferencesPtr ManifestParser::ParseUserPreferences(
-    const JSONObject* object) {
-  auto result = mojom::blink::ManifestUserPreferences::New();
-
-  if (!object->Get("user_preferences")) {
-    return nullptr;
-  }
-
-  JSONObject* user_preferences_map = object->GetJSONObject("user_preferences");
-  if (!user_preferences_map) {
-    AddErrorInfo("property 'user_preferences' ignored, object expected.");
-    return nullptr;
-  }
-
-  if (user_preferences_map->Get("color_scheme")) {
-    JSONObject* color_scheme_map =
-        user_preferences_map->GetJSONObject("color_scheme");
-    if (!color_scheme_map) {
-      AddErrorInfo("property 'color_scheme' ignored, object expected.");
-      return nullptr;
-    }
-    result->color_scheme_dark =
-        ParsePreferenceOverrides(color_scheme_map, "dark");
-  } else {
-    // TODO(crbug.com/1318305): Remove this path once the new format has become
-    // the norm.
-    result->color_scheme_dark =
-        ParsePreferenceOverrides(user_preferences_map, "color_scheme_dark");
-  }
-
-  return result;
-}
-
-std::optional<RGBA32> ManifestParser::ParseDarkColorOverride(
-    const JSONObject* object,
-    const String& key) {
-  JSONValue* json_value = object->Get(key);
-  if (!json_value) {
-    return std::nullopt;
-  }
-
-  JSONArray* colors_list = object->GetArray(key);
-  if (!colors_list) {
-    AddErrorInfo("property '" + key + "' ignored, type array expected.");
-    return std::nullopt;
-  }
-
-  MediaValuesCached::MediaValuesCachedData media_values_data;
-  media_values_data.preferred_color_scheme =
-      mojom::blink::PreferredColorScheme::kDark;
-
-  MediaQueryEvaluator media_query_evaluator(
-      MakeGarbageCollected<MediaValuesCached>(media_values_data));
-
-  for (wtf_size_t i = 0; i < colors_list->size(); ++i) {
-    const JSONObject* list_item = JSONObject::Cast(colors_list->at(i));
-    if (!list_item) {
-      continue;
-    }
-
-    std::optional<String> media_query =
-        ParseString(list_item, "media", Trim(false));
-    std::optional<RGBA32> color = ParseColor(list_item, "color");
-    if (!media_query.has_value() || !color.has_value()) {
-      continue;
-    }
-
-    auto tokens = CSSTokenizer(media_query.value()).TokenizeToEOF();
-    CSSParserTokenRange range(tokens);
-    while (!range.AtEnd()) {
-      if (range.Peek().GetType() == kIdentToken &&
-          (range.Peek().Value().ToString().LowerASCII() !=
-               "prefers-color-scheme" &&
-           range.Peek().Id() != CSSValueID::kDark)) {
-        // Skip the query if it contains anything other than
-        // "(prefers-color-scheme: dark)".
-        break;
-      }
-      range.Consume();
-      if (range.AtEnd() && media_query_evaluator.Eval(*MediaQuerySet::Create(
-                               media_query.value(), execution_context_))) {
-        return color.value();
-      }
-    }
-  }
-
-  return std::nullopt;
-}
-
 mojom::blink::ManifestTabStripPtr ManifestParser::ParseTabStrip(
     const JSONObject* object) {
   if (!object->Get("tab_strip")) {
@@ -2366,7 +2245,7 @@ mojom::blink::ManifestTabStripPtr ManifestParser::ParseTabStrip(
     JSONValue* home_tab_icons = home_tab_object->Get("icons");
     String string_value;
     if (home_tab_icons && !(home_tab_icons->AsString(&string_value) &&
-                            string_value.LowerASCII() == "auto")) {
+                            EqualIgnoringASCIICase(string_value, "auto"))) {
       home_tab_params->icons = ParseIcons(home_tab_object);
     }
 
@@ -2388,7 +2267,7 @@ mojom::blink::ManifestTabStripPtr ManifestParser::ParseTabStrip(
 
     String string_value;
     if (new_tab_button_url && !(new_tab_button_url->AsString(&string_value) &&
-                                string_value.LowerASCII() == "auto")) {
+                                EqualIgnoringASCIICase(string_value, "auto"))) {
       KURL url = ParseURL(new_tab_button_object, "url", manifest_url_,
                           ParseURLRestrictions::kWithinScope);
       if (!url.IsNull()) {
@@ -2409,7 +2288,7 @@ ManifestParser::ParseTabStripMemberVisibility(const JSONValue* json_value) {
 
   String string_value;
   if (json_value->AsString(&string_value) &&
-      string_value.LowerASCII() == "absent") {
+      EqualIgnoringASCIICase(string_value, "absent")) {
     return mojom::blink::TabStripMemberVisibility::kAbsent;
   }
 
@@ -2440,9 +2319,7 @@ Vector<SafeUrlPattern> ManifestParser::ParseScopePatterns(
 
     std::optional<PatternInit> init = MaybeCreatePatternInit(pattern_object);
     if (init.has_value()) {
-      auto base_url = init->base_url.IsValid()
-                          ? init->base_url
-                          : manifest_url_;
+      auto base_url = init->base_url.IsValid() ? init->base_url : manifest_url_;
       std::optional<SafeUrlPattern> pattern =
           ParseScopePattern(init.value(), base_url);
       if (pattern.has_value()) {

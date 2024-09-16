@@ -61,10 +61,11 @@ Profile* CreateTestingProfile(const base::FilePath& path) {
   size_t starting_number_of_profiles = profile_manager->GetNumberOfProfiles();
 
   if (!base::PathExists(path) && !base::CreateDirectory(path))
-    NOTREACHED() << "Could not create directory at " << path.MaybeAsASCII();
+    NOTREACHED_IN_MIGRATION()
+        << "Could not create directory at " << path.MaybeAsASCII();
 
   std::unique_ptr<Profile> profile =
-      Profile::CreateProfile(path, nullptr, Profile::CREATE_MODE_SYNCHRONOUS);
+      Profile::CreateProfile(path, nullptr, Profile::CreateMode::kSynchronous);
   Profile* profile_ptr = profile.get();
   profile_manager->RegisterTestingProfile(std::move(profile), true);
   EXPECT_EQ(starting_number_of_profiles + 1,

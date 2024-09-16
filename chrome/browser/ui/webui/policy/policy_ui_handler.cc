@@ -49,6 +49,7 @@
 #include "chrome/browser/ui/chrome_select_file_policy.h"
 #include "chrome/browser/ui/webui/policy/policy_ui.h"
 #include "chrome/browser/ui/webui/webui_util.h"
+#include "chrome/common/channel_info.h"
 #include "chrome/grit/branded_strings.h"
 #include "components/crx_file/id_util.h"
 #include "components/enterprise/browser/controller/browser_dm_token_storage.h"
@@ -69,6 +70,7 @@
 #include "components/policy/core/common/policy_pref_names.h"
 #include "components/policy/core/common/policy_scheduler.h"
 #include "components/policy/core/common/policy_types.h"
+#include "components/policy/core/common/policy_utils.h"
 #include "components/policy/core/common/remote_commands/remote_commands_service.h"
 #include "components/policy/core/common/schema.h"
 #include "components/policy/core/common/schema_map.h"
@@ -99,6 +101,8 @@
 #else
 #include "components/policy/core/common/cloud/user_cloud_policy_manager.h"
 #endif
+
+// LINT.IfChange
 
 namespace {
 
@@ -316,6 +320,12 @@ void PolicyUIHandler::HandleCopyPoliciesJson(const base::Value::List& args) {
 void PolicyUIHandler::HandleSetLocalTestPolicies(
     const base::Value::List& args) {
   std::string policies = args[1].GetString();
+  AllowJavascript();
+
+  if (!PolicyUI::ShouldLoadTestPage(Profile::FromWebUI(web_ui()))) {
+    ResolveJavascriptCallback(args[0], true);
+    return;
+  }
 
   policy::LocalTestPolicyProvider* local_test_provider =
       static_cast<policy::LocalTestPolicyProvider*>(
@@ -338,12 +348,14 @@ void PolicyUIHandler::HandleSetLocalTestPolicies(
       ->UseLocalTestPolicyProvider();
 
   local_test_provider->LoadJsonPolicies(policies);
-  AllowJavascript();
   ResolveJavascriptCallback(args[0], true);
 }
 
 void PolicyUIHandler::HandleRevertLocalTestPolicies(
     const base::Value::List& args) {
+  if (!PolicyUI::ShouldLoadTestPage(Profile::FromWebUI(web_ui()))) {
+    return;
+  }
 #if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS)
   Profile::FromWebUI(web_ui())->GetPrefs()->ClearPref(
       prefs::kUserCloudSigninPolicyResponseFromPolicyTestPage);
@@ -412,19 +424,35 @@ void PolicyUIHandler::HandleUploadReport(const base::Value::List& args) {
       enterprise_reporting::CloudProfileReportingServiceFactory::GetForProfile(
           Profile::FromWebUI(web_ui()))
           ->report_scheduler();
-  CHECK(profile_report_scheduler);
 
-  if (report_scheduler) {
+  if (report_scheduler && profile_report_scheduler) {
     const auto on_report_uploaded = base::BarrierClosure(
         2, base::BindOnce(&PolicyUIHandler::OnReportUploaded,
                           weak_factory_.GetWeakPtr(), callback_id));
     report_scheduler->UploadFullReport(on_report_uploaded);
     profile_report_scheduler->UploadFullReport(on_report_uploaded);
-  } else {
+    return;
+  }
+
+  if (report_scheduler) {
+    report_scheduler->UploadFullReport(
+        base::BindOnce(&PolicyUIHandler::OnReportUploaded,
+                       weak_factory_.GetWeakPtr(), callback_id));
+    return;
+  }
+
+  if (profile_report_scheduler) {
     profile_report_scheduler->UploadFullReport(
         base::BindOnce(&PolicyUIHandler::OnReportUploaded,
                        weak_factory_.GetWeakPtr(), callback_id));
+    return;
   }
+
+  // TODO(335639255): Consider disable the button when neither report
+  // scheduler are ready. On at least show an error message to ask people
+  // to try again.
+  OnReportUploaded(callback_id);
+
 }
 #endif  // !BUILDFLAG(IS_CHROMEOS)
 
@@ -491,3 +519,5 @@ std::string PolicyUIHandler::GetPoliciesAsJson() {
       policy::GetChromeMetadataParams(
           /*application_name=*/l10n_util::GetStringUTF8(IDS_PRODUCT_NAME)));
 }
+
+// LINT.ThenChange(//ios/chrome/browser/webui/ui_bundled/policy/policy_ui_handler.mm)

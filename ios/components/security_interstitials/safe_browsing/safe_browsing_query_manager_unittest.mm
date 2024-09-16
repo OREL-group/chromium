@@ -6,6 +6,8 @@
 
 #import <Foundation/Foundation.h>
 
+#import "base/test/scoped_feature_list.h"
+#import "components/safe_browsing/core/common/features.h"
 #import "components/security_interstitials/core/unsafe_resource.h"
 #import "ios/components/security_interstitials/safe_browsing/fake_safe_browsing_client.h"
 #import "ios/components/security_interstitials/safe_browsing/fake_safe_browsing_service.h"
@@ -33,6 +35,12 @@ class MockQueryManagerObserver : public SafeBrowsingQueryManager::Observer {
                     const SafeBrowsingQueryManager::Result&,
                     safe_browsing::SafeBrowsingUrlCheckerImpl::PerformedCheck
                         performed_check));
+
+  MOCK_METHOD1(SafeBrowsingSyncQueryFinished,
+               void(const SafeBrowsingQueryManager::QueryData&));
+
+  MOCK_METHOD1(SafeBrowsingAsyncQueryFinished,
+               void(const SafeBrowsingQueryManager::QueryData&));
 
   // Override rather than mocking so that the observer can remove itself.
   void SafeBrowsingQueryManagerDestroyed(
@@ -69,13 +77,68 @@ ACTION_P4(VerifyQueryFinished,
               resource.threat_type);
   }
 }
+
+// Verifies the expected values passed to the SafeBrowsingSyncQueryFinished
+// callback.
+ACTION_P4(VerifySyncQueryFinished,
+          expected_url,
+          expected_http_method,
+          is_url_sync_safe,
+          is_url_async_safe) {
+  const SafeBrowsingQueryManager::QueryData& query_data = arg0;
+  const SafeBrowsingQueryManager::Query& query = query_data.query;
+  EXPECT_EQ(expected_url, query.url);
+  EXPECT_EQ(expected_http_method, query.http_method);
+
+  const SafeBrowsingQueryManager::Result& result = query_data.result;
+  if (is_url_sync_safe && is_url_async_safe) {
+    EXPECT_FALSE(result.resource);
+    EXPECT_TRUE(result.proceed);
+    EXPECT_FALSE(result.show_error_page);
+  } else if (!is_url_sync_safe) {
+    EXPECT_FALSE(result.proceed);
+    EXPECT_TRUE(result.show_error_page);
+    ASSERT_TRUE(result.resource);
+    UnsafeResource resource = result.resource.value();
+    EXPECT_EQ(expected_url, resource.url);
+    EXPECT_NE(safe_browsing::SBThreatType::SB_THREAT_TYPE_SAFE,
+              resource.threat_type);
+  }
+}
+
+// Verifies the expected values passed to the SafeBrowsingAsyncQueryFinished
+// callback.
+ACTION_P4(VerifyAsyncQueryFinished,
+          expected_url,
+          expected_http_method,
+          is_url_sync_safe,
+          is_url_async_safe) {
+  const SafeBrowsingQueryManager::QueryData& query_data = arg0;
+  const SafeBrowsingQueryManager::Query& query = query_data.query;
+  EXPECT_EQ(expected_url, query.url);
+  EXPECT_EQ(expected_http_method, query.http_method);
+
+  const SafeBrowsingQueryManager::Result& result = query_data.result;
+  if (is_url_sync_safe && is_url_async_safe) {
+    EXPECT_FALSE(result.resource);
+    EXPECT_TRUE(result.proceed);
+    EXPECT_FALSE(result.show_error_page);
+  } else if (!is_url_async_safe) {
+    EXPECT_FALSE(result.proceed);
+    EXPECT_TRUE(result.show_error_page);
+    ASSERT_TRUE(result.resource);
+    UnsafeResource resource = result.resource.value();
+    EXPECT_EQ(expected_url, resource.url);
+    EXPECT_NE(safe_browsing::SBThreatType::SB_THREAT_TYPE_SAFE,
+              resource.threat_type);
+  }
+}
 }  // namespace
 
 class SafeBrowsingQueryManagerTest : public PlatformTest {
  protected:
   SafeBrowsingQueryManagerTest()
-      : task_environment_(web::WebTaskEnvironment::IO_MAINLOOP),
-        browser_state_(new web::FakeBrowserState()),
+      : browser_state_(new web::FakeBrowserState()),
         web_state_(std::make_unique<web::FakeWebState>()),
         http_method_("GET") {
     SafeBrowsingQueryManager::CreateForWebState(web_state_.get(), &client_);
@@ -87,7 +150,8 @@ class SafeBrowsingQueryManagerTest : public PlatformTest {
     return SafeBrowsingQueryManager::FromWebState(web_state_.get());
   }
 
-  web::WebTaskEnvironment task_environment_;
+  web::WebTaskEnvironment task_environment_{
+      web::WebTaskEnvironment::MainThreadType::IO};
   MockQueryManagerObserver observer_;
   std::unique_ptr<web::FakeBrowserState> browser_state_;
   std::unique_ptr<web::FakeWebState> web_state_;
@@ -101,6 +165,27 @@ TEST_F(SafeBrowsingQueryManagerTest, SafeURLQuery) {
   EXPECT_CALL(observer_, SafeBrowsingQueryFinished(manager(), _, _, _))
       .WillOnce(VerifyQueryFinished(url, http_method_,
                                     /*is_url_safe=*/true));
+
+  // Start a URL check query for the safe URL and run the runloop until the
+  // result is received.
+  manager()->StartQuery(SafeBrowsingQueryManager::Query(url, http_method_));
+  base::RunLoop().RunUntilIdle();
+}
+
+// Tests a query for a safe URL completes properly with async check logic.
+TEST_F(SafeBrowsingQueryManagerTest, SafeURLQueryWithAsyncRealTimeCheck) {
+  base::test::ScopedFeatureList scoped_feature_list_;
+  scoped_feature_list_.InitAndEnableFeature(
+      safe_browsing::kSafeBrowsingAsyncRealTimeCheck);
+  GURL url("http://chromium.test");
+  EXPECT_CALL(observer_, SafeBrowsingSyncQueryFinished(_))
+      .WillOnce(VerifySyncQueryFinished(url, http_method_,
+                                        /*is_url_sync_safe=*/true,
+                                        /*is_url_async_safe=*/true));
+  EXPECT_CALL(observer_, SafeBrowsingAsyncQueryFinished(_))
+      .WillOnce(VerifyAsyncQueryFinished(url, http_method_,
+                                         /*is_url_sync_safe=*/true,
+                                         /*is_url_async_safe=*/true));
 
   // Start a URL check query for the safe URL and run the runloop until the
   // result is received.
@@ -124,7 +209,64 @@ TEST_F(SafeBrowsingQueryManagerTest, UnsafeURLQuery) {
   resource.url = url;
   resource.threat_type =
       safe_browsing::SBThreatType::SB_THREAT_TYPE_URL_PHISHING;
-  resource.request_destination = network::mojom::RequestDestination::kDocument;
+  manager()->StoreUnsafeResource(resource);
+  base::RunLoop().RunUntilIdle();
+}
+
+// Tests a query for an unsafe URL with async checks enabled, where the URL
+// is unsafe with both sync and async checks.
+TEST_F(SafeBrowsingQueryManagerTest, SyncAndAsyncUnsafeURLQuery) {
+  base::test::ScopedFeatureList scoped_feature_list_;
+  scoped_feature_list_.InitAndEnableFeature(
+      safe_browsing::kSafeBrowsingAsyncRealTimeCheck);
+  GURL url("http://" + FakeSafeBrowsingService::kUnsafeHost);
+  EXPECT_CALL(observer_, SafeBrowsingSyncQueryFinished(_))
+      .WillOnce(VerifySyncQueryFinished(url, http_method_,
+                                        /*is_url_sync_safe=*/false,
+                                        /*is_url_async_safe=*/false));
+  EXPECT_CALL(observer_, SafeBrowsingAsyncQueryFinished(_))
+      .WillOnce(VerifyAsyncQueryFinished(url, http_method_,
+                                         /*is_url_sync_safe=*/false,
+                                         /*is_url_async_safe=*/false));
+
+  // Start a URL check query for the unsafe URL and run the runloop until the
+  // results are received.  An UnsafeResource is stored before the query
+  // finishes to simulate the production behavior that adds a resource that will
+  // be used to populate the error page.
+  manager()->StartQuery(SafeBrowsingQueryManager::Query(url, http_method_));
+  UnsafeResource resource;
+  resource.url = url;
+  resource.threat_type =
+      safe_browsing::SBThreatType::SB_THREAT_TYPE_URL_PHISHING;
+  manager()->StoreUnsafeResource(resource);
+  base::RunLoop().RunUntilIdle();
+}
+
+// Tests a query for an unsafe URL with async checks enabled, where the URL
+// is unsafe with async checks only.
+TEST_F(SafeBrowsingQueryManagerTest, AsyncUnsafeURLQuery) {
+  base::test::ScopedFeatureList scoped_feature_list_;
+  scoped_feature_list_.InitAndEnableFeature(
+      safe_browsing::kSafeBrowsingAsyncRealTimeCheck);
+  GURL url("http://" + FakeSafeBrowsingService::kAsyncUnsafeHost);
+  EXPECT_CALL(observer_, SafeBrowsingSyncQueryFinished(_))
+      .WillOnce(VerifySyncQueryFinished(url, http_method_,
+                                        /*is_url_sync_safe=*/true,
+                                        /*is_url_async_safe=*/false));
+  EXPECT_CALL(observer_, SafeBrowsingAsyncQueryFinished(_))
+      .WillOnce(VerifyAsyncQueryFinished(url, http_method_,
+                                         /*is_url_sync_safe=*/true,
+                                         /*is_url_async_safe=*/false));
+
+  // Start a URL check query for the unsafe URL and run the runloop until the
+  // results are received.  An UnsafeResource is stored before the query
+  // finishes to simulate the production behavior that adds a resource that will
+  // be used to populate the error page.
+  manager()->StartQuery(SafeBrowsingQueryManager::Query(url, http_method_));
+  UnsafeResource resource;
+  resource.url = url;
+  resource.threat_type =
+      safe_browsing::SBThreatType::SB_THREAT_TYPE_URL_PHISHING;
   manager()->StoreUnsafeResource(resource);
   base::RunLoop().RunUntilIdle();
 }
@@ -148,7 +290,6 @@ TEST_F(SafeBrowsingQueryManagerTest, MultipleUnsafeURLQueries) {
   resource.url = url;
   resource.threat_type =
       safe_browsing::SBThreatType::SB_THREAT_TYPE_URL_PHISHING;
-  resource.request_destination = network::mojom::RequestDestination::kDocument;
   manager()->StoreUnsafeResource(resource);
   manager()->StoreUnsafeResource(resource);
   base::RunLoop().RunUntilIdle();
@@ -172,7 +313,6 @@ TEST_F(SafeBrowsingQueryManagerTest, StoreUnsafeResourceMultipleQueries) {
   resource.url = url;
   resource.threat_type =
       safe_browsing::SBThreatType::SB_THREAT_TYPE_URL_PHISHING;
-  resource.request_destination = network::mojom::RequestDestination::kDocument;
   manager()->StoreUnsafeResource(resource);
   base::RunLoop().RunUntilIdle();
 }
@@ -222,9 +362,7 @@ class WebStateDestroyingQueryManagerObserver
 // SafeBrowsingQueryManager::Observer callback.
 class SafeBrowsingQueryManagerWebStateDestructionTest : public PlatformTest {
  protected:
-  SafeBrowsingQueryManagerWebStateDestructionTest()
-      : task_environment_(web::WebTaskEnvironment::IO_MAINLOOP),
-        http_method_("GET") {
+  SafeBrowsingQueryManagerWebStateDestructionTest() : http_method_("GET") {
     SafeBrowsingQueryManager::CreateForWebState(observer_.web_state(),
                                                 &client_);
     manager()->AddObserver(&observer_);
@@ -234,7 +372,8 @@ class SafeBrowsingQueryManagerWebStateDestructionTest : public PlatformTest {
     return SafeBrowsingQueryManager::FromWebState(observer_.web_state());
   }
 
-  web::WebTaskEnvironment task_environment_;
+  web::WebTaskEnvironment task_environment_{
+      web::WebTaskEnvironment::MainThreadType::IO};
   WebStateDestroyingQueryManagerObserver observer_;
   std::string http_method_;
   FakeSafeBrowsingClient client_;
@@ -262,7 +401,6 @@ TEST_F(SafeBrowsingQueryManagerWebStateDestructionTest, UnsafeURLQuery) {
   resource.url = url;
   resource.threat_type =
       safe_browsing::SBThreatType::SB_THREAT_TYPE_URL_PHISHING;
-  resource.request_destination = network::mojom::RequestDestination::kDocument;
   manager()->StoreUnsafeResource(resource);
   base::RunLoop().RunUntilIdle();
 }

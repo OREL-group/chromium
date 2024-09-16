@@ -63,8 +63,9 @@ class FeaturePromoSpecification {
     //
     // Default is zero unless there are additional conditions, in which case it
     // is a week.
-    void set_initial_delay_days(uint32_t initial_delay_days) {
+    AdditionalConditions& set_initial_delay_days(uint32_t initial_delay_days) {
       this->initial_delay_days_ = initial_delay_days;
+      return *this;
     }
     std::optional<uint32_t> initial_delay_days() const {
       return initial_delay_days_;
@@ -73,7 +74,10 @@ class FeaturePromoSpecification {
     // Sets the number of times a promoted feature can be used before the
     // associated promo stops showing. Default is zero - i.e. if the feature is
     // used at all, the promo won't show.
-    void set_used_limit(uint32_t used_limit) { this->used_limit_ = used_limit; }
+    AdditionalConditions& set_used_limit(uint32_t used_limit) {
+      this->used_limit_ = used_limit;
+      return *this;
+    }
     std::optional<uint32_t> used_limit() const { return used_limit_; }
 
     // Adds an additional constraint on when the promo can show. `event_name` is
@@ -86,7 +90,7 @@ class FeaturePromoSpecification {
                                 Constraint constraint,
                                 uint32_t count,
                                 std::optional<uint32_t> in_days = std::nullopt);
-    void AddAdditionalCondition(
+    AdditionalConditions& AddAdditionalCondition(
         const AdditionalCondition& additional_condition);
     const std::vector<AdditionalCondition>& additional_conditions() const {
       return additional_conditions_;
@@ -151,7 +155,11 @@ class FeaturePromoSpecification {
     // A simple promo that acts like a toast but without the required
     // accessibility data.
     kLegacy = 5,
-    kMaxValue = kLegacy
+    // Rotating promos have a list of different promos they cycle between.
+    // Because they are shown over and over, possibly at startup, this type
+    // requires being on an allowlist.
+    kRotating = 6,
+    kMaxValue = kRotating
   };
 
   // These values are persisted to logs. Entries should not be renumbered and
@@ -199,6 +207,42 @@ class FeaturePromoSpecification {
 
    private:
     ValueType value_;
+  };
+
+  // A list of rotating promos. The order or index of promos should not change,
+  // but a promo can be replaced with `std::nullopt` or another promo if it
+  // becomes deprecated.
+  class RotatingPromos {
+   public:
+    RotatingPromos();
+    RotatingPromos(RotatingPromos&&) noexcept;
+    RotatingPromos& operator=(RotatingPromos&&) noexcept;
+    ~RotatingPromos();
+
+    template <typename... Args>
+    explicit RotatingPromos(Args&&... args) {
+      (promos_.emplace_back(std::forward<Args>(args)), ...);
+    }
+
+    using ListType = std::vector<std::optional<FeaturePromoSpecification>>;
+    using iterator = ListType::iterator;
+    using const_iterator = ListType::const_iterator;
+    using size_type = ListType::size_type;
+    using value_type = ListType::value_type;
+    using reference = ListType::reference;
+    using const_reference = ListType::const_reference;
+
+    iterator begin() { return promos_.begin(); }
+    const_iterator begin() const { return promos_.begin(); }
+    iterator end() { return promos_.end(); }
+    const_iterator end() const { return promos_.end(); }
+    reference operator[](size_type index) { return promos_[index]; }
+    reference at(size_type index) { return promos_.at(index); }
+    const_reference at(size_type index) const { return promos_.at(index); }
+    size_type size() const { return promos_.size(); }
+
+   private:
+    ListType promos_;
   };
 
   FeaturePromoSpecification();
@@ -268,6 +312,29 @@ class FeaturePromoSpecification {
       int custom_action_string_id,
       CustomActionCallback custom_action_callback);
 
+  // Specifies a promo that shows a rotating set of promos.
+  static FeaturePromoSpecification CreateForRotatingPromo(
+      const base::Feature& feature,
+      RotatingPromos rotating_promos);
+
+  // Specifies a promo that shows a rotating set of promos.
+  //
+  // This is a convenience version of the method that allows each rotating promo
+  // to be passed in as a list of items without boilerplate.
+  template <typename Arg, typename... Args>
+    requires std::same_as<std::remove_reference_t<Arg>,
+                          std::optional<FeaturePromoSpecification>> ||
+             std::same_as<std::remove_reference_t<Arg>,
+                          FeaturePromoSpecification>
+  static FeaturePromoSpecification CreateForRotatingPromo(
+      const base::Feature& feature,
+      Arg&& arg,
+      Args&&... args) {
+    return CreateForRotatingPromo(
+        feature,
+        RotatingPromos(std::forward<Arg>(arg), std::forward<Args>(args)...));
+  }
+
   // Specifies a text-only promo without additional accessibility information.
   // Deprecated. Only included for backwards compatibility with existing
   // promos. This is the only case in which |feature| can be null, and if it is
@@ -294,14 +361,32 @@ class FeaturePromoSpecification {
   // is almost always better to e.g. improve the promo trigger logic so it
   // doesn't interrupt user workflow than it is to disable bubble auto-focus.
   //
+  // For rotating promos, also sets the override on all sub-promos that are not
+  // already explicitly set.
+  //
   // You should document calls to this method with a reason and ideally a bug
   // describing why the default a11y behavior needs to be overridden and what
   // can be done to fix it.
   FeaturePromoSpecification& OverrideFocusOnShow(bool focus_on_show);
 
-  // Set the promo subtype. Setting the subtype to LegalNotice requires being on
-  // an allowlist.
+  // Set the promo subtype. Setting the subtype to most values other than
+  // `kNormal` requires being on an allowlist.
   FeaturePromoSpecification& SetPromoSubtype(PromoSubtype promo_subtype);
+
+  // For keyed and legal notice IPH, allows the promo to be re-shown under
+  // specific circumstances. For keyed promos, the limit applies per key, not
+  // the entire promo.
+  //
+  // There is a minimum allowed `reshow_delay` depending on promo type. The
+  // current minimum delays are:
+  //  - two weeks for "toast" promos
+  //  - three months (90 days) for heavyweight promos
+  //
+  // The `max_show_count` is optional and can be used to limit the number of
+  // times the promo can be shown, regardless of delay. If specified, this
+  // count must be at least 2 (else it is meaningless).
+  FeaturePromoSpecification& SetReshowPolicy(base::TimeDelta reshow_delay,
+                                             std::optional<int> max_show_count);
 
   // Set the anchor element filter.
   FeaturePromoSpecification& SetAnchorElementFilter(
@@ -317,6 +402,8 @@ class FeaturePromoSpecification {
 
   // Get the anchor element based on `anchor_element_id`,
   // `anchor_element_filter`, and `context`.
+  //
+  // For rotating promos, call this method on the specific sub-promo.
   ui::TrackedElement* GetAnchorElement(ui::ElementContext context) const;
 
   const base::Feature* feature() const { return feature_; }
@@ -342,6 +429,10 @@ class FeaturePromoSpecification {
   const std::u16string custom_action_caption() const {
     return custom_action_caption_;
   }
+  const std::optional<base::TimeDelta>& reshow_delay() const {
+    return reshow_delay_;
+  }
+  const std::optional<int>& max_show_count() const { return max_show_count_; }
 
   // Sets whether the custom action button is the default button on the help
   // bubble (default is false). It is an error to call this method for a promo
@@ -386,12 +477,21 @@ class FeaturePromoSpecification {
     return SetMetadata(Metadata(std::forward<Args>(args)...));
   }
 
+  // Only valid for rotating promo subtype.
+  const RotatingPromos& rotating_promos() const { return rotating_promos_; }
+
   // Force the subtype to a particular value, bypassing permission checks.
   FeaturePromoSpecification& set_promo_subtype_for_testing(
       PromoSubtype promo_subtype) {
     promo_subtype_ = promo_subtype;
     return *this;
   }
+
+  // Force the type of promo to rotating and set the given `rotating_promos`,
+  // bypassing permission checks and safeguards.
+  static FeaturePromoSpecification CreateRotatingPromoForTesting(
+      const base::Feature& feature,
+      RotatingPromos rotating_promos);
 
  private:
   static constexpr HelpBubbleArrow kDefaultBubbleArrow =
@@ -415,6 +515,10 @@ class FeaturePromoSpecification {
 
   // Whether we are allowed to search for the anchor element in any context.
   bool in_any_context_ = false;
+
+  // Whether and how many times the promo can reshow.
+  std::optional<base::TimeDelta> reshow_delay_;
+  std::optional<int> max_show_count_;
 
   // The filter to use if there is more than one matching element, or
   // additional processing is needed (default is to always use the first
@@ -470,6 +574,9 @@ class FeaturePromoSpecification {
 
   // Additional conditions describing when the promo can show.
   AdditionalConditions additional_conditions_;
+
+  // For rotating promos, maintain a list of sub-promos.
+  RotatingPromos rotating_promos_;
 
   // Metadata for this promo.
   Metadata metadata_;

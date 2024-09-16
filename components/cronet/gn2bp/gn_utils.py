@@ -44,6 +44,8 @@ JAVA_FILES_TO_IGNORE = (
     "//components/cronet/android/test/javatests/src/org/chromium/net/apihelpers/ContentTypeParametersParserTest.java",
     # androidx-multidex is disabled on unbundled branches.
     "//base/test/android/java/src/org/chromium/base/multidex/ChromiumMultiDexInstaller.java",
+    # This file is not used in aosp and depends on newer accessibility_test_framework.
+    "//base/test/android/javatests/src/org/chromium/base/test/BaseActivityTestRule.java",
 )
 RESPONSE_FILE = '{{response_file_name}}'
 TESTING_SUFFIX = "__testing"
@@ -51,16 +53,19 @@ AIDL_INCLUDE_DIRS_REGEX = r'--includes=\[(.*)\]'
 AIDL_IMPORT_DIRS_REGEX = r'--imports=\[(.*)\]'
 PROTO_IMPORT_DIRS_REGEX = r'--import-dir=(.*)'
 
-
 def repo_root():
     """Returns an absolute path to the repository root."""
     return os.path.join(os.path.realpath(os.path.dirname(__file__)),
                         os.path.pardir)
 
 
+def _get_build_path_from_label(target_name: str) -> str:
+    """Returns the path to the BUILD file for which this target was declared."""
+    return target_name[2:].split(":")[0]
+
+
 def _clean_string(str):
     return str.replace('\\', '').replace('../../', '').replace('"', '').strip()
-
 
 def _clean_aidl_import(orig_str):
     str = _clean_string(orig_str)
@@ -68,7 +73,6 @@ def _clean_aidl_import(orig_str):
     if src_idx == -1:
         raise ValueError(f"Unable to clean aidl import {orig_str}")
     return str[:src_idx + len("src")]
-
 
 def _extract_includes_from_aidl_args(args):
     ret = []
@@ -93,10 +97,8 @@ def _extract_includes_from_aidl_args(args):
             ]
     return ret
 
-
 def contains_aidl(sources):
     return any([src.endswith(".aidl") for src in sources])
-
 
 def _get_jni_registration_deps(gn_target_name, gn_desc):
     # the dependencies are stored within another target with the same name
@@ -108,12 +110,10 @@ def _get_jni_registration_deps(gn_target_name, gn_desc):
         return gn_desc[jni_registration_java_target]["deps"]
     return set()
 
-
 def label_to_path(label):
     """Turn a GN output label (e.g., //some_dir/file.cc) into a path."""
     assert label.startswith('//')
-    return label[2:] or "./"
-
+    return label[2:] or ""
 
 def label_without_toolchain(label):
     """Strips the toolchain from a GN label.
@@ -222,6 +222,8 @@ class GnParser(object):
             # Path to the java jar path. This is used if the java library is
             # an import of a JAR like `android_java_prebuilt` targets in GN
             self.jar_path = ""
+            self.sdk_version = ""
+            self.build_file_path = ""
 
         # Properties to forward access to common arch.
         # TODO: delete these after the transition has been completed.
@@ -417,6 +419,8 @@ class GnParser(object):
             return 'android_arm'
         elif toolchain == '//build/toolchain/android:android_clang_arm64':
             return 'android_arm64'
+        elif toolchain == '//build/toolchain/android:android_clang_riscv64':
+            return 'android_riscv64'
         else:
             return 'host'
 
@@ -502,6 +506,7 @@ class GnParser(object):
             # defined otherwise it is a path.
             if metadata.get("jar_path", [""])[0]:
                 target.jar_path = label_to_path(metadata["jar_path"][0])
+            target.sdk_version = metadata.get('sdk_version', ['current'])[0]
             deps = metadata.get("all_deps", {})
             log.info('Found Java Target %s', target.name)
         elif target.script == "//build/android/gyp/aidl.py":
@@ -551,7 +556,7 @@ class GnParser(object):
         # accessible headers.
         public_headers = [x for x in desc.get('public', []) if x != '*']
         target.public_headers.update(public_headers)
-
+        target.build_file_path = _get_build_path_from_label(target_name)
         target.arch[arch].cflags.update(
             desc.get('cflags', []) + desc.get('cflags_cc', []))
         target.libs.update(desc.get('libs', []))
@@ -578,6 +583,8 @@ class GnParser(object):
             elif dep.type == 'group':
                 target.update(dep,
                               arch)  # Bubble up groups's cflags/ldflags etc.
+                target.transitive_jni_java_sources.update(
+                    dep.transitive_jni_java_sources)
             elif dep.type in ['action', 'action_foreach', 'copy']:
                 target.arch[arch].deps.add(dep.name)
                 target.transitive_jni_java_sources.update(

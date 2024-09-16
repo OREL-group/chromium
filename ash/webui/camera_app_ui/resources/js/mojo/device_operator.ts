@@ -107,7 +107,7 @@ function getMetadataData(
     // Disabling check because this code assumes that metadata.entries is
     // either undefined or defined, but at runtime Mojo will always set this
     // to null or defined.
-    // TODO(crbug.com/1442785): If this function only handles data
+    // TODO(crbug.com/40267104): If this function only handles data
     // from Mojo, the assertion above should be changed to null and the
     // null error suppression can be removed.
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -719,34 +719,6 @@ export class DeviceOperator {
       closeEndpoint(device);
       this.removeDevice(deviceId);
     }
-  }
-
-  /**
-   * Enables/Disables virtual device on target camera device. The extra
-   * stream will be reported as virtual video device from
-   * navigator.mediaDevices.enumerateDevices().
-   *
-   * @param deviceId The id of target camera device.
-   * @param enabled True for enabling virtual device.
-   */
-  async setVirtualDeviceEnabled(deviceId: string, enabled: boolean):
-      Promise<void> {
-    assert(this.deviceProvider !== null);
-    // TODO(pihsun): Check if there's actually case that deviceId is empty
-    // string here.
-    if (deviceId !== '') {
-      await this.deviceProvider.setVirtualDeviceEnabled(deviceId, enabled);
-    }
-  }
-
-  /**
-   * Enables/Disables the multiple streams feature for video recording on the
-   * target camera device.
-   */
-  async setMultipleStreamsEnabled(deviceId: string, enabled: boolean):
-      Promise<void> {
-    const device = await this.getDevice(deviceId);
-    await device.setMultipleStreamsEnabled(enabled);
   }
 
   /**

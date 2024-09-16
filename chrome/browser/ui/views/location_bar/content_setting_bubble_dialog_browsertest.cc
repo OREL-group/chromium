@@ -107,7 +107,7 @@ using ImageType = ContentSettingImageModel::ImageType;
 
 class ContentSettingBubbleDialogTest
     : public DialogBrowserTest,
-      public testing::WithParamInterface<HostContentSettingsMap::ProviderType> {
+      public testing::WithParamInterface<content_settings::ProviderType> {
  public:
   ContentSettingBubbleDialogTest()
       : resetter_(&ChromeContentBrowserClient::
@@ -209,7 +209,7 @@ void ContentSettingBubbleDialogTest::ApplyContentSettingsForType(
       break;
     }
     case ContentSettingsType::PROTOCOL_HANDLERS:
-      chrome::PageSpecificContentSettingsDelegate::FromWebContents(web_contents)
+      PageSpecificContentSettingsDelegate::FromWebContents(web_contents)
           ->set_pending_protocol_handler(
               custom_handlers::ProtocolHandler::CreateProtocolHandler(
                   "mailto", GURL("https://example.com/")));
@@ -425,5 +425,5 @@ IN_PROC_BROWSER_TEST_P(ContentSettingBubbleDialogTest,
 INSTANTIATE_TEST_SUITE_P(
     ,
     ContentSettingBubbleDialogTest,
-    testing::Values(HostContentSettingsMap::SUPERVISED_PROVIDER,
-                    HostContentSettingsMap::DEFAULT_PROVIDER));
+    testing::Values(content_settings::ProviderType::kSupervisedProvider,
+                    content_settings::ProviderType::kDefaultProvider));

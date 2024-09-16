@@ -4,6 +4,7 @@
 
 #import <UIKit/UIKit.h>
 #import <XCTest/XCTest.h>
+
 #import <map>
 #import <memory>
 
@@ -11,11 +12,15 @@
 #import "base/strings/stringprintf.h"
 #import "base/strings/sys_string_conversions.h"
 #import "build/branding_buildflags.h"
+#import "components/browsing_data/core/browsing_data_utils.h"
+#import "components/browsing_data/core/pref_names.h"
 #import "components/strings/grit/components_strings.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
+#import "ios/chrome/browser/shared/ui/elements/activity_overlay_egtest_util.h"
 #import "ios/chrome/browser/signin/model/test_constants.h"
 #import "ios/chrome/browser/ui/authentication/signin/signin_constants.h"
 #import "ios/chrome/browser/ui/authentication/signin_matchers.h"
+#import "ios/chrome/browser/ui/settings/clear_browsing_data/features.h"
 #import "ios/chrome/browser/ui/settings/settings_app_interface.h"
 #import "ios/chrome/grit/ios_branded_strings.h"
 #import "ios/chrome/grit/ios_strings.h"
@@ -29,9 +34,10 @@
 #import "ui/base/l10n/l10n_util.h"
 #import "url/gurl.h"
 
+using chrome_test_util::BrowsingDataButtonMatcher;
+using chrome_test_util::BrowsingDataConfirmButtonMatcher;
 using chrome_test_util::ButtonWithAccessibilityLabelId;
 using chrome_test_util::ClearBrowsingDataButton;
-using chrome_test_util::ClearBrowsingDataView;
 using chrome_test_util::ClearBrowsingHistoryButton;
 using chrome_test_util::ClearCacheButton;
 using chrome_test_util::ClearCookiesButton;
@@ -89,7 +95,19 @@ id<GREYMatcher> ClearBrowsingDataCell() {
         performAction:grey_tap()];
   }
 
+  // Shutdown network process after tests run to avoid hanging from
+  // clearing browsing history.
+  [ChromeEarlGrey killWebKitNetworkProcess];
+
   [super tearDown];
+}
+
+- (AppLaunchConfiguration)appConfigurationForTestCase {
+  AppLaunchConfiguration config = [super appConfigurationForTestCase];
+  config.relaunch_policy = ForceRelaunchByCleanShutdown;
+  config.features_enabled.push_back(kIOSQuickDelete);
+
+  return config;
 }
 
 // Performs the steps to clear browsing data. Must be called on the
@@ -97,19 +115,11 @@ id<GREYMatcher> ClearBrowsingDataCell() {
 // scheduled for removal.
 - (void)clearBrowsingData {
   [ChromeEarlGreyUI tapClearBrowsingDataMenuButton:ClearBrowsingDataButton()];
-  [[EarlGrey selectElementWithMatcher:chrome_test_util::
-                                          ConfirmClearBrowsingDataButton()]
-      performAction:grey_tap()];
+  [ChromeEarlGreyUI waitForAppToIdle];
 
-  // Before returning, make sure that the top of the Clear Browsing Data
-  // settings screen is visible to match the state at the start of the method.
-  // TODO(crbug.com/973708): On iOS 13 the settings menu appears as a card that
-  // can be dismissed with a downward swipe.  This make it difficult to use a
-  // gesture to return to the top of the Clear Browsing Data screen, so scroll
-  // programatically instead. Remove this custom action if we switch back to a
-  // fullscreen presentation.
-  [[EarlGrey selectElementWithMatcher:ClearBrowsingDataView()]
-      performAction:[ChromeActionsAppInterface scrollToTop]];
+  // Wait for the browsing data button to disappear.
+  [ChromeEarlGrey
+      waitForUIElementToDisappearWithMatcher:BrowsingDataButtonMatcher()];
 }
 
 // From the NTP, clears the cookies and site data via the UI.
@@ -118,6 +128,9 @@ id<GREYMatcher> ClearBrowsingDataCell() {
   [ChromeEarlGreyUI tapSettingsMenuButton:SettingsMenuPrivacyButton()];
   [ChromeEarlGreyUI tapPrivacyMenuButton:ClearBrowsingDataCell()];
 
+  // Tap on the browsing data subpage.
+  [ChromeEarlGreyUI tapPrivacyMenuButton:BrowsingDataButtonMatcher()];
+
   // "Browsing history", "Cookies, Site Data" and "Cached Images and Files"
   // are the default checked options when the prefs are registered. Uncheck
   // "Browsing history" and "Cached Images and Files".
@@ -125,6 +138,10 @@ id<GREYMatcher> ClearBrowsingDataCell() {
   [[EarlGrey selectElementWithMatcher:ClearBrowsingHistoryButton()]
       performAction:grey_tap()];
   [[EarlGrey selectElementWithMatcher:ClearCacheButton()]
+      performAction:grey_tap()];
+
+  // Tap the confirm button to save the prefs.
+  [[EarlGrey selectElementWithMatcher:BrowsingDataConfirmButtonMatcher()]
       performAction:grey_tap()];
 
   [self clearBrowsingData];
@@ -259,10 +276,16 @@ id<GREYMatcher> ClearBrowsingDataCell() {
 // local server to navigate to a page that sets then tests a cookie, and then
 // clears the cookie and tests it is not set.
 - (void)testClearCookies {
+  // Set pref to the last hour.
+  [ChromeEarlGrey
+      setIntegerValue:static_cast<int>(browsing_data::TimePeriod::LAST_HOUR)
+          forUserPref:browsing_data::prefs::kDeleteTimePeriod];
+
   GREYAssertTrue(self.testServer->Start(), @"Server did not start.");
 
   // Load `kUrl` and check that cookie is not set.
   [ChromeEarlGrey loadURL:self.testServer->GetURL("/echo")];
+  [ChromeEarlGrey waitForWebStateContainingText:"Echo"];
 
   NSDictionary* cookies = [ChromeEarlGrey cookies];
   GREYAssertEqual(0U, cookies.count, @"No cookie should be found.");
@@ -273,8 +296,10 @@ id<GREYMatcher> ClearBrowsingDataCell() {
       "/set-cookie?%s=%s", base::SysNSStringToUTF8(kCookieName).c_str(),
       base::SysNSStringToUTF8(kCookieValue).c_str());
   [ChromeEarlGrey loadURL:self.testServer->GetURL(setCookiePath)];
+  [ChromeEarlGrey waitForPageToFinishLoading];
 
   [ChromeEarlGrey loadURL:self.testServer->GetURL("/echo")];
+  [ChromeEarlGrey waitForWebStateContainingText:"Echo"];
 
   cookies = [ChromeEarlGrey cookies];
   GREYAssertEqualObjects(kCookieValue, cookies[kCookieName],
@@ -292,6 +317,7 @@ id<GREYMatcher> ClearBrowsingDataCell() {
 
   // Reload and test that there are no cookies left.
   [ChromeEarlGrey loadURL:self.testServer->GetURL("/echo")];
+  [ChromeEarlGrey waitForPageToFinishLoading];
 
   cookies = [ChromeEarlGrey cookies];
   GREYAssertEqual(0U, cookies.count, @"No cookie should be found.");

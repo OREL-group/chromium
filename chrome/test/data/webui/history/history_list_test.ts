@@ -3,12 +3,12 @@
 // found in the LICENSE file.
 
 import type {HistoryAppElement, HistoryEntry, HistoryItemElement, HistoryListElement, HistoryToolbarElement} from 'chrome://history/history.js';
-import {BrowserServiceImpl, ensureLazyLoaded} from 'chrome://history/history.js';
+import {BrowserServiceImpl, CrRouter, ensureLazyLoaded} from 'chrome://history/history.js';
 import {webUIListenerCallback} from 'chrome://resources/js/cr.js';
 import {isMac} from 'chrome://resources/js/platform.js';
-import {pressAndReleaseKeyOn} from 'chrome://resources/polymer/v3_0/iron-test-helpers/mock-interactions.js';
 import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 import {assertDeepEquals, assertEquals, assertFalse, assertGT, assertNotEquals, assertTrue} from 'chrome://webui-test/chai_assert.js';
+import {pressAndReleaseKeyOn} from 'chrome://webui-test/keyboard_mock_interactions.js';
 import {flushTasks, waitAfterNextRender} from 'chrome://webui-test/polymer_test_util.js';
 
 import {TestBrowserService} from './test_browser_service.js';
@@ -38,6 +38,7 @@ suite('HistoryListTest', function() {
   setup(function() {
     window.history.replaceState({}, '', '/');
     document.body.innerHTML = window.trustedTypes!.emptyHTML;
+    CrRouter.resetForTesting();
     testService = new TestBrowserService();
     BrowserServiceImpl.setInstance(testService);
 
@@ -70,6 +71,23 @@ suite('HistoryListTest', function() {
   function getHistoryData(): HistoryEntry[] {
     return element.$['infinite-list'].items! as HistoryEntry[];
   }
+
+  test('IsEmpty', async () => {
+    await finishSetup([]);
+    await flushTasks();
+    assertTrue(element.isEmpty);
+
+    // Load some results.
+    testService.resetResolver('queryHistory');
+    testService.setQueryResult(
+        {info: createHistoryInfo(), value: ADDITIONAL_RESULTS});
+    element.dispatchEvent(new CustomEvent(
+        'query-history', {detail: true, bubbles: true, composed: true}));
+    await testService.whenCalled('queryHistoryContinuation');
+    await flushTasks();
+
+    assertFalse(element.isEmpty);
+  });
 
   test('DeletingSingleItem', async function() {
     await finishSetup([createHistoryEntry('2015-01-01', 'http://example.com')]);
@@ -505,7 +523,7 @@ suite('HistoryListTest', function() {
 
     // Key event should be ignored.
     assertEquals(1, testService.getCallCount('removeVisits'));
-    pressAndReleaseKeyOn(document.body, 46, '', 'Delete');
+    pressAndReleaseKeyOn(document.body, 46, [], 'Delete');
 
     await flushTasks();
     assertEquals(1, testService.getCallCount('removeVisits'));
@@ -546,7 +564,7 @@ suite('HistoryListTest', function() {
     const items = element.shadowRoot!.querySelectorAll('history-item');
 
     // Dialog should not appear when there is no item selected.
-    pressAndReleaseKeyOn(document.body, 46, '', 'Delete');
+    pressAndReleaseKeyOn(document.body, 46, [], 'Delete');
     await flushTasks();
     assertFalse(dialog.open);
 
@@ -560,13 +578,13 @@ suite('HistoryListTest', function() {
 
     assertEquals(2, toolbar.count);
 
-    pressAndReleaseKeyOn(document.body, 46, '', 'Delete');
+    pressAndReleaseKeyOn(document.body, 46, [], 'Delete');
     await flushTasks();
     assertTrue(dialog.open);
     element.shadowRoot!.querySelector<HTMLElement>('.cancel-button')!.click();
     assertFalse(dialog.open);
 
-    pressAndReleaseKeyOn(document.body, 8, '', 'Backspace');
+    pressAndReleaseKeyOn(document.body, 8, [], 'Backspace');
     await flushTasks();
     assertTrue(dialog.open);
     element.shadowRoot!.querySelector<HTMLElement>('.action-button')!.click();
@@ -581,8 +599,7 @@ suite('HistoryListTest', function() {
     // Ensure that state changes are always mirrored to the URL.
     await finishSetup([]);
     testService.resetResolver('queryHistory');
-    app.shadowRoot!.querySelector('history-router')!.shadowRoot!
-        .querySelector('iron-location')!.dwellTime = 0;
+    CrRouter.getInstance().setDwellTime(0);
 
     testService.setQueryResult({
       info: createHistoryInfo('something else'),
@@ -662,6 +679,13 @@ suite('HistoryListTest', function() {
     await flushTasks();
     assertEquals(app.scrollTarget, element.$['infinite-list'].scrollTarget);
     assertEquals(app.scrollTarget, element.$['scroll-threshold'].scrollTarget);
+  });
+
+  test('SetsScrollOffset', async () => {
+    await finishSetup(TEST_HISTORY_RESULTS);
+    await flushTasks();
+    element.scrollOffset = 123;
+    assertEquals(123, element.$['infinite-list'].scrollOffset);
   });
 
   teardown(function() {

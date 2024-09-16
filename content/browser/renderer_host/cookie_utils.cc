@@ -72,29 +72,13 @@ void PotentiallyRecordNonAsciiCookieNameValue(
   }
 }
 
+// Relies on checks in RecordPartitionedCookiesUKMs to confirm that that the
+// cookie name is not "receive-cookie-deprecation", that cookie is first party
+// partitioned and the RenderFrameHost is not prerendering.
 void RecordFirstPartyPartitionedCookieCrossSiteContextUKM(
     RenderFrameHostImpl* render_frame_host_impl,
-    const net::CanonicalCookie& cookie) {
-  // Our data collection policy disallows collecting UKMs while prerendering.
-  // See //content/browser/preloading/prerender/README.md and ask the team to
-  // explore options to record data for prerendering pages if we need to
-  // support the case.
-  if (render_frame_host_impl->IsInLifecycleState(
-          RenderFrameHost::LifecycleState::kPrerendering)) {
-    return;
-  }
-
-  if (!cookie.IsFirstPartyPartitioned()) {
-    return;
-  }
-
-  // Cookies_FirstPartyPartitionedInCrossSiteContextV3 measures cookies
-  // without the name of 'receive-cookie-deprecation'. Return here to ensure
-  // that the metric does not include those cookies.
-  if (cookie.Name() == "receive-cookie-deprecation") {
-    return;
-  }
-
+    const net::CanonicalCookie& cookie,
+    const ukm::SourceId& source_id) {
   // Same-site embed with cross-site ancestors (ABA embeds) have a null site
   // for cookies since it is a cross-site context. If the result of
   // ComputeSiteForCookies is first-party that means we are not in an ABA
@@ -104,29 +88,49 @@ void RecordFirstPartyPartitionedCookieCrossSiteContextUKM(
           GURL(base::StrCat({url::kHttpsScheme, url::kStandardSchemeSeparator,
                              cookie.DomainWithoutDot()})));
 
-  ukm::builders::Cookies_FirstPartyPartitionedInCrossSiteContextV3(
-      render_frame_host_impl->GetPageUkmSourceId())
+  ukm::builders::Cookies_FirstPartyPartitionedInCrossSiteContextV3(source_id)
       .SetCookiePresent(has_cross_site_ancestor)
       .Record(ukm::UkmRecorder::Get());
 }
 
-void RecordPartitionedCookieUseUKM(RenderFrameHost* rfh,
-                                   bool partitioned_cookies_exist) {
+// Relies on checks in RecordPartitionedCookiesUKMs to confirm that that the
+// cookie is partitioned, the cookie name is not
+// "receive-cookie-deprecation" and the RenderFrameHost is not prerendering.
+void RecordPartitionedCookieUseV2UKM(RenderFrameHost* rfh,
+                                     const net::CanonicalCookie& cookie,
+                                     const ukm::SourceId& source_id) {
+  ukm::builders::PartitionedCookiePresentV2(source_id)
+      .SetPartitionedCookiePresentV2(true)
+      .Record(ukm::UkmRecorder::Get());
+}
+
+void RecordPartitionedCookiesUKMs(RenderFrameHostImpl* render_frame_host_impl,
+                                  const net::CanonicalCookie& cookie) {
   // Our data collection policy disallows collecting UKMs while prerendering.
   // See //content/browser/preloading/prerender/README.md and ask the team to
   // explore options to record data for prerendering pages if we need to
   // support the case.
-  if (rfh->IsInLifecycleState(RenderFrameHost::LifecycleState::kPrerendering)) {
+  if (render_frame_host_impl->IsInLifecycleState(
+          RenderFrameHost::LifecycleState::kPrerendering)) {
     return;
   }
-  if (!partitioned_cookies_exist) {
-    return;
-  }
-  ukm::SourceId source_id = rfh->GetPageUkmSourceId();
 
-  ukm::builders::PartitionedCookiePresent(source_id)
-      .SetPartitionedCookiePresent(partitioned_cookies_exist)
-      .Record(ukm::UkmRecorder::Get());
+  // Cookies_FirstPartyPartitionedInCrossSiteContextV3 and
+  // PartitionedCookiePresentV2 both measure cookies
+  // without the name of 'receive-cookie-deprecation'. Return here to ensure
+  // that the metrics do not include those cookies.
+  if (cookie.Name() == "receive-cookie-deprecation") {
+    return;
+  }
+
+  ukm::SourceId source_id = render_frame_host_impl->GetPageUkmSourceId();
+
+  if (cookie.IsFirstPartyPartitioned()) {
+    RecordFirstPartyPartitionedCookieCrossSiteContextUKM(render_frame_host_impl,
+                                                         cookie, source_id);
+  }
+
+  RecordPartitionedCookieUseV2UKM(render_frame_host_impl, cookie, source_id);
 }
 
 void RecordRedirectContextDowngradeUKM(RenderFrameHost* rfh,
@@ -222,7 +226,7 @@ bool ShouldReportLegacyTechIssueForStatus(
 
 // Logs cookie issues to DevTools Issues Panel and logs events to UseCounters
 // and UKM for a single cookie-accessed event.
-// TODO(crbug.com/977040): Remove when no longer needed.
+// TODO(crbug.com/40632967): Remove when no longer needed.
 void EmitCookieWarningsAndMetricsOnce(
     RenderFrameHostImpl* rfh,
     const network::mojom::CookieAccessDetailsPtr& cookie_details) {
@@ -309,11 +313,9 @@ void EmitCookieWarningsAndMetricsOnce(
          // usage of the Partitioned attribute.
          !cookie->cookie_or_line->get_cookie().PartitionKey()->nonce());
 
-    RecordPartitionedCookieUseUKM(rfh, partitioned_cookies_exist);
 
     if (partitioned_cookies_exist) {
-      RecordFirstPartyPartitionedCookieCrossSiteContextUKM(
-          rfh, cookie->cookie_or_line->get_cookie());
+      RecordPartitionedCookiesUKMs(rfh, cookie->cookie_or_line->get_cookie());
     }
 
     breaking_context_downgrade =
@@ -465,7 +467,7 @@ void ReportLegacyTechEvent(
       }
 
       LegacyTechCookieIssueDetails cookie_issue_details = {
-          cookie_details->url.spec(),
+          /* transfer_or_script_url= */ cookie_details->url,
           cookie->cookie_or_line->get_cookie().Name(),
           cookie->cookie_or_line->get_cookie().Domain(),
           cookie->cookie_or_line->get_cookie().Path(),
@@ -504,10 +506,10 @@ void SplitCookiesIntoAllowedAndBlocked(
                                   cookie_details->url,
                                   first_party_url,
                                   {},
-                                  cookie_details->count,
                                   /* blocked_by_policy=*/false,
                                   cookie_details->is_ad_tagged,
-                                  cookie_details->cookie_setting_overrides});
+                                  cookie_details->cookie_setting_overrides,
+                                  cookie_details->site_for_cookies});
   int allowed_count = base::ranges::count_if(
       cookie_details->cookie_list,
       [](const network::mojom::CookieOrLineWithAccessResultPtr&
@@ -516,16 +518,16 @@ void SplitCookiesIntoAllowedAndBlocked(
         // check for !(net::CookieInclusionStatus::EXCLUDE_USER_PREFERENCES).
         return cookie_and_access_result->access_result.status.IsInclude();
       });
-  allowed->cookie_list.reserve(allowed_count);
+  allowed->cookie_access_result_list.reserve(allowed_count);
 
   *blocked = CookieAccessDetails({cookie_details->type,
                                   cookie_details->url,
                                   first_party_url,
                                   {},
-                                  cookie_details->count,
                                   /* blocked_by_policy=*/true,
                                   cookie_details->is_ad_tagged,
-                                  cookie_details->cookie_setting_overrides});
+                                  cookie_details->cookie_setting_overrides,
+                                  cookie_details->site_for_cookies});
   int blocked_count = base::ranges::count_if(
       cookie_details->cookie_list,
       [](const network::mojom::CookieOrLineWithAccessResultPtr&
@@ -533,16 +535,18 @@ void SplitCookiesIntoAllowedAndBlocked(
         return cookie_and_access_result->access_result.status
             .ExcludedByUserPreferencesOrTPCD();
       });
-  blocked->cookie_list.reserve(blocked_count);
+  blocked->cookie_access_result_list.reserve(blocked_count);
 
   for (const auto& cookie_and_access_result : cookie_details->cookie_list) {
     if (cookie_and_access_result->access_result.status
             .ExcludedByUserPreferencesOrTPCD()) {
-      blocked->cookie_list.emplace_back(
-          std::move(cookie_and_access_result->cookie_or_line->get_cookie()));
+      blocked->cookie_access_result_list.emplace_back(
+          std::move(cookie_and_access_result->cookie_or_line->get_cookie()),
+          cookie_and_access_result->access_result);
     } else if (cookie_and_access_result->access_result.status.IsInclude()) {
-      allowed->cookie_list.emplace_back(
-          std::move(cookie_and_access_result->cookie_or_line->get_cookie()));
+      allowed->cookie_access_result_list.emplace_back(
+          std::move(cookie_and_access_result->cookie_or_line->get_cookie()),
+          cookie_and_access_result->access_result);
     }
   }
 }
@@ -552,9 +556,7 @@ void EmitCookieWarningsAndMetrics(
     NavigationRequest* navigation_request,
     const network::mojom::CookieAccessDetailsPtr& cookie_details) {
   ReportLegacyTechEvent(rfh, navigation_request, cookie_details);
-  for (size_t i = 0; i < cookie_details->count; ++i) {
-    EmitCookieWarningsAndMetricsOnce(rfh, cookie_details);
-  }
+  EmitCookieWarningsAndMetricsOnce(rfh, cookie_details);
 }
 
 }  // namespace content

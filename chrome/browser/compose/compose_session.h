@@ -8,6 +8,7 @@
 #include <memory>
 #include <stack>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/check_op.h"
@@ -19,7 +20,6 @@
 #include "chrome/common/compose/compose.mojom.h"
 #include "components/autofill/core/common/unique_ids.h"
 #include "components/compose/core/browser/compose_metrics.h"
-#include "components/optimization_guide/core/model_quality/model_quality_logs_uploader.h"
 #include "components/optimization_guide/core/optimization_guide_model_executor.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -38,6 +38,10 @@ class WebContents;
 namespace content_extraction {
 struct InnerTextResult;
 }  // namespace content_extraction
+
+namespace ui {
+struct AXTreeUpdate;
+}
 
 // A simple interface to reroute inner text calls to allow for test mocks.
 class InnerTextProvider {
@@ -75,13 +79,21 @@ class ComposeSession
   // form field on which it was triggered.
   using ComposeCallback = base::OnceCallback<void(const std::u16string&)>;
 
+  class Observer {
+   public:
+    virtual void OnSessionComplete(
+        autofill::FieldGlobalId node_id,
+        compose::ComposeSessionCloseReason close_reason,
+        const compose::ComposeSessionEvents& events) = 0;
+  };
   ComposeSession(
       content::WebContents* web_contents,
       optimization_guide::OptimizationGuideModelExecutor* executor,
-      optimization_guide::ModelQualityLogsUploader* model_quality_logs_uploader,
       base::Token session_id,
       InnerTextProvider* inner_text,
-      autofill::FieldRendererId node_id,
+      autofill::FieldGlobalId node_id,
+      bool is_page_language_supported,
+      Observer* observer,
       ComposeCallback callback = base::NullCallback());
   ~ComposeSession() override;
 
@@ -155,14 +167,16 @@ class ComposeSession
   void EditResult(const std::string& new_result,
                   EditResultCallback callback) override;
 
-  void PrintCurrentHistoryState();
-
   // Non-ComposeSessionUntrustedPageHandler Methods
 
-  // Notifies the session that a new dialog is opening and starts refreshing
-  // inner text. Calls Compose immediately if the initial input is valid.
-  void InitializeWithText(const std::optional<std::string>& text,
-                          const bool text_selected);
+  // Notifies the session that a new dialog is opening and starts. Saves the
+  // |selected_text| for use as an initial prompt and refreshes innertext.
+  void InitializeWithText(const std::string_view selected_text);
+
+  // If all pre-conditions are acknowledged starts refreshing page context. If
+  // autocompose is enabled and has not been tried yet this session will also
+  // start a compose request.
+  void MaybeRefreshPageContext(bool has_selection);
 
   // Returns true if the feedback page can be shown. If
   // |skip_feedback_ui_for_testing_| is true then this always returns false and
@@ -180,9 +194,6 @@ class ComposeSession
     callback_ = std::move(callback);
   }
 
-  // Sets an initial input value for the session given by the renderer.
-  void set_initial_input(const std::string input) { initial_input_ = input; }
-
   void set_collect_inner_text(bool collect_inner_text) {
     collect_inner_text_ = collect_inner_text;
   }
@@ -199,19 +210,25 @@ class ComposeSession
 
   bool get_fre_complete() { return fre_complete_; }
 
+  void set_started_with_proactive_nudge() {
+    session_events_.started_with_proactive_nudge = true;
+  }
+
   void SetFirstRunCompleted();
 
-  // Refresh the inner text on session resumption.
-  void RefreshInnerText();
-
   void SetFirstRunCloseReason(
-      compose::ComposeFirstRunSessionCloseReason close_reason);
+      compose::ComposeFreOrMsbbSessionCloseReason close_reason);
 
-  void SetMSBBCloseReason(compose::ComposeMSBBSessionCloseReason close_reason);
+  void SetMSBBCloseReason(
+      compose::ComposeFreOrMsbbSessionCloseReason close_reason);
 
   void SetCloseReason(compose::ComposeSessionCloseReason close_reason);
 
+  void LaunchHatsSurvey(compose::ComposeSessionCloseReason close_reason);
+
   void SetSkipFeedbackUiForTesting(bool allowed);
+
+  bool HasExpired();
 
  private:
   void ProcessError(compose::EvalLocation eval_location,
@@ -234,10 +251,6 @@ class ComposeSession
   void AddNewResponseToHistory(std::unique_ptr<ComposeState> new_state);
   void EraseForwardStatesInHistory();
 
-  // Adds page content to the session context.
-  void AddPageContentToSession(std::string inner_text,
-                               std::optional<uint64_t> node_offset);
-
   // Makes compose or rewrite request.
   void MakeRequest(optimization_guide::proto::ComposeRequest request,
                    compose::ComposeRequestReason request_reason,
@@ -259,10 +272,28 @@ class ComposeSession
       int request_id,
       std::unique_ptr<content_extraction::InnerTextResult> result);
 
+  void UpdateAXSnapshotAndContinueComposeIfNecessary(int request_id,
+                                                     ui::AXTreeUpdate& update);
+
+  // Continues the compose request if all page context has been received.
+  // Note that this adds necessary metadata that may have been populated from
+  // innerText or AXSnapshot (or both).
+  void TryContinueComposeWithContext();
+
+  // Returns true if the necessary page context has been received.
+  bool HasNecessaryPageContext() const;
+
   void SetQualityLogEntryUponError(
       std::unique_ptr<optimization_guide::ModelQualityLogEntry>,
       base::TimeDelta request_time,
       bool was_input_edited);
+
+  // TODO(crbug.com/351040914): We should refactor different context pieces into
+  // a common flow.
+  // Refresh the inner text on session resumption.
+  void RefreshInnerText();
+  // Refresh the ax tree on session resumption.
+  void RefreshAXSnapshot();
 
   // Returns a reference to the ComposeState at `history_current_index`, or at
   // `offset` from the current index if `offset` is specified, if it exists.
@@ -296,26 +327,33 @@ class ComposeSession
   std::vector<std::unique_ptr<ComposeState>> history_;
 
   // Renderer provided text selection.
-  std::string initial_input_;
-  // True if the user selected text when the dialog is opened.
-  bool text_selected_;
+  std::string initial_input_ = "";
+  // True if there was selected text when the dialog was last opened.
+  bool currently_has_selection_ = false;
 
   // The state of the MSBB preference
-  bool current_msbb_state_;
-  bool msbb_initially_off_;
+  bool current_msbb_state_ = false;
+  bool msbb_initially_off_ = false;
 
   // Reason that a compose msbb session was exited, used for metrics.
-  compose::ComposeMSBBSessionCloseReason msbb_close_reason_;
+  compose::ComposeFreOrMsbbSessionCloseReason msbb_close_reason_{
+      compose::ComposeFreOrMsbbSessionCloseReason::kAbandoned};
   // State tracking whether the FRE has been completed
   bool fre_complete_ = false;
 
+  // True if we have checked if autocompose is possible this session.
+  bool has_checked_autocompose_ = false;
+
   // Reason that a FRE session was exited, used for metrics.
-  compose::ComposeFirstRunSessionCloseReason fre_close_reason_;
+  compose::ComposeFreOrMsbbSessionCloseReason fre_close_reason_{
+      compose::ComposeFreOrMsbbSessionCloseReason::kAbandoned};
 
   // Reason that a compose session was exited, used for metrics.
-  compose::ComposeSessionCloseReason close_reason_;
+  compose::ComposeSessionCloseReason close_reason_{
+      compose::ComposeSessionCloseReason::kAbandoned};
   // Reason that a compose session was exited, used for quality logging.
-  optimization_guide::proto::FinalStatus final_status_;
+  optimization_guide::proto::FinalStatus final_status_{
+      optimization_guide::proto::FinalStatus::STATUS_UNSPECIFIED};
 
   // Tracks how long a session has been open.
   std::unique_ptr<base::ElapsedTimer> session_duration_;
@@ -326,6 +364,8 @@ class ComposeSession
   // ComposeSession is owned by WebContentsUserData, so `web_contents_` outlives
   // `this`.
   raw_ptr<content::WebContents> web_contents_;
+
+  raw_ptr<Observer> observer_;
 
   // A callback to Autofill that triggers filling the field.
   ComposeCallback callback_;
@@ -339,8 +379,12 @@ class ComposeSession
 
   // Increasing counter used to identify most recent request for inner-text.
   int current_inner_text_request_id_ = 0;
+  // Increasing counter used to identify most recent request for ax snapshot.
+  int current_ax_snapshot_request_id_ = 0;
 
   bool collect_inner_text_;
+
+  bool collect_ax_snapshot_ = false;
 
   // This pointer is to a class that owns and creates this class, so will
   // outlive the session.
@@ -355,19 +399,21 @@ class ComposeSession
   // If true, the inner-text was received.
   bool got_inner_text_ = false;
 
-  autofill::FieldRendererId node_id_;
+  // If true, the ax snapshot was received.
+  bool got_ax_snapshot_ = false;
+
+  autofill::FieldGlobalId node_id_;
+
+  // Information about the page assessed language being supported by Compose.
+  bool is_page_language_supported_;
 
   base::OnceClosure continue_compose_;
-
-  // This pointer is obtained form a BrowserContextKeyedService.
-  // TODO(b/314328835) Add a BrowserContextKeyedServiceShutdownNotifierFactory
-  // to nullify when keyed service is destyroyed.
-  raw_ptr<optimization_guide::ModelQualityLogsUploader>
-      model_quality_logs_uploader_;
 
   base::Token session_id_;
 
   bool skip_feedback_ui_for_testing_ = false;
+
+  std::optional<optimization_guide::proto::ComposePageMetadata> page_metadata_;
 
   base::WeakPtrFactory<ComposeSession> weak_ptr_factory_;
 };

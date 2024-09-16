@@ -94,7 +94,6 @@ std::string ToString(ItemAction action) {
       return "ViewDetailsInBrowser";
   }
   NOTREACHED();
-  return std::string();
 }
 
 // Records the counts of the specified holding space `items` to the item count

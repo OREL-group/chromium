@@ -12,11 +12,14 @@
 #include "ash/ash_export.h"
 #include "ash/picker/views/picker_category_type.h"
 #include "ash/picker/views/picker_page_view.h"
+#include "ash/picker/views/picker_submenu_controller.h"
 #include "ash/public/cpp/picker/picker_category.h"
+#include "ash/public/cpp/picker/picker_search_result.h"
 #include "base/containers/span.h"
 #include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/timer/timer.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 
 namespace views {
@@ -25,74 +28,83 @@ class View;
 
 namespace ash {
 
-class PickerClipboardProvider;
-class PickerSearchResult;
+class PickerAssetFetcher;
+class PickerClipboardHistoryProvider;
+class PickerPreviewBubbleController;
 class PickerSectionListView;
 class PickerSectionView;
+class PickerZeroStateViewDelegate;
 
 class ASH_EXPORT PickerZeroStateView : public PickerPageView {
   METADATA_HEADER(PickerZeroStateView, PickerPageView)
 
  public:
-  // Indicates the user has selected a category.
-  using SelectCategoryCallback =
-      base::RepeatingCallback<void(PickerCategory category)>;
-
-  // Indicates the user has selected a result.
-  using SelectSearchResultCallback =
-      base::RepeatingCallback<void(const PickerSearchResult& result)>;
-
+  // `delegate`, `asset_fetcher`, `submenu_controller`, `preview_controller`
+  // must remain valid for the lifetime of this class.
   explicit PickerZeroStateView(
+      PickerZeroStateViewDelegate* delegate,
       base::span<const PickerCategory> available_categories,
-      bool show_suggested_results,
       int picker_view_width,
-      SelectCategoryCallback select_category_callback,
-      SelectSearchResultCallback select_result_callback);
+      PickerAssetFetcher* asset_fetcher,
+      PickerSubmenuController* submenu_controller,
+      PickerPreviewBubbleController* preview_controller);
   PickerZeroStateView(const PickerZeroStateView&) = delete;
   PickerZeroStateView& operator=(const PickerZeroStateView&) = delete;
   ~PickerZeroStateView() override;
 
   // PickerPageView:
-  bool DoPseudoFocusedAction() override;
-  bool MovePseudoFocusUp() override;
-  bool MovePseudoFocusDown() override;
-  bool MovePseudoFocusLeft() override;
-  bool MovePseudoFocusRight() override;
-  void AdvancePseudoFocus(PseudoFocusDirection direction) override;
+  views::View* GetTopItem() override;
+  views::View* GetBottomItem() override;
+  views::View* GetItemAbove(views::View* item) override;
+  views::View* GetItemBelow(views::View* item) override;
+  views::View* GetItemLeftOf(views::View* item) override;
+  views::View* GetItemRightOf(views::View* item) override;
+  bool ContainsItem(views::View* item) override;
 
   std::map<PickerCategoryType, raw_ptr<PickerSectionView>>
-  section_views_for_testing() const {
-    return section_views_;
+  category_section_views_for_testing() const {
+    return category_section_views_;
   }
 
-  PickerSectionView* SuggestedSectionForTesting() const {
-    return suggested_section_view_;
+  PickerSectionView* primary_section_view_for_testing() {
+    return primary_section_view_;
   }
 
  private:
-  // Gets or creates the section to contain `category`.
+  void OnCategorySelected(PickerCategory category);
+  void OnResultSelected(const PickerSearchResult& result);
+  void RecordCapsLockIgnored(bool ignored);
+
+  // Gets or creates the category type section for `category_type`.
+  PickerSectionView* GetOrCreateSectionView(PickerCategoryType category_type);
+
+  // Gets or creates the category type section to contain `category`.
   PickerSectionView* GetOrCreateSectionView(PickerCategory category);
 
-  void SetPseudoFocusedView(views::View* view);
-
-  void ScrollPseudoFocusedViewToVisible();
-
   void OnFetchSuggestedResults(std::vector<PickerSearchResult> result);
+  void AddResultToSection(const PickerSearchResult& result,
+                          PickerSectionView* section);
 
-  SelectSearchResultCallback select_result_callback_;
+  raw_ptr<PickerZeroStateViewDelegate> delegate_;
+  raw_ptr<PickerSubmenuController> submenu_controller_;
+  raw_ptr<PickerPreviewBubbleController> preview_controller_;
 
   // The section list view, contains the section views.
   raw_ptr<PickerSectionListView> section_list_view_ = nullptr;
 
-  // Used to track the section view for each category type.
-  std::map<PickerCategoryType, raw_ptr<PickerSectionView>> section_views_;
+  // The primary section is a titleless section that is shown first.
+  // It contains items such as zero-state suggestions.
+  raw_ptr<PickerSectionView> primary_section_view_ = nullptr;
 
-  // The currently pseudo focused view, which responds to user actions that
-  // trigger `DoPseudoFocusedAction`.
-  raw_ptr<views::View> pseudo_focused_view_ = nullptr;
+  // Below the primary section, there is a set of sections for each category
+  // type.
+  std::map<PickerCategoryType, raw_ptr<PickerSectionView>>
+      category_section_views_;
 
-  raw_ptr<PickerSectionView> suggested_section_view_ = nullptr;
-  std::unique_ptr<PickerClipboardProvider> clipboard_provider_;
+  std::unique_ptr<PickerClipboardHistoryProvider> clipboard_provider_;
+
+  // Timer used to put caps lock toggle to the end of the primary section.
+  base::OneShotTimer add_caps_lock_delay_timer_;
 
   base::WeakPtrFactory<PickerZeroStateView> weak_ptr_factory_{this};
 };

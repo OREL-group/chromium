@@ -8,6 +8,7 @@
 #import "base/test/metrics/histogram_tester.h"
 #import "base/test/scoped_feature_list.h"
 #import "base/test/task_environment.h"
+#import "components/tab_groups/tab_group_id.h"
 #import "components/tab_groups/tab_group_visual_data.h"
 #import "ios/chrome/browser/net/model/crurl.h"
 #import "ios/chrome/browser/shared/model/web_state_list/tab_group.h"
@@ -26,6 +27,8 @@
 #import "ui/base/l10n/l10n_util_mac.h"
 #import "ui/base/test/ios/ui_image_test_utils.h"
 #import "url/gurl.h"
+
+using tab_groups::TabGroupId;
 
 namespace {
 const MenuScenarioHistogram kTestMenuScenario =
@@ -63,7 +66,7 @@ TEST_F(ActionFactoryTest, CreateActionWithParameters) {
                                         block:^{
                                         }];
 
-  EXPECT_TRUE([test_title_ isEqualToString:action.title]);
+  EXPECT_NSEQ(test_title_, action.title);
   EXPECT_EQ(mockImage, action.image);
 }
 
@@ -80,7 +83,7 @@ TEST_F(ActionFactoryTest, BookmarkAction) {
   UIAction* action = [factory actionToBookmarkWithBlock:^{
   }];
 
-  EXPECT_TRUE([expectedTitle isEqualToString:action.title]);
+  EXPECT_NSEQ(expectedTitle, action.title);
   EXPECT_EQ(expectedImage, action.image);
 }
 
@@ -97,7 +100,7 @@ TEST_F(ActionFactoryTest, CloseRegularTabAction) {
   UIAction* action = [factory actionToCloseRegularTabWithBlock:^{
   }];
 
-  EXPECT_TRUE([expectedTitle isEqualToString:action.title]);
+  EXPECT_NSEQ(expectedTitle, action.title);
   EXPECT_EQ(expectedImage, action.image);
 }
 
@@ -114,7 +117,7 @@ TEST_F(ActionFactoryTest, ClosePinnedTabAction) {
   UIAction* action = [factory actionToClosePinnedTabWithBlock:^{
   }];
 
-  EXPECT_TRUE([expectedTitle isEqualToString:action.title]);
+  EXPECT_NSEQ(expectedTitle, action.title);
   EXPECT_EQ(expectedImage, action.image);
 }
 
@@ -130,7 +133,7 @@ TEST_F(ActionFactoryTest, CopyAction) {
   CrURL* testURL = [[CrURL alloc] initWithGURL:GURL("https://example.com")];
   UIAction* action = [factory actionToCopyURL:testURL];
 
-  EXPECT_TRUE([expectedTitle isEqualToString:action.title]);
+  EXPECT_NSEQ(expectedTitle, action.title);
   EXPECT_EQ(expectedImage, action.image);
 }
 
@@ -146,7 +149,7 @@ TEST_F(ActionFactoryTest, ShareAction) {
   UIAction* action = [factory actionToShareWithBlock:^{
   }];
 
-  EXPECT_TRUE([expectedTitle isEqualToString:action.title]);
+  EXPECT_NSEQ(expectedTitle, action.title);
   EXPECT_EQ(expectedImage, action.image);
 }
 
@@ -162,7 +165,7 @@ TEST_F(ActionFactoryTest, DeleteAction) {
   UIAction* action = [factory actionToDeleteWithBlock:^{
   }];
 
-  EXPECT_TRUE([expectedTitle isEqualToString:action.title]);
+  EXPECT_NSEQ(expectedTitle, action.title);
   EXPECT_EQ(expectedImage, action.image);
   EXPECT_EQ(UIMenuElementAttributesDestructive, action.attributes);
 }
@@ -180,7 +183,7 @@ TEST_F(ActionFactoryTest, ReadLaterAction) {
   UIAction* action = [factory actionToAddToReadingListWithBlock:^{
   }];
 
-  EXPECT_TRUE([expectedTitle isEqualToString:action.title]);
+  EXPECT_NSEQ(expectedTitle, action.title);
   EXPECT_EQ(expectedImage, action.image);
 }
 
@@ -196,7 +199,7 @@ TEST_F(ActionFactoryTest, RemoveAction) {
   UIAction* action = [factory actionToRemoveWithBlock:^{
   }];
 
-  EXPECT_TRUE([expectedTitle isEqualToString:action.title]);
+  EXPECT_NSEQ(expectedTitle, action.title);
   EXPECT_EQ(expectedImage, action.image);
 }
 
@@ -212,7 +215,7 @@ TEST_F(ActionFactoryTest, EditAction) {
   UIAction* action = [factory actionToEditWithBlock:^{
   }];
 
-  EXPECT_TRUE([expectedTitle isEqualToString:action.title]);
+  EXPECT_NSEQ(expectedTitle, action.title);
   EXPECT_EQ(expectedImage, action.image);
 }
 
@@ -229,7 +232,7 @@ TEST_F(ActionFactoryTest, openAllTabsAction) {
   UIAction* action = [factory actionToOpenAllTabsWithBlock:^{
   }];
 
-  EXPECT_TRUE([expectedTitle isEqualToString:action.title]);
+  EXPECT_NSEQ(expectedTitle, action.title);
   EXPECT_EQ(expectedImage, action.image);
 }
 
@@ -246,7 +249,7 @@ TEST_F(ActionFactoryTest, hideAction) {
   UIAction* action = [factory actionToHideWithBlock:^{
   }];
 
-  EXPECT_TRUE([expectedTitle isEqualToString:action.title]);
+  EXPECT_NSEQ(expectedTitle, action.title);
   EXPECT_EQ(expectedImage, action.image);
 }
 
@@ -264,7 +267,7 @@ TEST_F(ActionFactoryTest, MoveFolderAction) {
   UIAction* action = [factory actionToMoveFolderWithBlock:^{
   }];
 
-  EXPECT_TRUE([expectedTitle isEqualToString:action.title]);
+  EXPECT_NSEQ(expectedTitle, action.title);
   EXPECT_NSEQ(expectedImage, action.image);
 }
 
@@ -282,7 +285,7 @@ TEST_F(ActionFactoryTest, markAsReadAction) {
   UIAction* action = [factory actionToMarkAsReadWithBlock:^{
   }];
 
-  EXPECT_TRUE([expectedTitle isEqualToString:action.title]);
+  EXPECT_NSEQ(expectedTitle, action.title);
   EXPECT_EQ(expectedImage, action.image);
 }
 
@@ -300,7 +303,7 @@ TEST_F(ActionFactoryTest, markAsUnreadAction) {
   UIAction* action = [factory actionToMarkAsUnreadWithBlock:^{
   }];
 
-  EXPECT_TRUE([expectedTitle isEqualToString:action.title]);
+  EXPECT_NSEQ(expectedTitle, action.title);
   EXPECT_EQ(expectedImage, action.image);
 }
 
@@ -319,7 +322,7 @@ TEST_F(ActionFactoryTest, viewOfflineVersion) {
   UIAction* action = [factory actionToOpenOfflineVersionInNewTabWithBlock:^{
   }];
 
-  EXPECT_TRUE([expectedTitle isEqualToString:action.title]);
+  EXPECT_NSEQ(expectedTitle, action.title);
   EXPECT_EQ(expectedImage, action.image);
 }
 
@@ -336,7 +339,7 @@ TEST_F(ActionFactoryTest, SaveImageAction) {
   UIAction* action = [factory actionSaveImageWithBlock:^{
   }];
 
-  EXPECT_TRUE([expectedTitle isEqualToString:action.title]);
+  EXPECT_NSEQ(expectedTitle, action.title);
   EXPECT_EQ(expectedImage, action.image);
 }
 
@@ -353,7 +356,7 @@ TEST_F(ActionFactoryTest, CopyImageAction) {
   UIAction* action = [factory actionCopyImageWithBlock:^{
   }];
 
-  EXPECT_TRUE([expectedTitle isEqualToString:action.title]);
+  EXPECT_NSEQ(expectedTitle, action.title);
   EXPECT_EQ(expectedImage, action.image);
 }
 
@@ -365,12 +368,15 @@ TEST_F(ActionFactoryTest, CloseAllTabsAction) {
   UIImage* expectedImage =
       DefaultSymbolWithPointSize(kXMarkSymbol, kSymbolActionPointSize);
   NSString* expectedTitle =
-      l10n_util::GetNSString(IDS_IOS_CONTENT_CONTEXT_CLOSEALLTABS);
+      IsTabGroupSyncEnabled()
+          ? l10n_util::GetNSString(
+                IDS_IOS_CONTENT_CONTEXT_CLOSEALLTABSANDGROUPS)
+          : l10n_util::GetNSString(IDS_IOS_CONTENT_CONTEXT_CLOSEALLTABS);
 
   UIAction* action = [factory actionToCloseAllTabsWithBlock:^{
   }];
 
-  EXPECT_TRUE([expectedTitle isEqualToString:action.title]);
+  EXPECT_NSEQ(expectedTitle, action.title);
   EXPECT_EQ(expectedImage, action.image);
 }
 
@@ -387,14 +393,15 @@ TEST_F(ActionFactoryTest, SelectTabsAction) {
   UIAction* action = [factory actionToSelectTabsWithBlock:^{
   }];
 
-  EXPECT_TRUE([expectedTitle isEqualToString:action.title]);
+  EXPECT_NSEQ(expectedTitle, action.title);
   EXPECT_EQ(expectedImage, action.image);
 }
 
 // Tests that the add to new group action has the right title and image when in
 // a submenu.
 TEST_F(ActionFactoryTest, AddTabsToNewGroupInSubmenuAction) {
-  feature_list_.InitWithFeatures({kTabGroupsInGrid, kTabGroupsIPad}, {});
+  feature_list_.InitWithFeatures(
+      {kTabGroupsInGrid, kTabGroupsIPad, kModernTabStrip}, {});
   ActionFactory* factory =
       [[ActionFactory alloc] initWithScenario:kTestMenuScenario];
 
@@ -408,14 +415,15 @@ TEST_F(ActionFactoryTest, AddTabsToNewGroupInSubmenuAction) {
                                                                 block:^{
                                                                 }];
 
-  EXPECT_TRUE([expectedTitle isEqualToString:action.title]);
+  EXPECT_NSEQ(expectedTitle, action.title);
   EXPECT_EQ(expectedImage, action.image);
 }
 
 // Tests that the add to new group action has the right title and image when
 // *not* in a submenu.
 TEST_F(ActionFactoryTest, AddTabsToNewGroupOutOfMenuAction) {
-  feature_list_.InitWithFeatures({kTabGroupsInGrid, kTabGroupsIPad}, {});
+  feature_list_.InitWithFeatures(
+      {kTabGroupsInGrid, kTabGroupsIPad, kModernTabStrip}, {});
   ActionFactory* factory =
       [[ActionFactory alloc] initWithScenario:kTestMenuScenario];
 
@@ -429,21 +437,24 @@ TEST_F(ActionFactoryTest, AddTabsToNewGroupOutOfMenuAction) {
                                                                 block:^{
                                                                 }];
 
-  EXPECT_TRUE([expectedTitle isEqualToString:action.title]);
+  EXPECT_NSEQ(expectedTitle, action.title);
   EXPECT_EQ(expectedImage, action.image);
 }
 
 // Tests the different sub elements of the menu when adding to a group with
 // different groups available.
 TEST_F(ActionFactoryTest, AddTabsToGroupSeveralGroups) {
-  feature_list_.InitWithFeatures({kTabGroupsInGrid, kTabGroupsIPad}, {});
+  feature_list_.InitWithFeatures(
+      {kTabGroupsInGrid, kTabGroupsIPad, kModernTabStrip}, {});
   ActionFactory* factory =
       [[ActionFactory alloc] initWithScenario:kTestMenuScenario];
 
-  TabGroup group1(tab_groups::TabGroupVisualData(
-      u"First", tab_groups::TabGroupColorId::kGrey));
-  TabGroup group2(tab_groups::TabGroupVisualData(
-      u"Second", tab_groups::TabGroupColorId::kGrey));
+  TabGroup group1(TabGroupId::GenerateNew(),
+                  tab_groups::TabGroupVisualData(
+                      u"First", tab_groups::TabGroupColorId::kGrey));
+  TabGroup group2(TabGroupId::GenerateNew(),
+                  tab_groups::TabGroupVisualData(
+                      u"Second", tab_groups::TabGroupColorId::kGrey));
   std::set<const TabGroup*> groups{&group1, &group2};
 
   UIMenuElement* menu_element =
@@ -486,7 +497,8 @@ TEST_F(ActionFactoryTest, AddTabsToGroupSeveralGroups) {
 // Tests the different sub elements of the menu when adding to a group with no
 // group available.
 TEST_F(ActionFactoryTest, AddTabsToGroupNoGroups) {
-  feature_list_.InitWithFeatures({kTabGroupsInGrid, kTabGroupsIPad}, {});
+  feature_list_.InitWithFeatures(
+      {kTabGroupsInGrid, kTabGroupsIPad, kModernTabStrip}, {});
   ActionFactory* factory =
       [[ActionFactory alloc] initWithScenario:kTestMenuScenario];
 
@@ -510,14 +522,17 @@ TEST_F(ActionFactoryTest, AddTabsToGroupNoGroups) {
 
 // Tests the different sub elements of the menu when moving a tab to a group.
 TEST_F(ActionFactoryTest, MoveTabFromGroup) {
-  feature_list_.InitWithFeatures({kTabGroupsInGrid, kTabGroupsIPad}, {});
+  feature_list_.InitWithFeatures(
+      {kTabGroupsInGrid, kTabGroupsIPad, kModernTabStrip, kTabGroupSync}, {});
   ActionFactory* factory =
       [[ActionFactory alloc] initWithScenario:kTestMenuScenario];
 
-  TabGroup group1(tab_groups::TabGroupVisualData(
-      u"First", tab_groups::TabGroupColorId::kGrey));
-  TabGroup group2(tab_groups::TabGroupVisualData(
-      u"Second", tab_groups::TabGroupColorId::kGrey));
+  TabGroup group1(TabGroupId::GenerateNew(),
+                  tab_groups::TabGroupVisualData(
+                      u"First", tab_groups::TabGroupColorId::kGrey));
+  TabGroup group2(TabGroupId::GenerateNew(),
+                  tab_groups::TabGroupVisualData(
+                      u"Second", tab_groups::TabGroupColorId::kGrey));
   std::set<const TabGroup*> groups{&group1, &group2};
 
   UIMenuElement* menu_element =
@@ -555,4 +570,63 @@ TEST_F(ActionFactoryTest, MoveTabFromGroup) {
   EXPECT_EQ(2u, titles.count);
   EXPECT_TRUE([titles containsObject:@"First"]);
   EXPECT_TRUE([titles containsObject:@"Second"]);
+}
+
+// Tests that the ungroup tab group action has the right title and image.
+TEST_F(ActionFactoryTest, UngroupTabGroup) {
+  feature_list_.InitWithFeatures(
+      {kTabGroupsInGrid, kTabGroupsIPad, kModernTabStrip, kTabGroupSync}, {});
+  ActionFactory* factory =
+      [[ActionFactory alloc] initWithScenario:kTestMenuScenario];
+
+  UIImage* expectedImage = DefaultSymbolWithPointSize(kUngroupTabGroupSymbol,
+                                                      kSymbolActionPointSize);
+  NSString* expectedTitle =
+      l10n_util::GetNSString(IDS_IOS_CONTENT_CONTEXT_UNGROUP);
+
+  UIAction* action = [factory actionToUngroupTabGroupWithBlock:^{
+  }];
+
+  EXPECT_NSEQ(expectedTitle, action.title);
+  EXPECT_EQ(expectedImage, action.image);
+}
+
+// Tests that the delete tab group action has the right title and image.
+TEST_F(ActionFactoryTest, DeleteTabGroup) {
+  feature_list_.InitWithFeatures(
+      {kTabGroupsInGrid, kTabGroupsIPad, kModernTabStrip, kTabGroupSync}, {});
+  ActionFactory* factory =
+      [[ActionFactory alloc] initWithScenario:kTestMenuScenario];
+
+  UIImage* expectedImage =
+      DefaultSymbolWithPointSize(kDeleteActionSymbol, kSymbolActionPointSize);
+  NSString* expectedTitle =
+      l10n_util::GetNSString(IDS_IOS_CONTENT_CONTEXT_DELETEGROUP);
+
+  UIAction* action = [factory actionToDeleteTabGroupWithBlock:^{
+  }];
+
+  EXPECT_NSEQ(expectedTitle, action.title);
+  EXPECT_EQ(expectedImage, action.image);
+  EXPECT_EQ(UIMenuElementAttributesDestructive, action.attributes);
+}
+
+// Tests that the close tab group action has the right title and image.
+TEST_F(ActionFactoryTest, CloseTabGroup) {
+  feature_list_.InitWithFeatures(
+      {kTabGroupsInGrid, kTabGroupsIPad, kModernTabStrip, kTabGroupSync}, {});
+  ActionFactory* factory =
+      [[ActionFactory alloc] initWithScenario:kTestMenuScenario];
+
+  UIImage* expectedImage =
+      DefaultSymbolWithPointSize(kXMarkSymbol, kSymbolActionPointSize);
+  NSString* expectedTitle =
+      l10n_util::GetNSString(IDS_IOS_CONTENT_CONTEXT_CLOSEGROUP);
+
+  UIAction* action = [factory actionToCloseTabGroupWithBlock:^{
+  }];
+
+  EXPECT_NSEQ(expectedTitle, action.title);
+  EXPECT_EQ(expectedImage, action.image);
+  EXPECT_EQ(UIMenuElementAttributesDestructive, action.attributes);
 }

@@ -206,4 +206,24 @@ void TestSystemTrayClient::ShowRemapKeysSubpage(int device_id) {
   ++show_remap_keys_subpage_count_;
 }
 
+void TestSystemTrayClient::ShowYouTubeMusicPremiumPage() {
+  ++show_youtube_music_premium_page_count_;
+}
+
+void TestSystemTrayClient::ShowChromebookPerksYouTubePage() {
+  ++show_chromebook_perks_youtube_page_count_;
+}
+
+void TestSystemTrayClient::ShowKeyboardSettings() {
+  ++show_keyboard_settings_count_;
+}
+
+void TestSystemTrayClient::ShowPointingStickSettings() {
+  ++show_pointing_stick_settings_count_;
+}
+
+void TestSystemTrayClient::ShowNearbyShareSettings() {
+  ++show_nearby_share_settings_count_;
+}
+
 }  // namespace ash

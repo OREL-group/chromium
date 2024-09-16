@@ -23,7 +23,6 @@
 #include "content/renderer/media/codec_factory.h"
 #include "content/renderer/render_thread_impl.h"
 #include "gpu/command_buffer/client/gpu_memory_buffer_manager.h"
-#include "gpu/command_buffer/common/gpu_memory_buffer_support.h"
 #include "gpu/ipc/client/command_buffer_proxy_impl.h"
 #include "gpu/ipc/client/gpu_channel_host.h"
 #include "media/base/decoder.h"
@@ -35,41 +34,20 @@
 #include "third_party/skia/include/core/SkTypes.h"
 
 namespace content {
+
+#if BUILDFLAG(IS_WIN)
 namespace {
 
-// Kill switch for using multiplanar YV12 instead of I420 with 3x single planar.
-BASE_FEATURE(kUseYV12MultiPlanar,
-             "UseYV12MultiPlanar",
+// Use NV12 as the default video frame output format. Note that NV12 is the
+// preferred 4:2:0 pixel format on Windows according to:
+// https://learn.microsoft.com/en-us/windows-hardware/drivers/display/4-2-0-video-pixel-formats
+// https://learn.microsoft.com/en-us/windows/win32/medfound/recommended-8-bit-yuv-formats-for-video-rendering#nv12
+BASE_FEATURE(kUseNV12OutputFormat,
+             "UseNV12OutputFormat",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-bool UseYV12MultiPlanar() {
-  return base::FeatureList::IsEnabled(
-             media::kUseMultiPlaneFormatForSoftwareVideo) &&
-         base::FeatureList::IsEnabled(kUseYV12MultiPlanar);
-}
-
-// Controls if this should always use a single NV12 GMB with multiplanar path.
-bool UseSingleNV12() {
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
-  // Mac + Windows have used this path for an extended period so no need for
-  // kill switch.
-  return true;
-#else
-  static BASE_FEATURE(kUseSingleNV12ForSoftwareGMB,
-                      "UseSingleNV12ForSoftwareGMB",
-#if BUILDFLAG(IS_LINUX)
-                      base::FEATURE_ENABLED_BY_DEFAULT);
-#else
-                      base::FEATURE_DISABLED_BY_DEFAULT);
-#endif
-
-  return base::FeatureList::IsEnabled(
-             media::kUseMultiPlaneFormatForSoftwareVideo) &&
-         base::FeatureList::IsEnabled(kUseSingleNV12ForSoftwareGMB);
-#endif
-}
-
 }  // namespace
+#endif
 
 // static
 std::unique_ptr<GpuVideoAcceleratorFactoriesImpl>
@@ -338,6 +316,8 @@ GpuVideoAcceleratorFactoriesImpl::VideoFrameOutputFormatImpl(
   }
 #endif
   auto capabilities = context_provider_->ContextCapabilities();
+  const auto& shared_image_capabilities =
+      context_provider_->SharedImageInterface()->GetCapabilities();
   const size_t bit_depth = media::BitDepth(pixel_format);
   if (bit_depth > 8) {
     if (capabilities.image_ycbcr_p010 && bit_depth == 10) {
@@ -353,7 +333,7 @@ GpuVideoAcceleratorFactoriesImpl::VideoFrameOutputFormatImpl(
     if (rendering_color_space_.IsHDR()) {
       return OutputFormat::UNDEFINED;
     }
-#endif
+#endif  // !BUILDFLAG(IS_MAC)
 
 #if !BUILDFLAG(IS_WIN)
     // TODO(mcasas): enable Win https://crbug.com/803451.
@@ -366,12 +346,15 @@ GpuVideoAcceleratorFactoriesImpl::VideoFrameOutputFormatImpl(
         return OutputFormat::XB30;
       }
     }
-#endif
+#endif  // !BUILDFLAG(IS_WIN)
     if (capabilities.texture_rg) {
-      if (UseYV12MultiPlanar()) {
-        return OutputFormat::YV12;
+#if BUILDFLAG(IS_WIN)
+      // Use NV12 for Windows platform which has the overlay support.
+      if (base::FeatureList::IsEnabled(kUseNV12OutputFormat)) {
+        return OutputFormat::NV12;
       }
-      return OutputFormat::I420;
+#endif
+      return OutputFormat::YV12;
     }
     return OutputFormat::UNDEFINED;
   }
@@ -384,23 +367,30 @@ GpuVideoAcceleratorFactoriesImpl::VideoFrameOutputFormatImpl(
 #endif
   }
 
+#if BUILDFLAG(IS_FUCHSIA)
+  // Hardware support for NV12 GMBs is expected to be present on all supported
+  // Fuchsia devices.
+  CHECK(capabilities.image_ycbcr_420v);
+  CHECK(shared_image_capabilities.supports_native_nv12_mappable_shared_images);
+  return OutputFormat::NV12;
+#else
+
   if (capabilities.image_ycbcr_420v &&
-      !capabilities.image_ycbcr_420v_disabled_for_video_frames) {
-    return OutputFormat::NV12_SINGLE_GMB;
+      shared_image_capabilities.supports_native_nv12_mappable_shared_images) {
+    return OutputFormat::NV12;
   }
 
-#if BUILDFLAG(IS_CHROMEOS)
-  if (base::FeatureList::IsEnabled(
-          features::kGateNV12GMBVideoFramesOnHWSupport)) {
-    return OutputFormat::UNDEFINED;
-  }
-#endif
-
+  // For ChromeOS, if above hardware support for NV12 is not present then
+  // fallback to pixel upload.
+#if !BUILDFLAG(IS_CHROMEOS)
   if (capabilities.texture_rg) {
-    return UseSingleNV12() ? OutputFormat::NV12_SINGLE_GMB
-                           : OutputFormat::NV12_DUAL_GMB;
+    // Use NV12 for Mac, Windows, Linux and CastOS platforms.
+    return OutputFormat::NV12;
   }
+#endif  // !BUILDFLAG(IS_CHROMEOS)
+
   return OutputFormat::UNDEFINED;
+#endif  // BUILDFLAG(IS_FUCHSIA)
 }
 
 gpu::SharedImageInterface*

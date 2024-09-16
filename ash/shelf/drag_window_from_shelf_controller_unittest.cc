@@ -6,6 +6,7 @@
 
 #include <tuple>
 
+#include "ash/accessibility/accessibility_controller.h"
 #include "ash/app_list/app_list_controller_impl.h"
 #include "ash/app_list/test/app_list_test_helper.h"
 #include "ash/app_list/views/app_list_view.h"
@@ -35,13 +36,14 @@
 #include "ash/wm/work_area_insets.h"
 #include "base/memory/raw_ptr.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/test/scoped_feature_list.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/window_parenting_client.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/layer_animator.h"
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
+#include "ui/compositor/test/layer_animation_stopped_waiter.h"
 #include "ui/compositor/test/test_utils.h"
 #include "ui/gfx/geometry/point_f.h"
 #include "ui/views/test/views_test_utils.h"
@@ -116,18 +118,20 @@ class DragWindowFromShelfControllerTest : public AshTestBase {
   void CancelDrag() { window_drag_controller_->CancelDrag(); }
   void WaitForHomeLauncherAnimationToFinish() {
     // Wait until home launcher animation finishes.
-    ui::Layer* layer =
+    ui::Layer* const layer =
         GetAppListTestHelper()->GetAppListView()->GetWidget()->GetLayer();
-    ui::Compositor* compositor = layer->GetCompositor();
+    ui::Compositor* const compositor = layer->GetCompositor();
 
-    while (layer->GetAnimator()->is_animating()) {
-      EXPECT_TRUE(ui::WaitForNextFrameToBePresented(compositor));
+    ui::LayerAnimationStoppedWaiter animation_waiter;
+    animation_waiter.Wait(layer);
+
+    // Force frames and wait for all throughput trackers to be gone to allow
+    // animation throughput data to be passed from cc to ui.
+    while (compositor->has_throughput_trackers_for_testing()) {
+      compositor->ScheduleFullRedraw();
+      std::ignore = ui::WaitForNextFrameToBePresented(compositor,
+                                                      base::Milliseconds(500));
     }
-
-    // Ensure there is one more frame presented after animation finishes
-    // to allow animation throughput data is passed from cc to ui.
-    std::ignore =
-        ui::WaitForNextFrameToBePresented(compositor, base::Milliseconds(200));
   }
 
   SplitViewController* split_view_controller() {
@@ -151,7 +155,7 @@ class DragWindowFromShelfControllerTest : public AshTestBase {
                                           bounds, display::kInvalidDisplayId);
     child->Show();
 
-    child->SetProperty(aura::client::kModalKey, ui::MODAL_TYPE_WINDOW);
+    child->SetProperty(aura::client::kModalKey, ui::mojom::ModalType::kWindow);
     wm::SetModalParent(child.get(), transient_parent);
     return child;
   }
@@ -273,9 +277,6 @@ TEST_F(DragWindowFromShelfControllerTest, HideHomeLauncherDuringDraggingTest) {
 // Test that the "No recent items" label is not visible (not created) while
 // dragging from shelf. Regression test for http://b/326091611.
 TEST_F(DragWindowFromShelfControllerTest, NoWindowsWidget) {
-  base::test::ScopedFeatureList scoped_feature_list(
-      features::kFasterSplitScreenSetup);
-
   const gfx::Rect shelf_bounds = GetShelfBounds();
   auto window = CreateTestWindow();
   StartDrag(window.get(), shelf_bounds.CenterPoint());
@@ -507,18 +508,9 @@ TEST_F(DragWindowFromShelfControllerTest, FlingInOverview) {
   EXPECT_TRUE(WindowState::Get(window.get())->IsMinimized());
 }
 
-// TODO(crbug.com/1473400): Re-enable the test once the bug is fixed.
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
-#define MAYBE_VerifyHomeLauncherAnimationMetrics \
-  DISABLED_VerifyHomeLauncherAnimationMetrics
-#else
-#define MAYBE_VerifyHomeLauncherAnimationMetrics \
-  VerifyHomeLauncherAnimationMetrics
-#endif
 // Verify that metrics of home launcher animation are recorded correctly when
 // swiping up from shelf with sufficient velocity.
-TEST_F(DragWindowFromShelfControllerTest,
-       MAYBE_VerifyHomeLauncherAnimationMetrics) {
+TEST_F(DragWindowFromShelfControllerTest, VerifyHomeLauncherAnimationMetrics) {
   // Set non-zero animation duration to report animation metrics.
   ui::ScopedAnimationDurationScaleMode non_zero_duration_mode(
       ui::ScopedAnimationDurationScaleMode::NON_ZERO_DURATION);
@@ -687,6 +679,26 @@ TEST_F(DragWindowFromShelfControllerTest,
             drag_indicators->current_window_dragging_state());
 
   EndDrag(shelf_bounds.CenterPoint(), /*velocity_y=*/std::nullopt);
+}
+
+// Tests no crash on dragging from shelf from the split view drag indicators.
+// Regression test for http://b/339071708.
+TEST_F(DragWindowFromShelfControllerTest, NoCrashOnSplitViewDragIndicators) {
+  UpdateDisplay("500x400");
+  const gfx::Rect shelf_bounds = GetShelfBounds();
+  auto window = CreateTestWindow();
+
+  // Drag just enough to show the shelf.
+  StartDrag(window.get(), shelf_bounds.CenterPoint());
+  Drag(gfx::Point(200, 200), 0.f,
+       DragWindowFromShelfController::kShowOverviewThreshold + 1);
+  ASSERT_FALSE(OverviewController::Get()->InOverviewSession());
+
+  // Enable chromevox to destroy the drag indicators.
+  Shell::Get()->accessibility_controller()->spoken_feedback().SetEnabled(true);
+
+  // Continue dragging to the top.
+  Drag(gfx::Point(10, 399), 0.5f, 0.5f);
 }
 
 // Test there is no black backdrop behind the dragged window if we're doing the
@@ -1313,11 +1325,11 @@ TEST_F(DragWindowFromShelfControllerTest,
       overview_controller->overview_session()->GetGridWithRootWindow(
           Shell::GetPrimaryRootWindow());
   EXPECT_TRUE(overview_grid);
-  ASSERT_EQ(1u, overview_grid->window_list().size());
-
-  auto* overview_item = overview_grid->window_list()[0].get();
+  const auto& overview_items = overview_grid->item_list();
+  ASSERT_EQ(1u, overview_items.size());
 
   // Press on `overview_item` to exit overview mode and show windows.
+  auto* overview_item = overview_items[0].get();
   auto* event_generator = GetEventGenerator();
   event_generator->set_current_screen_location(
       gfx::ToRoundedPoint(overview_item->GetTransformedBounds().CenterPoint()));

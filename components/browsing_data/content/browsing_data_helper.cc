@@ -40,7 +40,8 @@ bool WebsiteSettingsFilterAdapter(
   // this filter is used for is DURABLE_STORAGE, which also only uses
   // origin-scoped patterns. Such patterns can be directly translated to a GURL.
   GURL url(primary_pattern.ToString());
-  DCHECK(url.is_valid());
+  DCHECK(url.is_valid()) << "url: '" << url.possibly_invalid_spec() << "' "
+                         << "pattern: '" << primary_pattern.ToString() << "'";
   return predicate.Run(url);
 }
 
@@ -234,7 +235,8 @@ int GetUniqueThirdPartyCookiesHostCount(
   std::set<BrowsingDataModel::DataOwner> unique_hosts;
   for (auto entry : browsing_data_model) {
     std::string host = BrowsingDataModel::GetHost(entry.data_owner.get());
-    if ((top_frame_domain.empty() && !IsSameHost(host, top_frame_url.host())) ||
+    if (entry.data_details->blocked_third_party ||
+        (top_frame_domain.empty() && !IsSameHost(host, top_frame_url.host())) ||
         (!top_frame_domain.empty() && !url::DomainIs(host, top_frame_domain))) {
       for (auto storage_type : entry.data_details->storage_types) {
         if (browsing_data_model.IsBlockedByThirdPartyCookieBlocking(

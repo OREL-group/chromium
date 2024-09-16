@@ -8,7 +8,7 @@
 #import "base/metrics/user_metrics.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/ui/table_view/table_view_utils.h"
 #import "ios/chrome/browser/signin/model/authentication_service.h"
 #import "ios/chrome/browser/signin/model/authentication_service_factory.h"
@@ -91,7 +91,8 @@ using DismissViewCallback = SystemIdentityManager::DismissViewCallback;
       GetApplicationContext()
           ->GetSystemIdentityManager()
           ->PresentWebAndAppSettingDetailsController(identity, _viewController,
-                                                     YES);
+                                                     /*animated=*/YES,
+                                                     base::DoNothing());
 }
 
 - (void)openLinkedGoogleServicesDialog {
@@ -107,7 +108,7 @@ using DismissViewCallback = SystemIdentityManager::DismissViewCallback;
       GetApplicationContext()
           ->GetSystemIdentityManager()
           ->PresentLinkedServicesSettingsDetailsController(
-              identity, _viewController, YES);
+              identity, _viewController, /*animated=*/YES, base::DoNothing());
 }
 
 @end

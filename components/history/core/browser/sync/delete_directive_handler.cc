@@ -126,7 +126,7 @@ void CheckDeleteDirectiveValid(
     DCHECK(url_directive.has_url());
     DCHECK_GT(url_directive.end_time_usec(), 0);
   } else {
-    NOTREACHED()
+    NOTREACHED_IN_MIGRATION()
         << "Delete directive has no time range, global ID or url directive";
   }
 }
@@ -469,7 +469,7 @@ void DeleteDirectiveHandler::WaitUntilReadyToSync(base::OnceClosure done) {
 
 std::optional<syncer::ModelError>
 DeleteDirectiveHandler::MergeDataAndStartSyncing(
-    syncer::ModelType type,
+    syncer::DataType type,
     const syncer::SyncDataList& initial_sync_data,
     std::unique_ptr<syncer::SyncChangeProcessor> sync_processor) {
   DCHECK_EQ(type, syncer::HISTORY_DELETE_DIRECTIVES);
@@ -488,7 +488,7 @@ DeleteDirectiveHandler::MergeDataAndStartSyncing(
   return std::nullopt;
 }
 
-void DeleteDirectiveHandler::StopSyncing(syncer::ModelType type) {
+void DeleteDirectiveHandler::StopSyncing(syncer::DataType type) {
   DCHECK_EQ(type, syncer::HISTORY_DELETE_DIRECTIVES);
   DCHECK(thread_checker_.CalledOnValidThread());
   sync_processor_.reset();
@@ -513,7 +513,7 @@ std::optional<syncer::ModelError> DeleteDirectiveHandler::ProcessSyncChanges(
         // TODO(akalin): Keep track of existing delete directives.
         break;
       default:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
         break;
     }
   }

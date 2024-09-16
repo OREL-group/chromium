@@ -9,8 +9,6 @@ UNKNOWN focusable has_input_focus
 ++++++IMAGE label='defs should not be exposed'
 ++++++IMAGE label='discard should not be exposed'
 ++++++IMAGE label='filter and filter effect elements should not be exposed'
-++++++++UNKNOWN hidden
-++++++++++UNKNOWN hidden
 ++++++IMAGE label='hatch should not be exposed'
 ++++++IMAGE label='hatchpath should not be exposed'
 ++++++IMAGE label='image which lacks criteria for inclusion should not be exposed'
@@ -28,7 +26,7 @@ UNKNOWN focusable has_input_focus
 ++++++UNKNOWN label='switch should not be exposed'
 ++++++++UNKNOWN
 ++++++++++STATIC_TEXT label='Hey!'
-++++++++++++UNKNOWN
+++++++++++++UNKNOWN label='Hey!'
 ++++++IMAGE label='view should not be exposed'
 ++++++IMAGE label='desc should not be exposed as accessible object' secondary_label='abc'
 ++++++IMAGE label='title should not be exposed as accessible object' secondary_label='abc'
@@ -41,7 +39,6 @@ UNKNOWN focusable has_input_focus
 ++++++++++++++UNKNOWN label='Hello '
 ++++++++++++++UNKNOWN label='world'
 ++++++IMAGE label='group which lacks criteria for inclusion should not be exposed'
-++++++++UNKNOWN hidden
 ++++++IMAGE label='line which lacks criteria for inclusion should not be exposed'
 ++++++IMAGE label='path which lacks criteria for inclusion should not be exposed'
 ++++++IMAGE label='polygon which lacks criteria for inclusion should not be exposed'
@@ -61,8 +58,8 @@ UNKNOWN focusable has_input_focus
 ++++++UNKNOWN label='tspan which lacks criteria for inclusion should not be exposed'
 ++++++++UNKNOWN
 ++++++++++STATIC_TEXT label='Hello '
-++++++++++++UNKNOWN
+++++++++++++UNKNOWN label='Hello '
 ++++++++++STATIC_TEXT label='world'
-++++++++++++UNKNOWN
+++++++++++++UNKNOWN label='world'
 ++++++++++STATIC_TEXT label='!'
-++++++++++++UNKNOWN
+++++++++++++UNKNOWN label='!'

@@ -18,7 +18,6 @@
 #include "base/functional/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
-#include "chrome/android/chrome_jni_headers/TabWebContentsDelegateAndroidImpl_jni.h"
 #include "chrome/browser/android/customtabs/client_data_header_web_contents_observer.h"
 #include "chrome/browser/android/framebust_intervention/framebust_blocked_delegate_android.h"
 #include "chrome/browser/android/tab_android.h"
@@ -31,7 +30,6 @@
 #include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
 #include "chrome/browser/password_manager/chrome_password_manager_client.h"
 #include "chrome/browser/picture_in_picture/picture_in_picture_window_manager.h"
-#include "chrome/browser/preloading/prefetch/no_state_prefetch/no_state_prefetch_manager_factory.h"
 #include "chrome/browser/preloading/preloading_prefs.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/chrome_password_reuse_detection_manager_client.h"
@@ -85,6 +83,9 @@
 #include "components/paint_preview/browser/paint_preview_client.h"
 #endif
 
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "chrome/android/chrome_jni_headers/TabWebContentsDelegateAndroidImpl_jni.h"
+
 using base::android::AttachCurrentThread;
 using base::android::JavaParamRef;
 using base::android::JavaRef;
@@ -136,10 +137,10 @@ void ShowFramebustBlockMessageInternal(content::WebContents* web_contents,
 
 namespace android {
 
-TabWebContentsDelegateAndroid::TabWebContentsDelegateAndroid(JNIEnv* env,
-                                                                   jobject obj)
-    : WebContentsDelegateAndroid(env, obj) {
-}
+TabWebContentsDelegateAndroid::TabWebContentsDelegateAndroid(
+    JNIEnv* env,
+    const jni_zero::JavaRef<jobject>& obj)
+    : WebContentsDelegateAndroid(env, obj) {}
 
 TabWebContentsDelegateAndroid::~TabWebContentsDelegateAndroid() = default;
 
@@ -319,7 +320,7 @@ bool TabWebContentsDelegateAndroid::ShouldResumeRequestsForCreatedWindow() {
       env, obj);
 }
 
-void TabWebContentsDelegateAndroid::AddNewContents(
+WebContents* TabWebContentsDelegateAndroid::AddNewContents(
     WebContents* source,
     std::unique_ptr<WebContents> new_contents,
     const GURL& target_url,
@@ -378,6 +379,8 @@ void TabWebContentsDelegateAndroid::AddNewContents(
   // creates a new TabAndroid instance to own the WebContents.
   if (handled)
     new_contents.release();
+
+  return nullptr;
 }
 
 void TabWebContentsDelegateAndroid::OnDidBlockNavigation(
@@ -407,7 +410,8 @@ void TabWebContentsDelegateAndroid::ExitPictureInPicture() {
   PictureInPictureWindowManager::GetInstance()->ExitPictureInPicture();
 }
 
-bool TabWebContentsDelegateAndroid::IsBackForwardCacheSupported() {
+bool TabWebContentsDelegateAndroid::IsBackForwardCacheSupported(
+    content::WebContents& web_contents) {
   return true;
 }
 

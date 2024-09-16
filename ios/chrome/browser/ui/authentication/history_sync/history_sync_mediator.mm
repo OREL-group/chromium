@@ -48,6 +48,9 @@
       _accountCapabilitiesLatencyTracker;
   // Capabilities fetcher to determine minor mode restriction.
   HistorySyncCapabilitiesFetcher* _capabilitiesFetcher;
+  // This boolean should help to understand CHECK failure with
+  // crbug.com/366198713. This variable can be removed once the bug is fixed.
+  BOOL _signoutNotificationCalled;
 }
 
 - (instancetype)
@@ -73,8 +76,7 @@
 
     if ([self useMinorModeRestrictions]) {
       _capabilitiesFetcher = [[HistorySyncCapabilitiesFetcher alloc]
-          initWithAuthenticationService:authenticationService
-                        identityManager:identityManager];
+          initWithIdentityManager:identityManager];
     } else {
       _accountCapabilitiesLatencyTracker =
           std::make_unique<signin::AccountCapabilitiesLatencyTracker>(
@@ -100,8 +102,20 @@
 - (void)enableHistorySyncOptin {
   id<SystemIdentity> identity =
       _authenticationService->GetPrimaryIdentity(signin::ConsentLevel::kSignin);
-  CHECK(identity);
-  // TODO(crbug.com/1467853): Record the history sync opt-in when the new
+  bool hasPrimaryAccount =
+      _identityManager->HasPrimaryAccount(signin::ConsentLevel::kSignin);
+  // It is possible to have no identity from AuthenticationService here
+  // (see crbug.com/366198713).
+  // The mediator listens for IdentityManagerObserverBridgeDelegate to know
+  // if the user is signed out. If it happens, the dialog is supposed to be
+  // dissmissed automatically.
+  // to understand if there is a difference between AuthenticationService and
+  // IdentityManager, the CHECK logs if there is primary identity
+  // from AuthenticationService and from IdentityManager.
+  CHECK(identity) << "IdentityManager has primary identity: "
+                  << hasPrimaryAccount << ", _signoutNotificationCalled: "
+                  << _signoutNotificationCalled;
+  // TODO(crbug.com/40068130): Record the history sync opt-in when the new
   // consent type will be available.
   syncer::SyncUserSettings* syncUserSettings = _syncService->GetUserSettings();
   syncUserSettings->SetSelectedType(syncer::UserSelectableType::kHistory, true);
@@ -133,16 +147,11 @@
           : l10n_util::GetNSString(IDS_IOS_HISTORY_SYNC_FOOTER_WITHOUT_EMAIL);
   [_consumer setFooterText:footerText];
 
-  // Fetch capabilities to update action buttons.
-  __weak __typeof(self) weakSelf = self;
-  CapabilityFetchCompletionCallback callback =
-      base::BindOnce(^(bool capability) {
-        bool isRestricted = !capability;
-        [weakSelf.consumer displayButtonsWithRestrictionStatus:isRestricted];
-      });
-  [_capabilitiesFetcher
-      fetchImmediatelyAvailableRestrictionCapabilityWithCallback:std::move(
-                                                                     callback)];
+  if ([self useMinorModeRestrictions]) {
+    [self.consumer
+        displayButtonsWithRestrictionCapability:
+            [_capabilitiesFetcher canShowUnrestrictedOptInsCapability]];
+  }
 }
 
 #pragma mark - ChromeAccountManagerServiceObserver
@@ -153,7 +162,7 @@
 
 - (void)onChromeAccountManagerServiceShutdown:
     (ChromeAccountManagerService*)accountManagerService {
-  // TODO(crbug.com/1489595): Remove `[self disconnect]`.
+  // TODO(crbug.com/40284086): Remove `[self disconnect]`.
   [self disconnect];
 }
 
@@ -163,6 +172,7 @@
     (const signin::PrimaryAccountChangeEvent&)event {
   if (event.GetEventTypeFor(signin::ConsentLevel::kSignin) ==
       signin::PrimaryAccountChangeEvent::Type::kCleared) {
+    _signoutNotificationCalled = YES;
     [self.delegate historySyncMediatorPrimaryAccountCleared:self];
   }
 }

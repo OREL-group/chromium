@@ -21,9 +21,11 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
+#include "chrome/browser/ui/views/overlay/back_to_tab_button.h"
 #include "chrome/browser/ui/views/overlay/back_to_tab_label_button.h"
 #include "chrome/browser/ui/views/overlay/close_image_button.h"
 #include "chrome/browser/ui/views/overlay/hang_up_button.h"
+#include "chrome/browser/ui/views/overlay/minimize_button.h"
 #include "chrome/browser/ui/views/overlay/playback_image_button.h"
 #include "chrome/browser/ui/views/overlay/resize_handle_button.h"
 #include "chrome/browser/ui/views/overlay/simple_overlay_window_image_button.h"
@@ -41,6 +43,7 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/layer.h"
 #include "ui/display/display.h"
@@ -50,10 +53,11 @@
 #include "ui/views/window/non_client_view.h"
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "ash/constants/app_types.h"
 #include "ash/public/cpp/ash_constants.h"
 #include "ash/public/cpp/rounded_corner_utils.h"
 #include "ash/public/cpp/window_properties.h"  // nogncheck
+#include "chromeos/ui/base/app_types.h"
+#include "chromeos/ui/base/window_properties.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/window.h"
 #endif
@@ -257,7 +261,7 @@ class OverlayWindowWidgetDelegate : public views::WidgetDelegate {
  public:
   OverlayWindowWidgetDelegate() {
     SetCanResize(true);
-    SetModalType(ui::MODAL_TYPE_NONE);
+    SetModalType(ui::mojom::ModalType::kNone);
     // While not shown, the title is still used to identify the window in the
     // window switcher.
     SetShowTitle(false);
@@ -287,11 +291,19 @@ std::unique_ptr<VideoOverlayWindowViews> VideoOverlayWindowViews::Create(
   auto overlay_window =
       base::WrapUnique(new VideoOverlayWindowViews(controller));
 
+  // The 2024 updated controls use dark mode colors.
+  if (base::FeatureList::IsEnabled(
+          media::kVideoPictureInPictureControlsUpdate2024)) {
+    overlay_window->SetColorModeOverride(
+        ui::ColorProviderKey::ColorMode::kDark);
+  }
+
   overlay_window->CalculateAndUpdateWindowBounds();
   overlay_window->SetUpViews();
 
-  views::Widget::InitParams params(views::Widget::InitParams::TYPE_WINDOW);
-  params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+  views::Widget::InitParams params(
+      views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET,
+      views::Widget::InitParams::TYPE_WINDOW);
   // Just to have any non-empty bounds as required by Init(). The window is
   // resized to fit the video that is embedded right afterwards, anyway.
   params.bounds = gfx::Rect(overlay_window->GetMinimumSize());
@@ -303,8 +315,8 @@ std::unique_ptr<VideoOverlayWindowViews> VideoOverlayWindowViews::Create(
   params.delegate = new OverlayWindowWidgetDelegate();
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-  params.init_properties_container.SetProperty(
-      aura::client::kAppType, static_cast<int>(ash::AppType::BROWSER));
+  params.init_properties_container.SetProperty(chromeos::kAppTypeKey,
+                                               chromeos::AppType::BROWSER);
 #endif
 
   overlay_window->Init(std::move(params));
@@ -336,9 +348,11 @@ std::unique_ptr<VideoOverlayWindowViews> VideoOverlayWindowViews::Create(
                                    ->ShouldDoLearning()
                                ? IS_DEFAULT
                                : IS_PRIVATE;
+
   ui::tsf_inputscope::SetInputScope(
       overlay_window->GetNativeWindow()->GetHost()->GetAcceleratedWidget(),
       input_scope);
+
 #endif  // BUILDFLAG(IS_WIN)
 
   PictureInPictureOcclusionTracker* tracker =
@@ -378,6 +392,9 @@ VideoOverlayWindowViews::VideoOverlayWindowViews(
 }
 
 VideoOverlayWindowViews::~VideoOverlayWindowViews() {
+  if (overlay_view_) {
+    overlay_view_->RemoveObserver(this);
+  }
   display::Screen::GetScreen()->RemoveObserver(this);
 }
 
@@ -464,7 +481,8 @@ void VideoOverlayWindowViews::OnNativeFocus() {
 void VideoOverlayWindowViews::OnNativeBlur() {
   // Controls should be hidden when there is no more focus on the window. This
   // is used for tabbing and touch interactions. For mouse interactions, the
-  // window cannot be blurred before the ui::ET_MOUSE_EXITED event is handled.
+  // window cannot be blurred before the ui::EventType::kMouseExited event is
+  // handled.
   UpdateControlsVisibility(false);
 
   views::Widget::OnNativeBlur();
@@ -507,6 +525,9 @@ void VideoOverlayWindowViews::OnNativeWidgetMove() {
   WindowQuadrant quadrant =
       GetCurrentWindowQuadrant(GetBounds(), GetController());
   close_controls_view_->SetPosition(GetBounds().size(), quadrant);
+  if (minimize_button_) {
+    minimize_button_->SetPosition(GetBounds().size(), quadrant);
+  }
   UpdateResizeHandleBounds(quadrant);
 #endif
 
@@ -533,7 +554,7 @@ void VideoOverlayWindowViews::OnKeyEvent(ui::KeyEvent* event) {
   // Any keystroke will make the controls visible, if not already. The Tab key
   // needs to be handled separately.
   // If the controls are already visible, this is a no-op.
-  if (event->type() == ui::ET_KEY_PRESSED ||
+  if (event->type() == ui::EventType::kKeyPressed ||
       event->key_code() == ui::VKEY_TAB) {
     UpdateControlsVisibility(true);
   }
@@ -542,12 +563,9 @@ void VideoOverlayWindowViews::OnKeyEvent(ui::KeyEvent* event) {
 // closure on key press so Close() is not called a second time when the key
 // is released.
 #if BUILDFLAG(IS_WIN)
-  if (event->type() == ui::ET_KEY_PRESSED && event->IsAltDown() &&
+  if (event->type() == ui::EventType::kKeyPressed && event->IsAltDown() &&
       event->key_code() == ui::VKEY_F4) {
-    PictureInPictureWindowManager::GetInstance()
-        ->ExitPictureInPictureViaWindowUi(
-            PictureInPictureWindowManager::UiBehavior::
-                kCloseWindowAndPauseVideo);
+    CloseAndPauseIfAvailable();
     event->SetHandled();
   }
 #endif  // BUILDFLAG(IS_WIN)
@@ -555,7 +573,7 @@ void VideoOverlayWindowViews::OnKeyEvent(ui::KeyEvent* event) {
   // If there is no focus affordance on the buttons and play/pause button is
   // visible, only handle space key for TogglePlayPause().
   views::View* focused_view = GetFocusManager()->GetFocusedView();
-  if (!focused_view && event->type() == ui::ET_KEY_PRESSED &&
+  if (!focused_view && event->type() == ui::EventType::kKeyPressed &&
       event->key_code() == ui::VKEY_SPACE && show_play_pause_button_) {
     TogglePlayPause();
     event->SetHandled();
@@ -568,21 +586,21 @@ void VideoOverlayWindowViews::OnMouseEvent(ui::MouseEvent* event) {
   switch (event->type()) {
       // Only show the media controls when the mouse is hovering over the
       // window.
-    case ui::ET_MOUSE_MOVED:
-    case ui::ET_MOUSE_ENTERED:
+    case ui::EventType::kMouseMoved:
+    case ui::EventType::kMouseEntered:
       UpdateControlsVisibility(true);
       break;
 
-    case ui::ET_MOUSE_EXITED: {
+    case ui::EventType::kMouseExited: {
 #if BUILDFLAG(IS_CHROMEOS_LACROS)
       // On Lacros, the |event| will always occur within
       // |window_background_view_| despite the mouse exiting the respective
       // surface so always hide the controls.
       const bool should_update_control_visibility = true;
 #else
-      // On Windows, ui::ET_MOUSE_EXITED is triggered when hovering over the
-      // media controls because of the HitTest. This check ensures the controls
-      // are visible if the mouse is still over the window.
+      // On Windows, ui::EventType::kMouseExited is triggered when hovering over
+      // the media controls because of the HitTest. This check ensures the
+      // controls are visible if the mouse is still over the window.
       const bool should_update_control_visibility =
           !GetWindowBackgroundView()->bounds().Contains(event->location());
 #endif
@@ -604,8 +622,9 @@ void VideoOverlayWindowViews::OnMouseEvent(ui::MouseEvent* event) {
 
 bool VideoOverlayWindowViews::OnGestureEventHandledOrIgnored(
     ui::GestureEvent* event) {
-  if (event->type() != ui::ET_GESTURE_TAP)
+  if (event->type() != ui::EventType::kGestureTap) {
     return true;
+  }
 
   // Every time a user taps on the window, restart the timer to automatically
   // hide the controls.
@@ -766,6 +785,7 @@ bool VideoOverlayWindowViews::ControlsHitTestContainsPoint(
   if (GetBackToTabControlsBounds().Contains(point) ||
       GetSkipAdControlsBounds().Contains(point) ||
       GetCloseControlsBounds().Contains(point) ||
+      GetMinimizeControlsBounds().Contains(point) ||
       GetPlayPauseControlsBounds().Contains(point) ||
       GetNextTrackControlsBounds().Contains(point) ||
       GetPreviousTrackControlsBounds().Contains(point) ||
@@ -800,29 +820,46 @@ void VideoOverlayWindowViews::SetUpViews() {
   auto video_view = std::make_unique<views::View>();
   auto controls_scrim_view = std::make_unique<ControlsBackgroundView>();
   auto controls_container_view = std::make_unique<views::View>();
-  auto close_controls_view =
-      std::make_unique<CloseImageButton>(base::BindRepeating(
-          [](VideoOverlayWindowViews* overlay) {
-            // Only pause the video if play/pause is available.
-            const bool should_pause_video = overlay->show_play_pause_button_;
-            PictureInPictureWindowManager::GetInstance()
-                ->ExitPictureInPictureViaWindowUi(
-                    should_pause_video
-                        ? PictureInPictureWindowManager::UiBehavior::
-                              kCloseWindowAndPauseVideo
-                        : PictureInPictureWindowManager::UiBehavior::
-                              kCloseWindowOnly);
-          },
-          base::Unretained(this)));
-  auto back_to_tab_label_button =
-      std::make_unique<BackToTabLabelButton>(base::BindRepeating(
-          [](VideoOverlayWindowViews* overlay) {
-            PictureInPictureWindowManager::GetInstance()
-                ->ExitPictureInPictureViaWindowUi(
-                    PictureInPictureWindowManager::UiBehavior::
-                        kCloseWindowAndFocusOpener);
-          },
-          base::Unretained(this)));
+  auto close_controls_view = std::make_unique<CloseImageButton>(
+      base::BindRepeating(&VideoOverlayWindowViews::CloseAndPauseIfAvailable,
+                          base::Unretained(this)));
+  std::unique_ptr<OverlayWindowMinimizeButton> minimize_button;
+  std::unique_ptr<OverlayWindowBackToTabButton> back_to_tab_button;
+  std::unique_ptr<BackToTabLabelButton> back_to_tab_label_button;
+  if (base::FeatureList::IsEnabled(
+          media::kVideoPictureInPictureControlsUpdate2024)) {
+    // The 2024 controls have a minimize button and an image button for the back
+    // to tab control.
+    minimize_button = std::make_unique<
+        OverlayWindowMinimizeButton>(base::BindRepeating(
+        [](VideoOverlayWindowViews* overlay) {
+          PictureInPictureWindowManager::GetInstance()
+              ->ExitPictureInPictureViaWindowUi(
+                  PictureInPictureWindowManager::UiBehavior::kCloseWindowOnly);
+        },
+        base::Unretained(this)));
+    back_to_tab_button =
+        std::make_unique<OverlayWindowBackToTabButton>(base::BindRepeating(
+            [](VideoOverlayWindowViews* overlay) {
+              PictureInPictureWindowManager::GetInstance()
+                  ->ExitPictureInPictureViaWindowUi(
+                      PictureInPictureWindowManager::UiBehavior::
+                          kCloseWindowAndFocusOpener);
+            },
+            base::Unretained(this)));
+  } else {
+    // The previous controls have no minimize button and a label button for the
+    // back to tab control.
+    back_to_tab_label_button =
+        std::make_unique<BackToTabLabelButton>(base::BindRepeating(
+            [](VideoOverlayWindowViews* overlay) {
+              PictureInPictureWindowManager::GetInstance()
+                  ->ExitPictureInPictureViaWindowUi(
+                      PictureInPictureWindowManager::UiBehavior::
+                          kCloseWindowAndFocusOpener);
+            },
+            base::Unretained(this)));
+  }
   auto previous_track_controls_view =
       std::make_unique<SimpleOverlayWindowImageButton>(
           base::BindRepeating(
@@ -921,10 +958,24 @@ void VideoOverlayWindowViews::SetUpViews() {
   close_controls_view->layer()->SetFillsBoundsOpaquely(false);
   close_controls_view->layer()->SetName("CloseControlsView");
 
+  // views::View that closes the window without pausing. ----------------------
+  if (minimize_button) {
+    minimize_button->SetPaintToLayer(ui::LAYER_TEXTURED);
+    minimize_button->layer()->SetFillsBoundsOpaquely(false);
+    minimize_button->layer()->SetName("OverlayWindowMinimizeButton");
+  }
+
   // views::View that closes the window and focuses initiator tab. ------------
-  back_to_tab_label_button->SetPaintToLayer(ui::LAYER_TEXTURED);
-  back_to_tab_label_button->layer()->SetFillsBoundsOpaquely(false);
-  back_to_tab_label_button->layer()->SetName("BackToTabControlsView");
+  if (back_to_tab_button) {
+    back_to_tab_button->SetPaintToLayer(ui::LAYER_TEXTURED);
+    back_to_tab_button->layer()->SetFillsBoundsOpaquely(false);
+    back_to_tab_button->layer()->SetName("BackToTabControlsView");
+  } else {
+    CHECK(back_to_tab_label_button);
+    back_to_tab_label_button->SetPaintToLayer(ui::LAYER_TEXTURED);
+    back_to_tab_label_button->layer()->SetFillsBoundsOpaquely(false);
+    back_to_tab_label_button->layer()->SetName("BackToTabControlsView");
+  }
 
   // views::View that holds the previous-track image button. ------------------
   previous_track_controls_view->SetPaintToLayer(ui::LAYER_TEXTURED);
@@ -984,9 +1035,18 @@ void VideoOverlayWindowViews::SetUpViews() {
       controls_container_view->AddChildView(std::move(controls_scrim_view));
   close_controls_view_ =
       controls_container_view->AddChildView(std::move(close_controls_view));
-  back_to_tab_label_button_ = controls_container_view->AddChildView(
-      std::move(back_to_tab_label_button));
-
+  if (minimize_button) {
+    minimize_button_ =
+        controls_container_view->AddChildView(std::move(minimize_button));
+  }
+  if (back_to_tab_button) {
+    back_to_tab_button_ =
+        controls_container_view->AddChildView(std::move(back_to_tab_button));
+  } else {
+    CHECK(back_to_tab_label_button);
+    back_to_tab_label_button_ = controls_container_view->AddChildView(
+        std::move(back_to_tab_label_button));
+  }
   previous_track_controls_view_ = controls_container_view->AddChildView(
       std::move(previous_track_controls_view));
   previous_slide_controls_view_ = controls_container_view->AddChildView(
@@ -1096,9 +1156,21 @@ void VideoOverlayWindowViews::OnUpdateControlsBounds() {
 
   WindowQuadrant quadrant = GetCurrentWindowQuadrant(GetBounds(), controller_);
   close_controls_view_->SetPosition(GetBounds().size(), quadrant);
+  if (minimize_button_) {
+    minimize_button_->SetPosition(GetBounds().size(), quadrant);
+  }
 
-  if (back_to_tab_label_button_)
+  if (back_to_tab_button_) {
+    back_to_tab_button_->SetPosition(GetBounds().size(), quadrant);
+  } else {
+    CHECK(back_to_tab_label_button_);
     back_to_tab_label_button_->SetWindowSize(GetBounds().size());
+  }
+
+  if (base::FeatureList::IsEnabled(
+          media::kVideoPictureInPictureControlsUpdate2024)) {
+    play_pause_controls_view_->SetWindowSize(GetBounds().size());
+  }
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
   UpdateResizeHandleBounds(quadrant);
@@ -1120,8 +1192,11 @@ void VideoOverlayWindowViews::OnUpdateControlsBounds() {
     visible_controls_views.push_back(previous_track_controls_view_);
   if (show_previous_slide_button_)
     visible_controls_views.push_back(previous_slide_controls_view_);
-  if (show_play_pause_button_)
+  if (show_play_pause_button_ &&
+      !base::FeatureList::IsEnabled(
+          media::kVideoPictureInPictureControlsUpdate2024)) {
     visible_controls_views.push_back(play_pause_controls_view_);
+  }
   if (show_next_track_button_)
     visible_controls_views.push_back(next_track_controls_view_);
   if (show_next_slide_button_)
@@ -1146,7 +1221,6 @@ void VideoOverlayWindowViews::OnUpdateControlsBounds() {
 
   switch (visible_controls_views.size()) {
     case 0:
-      DCHECK(back_to_tab_label_button_);
       break;
     case 1: {
       /* | --- --- [ ] --- --- | */
@@ -1229,7 +1303,7 @@ void VideoOverlayWindowViews::OnUpdateControlsBounds() {
       break;
     }
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 
   // This will actually update the visibility of a control that was just added
@@ -1276,7 +1350,7 @@ void VideoOverlayWindowViews::ShowInactive() {
 
   // At this point, the aura surface will be created so we can set it to pip and
   // its aspect ratio. Let Exo handle adding a rounded corner decorartor.
-  desktop_window_tree_host->GetWaylandExtension()->SetPip();
+  desktop_window_tree_host->GetWaylandToplevelExtension()->SetPip();
   desktop_window_tree_host->SetAspectRatio(gfx::SizeF(natural_size_),
                                            /*excluded_margin=*/gfx::Size());
 #endif
@@ -1300,7 +1374,7 @@ void VideoOverlayWindowViews::ShowInactive() {
   if (overlay_view) {
     overlay_view_ = GetContentsView()->AddChildView(std::move(overlay_view));
     overlay_view_->views::View::AddObserver(this);
-    auto_pip_setting_overlay_view_observation_.Observe(overlay_view_);
+    overlay_view_->set_delegate(this);
     // Also update the bounds, since that's already happened for everything
     // else, potentially, during widget resize.
     overlay_view_->SetBoundsRect(gfx::Rect(GetBounds().size()));
@@ -1485,10 +1559,12 @@ void VideoOverlayWindowViews::OnGestureEvent(ui::GestureEvent* event) {
     controller_->SkipAd();
     event->SetHandled();
   } else if (GetCloseControlsBounds().Contains(event->location())) {
+    CloseAndPauseIfAvailable();
+    event->SetHandled();
+  } else if (GetMinimizeControlsBounds().Contains(event->location())) {
     PictureInPictureWindowManager::GetInstance()
         ->ExitPictureInPictureViaWindowUi(
-            PictureInPictureWindowManager::UiBehavior::
-                kCloseWindowAndPauseVideo);
+            PictureInPictureWindowManager::UiBehavior::kCloseWindowOnly);
     event->SetHandled();
   } else if (GetPlayPauseControlsBounds().Contains(event->location())) {
     TogglePlayPause();
@@ -1512,6 +1588,10 @@ void VideoOverlayWindowViews::OnGestureEvent(ui::GestureEvent* event) {
 }
 
 gfx::Rect VideoOverlayWindowViews::GetBackToTabControlsBounds() {
+  if (back_to_tab_button_) {
+    return back_to_tab_button_->GetMirroredBounds();
+  }
+  CHECK(back_to_tab_label_button_);
   return back_to_tab_label_button_->GetMirroredBounds();
 }
 
@@ -1521,6 +1601,13 @@ gfx::Rect VideoOverlayWindowViews::GetSkipAdControlsBounds() {
 
 gfx::Rect VideoOverlayWindowViews::GetCloseControlsBounds() {
   return close_controls_view_->GetMirroredBounds();
+}
+
+gfx::Rect VideoOverlayWindowViews::GetMinimizeControlsBounds() {
+  if (!minimize_button_) {
+    return gfx::Rect();
+  }
+  return minimize_button_->GetMirroredBounds();
 }
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
@@ -1575,6 +1662,15 @@ void VideoOverlayWindowViews::TogglePlayPause() {
   play_pause_controls_view_->SetPlaybackState(is_active ? kPlaying : kPaused);
 }
 
+void VideoOverlayWindowViews::CloseAndPauseIfAvailable() {
+  // Only pause the video if play/pause is available.
+  const bool should_pause_video = !!show_play_pause_button_;
+  PictureInPictureWindowManager::GetInstance()->ExitPictureInPictureViaWindowUi(
+      should_pause_video
+          ? PictureInPictureWindowManager::UiBehavior::kCloseWindowAndPauseVideo
+          : PictureInPictureWindowManager::UiBehavior::kCloseWindowOnly);
+}
+
 PlaybackImageButton*
 VideoOverlayWindowViews::play_pause_controls_view_for_testing() const {
   return play_pause_controls_view_;
@@ -1623,6 +1719,16 @@ CloseImageButton* VideoOverlayWindowViews::close_button_for_testing() const {
   return close_controls_view_;
 }
 
+OverlayWindowMinimizeButton*
+VideoOverlayWindowViews::minimize_button_for_testing() const {
+  return minimize_button_;
+}
+
+OverlayWindowBackToTabButton*
+VideoOverlayWindowViews::back_to_tab_button_for_testing() const {
+  return back_to_tab_button_;
+}
+
 gfx::Point VideoOverlayWindowViews::close_image_position_for_testing() const {
   return close_controls_view_->origin();
 }
@@ -1663,11 +1769,10 @@ bool VideoOverlayWindowViews::IsOverlayViewShown() const {
 
 void VideoOverlayWindowViews::RemoveOverlayViewIfExists() {
   if (overlay_view_) {
-    auto_pip_setting_overlay_view_observation_.Reset();
     // Remove and delete the outgoing view.  Note the trailing `T` on the method
     // name -- this removes `overlay_view_` and returns a unique_ptr to it which
     // we then discard.  Without the `T`, it returns nothing and frees nothing.
-    overlay_view_->views::View::RemoveObserver(this);
+    overlay_view_->RemoveObserver(this);
     GetContentsView()->RemoveChildViewT(overlay_view_.ExtractAsDangling());
     OnSizeConstraintsChanged();
   }

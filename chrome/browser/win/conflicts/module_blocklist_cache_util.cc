@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "base/check.h"
+#include "base/compiler_specific.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -29,7 +30,7 @@ namespace {
 // Wrapper for base::File::ReadAtCurrentPost() that returns true only if all
 // the requested bytes were succesfully read from the file.
 bool SafeRead(base::File* file, char* data, int size) {
-  return file->ReadAtCurrentPos(data, size) == size;
+  return UNSAFE_TODO(file->ReadAtCurrentPos(data, size)) == size;
 }
 
 // Returns an iterator to the element equal to |value|, or |last| if it can't
@@ -161,7 +162,7 @@ bool WriteModuleBlocklistCache(
       sizeof(third_party_dlls::PackedListModule) * blocklisted_modules.size());
   file_contents.append(std::begin(md5_digest->a), std::end(md5_digest->a));
 
-  // TODO(1022041): Investigate if using WriteFileAtomically() in a
+  // TODO(crbug.com/40106434): Investigate if using WriteFileAtomically() in a
   // CONTINUE_ON_SHUTDOWN sequence doesn't cause too many corrupted caches.
   return base::ImportantFileWriter::WriteFileAtomically(
       module_blocklist_cache_path, file_contents);
@@ -235,7 +236,7 @@ int64_t CalculateExpectedFileSize(
   return static_cast<int64_t>(sizeof(third_party_dlls::PackedListMetadata) +
                               packed_list_metadata.module_count *
                                   sizeof(third_party_dlls::PackedListModule) +
-                              std::extent<decltype(base::MD5Digest::a)>());
+                              sizeof(base::MD5Digest::a));
 }
 
 bool ModuleLess::operator()(

@@ -14,7 +14,6 @@
 #include <string>
 #include <string_view>
 
-#include "android_webview/js_sandbox/js_sandbox_jni_headers/JsSandboxIsolate_jni.h"
 #include "android_webview/js_sandbox/service/js_sandbox_array_buffer_allocator.h"
 #include "android_webview/js_sandbox/service/js_sandbox_isolate_callback.h"
 #include "base/android/callback_android.h"
@@ -57,6 +56,9 @@
 #include "v8/include/v8-statistics.h"
 #include "v8/include/v8-template.h"
 
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "android_webview/js_sandbox/js_sandbox_jni_headers/JsSandboxIsolate_jni.h"
+
 using base::android::ConvertJavaStringToUTF8;
 using base::android::ConvertUTF8ToJavaString;
 using base::android::JavaParamRef;
@@ -64,8 +66,8 @@ using base::android::JavaRef;
 
 namespace {
 
-// TODO(crbug.com/1297672): This is what shows up as filename in errors. Revisit
-// this once error handling is in place.
+// TODO(crbug.com/40215244): This is what shows up as filename in errors.
+// Revisit this once error handling is in place.
 constexpr std::string_view resource_name = "<expression>";
 constexpr jlong kUnknownAssetFileDescriptorLength = -1;
 constexpr int64_t kDefaultChunkSize = 1 << 16;
@@ -194,7 +196,7 @@ jint remapConsoleMessageErrorLevel(const v8::Isolate::MessageErrorLevel level) {
     case v8::Isolate::MessageErrorLevel::kMessageWarning:
       return 1 << 4;
     case v8::Isolate::MessageErrorLevel::kMessageAll:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -700,8 +702,7 @@ void JsSandboxIsolate::EvaluateJavascriptOnThread(
   v8::TryCatch try_catch(v8_isolate);
 
   // Compile
-  v8::ScriptOrigin origin(v8_isolate,
-                          gin::StringToV8(v8_isolate, resource_name));
+  v8::ScriptOrigin origin(gin::StringToV8(v8_isolate, resource_name));
   v8::MaybeLocal<v8::Script> maybe_script = v8::Script::Compile(
       context_holder_->context(), gin::StringToV8(v8_isolate, code), &origin);
   std::string compile_error = "";
@@ -716,7 +717,6 @@ void JsSandboxIsolate::EvaluateJavascriptOnThread(
   }
 
   // Run
-  v8::Isolate::SafeForTerminationScope safe_for_termination(v8_isolate);
   v8::MaybeLocal<v8::Value> maybe_result =
       script->Run(context_holder_->context());
   std::string run_error = "";

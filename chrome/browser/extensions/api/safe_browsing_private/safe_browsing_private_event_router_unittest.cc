@@ -21,7 +21,6 @@
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/enterprise/connectors/common.h"
-#include "chrome/browser/enterprise/connectors/connectors_prefs.h"
 #include "chrome/browser/enterprise/connectors/connectors_service.h"
 #include "chrome/browser/enterprise/connectors/reporting/realtime_reporting_client.h"
 #include "chrome/browser/enterprise/connectors/reporting/realtime_reporting_client_factory.h"
@@ -38,6 +37,7 @@
 #include "components/download/public/common/download_danger_type.h"
 #include "components/enterprise/browser/enterprise_switches.h"
 #include "components/enterprise/common/proto/connectors.pb.h"
+#include "components/enterprise/connectors/core/connectors_prefs.h"
 #include "components/policy/core/common/cloud/mock_cloud_policy_client.h"
 #include "components/policy/core/common/cloud/realtime_reporting_job_configuration.h"
 #include "components/safe_browsing/core/common/features.h"
@@ -248,11 +248,9 @@ class SafeBrowsingPrivateEventRouterTestBase : public testing::Test {
   void TriggerOnLoginEvent(
       const GURL& url,
       const std::u16string& login_user_name,
-      std::optional<url::Origin> federated_origin = std::nullopt) {
+      url::SchemeHostPort federated_origin = url::SchemeHostPort()) {
     SafeBrowsingPrivateEventRouterFactory::GetForProfile(profile_)
-        ->OnLoginEvent(url, federated_origin.has_value(),
-                       federated_origin.has_value() ? federated_origin.value()
-                                                    : url::Origin(),
+        ->OnLoginEvent(url, federated_origin.IsValid(), federated_origin,
                        login_user_name);
   }
 
@@ -262,6 +260,17 @@ class SafeBrowsingPrivateEventRouterTestBase : public testing::Test {
     SafeBrowsingPrivateEventRouterFactory::GetForProfile(profile_)
         ->OnPasswordBreach(trigger, identities);
   }
+
+#if BUILDFLAG(ENTERPRISE_DATA_CONTROLS)
+  void TriggerOnDataControlsSensitiveDataEvent(
+      const data_controls::Verdict::TriggeredRules& triggered_rules) {
+    SafeBrowsingPrivateEventRouterFactory::GetForProfile(profile_)
+        ->OnDataControlsSensitiveDataEvent(
+            GURL(kUrl), GURL(kTabUrl), kSource, kDestination, "text/plain",
+            SafeBrowsingPrivateEventRouter::kTriggerWebContentUpload,
+            triggered_rules, safe_browsing::EventResult::BLOCKED, 12345);
+  }
+#endif  // BUILDFLAG(ENTERPRISE_DATA_CONTROLS)
 
   void SetReportingPolicy(
       bool enabled,
@@ -375,7 +384,7 @@ TEST_F(SafeBrowsingPrivateEventRouterTest, TestOnReuseDetected_Warned) {
   ASSERT_EQ(1u, event_list->size());
   const base::Value::Dict& wrapper = (*event_list)[0].GetDict();
   const base::Value::Dict* event =
-      wrapper.FindDict(SafeBrowsingPrivateEventRouter::kKeyPasswordReuseEvent);
+      wrapper.FindDict(enterprise_connectors::kKeyPasswordReuseEvent);
   EXPECT_NE(nullptr, event);
   EXPECT_EQ("https://phishing.com/",
             *event->FindString(SafeBrowsingPrivateEventRouter::kKeyUrl));
@@ -413,7 +422,7 @@ TEST_F(SafeBrowsingPrivateEventRouterTest, TestOnReuseDetected_Allowed) {
   ASSERT_EQ(1u, event_list->size());
   const base::Value::Dict& wrapper = (*event_list)[0].GetDict();
   const base::Value::Dict* event =
-      wrapper.FindDict(SafeBrowsingPrivateEventRouter::kKeyPasswordReuseEvent);
+      wrapper.FindDict(enterprise_connectors::kKeyPasswordReuseEvent);
   EXPECT_NE(nullptr, event);
   EXPECT_EQ("https://phishing.com/",
             *event->FindString(SafeBrowsingPrivateEventRouter::kKeyUrl));
@@ -446,8 +455,8 @@ TEST_F(SafeBrowsingPrivateEventRouterTest, TestOnPasswordChanged) {
   ASSERT_NE(nullptr, event_list);
   ASSERT_EQ(1u, event_list->size());
   const base::Value::Dict& wrapper = (*event_list)[0].GetDict();
-  const base::Value::Dict* event = wrapper.FindDict(
-      SafeBrowsingPrivateEventRouter::kKeyPasswordChangedEvent);
+  const base::Value::Dict* event =
+      wrapper.FindDict(enterprise_connectors::kKeyPasswordChangedEvent);
   EXPECT_NE(nullptr, event);
   EXPECT_EQ("user_name_2",
             *event->FindString(SafeBrowsingPrivateEventRouter::kKeyUserName));
@@ -482,8 +491,8 @@ TEST_F(SafeBrowsingPrivateEventRouterTest, TestOnDangerousDownloadOpened) {
   ASSERT_NE(nullptr, event_list);
   ASSERT_EQ(1u, event_list->size());
   const base::Value::Dict& wrapper = (*event_list)[0].GetDict();
-  const base::Value::Dict* event = wrapper.FindDict(
-      SafeBrowsingPrivateEventRouter::kKeyDangerousDownloadEvent);
+  const base::Value::Dict* event =
+      wrapper.FindDict(enterprise_connectors::kKeyDangerousDownloadEvent);
   EXPECT_NE(nullptr, event);
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -535,7 +544,7 @@ TEST_F(SafeBrowsingPrivateEventRouterTest,
   ASSERT_EQ(1u, event_list->size());
   const base::Value::Dict& wrapper = (*event_list)[0].GetDict();
   const base::Value::Dict* event =
-      wrapper.FindDict(SafeBrowsingPrivateEventRouter::kKeyInterstitialEvent);
+      wrapper.FindDict(enterprise_connectors::kKeyInterstitialEvent);
   EXPECT_NE(nullptr, event);
   EXPECT_EQ("PHISHING",
             *event->FindString(SafeBrowsingPrivateEventRouter::kKeyReason));
@@ -573,7 +582,7 @@ TEST_F(SafeBrowsingPrivateEventRouterTest, TestOnSecurityInterstitialShown) {
   ASSERT_EQ(1u, event_list->size());
   const base::Value::Dict& wrapper = (*event_list)[0].GetDict();
   const base::Value::Dict* event =
-      wrapper.FindDict(SafeBrowsingPrivateEventRouter::kKeyInterstitialEvent);
+      wrapper.FindDict(enterprise_connectors::kKeyInterstitialEvent);
   EXPECT_NE(nullptr, event);
   EXPECT_EQ("PHISHING",
             *event->FindString(SafeBrowsingPrivateEventRouter::kKeyReason));
@@ -602,8 +611,8 @@ TEST_F(SafeBrowsingPrivateEventRouterTest, TestOnDangerousDownloadWarning) {
   ASSERT_NE(nullptr, event_list);
   ASSERT_EQ(1u, event_list->size());
   const base::Value::Dict& wrapper = (*event_list)[0].GetDict();
-  const base::Value::Dict* event = wrapper.FindDict(
-      SafeBrowsingPrivateEventRouter::kKeyDangerousDownloadEvent);
+  const base::Value::Dict* event =
+      wrapper.FindDict(enterprise_connectors::kKeyDangerousDownloadEvent);
   EXPECT_NE(nullptr, event);
 #if BUILDFLAG(IS_CHROMEOS)
   // TODO(crbug.com/1163303): To fix the tests for ChromeOS.
@@ -645,8 +654,8 @@ TEST_F(SafeBrowsingPrivateEventRouterTest,
   ASSERT_NE(nullptr, event_list);
   ASSERT_EQ(1u, event_list->size());
   const base::Value::Dict& wrapper = (*event_list)[0].GetDict();
-  const base::Value::Dict* event = wrapper.FindDict(
-      SafeBrowsingPrivateEventRouter::kKeyDangerousDownloadEvent);
+  const base::Value::Dict* event =
+      wrapper.FindDict(enterprise_connectors::kKeyDangerousDownloadEvent);
   EXPECT_NE(nullptr, event);
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -914,7 +923,7 @@ TEST_F(SafeBrowsingPrivateEventRouterTest, TestOnLoginEventFederated) {
       profile_->GetProfileUserName(), GetProfileIdentifier(), u"*****");
 
   TriggerOnLoginEvent(GURL("https://www.example.com/"), u"login-username",
-                      url::Origin::Create(GURL("https://www.google.com")));
+                      url::SchemeHostPort(GURL("https://www.google.com")));
 }
 
 TEST_F(SafeBrowsingPrivateEventRouterTest, TestOnPasswordBreach) {
@@ -1025,7 +1034,7 @@ TEST_F(SafeBrowsingPrivateEventRouterTest, TestOnSensitiveDataEvent_Allowed) {
   ASSERT_EQ(1u, event_list->size());
   const base::Value::Dict& wrapper = (*event_list)[0].GetDict();
   const base::Value::Dict* event =
-      wrapper.FindDict(SafeBrowsingPrivateEventRouter::kKeySensitiveDataEvent);
+      wrapper.FindDict(enterprise_connectors::kKeySensitiveDataEvent);
   ASSERT_NE(nullptr, event);
 
   EXPECT_EQ(kUrl, *event->FindString(SafeBrowsingPrivateEventRouter::kKeyUrl));
@@ -1082,7 +1091,7 @@ TEST_F(SafeBrowsingPrivateEventRouterTest, TestOnSensitiveDataEvent_Blocked) {
   ASSERT_EQ(1u, event_list->size());
   const base::Value::Dict& wrapper = (*event_list)[0].GetDict();
   const base::Value::Dict* event =
-      wrapper.FindDict(SafeBrowsingPrivateEventRouter::kKeySensitiveDataEvent);
+      wrapper.FindDict(enterprise_connectors::kKeySensitiveDataEvent);
   ASSERT_NE(nullptr, event);
 
   EXPECT_EQ(kUrl, *event->FindString(SafeBrowsingPrivateEventRouter::kKeyUrl));
@@ -1140,7 +1149,7 @@ TEST_F(SafeBrowsingPrivateEventRouterTest,
   ASSERT_EQ(1u, event_list->size());
   const base::Value::Dict& wrapper = (*event_list)[0].GetDict();
   const base::Value::Dict* event = wrapper.FindDict(
-      SafeBrowsingPrivateEventRouter::kKeyUrlFilteringInterstitialEvent);
+      enterprise_connectors::kKeyUrlFilteringInterstitialEvent);
   ASSERT_NE(nullptr, event);
 
   EXPECT_FALSE(
@@ -1182,7 +1191,7 @@ TEST_F(SafeBrowsingPrivateEventRouterTest,
   ASSERT_EQ(1u, event_list->size());
   const base::Value::Dict& wrapper = (*event_list)[0].GetDict();
   const base::Value::Dict* event = wrapper.FindDict(
-      SafeBrowsingPrivateEventRouter::kKeyUrlFilteringInterstitialEvent);
+      enterprise_connectors::kKeyUrlFilteringInterstitialEvent);
   ASSERT_NE(nullptr, event);
 
   EXPECT_FALSE(
@@ -1223,7 +1232,7 @@ TEST_F(SafeBrowsingPrivateEventRouterTest,
   ASSERT_EQ(1u, event_list->size());
   const base::Value::Dict& wrapper = (*event_list)[0].GetDict();
   const base::Value::Dict* event = wrapper.FindDict(
-      SafeBrowsingPrivateEventRouter::kKeyUrlFilteringInterstitialEvent);
+      enterprise_connectors::kKeyUrlFilteringInterstitialEvent);
   ASSERT_NE(nullptr, event);
 
   EXPECT_TRUE(
@@ -1264,7 +1273,7 @@ TEST_F(SafeBrowsingPrivateEventRouterTest,
   ASSERT_EQ(1u, event_list->size());
   const base::Value::Dict& wrapper = (*event_list)[0].GetDict();
   const base::Value::Dict* event = wrapper.FindDict(
-      SafeBrowsingPrivateEventRouter::kKeyUrlFilteringInterstitialEvent);
+      enterprise_connectors::kKeyUrlFilteringInterstitialEvent);
   ASSERT_NE(nullptr, event);
 
   EXPECT_FALSE(
@@ -1304,7 +1313,7 @@ TEST_F(SafeBrowsingPrivateEventRouterTest, TestOnUnscannedFileEvent_Allowed) {
   ASSERT_EQ(1u, event_list->size());
   const base::Value::Dict& wrapper = (*event_list)[0].GetDict();
   const base::Value::Dict* event =
-      wrapper.FindDict(SafeBrowsingPrivateEventRouter::kKeyUnscannedFileEvent);
+      wrapper.FindDict(enterprise_connectors::kKeyUnscannedFileEvent);
   ASSERT_NE(nullptr, event);
 
   EXPECT_EQ(kUrl, *event->FindString(SafeBrowsingPrivateEventRouter::kKeyUrl));
@@ -1350,7 +1359,7 @@ TEST_F(SafeBrowsingPrivateEventRouterTest, TestOnUnscannedFileEvent_Blocked) {
   ASSERT_EQ(1u, event_list->size());
   const base::Value::Dict& wrapper = (*event_list)[0].GetDict();
   const base::Value::Dict* event =
-      wrapper.FindDict(SafeBrowsingPrivateEventRouter::kKeyUnscannedFileEvent);
+      wrapper.FindDict(enterprise_connectors::kKeyUnscannedFileEvent);
   ASSERT_NE(nullptr, event);
 
   EXPECT_EQ(kUrl, *event->FindString(SafeBrowsingPrivateEventRouter::kKeyUrl));
@@ -1426,8 +1435,7 @@ TEST_F(SafeBrowsingPrivateEventRouterTest, TestProfileUsername) {
 // triggers for the same event name).
 TEST_F(SafeBrowsingPrivateEventRouterTest, TestPasswordChangedEnabled) {
   std::set<std::string> enabled_event_names;
-  enabled_event_names.insert(
-      SafeBrowsingPrivateEventRouter::kKeyPasswordChangedEvent);
+  enabled_event_names.insert(enterprise_connectors::kKeyPasswordChangedEvent);
   SetUpRouters(/*authorized=*/true, /*realtime_reporting_enable=*/true,
                enabled_event_names);
 
@@ -1449,8 +1457,7 @@ TEST_F(SafeBrowsingPrivateEventRouterTest, TestPasswordChangedEnabled) {
 
 TEST_F(SafeBrowsingPrivateEventRouterTest, TestPasswordReuseEnabled) {
   std::set<std::string> enabled_event_names;
-  enabled_event_names.insert(
-      SafeBrowsingPrivateEventRouter::kKeyPasswordReuseEvent);
+  enabled_event_names.insert(enterprise_connectors::kKeyPasswordReuseEvent);
   SetUpRouters(/*authorized=*/true, /*realtime_reporting_enable=*/true,
                enabled_event_names);
 
@@ -1473,8 +1480,7 @@ TEST_F(SafeBrowsingPrivateEventRouterTest, TestPasswordReuseEnabled) {
 
 TEST_F(SafeBrowsingPrivateEventRouterTest, TestDangerousDownloadEnabled) {
   std::set<std::string> enabled_event_names;
-  enabled_event_names.insert(
-      SafeBrowsingPrivateEventRouter::kKeyDangerousDownloadEvent);
+  enabled_event_names.insert(enterprise_connectors::kKeyDangerousDownloadEvent);
   SetUpRouters(/*authorized=*/true, /*realtime_reporting_enable=*/true,
                enabled_event_names);
 
@@ -1498,8 +1504,7 @@ TEST_F(SafeBrowsingPrivateEventRouterTest, TestDangerousDownloadEnabled) {
 
 TEST_F(SafeBrowsingPrivateEventRouterTest, TestInterstitialEnabled) {
   std::set<std::string> enabled_event_names;
-  enabled_event_names.insert(
-      SafeBrowsingPrivateEventRouter::kKeyInterstitialEvent);
+  enabled_event_names.insert(enterprise_connectors::kKeyInterstitialEvent);
   SetUpRouters(/*authorized=*/true, /*realtime_reporting_enable=*/true,
                enabled_event_names);
 
@@ -1526,8 +1531,7 @@ TEST_F(SafeBrowsingPrivateEventRouterTest, TestInterstitialEnabled) {
 
 TEST_F(SafeBrowsingPrivateEventRouterTest, TestSensitiveDataEnabled) {
   std::set<std::string> enabled_event_names;
-  enabled_event_names.insert(
-      SafeBrowsingPrivateEventRouter::kKeySensitiveDataEvent);
+  enabled_event_names.insert(enterprise_connectors::kKeySensitiveDataEvent);
   SetUpRouters(/*authorized=*/true, /*realtime_reporting_enable=*/true,
                enabled_event_names);
 
@@ -1542,8 +1546,7 @@ TEST_F(SafeBrowsingPrivateEventRouterTest, TestSensitiveDataEnabled) {
 
 TEST_F(SafeBrowsingPrivateEventRouterTest, TestUnscannedFileEnabled) {
   std::set<std::string> enabled_event_names;
-  enabled_event_names.insert(
-      SafeBrowsingPrivateEventRouter::kKeyUnscannedFileEvent);
+  enabled_event_names.insert(enterprise_connectors::kKeyUnscannedFileEvent);
   SetUpRouters(/*authorized=*/true, /*realtime_reporting_enable=*/true,
                enabled_event_names);
 
@@ -1555,6 +1558,68 @@ TEST_F(SafeBrowsingPrivateEventRouterTest, TestUnscannedFileEnabled) {
   // times.
   Mock::VerifyAndClearExpectations(client_.get());
 }
+
+#if BUILDFLAG(ENTERPRISE_DATA_CONTROLS)
+TEST_F(SafeBrowsingPrivateEventRouterTest, TestDataControlsSensitiveDataEvent) {
+  SetUpRouters();
+
+  base::Value::Dict report;
+  EXPECT_CALL(*client_, UploadSecurityEventReport)
+      .WillOnce(CaptureArg(&report));
+
+  TriggerOnDataControlsSensitiveDataEvent({
+      {0, {"rule_id_1", "rule_name_1"}},
+      {1, {"rule_id_2", "rule_name_2"}},
+  });
+  base::RunLoop().RunUntilIdle();
+
+  Mock::VerifyAndClearExpectations(client_.get());
+  const base::Value::List* event_list =
+      report.FindList(policy::RealtimeReportingJobConfiguration::kEventListKey);
+  ASSERT_NE(event_list, nullptr);
+  ASSERT_EQ(event_list->size(), 1u);
+  const base::Value::Dict& wrapper = (*event_list)[0].GetDict();
+  const base::Value::Dict* event =
+      wrapper.FindDict(enterprise_connectors::kKeySensitiveDataEvent);
+  ASSERT_NE(event, nullptr);
+
+  EXPECT_EQ(*event->FindString(SafeBrowsingPrivateEventRouter::kKeyUrl), kUrl);
+  EXPECT_EQ(*event->FindString(SafeBrowsingPrivateEventRouter::kKeyTabUrl),
+            kTabUrl);
+  EXPECT_EQ(*event->FindString(SafeBrowsingPrivateEventRouter::kKeySource),
+            kSource);
+  EXPECT_EQ(*event->FindString(SafeBrowsingPrivateEventRouter::kKeyDestination),
+            kDestination);
+  EXPECT_EQ(*event->FindString(SafeBrowsingPrivateEventRouter::kKeyContentSize),
+            "12345");
+  EXPECT_EQ(*event->FindString(SafeBrowsingPrivateEventRouter::kKeyContentType),
+            "text/plain");
+  EXPECT_EQ(*event->FindString(SafeBrowsingPrivateEventRouter::kKeyTrigger),
+            SafeBrowsingPrivateEventRouter::kTriggerWebContentUpload);
+  EXPECT_EQ(
+      *event->FindString(SafeBrowsingPrivateEventRouter::kKeyEventResult),
+      safe_browsing::EventResultToString(safe_browsing::EventResult::BLOCKED));
+
+  const base::Value::List* triggered_rule_info =
+      event->FindList(SafeBrowsingPrivateEventRouter::kKeyTriggeredRuleInfo);
+  ASSERT_NE(triggered_rule_info, nullptr);
+  ASSERT_EQ(triggered_rule_info->size(), 2u);
+  const base::Value::Dict& rule_1 = (*triggered_rule_info)[0].GetDict();
+  EXPECT_EQ(
+      *rule_1.FindString(SafeBrowsingPrivateEventRouter::kKeyTriggeredRuleName),
+      "rule_name_1");
+  EXPECT_EQ(
+      *rule_1.FindString(SafeBrowsingPrivateEventRouter::kKeyTriggeredRuleId),
+      "rule_id_1");
+  const base::Value::Dict& rule_2 = (*triggered_rule_info)[1].GetDict();
+  EXPECT_EQ(
+      *rule_2.FindString(SafeBrowsingPrivateEventRouter::kKeyTriggeredRuleName),
+      "rule_name_2");
+  EXPECT_EQ(
+      *rule_2.FindString(SafeBrowsingPrivateEventRouter::kKeyTriggeredRuleId),
+      "rule_id_2");
+}
+#endif  // BUILDFLAG(ENTERPRISE_DATA_CONTROLS)
 
 // Tests to make sure the feature flag and policy control real-time reporting
 // as expected.  The parameter for these tests is a tuple of bools:
@@ -1731,23 +1796,12 @@ INSTANTIATE_TEST_SUITE_P(
     All,
     SafeBrowsingIsRealtimeReportingEventDisabledTest,
     testing::Values(
-        testing::make_tuple(
-            SafeBrowsingPrivateEventRouter::kKeyPasswordChangedEvent,
-            1),
-        testing::make_tuple(
-            SafeBrowsingPrivateEventRouter::kKeyPasswordReuseEvent,
-            1),
-        testing::make_tuple(
-            SafeBrowsingPrivateEventRouter::kKeyDangerousDownloadEvent,
-            3),
-        testing::make_tuple(
-            SafeBrowsingPrivateEventRouter::kKeyInterstitialEvent,
-            2),
-        testing::make_tuple(
-            SafeBrowsingPrivateEventRouter::kKeySensitiveDataEvent,
-            1),
-        testing::make_tuple(
-            SafeBrowsingPrivateEventRouter::kKeyUnscannedFileEvent,
-            1)));
+        testing::make_tuple(enterprise_connectors::kKeyPasswordChangedEvent, 1),
+        testing::make_tuple(enterprise_connectors::kKeyPasswordReuseEvent, 1),
+        testing::make_tuple(enterprise_connectors::kKeyDangerousDownloadEvent,
+                            3),
+        testing::make_tuple(enterprise_connectors::kKeyInterstitialEvent, 2),
+        testing::make_tuple(enterprise_connectors::kKeySensitiveDataEvent, 1),
+        testing::make_tuple(enterprise_connectors::kKeyUnscannedFileEvent, 1)));
 
 }  // namespace extensions

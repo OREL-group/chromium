@@ -2,12 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ui/webui/commerce/shopping_insights_side_panel_ui.h"
 
 #include <memory>
 
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
-#include "chrome/browser/browser_process.h"
 #include "chrome/browser/commerce/shopping_service_factory.h"
 #include "chrome/browser/feature_engagement/tracker_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -20,7 +24,6 @@
 #include "chrome/grit/side_panel_commerce_resources_map.h"
 #include "chrome/grit/side_panel_shared_resources.h"
 #include "chrome/grit/side_panel_shared_resources_map.h"
-#include "components/commerce/core/commerce_constants.h"
 #include "components/commerce/core/commerce_feature_list.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/web_ui.h"
@@ -76,8 +79,6 @@ ShoppingInsightsSidePanelUI::ShoppingInsightsSidePanelUI(content::WebUI* web_ui)
   source->AddBoolean("shouldShowFeedback",
                      commerce::kPriceInsightsShowFeedback.Get());
 
-  webui::SetupChromeRefresh2023(source);
-
   webui::SetupWebUIDataSource(source,
                               base::make_span(kSidePanelCommerceResources,
                                               kSidePanelCommerceResourcesSize),
@@ -117,8 +118,8 @@ void ShoppingInsightsSidePanelUI::CreateShoppingServiceHandler(
       std::make_unique<commerce::ShoppingServiceHandler>(
           std::move(page), std::move(receiver), bookmark_model,
           shopping_service, profile->GetPrefs(), tracker,
-          g_browser_process->GetApplicationLocale(),
-          std::make_unique<commerce::ShoppingUiHandlerDelegate>(this, profile));
+          std::make_unique<commerce::ShoppingUiHandlerDelegate>(this, profile),
+          nullptr);
 }
 
 WEB_UI_CONTROLLER_TYPE_IMPL(ShoppingInsightsSidePanelUI)

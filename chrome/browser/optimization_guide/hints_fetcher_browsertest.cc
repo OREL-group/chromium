@@ -344,8 +344,9 @@ class HintsFetcherDisabledBrowserTest : public InProcessBrowserTest {
             prerender::FINAL_STATUS_NOSTATE_PREFETCH_FINISHED);
 
     std::unique_ptr<prerender::NoStatePrefetchHandle> no_state_prefetch_handle =
-        no_state_prefetch_manager->StartPrefetchingFromOmnibox(
-            url, storage_namespace, gfx::Size(640, 480), nullptr);
+        no_state_prefetch_manager->AddSameOriginSpeculation(
+            url, storage_namespace, gfx::Size(640, 480),
+            url::Origin::Create(url));
     ASSERT_EQ(no_state_prefetch_handle->contents(), test_prerender->contents());
 
     // The final status may be either  FINAL_STATUS_NOSTATE_PREFETCH_FINISHED or
@@ -434,7 +435,7 @@ class HintsFetcherDisabledBrowserTest : public InProcessBrowserTest {
                optimization_guide::HintsFetcherRemoteResponseType::kHung) {
       return std::make_unique<net::test_server::HungResponse>();
     } else {
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
     }
 
     return std::move(response);
@@ -1474,7 +1475,8 @@ IN_PROC_BROWSER_TEST_F(HintsFetcherSearchPagePrerenderingBrowserTest,
   // Load a page in the prerender.
   GURL prerender_url = search_results_page_url();
   ResetCountHintsRequestsReceived();
-  int host_id = prerender_helper()->AddPrerender(prerender_url);
+  content::FrameTreeNodeId host_id =
+      prerender_helper()->AddPrerender(prerender_url);
   EXPECT_EQ(0u, count_hints_requests_received());
   histogram_tester->ExpectBucketCount(
       "OptimizationGuide.HintsFetcher.GetHintsRequest.HostCount", 0, 0);

@@ -33,8 +33,10 @@
     "contexts": ["privileged_extension"]
   },
   "action.openPopup": [{
-    // TODO(https://crbug.com/1245093): Upgrade to stable channel.
-    "channel": "dev"
+    "channel": "stable",
+    // TODO(https://crbug.com/40057101): Remove this guard after the feature
+    // has been in stable for a milestone or two.
+    "feature_flag": "ApiActionOpenPopup"
   }, {
     "channel": "stable",
     "location": "policy"
@@ -58,6 +60,10 @@
       "chrome://extensions/*"
     ]
   }],
+  "experimentalAiData": {
+    "contexts": ["privileged_extension"],
+    "channel": "dev"
+  },
   "app": {
     "blocklist": [
       "2FC374607C2DF285634B67C64A2E356C607091C3",  // Quickoffice
@@ -213,6 +219,7 @@
       "chrome://add-supervision/*",
       "chrome://chrome-signin/*",
       "chrome://discards/*",
+      "chrome://graduation/*",
       "chrome://mobilesetup/*",
       "chrome://oobe/*",
       "chrome://os-settings/*",
@@ -239,6 +246,9 @@
     "internal": true,
     "channel": "stable",
     "contexts": ["web_page"],
+    "matches": [
+      "<all_urls>"
+    ],
     // This feature is only enabled if the embedder's delegated check returns
     // true.
     "requires_delegated_availability_check": true
@@ -251,10 +261,21 @@
     "dependencies": ["manifest:commands"],
     "contexts": ["privileged_extension"]
   },
-  "contentSettings": {
+  "contentSettings": [{
     "dependencies": ["permission:contentSettings"],
-    "contexts": ["privileged_extension"]
-  },
+    "contexts": [
+      "privileged_extension"
+    ],
+    "default_parent": true
+  },{
+    "channel": "stable",
+    "contexts": [
+      "webui_untrusted"
+    ],
+    "matches": [
+      "chrome-untrusted://boca-app/*"
+    ]
+  }],
   "contentSettings.clipboard": {
     "feature_flag": "ApiContentSettingsClipboard"
   },
@@ -278,13 +299,15 @@
     ],
     "matches": [
       "chrome://camera-app/*",
-      "chrome://media-app/*"
+      "chrome://media-app/*",
+      "chrome://recorder-app/*"
     ]
   },
   {
     "channel": "stable",
     "contexts": ["webui_untrusted"],
     "matches": [
+      "chrome-untrusted://boca-app/*",
       "chrome-untrusted://camera-app/*",
       "chrome-untrusted://help-app/*",
       "chrome-untrusted://media-app/*",
@@ -292,13 +315,6 @@
       "chrome-untrusted://projector-annotator/*"
     ]
   }],
-  "dashboardPrivate": {
-    "channel": "stable",
-    "contexts": ["privileged_extension"],
-    "allowlist": [
-      "B44D08FD98F1523ED5837D78D0A606EA9D6206E5"  // Web Store
-    ]
-  },
   "debugger": {
     "dependencies": ["permission:debugger"],
     "contexts": ["privileged_extension"]
@@ -416,6 +432,9 @@
   },
   "enterprise.reportingPrivate.getHotfixes": {
     "platforms": ["win"]
+  },
+  "enterprise.reportingPrivate.reportDataMaskingEvent": {
+    "feature_flag": "ApiEnterpriseReportingPrivateReportDataMaskingEvent"
   },
   "experimental.devtools.audits": {
     "nocompile": true,
@@ -596,7 +615,8 @@
   },
   "input.ime": {
     "dependencies": ["permission:input"],
-    "contexts": ["privileged_extension"]
+    "contexts": ["privileged_extension"],
+    "platforms": ["chromeos"]
   },
   "inputMethodPrivate": [{
     "dependencies": ["permission:inputMethodPrivate"],
@@ -626,6 +646,15 @@
       // chrome://os-settings as appropriate
       "chrome://os-settings/*",
       "chrome://settings/*"
+    ]
+  },
+  {
+    "channel": "stable",
+    "contexts": [
+      "webui_untrusted"
+    ],
+    "matches": [
+      "chrome-untrusted://lens-overlay/*"
     ]
   }],
   "login": [{
@@ -729,6 +758,14 @@
     ],
     "contexts": ["privileged_extension"]
   },
+  "permissions.addSiteAccessRequest": {
+    "min_manifest_version": 3,
+    "feature_flag": "ApiPermissionsSiteAccessRequests"
+  },
+  "permissions.removeSiteAccessRequest": {
+    "min_manifest_version": 3,
+    "feature_flag": "ApiPermissionsSiteAccessRequests"
+  },
   "platformKeys": {
     "dependencies": ["permission:platformKeys"],
     "contexts": ["privileged_extension"]
@@ -785,8 +822,7 @@
   },
   "readingList": {
     "dependencies": ["permission:readingList"],
-    "contexts": ["privileged_extension"],
-    "feature_flag": "ApiReadingList"
+    "contexts": ["privileged_extension"]
   },
   "resourcesPrivate": [{
     "dependencies": ["permission:resourcesPrivate"],
@@ -1031,8 +1067,14 @@
   }, {
     "channel": "stable",
     "contexts": ["web_page"],
-    "matches": ["https://chromewebstore.google.com/*"],
-    "feature_flag": "NewWebstoreDomain"
+    "matches": ["https://chromewebstore.google.com/*"]
+  }, {
+    // Used for webstore testing. See comment in
+    // chrome/common/extensions/webstore_override.cc
+    "channel": "stable",
+    "contexts": ["web_page"],
+    "requires_delegated_availability_check": true,
+    "matches": ["<all_urls>"]
   }],
   "webviewTag": {
     "internal": true,

@@ -49,7 +49,7 @@
 #include "services/viz/public/cpp/gpu/command_buffer_metrics.h"
 #include "skia/buildflags.h"
 #include "third_party/skia/include/core/SkTraceMemoryDump.h"
-#include "third_party/skia/include/gpu/GrDirectContext.h"
+#include "third_party/skia/include/gpu/ganesh/GrDirectContext.h"
 #include "ui/gl/trace_util.h"
 
 class SkDiscardableMemory;
@@ -307,7 +307,7 @@ gpu::ContextResult ContextProviderCommandBuffer::BindToCurrentSequence() {
   cache_controller_ =
       std::make_unique<ContextCacheController>(impl_, default_task_runner_);
 
-  // TODO(crbug.com/868192): SetLostContextCallback should probably work on
+  // TODO(crbug.com/40586882): SetLostContextCallback should probably work on
   // WebGPU contexts too.
   if (impl_) {
     impl_->SetLostContextCallback(
@@ -385,13 +385,9 @@ gpu::raster::RasterInterface* ContextProviderCommandBuffer::RasterInterface() {
   }
 
 #if BUILDFLAG(IS_ANDROID)
-  // The last few usages of RasterImplementationGLES are removed from Android
-  // with switching to use RasterInterface in VideoResourceUpdater. Thus,
-  // Android should never need a RasterImplementationGLES through
-  // ContextProviderCommandBuffer. This DUMP_WILL_BE_CHECK helps validate it.
-  DUMP_WILL_BE_CHECK(false);
-#endif
-
+  // Android uses RasterDecoder exclusively.
+  NOTREACHED();
+#else
   if (!gles2_impl_.get()) {
     return nullptr;
   }
@@ -399,6 +395,7 @@ gpu::raster::RasterInterface* ContextProviderCommandBuffer::RasterInterface() {
   raster_interface_ = std::make_unique<gpu::raster::RasterImplementationGLES>(
       gles2_impl_.get(), gles2_impl_.get(), ContextCapabilities());
   return raster_interface_.get();
+#endif
 }
 
 gpu::ContextSupport* ContextProviderCommandBuffer::ContextSupport() {

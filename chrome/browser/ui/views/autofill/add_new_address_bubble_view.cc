@@ -3,10 +3,12 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/ui/views/autofill/add_new_address_bubble_view.h"
+
 #include "chrome/browser/ui/views/accessibility/theme_tracking_non_accessible_image_view.h"
 #include "chrome/grit/theme_resources.h"
 #include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/views/view_class_properties.h"
 
 namespace autofill {
@@ -28,10 +30,10 @@ AddNewAddressBubbleView::AddNewAddressBubbleView(
   SetTitle(
       l10n_util::GetStringUTF16(IDS_AUTOFILL_ADD_NEW_ADDRESS_PROMPT_TITLE));
 
-  SetButtonLabel(ui::DIALOG_BUTTON_OK,
+  SetButtonLabel(ui::mojom::DialogButton::kOk,
                  l10n_util::GetStringUTF16(
                      IDS_AUTOFILL_ADD_NEW_ADDRESS_DIALOG_OK_BUTTON_LABEL));
-  SetButtonLabel(ui::DIALOG_BUTTON_CANCEL,
+  SetButtonLabel(ui::mojom::DialogButton::kCancel,
                  l10n_util::GetStringUTF16(
                      IDS_AUTOFILL_SAVE_ADDRESS_PROMPT_CANCEL_BUTTON_LABEL));
 
@@ -39,15 +41,12 @@ AddNewAddressBubbleView::AddNewAddressBubbleView(
       views::BoxLayout::Orientation::kVertical, gfx::Insets(),
       views::LayoutProvider::Get()->GetDistanceMetric(
           views::DISTANCE_UNRELATED_CONTROL_VERTICAL)));
+  set_fixed_width(views::LayoutProvider::Get()->GetDistanceMetric(
+      views::DISTANCE_BUBBLE_PREFERRED_WIDTH));
 
   AddChildView(views::Builder<views::Label>()
                    .SetText(controller_->GetBodyText())
                    .SetTextStyle(views::style::STYLE_SECONDARY)
-                   .SetPreferredSize(gfx::Size(
-                       views::LayoutProvider::Get()->GetDistanceMetric(
-                           views::DISTANCE_BUBBLE_PREFERRED_WIDTH) -
-                           margins().width(),
-                       0))
                    .SetHorizontalAlignment(gfx::HorizontalAlignment::ALIGN_LEFT)
                    .SetMultiLine(true)
                    .Build());

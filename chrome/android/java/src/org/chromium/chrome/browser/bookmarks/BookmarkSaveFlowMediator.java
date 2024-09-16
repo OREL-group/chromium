@@ -40,7 +40,6 @@ import org.chromium.components.power_bookmarks.PowerBookmarkMeta;
 import org.chromium.components.signin.identitymanager.ConsentLevel;
 import org.chromium.components.signin.identitymanager.IdentityManager;
 import org.chromium.ui.modelutil.PropertyModel;
-import org.chromium.url.GURL;
 
 /**
  * Controls the bookmarks save-flow, which has 2 variants: standard, improved. The two variants have
@@ -308,12 +307,7 @@ public class BookmarkSaveFlowMediator extends BookmarkModelObserver
                             ImprovedBookmarkSaveFlowProperties.BOOKMARK_ROW_ICON, drawable);
                 };
 
-        if (meta != null && meta.hasShoppingSpecifics()) {
-            mBookmarkImageFetcher.fetchImageUrlWithFallbacks(
-                    new GURL(meta.getLeadImage().getUrl()), item, callback);
-        } else {
-            mBookmarkImageFetcher.fetchImageForBookmarkWithFaviconFallback(item, callback);
-        }
+        mBookmarkImageFetcher.fetchImageForBookmarkWithFaviconFallback(item, callback);
     }
 
     void handlePriceTrackingSwitchToggle(CompoundButton view, boolean toggled) {
@@ -329,12 +323,6 @@ public class BookmarkSaveFlowMediator extends BookmarkModelObserver
                             });
         }
 
-        // Make sure the notification channel is initialized when the user tracks a product.
-        // TODO(crbug.com/1382191): Add a SubscriptionsObserver in the PriceDropNotificationManager
-        // and initialize the channel there.
-        if (toggled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            PriceDropNotificationManagerFactory.create().createNotificationChannel();
-        }
         setPriceTrackingIconForEnabledState(toggled);
         PriceTrackingUtils.setPriceTrackingStateForBookmark(
                 mProfile,
@@ -433,6 +421,11 @@ public class BookmarkSaveFlowMediator extends BookmarkModelObserver
     public void onSubscribe(CommerceSubscription subscription, boolean succeeded) {
         if (!succeeded || !subscription.equals(mSubscription)) return;
         setPriceTrackingToggleVisualsOnly(true);
+
+        // Make sure the notification channel is initialized when the user tracks the product.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            PriceDropNotificationManagerFactory.create(mProfile).createNotificationChannel();
+        }
     }
 
     @Override
@@ -473,7 +466,7 @@ public class BookmarkSaveFlowMediator extends BookmarkModelObserver
 
     private void onFolderSelectClicked(View v) {
         RecordUserAction.record("MobileBookmark.SaveFlow.EditFolder");
-        BookmarkUtils.startFolderSelectActivity(mContext, mBookmarkId);
+        BookmarkUtils.startFolderPickerActivity(mContext, mBookmarkId);
         TrackerFactory.getTrackerForProfile(mProfile)
                 .notifyEvent(EventConstants.SHOPPING_LIST_SAVE_FLOW_FOLDER_TAP);
         mCloseRunnable.run();

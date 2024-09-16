@@ -8,16 +8,18 @@
  * settings.
  */
 
-import 'chrome://resources/ash/common/cr_elements/cr_icon_button/cr_icon_button.js';
-import 'chrome://resources/ash/common/cr_elements/policy/cr_policy_indicator.js';
-import 'chrome://resources/ash/common/cr_elements/cr_slider/cr_slider.js';
 import '../icons.html.js';
 import '../settings_shared.css.js';
+import 'chrome://resources/ash/common/cr_elements/cr_icon_button/cr_icon_button.js';
+import 'chrome://resources/ash/common/cr_elements/cr_slider/cr_slider.js';
+import 'chrome://resources/ash/common/cr_elements/policy/cr_policy_indicator.js';
 
 import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
 import {CrSliderElement} from 'chrome://resources/ash/common/cr_elements/cr_slider/cr_slider.js';
+import {CrToggleElement} from 'chrome://resources/ash/common/cr_elements/cr_toggle/cr_toggle.js';
 import {I18nMixin} from 'chrome://resources/ash/common/cr_elements/i18n_mixin.js';
 import {WebUiListenerMixin} from 'chrome://resources/ash/common/cr_elements/web_ui_listener_mixin.js';
+import {strictQuery} from 'chrome://resources/ash/common/typescript_utils/strict_query.js';
 import {assert} from 'chrome://resources/js/assert.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
@@ -31,7 +33,7 @@ import {Route, routes} from '../router.js';
 
 import {getTemplate} from './audio.html.js';
 import {CrosAudioConfigInterface, getCrosAudioConfig} from './cros_audio_config.js';
-import {BatteryStatus} from './device_page_browser_proxy.js';
+import {BatteryStatus, DevicePageBrowserProxy, DevicePageBrowserProxyImpl} from './device_page_browser_proxy.js';
 import {FakeCrosAudioConfig} from './fake_cros_audio_config.js';
 
 /** Utility for keeping percent in inclusive range of [0,100].  */
@@ -84,6 +86,14 @@ export class SettingsAudioElement extends SettingsAudioElementBase {
         type: Boolean,
       },
 
+      isStyleTransferEnabled_: {
+        type: Boolean,
+      },
+
+      isStyleTransferSupported_: {
+        type: Boolean,
+      },
+
       outputVolume_: {
         type: Number,
       },
@@ -128,6 +138,10 @@ export class SettingsAudioElement extends SettingsAudioElementBase {
       showHfpMicSr: {
         type: Boolean,
       },
+
+      showStyleTransfer: {
+        type: Boolean,
+      },
     };
   }
 
@@ -135,8 +149,10 @@ export class SettingsAudioElement extends SettingsAudioElementBase {
   protected showAllowAGC: boolean;
   protected isHfpMicSrEnabled: boolean;
   protected showHfpMicSr: boolean;
+  protected showStyleTransfer: boolean;
 
   private audioAndCaptionsBrowserProxy_: AudioAndCaptionsPageBrowserProxy;
+  private devicePageBrowserProxy_: DevicePageBrowserProxy;
   private audioSystemProperties_: AudioSystemProperties;
   private audioSystemPropertiesObserverReceiver_:
       AudioSystemPropertiesObserverReceiver;
@@ -145,6 +161,8 @@ export class SettingsAudioElement extends SettingsAudioElementBase {
   private isInputMuted_: boolean;
   private isNoiseCancellationEnabled_: boolean;
   private isNoiseCancellationSupported_: boolean;
+  private isStyleTransferEnabled_: boolean;
+  private isStyleTransferSupported_: boolean;
   private outputVolume_: number;
   private startupSoundEnabled_: boolean;
   private batteryStatus_: BatteryStatus|undefined;
@@ -160,6 +178,8 @@ export class SettingsAudioElement extends SettingsAudioElementBase {
 
     this.audioAndCaptionsBrowserProxy_ =
         AudioAndCaptionsPageBrowserProxyImpl.getInstance();
+
+    this.devicePageBrowserProxy_ = DevicePageBrowserProxyImpl.getInstance();
   }
 
   override ready(): void {
@@ -173,6 +193,10 @@ export class SettingsAudioElement extends SettingsAudioElementBase {
         });
     this.addWebUiListener(
         'battery-status-changed', this.set.bind(this, 'batteryStatus_'));
+
+    // Manually call updatePowerStatus to ensure batteryStatus_ is initialized
+    // and up to date.
+    this.devicePageBrowserProxy_.updatePowerStatus();
   }
 
   /**
@@ -193,6 +217,10 @@ export class SettingsAudioElement extends SettingsAudioElementBase {
     this.isNoiseCancellationSupported_ =
         !(activeInputDevice?.noiseCancellationState ===
           AudioEffectState.kNotSupported);
+    this.isStyleTransferEnabled_ =
+        (activeInputDevice?.styleTransferState === AudioEffectState.kEnabled);
+    this.isStyleTransferSupported_ = activeInputDevice?.styleTransferState !==
+        AudioEffectState.kNotSupported;
     this.isAllowAGCEnabled =
         (activeInputDevice?.forceRespectUiGainsState ===
          AudioEffectState.kNotEnabled);
@@ -422,6 +450,10 @@ export class SettingsAudioElement extends SettingsAudioElementBase {
     this.crosAudioConfig_.setNoiseCancellationEnabled(e.detail);
   }
 
+  private toggleStyleTransferEnabled_(e: CustomEvent<boolean>): void {
+    this.crosAudioConfig_.setStyleTransferEnabled(e.detail);
+  }
+
   private toggleHfpMicSrEnabled_(e: CustomEvent<boolean>): void {
     this.crosAudioConfig_.setHfpMicSrEnabled(e.detail);
   }
@@ -432,6 +464,25 @@ export class SettingsAudioElement extends SettingsAudioElementBase {
 
   private computePowerSoundsHidden_(): boolean {
     return !this.batteryStatus_?.present;
+  }
+
+  private onDeviceStartupSoundRowClicked_(): void {
+    this.startupSoundEnabled_ = !this.startupSoundEnabled_;
+    this.audioAndCaptionsBrowserProxy_.setStartupSoundEnabled(
+        this.startupSoundEnabled_);
+  }
+
+  private onNoiseCancellationRowClicked_(): void {
+    const noiseCancellationToggle = strictQuery(
+        '#audioInputNoiseCancellationToggle', this.shadowRoot, CrToggleElement);
+    this.crosAudioConfig_.setNoiseCancellationEnabled(
+        !noiseCancellationToggle.checked);
+  }
+
+  private onStyleTransferRowClicked_(): void {
+    const styleTransferToggle = strictQuery(
+        '#audioInputStyleTransferToggle', this.shadowRoot, CrToggleElement);
+    this.crosAudioConfig_.setStyleTransferEnabled(!styleTransferToggle.checked);
   }
 }
 

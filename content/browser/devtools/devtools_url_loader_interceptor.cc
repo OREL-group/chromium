@@ -2,9 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "content/browser/devtools/devtools_url_loader_interceptor.h"
 
 #include <memory>
+#include <optional>
 #include <string_view>
 
 #include "base/barrier_closure.h"
@@ -215,10 +221,9 @@ class BodyReader : public mojo::DataPipeDrainer::Client {
   }
 
  private:
-  void OnDataAvailable(const void* data, size_t num_bytes) override {
+  void OnDataAvailable(base::span<const uint8_t> data) override {
     DCHECK(!data_complete_);
-    body_->data().append(
-        std::string(static_cast<const char*>(data), num_bytes));
+    body_->as_string().append(base::as_string_view(data));
   }
 
   void OnDataComplete() override;
@@ -245,7 +250,7 @@ void BodyReader::OnDataComplete() {
   data_complete_ = true;
   body_pipe_drainer_.reset();
   // TODO(caseq): only encode if necessary.
-  encoded_body_ = base::Base64Encode(body_->data());
+  encoded_body_ = base::Base64Encode(*body_);
   for (auto& cb : callbacks_)
     cb->sendSuccess(encoded_body_, true);
   callbacks_.clear();
@@ -797,7 +802,7 @@ bool DevToolsURLLoaderInterceptor::CreateProxyForInterception(
       target_remote.InitWithNewPipeAndPassReceiver();
   mojo::PendingRemote<network::mojom::CookieManager> cookie_manager;
 
-  // TODO(https://crbug.com/1467851): Using 0 as the process id for navigations
+  // TODO(crbug.com/40276949): Using 0 as the process id for navigations
   // can lead to collisions between multiple navigations/service workers main
   // script fetch. It should be replaced by the more robust
   // GlobalRequestID::MakeBrowserInitiated().
@@ -1229,11 +1234,10 @@ Response InterceptionJob::ProcessResponseOverride(
       size_t bytes_to_sniff =
           std::min(body_size, static_cast<size_t>(net::kMaxBytesToSniff));
       const std::string hint = head->mime_type;
-      net::SniffMimeType(
-          std::string_view(body->front_as<const char>() + response_body_offset,
-                           bytes_to_sniff),
-          url, hint, net::ForceSniffFileUrlsForHtml::kDisabled,
-          &head->mime_type);
+      net::SniffMimeType(base::as_string_view(*body).substr(
+                             response_body_offset, bytes_to_sniff),
+                         url, hint, net::ForceSniffFileUrlsForHtml::kDisabled,
+                         &head->mime_type);
       head->did_mime_sniff = true;
     } else if (head->mime_type.empty()) {
       head->mime_type.assign("text/plain");
@@ -1284,10 +1288,7 @@ void InterceptionJob::ProcessSetCookies(const net::HttpResponseHeaders& headers,
   }
 
   std::vector<std::unique_ptr<net::CanonicalCookie>> cookies;
-  base::Time response_date;
-  std::optional<base::Time> server_time = std::nullopt;
-  if (headers.GetDateValue(&response_date))
-    server_time = std::make_optional(response_date);
+  std::optional<base::Time> server_time = headers.GetDateValue();
   base::Time now = base::Time::Now();
 
   const std::string_view name("Set-Cookie");
@@ -1296,7 +1297,7 @@ void InterceptionJob::ProcessSetCookies(const net::HttpResponseHeaders& headers,
   while (headers.EnumerateHeader(&iter, name, &cookie_line)) {
     std::unique_ptr<net::CanonicalCookie> cookie = net::CanonicalCookie::Create(
         create_loader_params_->request.url, cookie_line, now, server_time,
-        std::nullopt, /*block_truncated=*/true, net::CookieSourceType::kOther,
+        std::nullopt, net::CookieSourceType::kOther,
         /*status=*/nullptr);
     if (cookie)
       cookies.emplace_back(std::move(cookie));
@@ -1358,24 +1359,26 @@ void InterceptionJob::ProcessRedirectByClient(const GURL& redirect_url) {
 
 void InterceptionJob::SendResponse(scoped_refptr<base::RefCountedMemory> body,
                                    size_t offset) {
-  size_t body_size = body ? body->size() : 0;
-  CHECK_LE(offset, body_size);
-  body_size -= offset;
+  base::span<const uint8_t> bytes_to_write;
+  if (body) {
+    bytes_to_write = base::as_byte_span(*body).subspan(offset);
+  }
   // We shouldn't be able to transfer a string that big over the protocol,
   // but just in case...
-  CHECK_LE(body_size, UINT32_MAX)
+  CHECK_LE(bytes_to_write.size(), UINT32_MAX)
       << "Response bodies larger than " << UINT32_MAX << " are not supported";
   mojo::ScopedDataPipeConsumerHandle consumer_handle;
   mojo::ScopedDataPipeProducerHandle producer_handle;
-  CHECK_EQ(mojo::CreateDataPipe(body_size, producer_handle, consumer_handle),
+  CHECK_EQ(mojo::CreateDataPipe(bytes_to_write.size(), producer_handle,
+                                consumer_handle),
            MOJO_RESULT_OK);
 
   if (body) {
-    size_t num_bytes = body_size;
+    size_t actually_written_bytes = 0;
     MojoResult res = producer_handle->WriteData(
-        body->front() + offset, &num_bytes, MOJO_WRITE_DATA_FLAG_NONE);
+        bytes_to_write, MOJO_WRITE_DATA_FLAG_NONE, actually_written_bytes);
     DCHECK_EQ(0u, res);
-    DCHECK_EQ(num_bytes, body_size);
+    DCHECK_EQ(actually_written_bytes, bytes_to_write.size());
   }
   client_->OnReceiveResponse(std::move(response_metadata_->head),
                              std::move(consumer_handle),

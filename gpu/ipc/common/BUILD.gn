@@ -111,10 +111,6 @@ source_set("ipc_common_sources") {
     ]
   }
   if (is_android) {
-    sources += [
-      "gpu_memory_buffer_impl_android_hardware_buffer.cc",
-      "gpu_memory_buffer_impl_android_hardware_buffer.h",
-    ]
     visibility += [ "//media/gpu:gpu" ]
   }
 
@@ -203,7 +199,7 @@ source_set("vulkan_types") {
   sources = [ "vulkan_types.h" ]
   public_deps = [ "//ui/gfx" ]
   all_dependent_configs =
-      [ "//third_party/vulkan-deps/vulkan-headers/src:vulkan_headers_config" ]
+      [ "//third_party/vulkan-headers/src:vulkan_headers_config" ]
   configs += [ "//gpu:gpu_implementation" ]
 }
 
@@ -752,7 +748,7 @@ mojom("vulkan_interface") {
   webui_module_path = "/"
   generate_legacy_js_bindings = true
 
-  # TODO(crbug.com/1062364): This interface code is used by some javascript
+  # TODO(crbug.com/40122851): This interface code is used by some javascript
   # targets even when vulkan isn't enabled, but the C++ fuzzer code will fail
   # to compile if the headers aren't available.
   if (!enable_vulkan) {

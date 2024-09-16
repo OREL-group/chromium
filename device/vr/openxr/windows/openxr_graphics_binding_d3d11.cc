@@ -173,7 +173,7 @@ void OpenXrGraphicsBindingD3D11::CreateSharedImages(
     gpu_memory_buffer_handle.dxgi_token = gfx::DXGIHandleToken();
     gpu_memory_buffer_handle.type = gfx::DXGI_SHARED_HANDLE;
 
-    // TODO(https://crbug.com/1458256): This size is the size of the texture
+    // TODO(crbug.com/40918787): This size is the size of the texture
     // from the OpenXr runtime, which is fine but does not work properly if the
     // page requests any kind of framebuffer scaling, because then the image
     // size that the page uses would be different than this size, which can
@@ -184,10 +184,10 @@ void OpenXrGraphicsBindingD3D11::CreateSharedImages(
     // The SharedImages created here will eventually be transferred to other
     // processes to have their contents written by WebGL and read via GL by
     // OpenXR.
-    const uint32_t shared_image_usage = gpu::SHARED_IMAGE_USAGE_SCANOUT |
-                                        gpu::SHARED_IMAGE_USAGE_DISPLAY_READ |
-                                        gpu::SHARED_IMAGE_USAGE_GLES2_READ |
-                                        gpu::SHARED_IMAGE_USAGE_GLES2_WRITE;
+    const gpu::SharedImageUsageSet shared_image_usage =
+        gpu::SHARED_IMAGE_USAGE_SCANOUT | gpu::SHARED_IMAGE_USAGE_DISPLAY_READ |
+        gpu::SHARED_IMAGE_USAGE_GLES2_READ |
+        gpu::SHARED_IMAGE_USAGE_GLES2_WRITE;
 
     swap_chain_info.shared_image = sii->CreateSharedImage(
         {viz::SinglePlaneFormat::kRGBA_8888, buffer_size,
@@ -274,7 +274,7 @@ void OpenXrGraphicsBindingD3D11::CleanupWithoutSubmit() {
 }
 
 bool OpenXrGraphicsBindingD3D11::ShouldFlipSubmittedImage() {
-  return IsUsingSharedImages();
+  return true;
 }
 
 void OpenXrGraphicsBindingD3D11::OnSwapchainImageSizeChanged() {

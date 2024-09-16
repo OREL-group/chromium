@@ -26,7 +26,7 @@ class PromosManager;
                 authenticationService:
                     (AuthenticationService*)authenticationService
                       identityManager:(signin::IdentityManager*)identityManager
-                           localState:(PrefService*)localState;
+                          prefService:(PrefService*)prefService;
 
 @end
 

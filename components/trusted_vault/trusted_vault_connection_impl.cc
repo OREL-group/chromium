@@ -4,6 +4,7 @@
 
 #include "components/trusted_vault/trusted_vault_connection_impl.h"
 
+#include <algorithm>
 #include <string>
 #include <utility>
 
@@ -84,7 +85,7 @@ trusted_vault_pb::SharedMemberKey CreateSharedMemberKey(
 }
 
 trusted_vault_pb::SharedMemberKey CreateSharedMemberKey(
-    const PrecomputedMemberKeys& precomputed) {
+    const MemberKeys& precomputed) {
   trusted_vault_pb::SharedMemberKey shared_member_key;
   shared_member_key.set_epoch(precomputed.version);
 
@@ -93,6 +94,30 @@ trusted_vault_pb::SharedMemberKey CreateSharedMemberKey(
   AssignBytesToProtoString(precomputed.proof,
                            shared_member_key.mutable_member_proof());
   return shared_member_key;
+}
+
+trusted_vault_pb::PhysicalDeviceMetadata::DeviceType
+GetLocalPhysicalDeviceType() {
+  // Note that some of the below are unreachable in practice as this code isn't
+  // currently used or even built on all platforms.
+#if BUILDFLAG(IS_CHROMEOS)
+  return trusted_vault_pb::PhysicalDeviceMetadata::DEVICE_TYPE_CHROMEOS;
+#elif BUILDFLAG(IS_LINUX)
+  return trusted_vault_pb::PhysicalDeviceMetadata::DEVICE_TYPE_LINUX;
+#elif BUILDFLAG(IS_ANDROID)
+  return trusted_vault_pb::PhysicalDeviceMetadata::DEVICE_TYPE_ANDROID;
+#elif BUILDFLAG(IS_IOS)
+  return trusted_vault_pb::PhysicalDeviceMetadata::DEVICE_TYPE_IOS;
+#elif BUILDFLAG(IS_MAC)
+  return trusted_vault_pb::PhysicalDeviceMetadata::DEVICE_TYPE_MAC_OS;
+#elif BUILDFLAG(IS_WIN)
+  return trusted_vault_pb::PhysicalDeviceMetadata::DEVICE_TYPE_WINDOWS;
+#elif BUILDFLAG(IS_FUCHSIA)
+  // Not used in Fuchsia.
+  return trusted_vault_pb::PhysicalDeviceMetadata::DEVICE_TYPE_UNKNOWN;
+#else
+#error Please handle your new device OS here.
+#endif
 }
 
 trusted_vault_pb::SecurityDomainMember CreateSecurityDomainMember(
@@ -114,9 +139,14 @@ trusted_vault_pb::SecurityDomainMember CreateSecurityDomainMember(
 
   absl::visit(
       base::Overloaded{
-          [&member](const PhysicalDevice&) {
+          [&member](const LocalPhysicalDevice&) {
             member.set_member_type(trusted_vault_pb::SecurityDomainMember::
                                        MEMBER_TYPE_PHYSICAL_DEVICE);
+            auto* member_metadata = member.mutable_member_metadata();
+            auto* physical_device_metadata =
+                member_metadata->mutable_physical_device_metadata();
+            physical_device_metadata->set_device_type(
+                GetLocalPhysicalDeviceType());
           },
           [&member](const LockScreenKnowledgeFactor&) {
             member.set_member_type(trusted_vault_pb::SecurityDomainMember::
@@ -124,9 +154,9 @@ trusted_vault_pb::SecurityDomainMember CreateSecurityDomainMember(
           },
           [&member](const UnspecifiedAuthenticationFactorType&) {
             member.set_member_type(trusted_vault_pb::SecurityDomainMember::
-                                       MEMBER_TYPE_PHYSICAL_DEVICE);
-            // The type hint field is in the request protobuf, not the security
-            // domain member, and so is set in
+                                       MEMBER_TYPE_UNSPECIFIED);
+            // The type hint field is in the request protobuf, not the
+            // security domain member, and so is set in
             // `CreateJoinSecurityDomainsRequest`.
           },
           [&member](const GpmPinMetadata& gpm_pin_metadata) {
@@ -136,6 +166,10 @@ trusted_vault_pb::SecurityDomainMember CreateSecurityDomainMember(
             auto* pin_metadata =
                 member_metadata->mutable_google_password_manager_pin_metadata();
             pin_metadata->set_encrypted_pin_hash(gpm_pin_metadata.wrapped_pin);
+          },
+          [&member](const ICloudKeychain&) {
+            member.set_member_type(trusted_vault_pb::SecurityDomainMember::
+                                       MEMBER_TYPE_ICLOUD_KEYCHAIN);
           }},
       authentication_factor_type);
   return member;
@@ -155,7 +189,7 @@ void AddSharedMemberKeysFromSource(
                   trusted_vault_key_and_version, public_key);
             }
           },
-          [request](const PrecomputedMemberKeys& precomputed) {
+          [request](const MemberKeys& precomputed) {
             *request->add_shared_member_key() =
                 CreateSharedMemberKey(precomputed);
           }},
@@ -257,6 +291,11 @@ void ProcessJoinSecurityDomainsResponse(
       *last_key_version);
 }
 
+base::Time ToTime(const trusted_vault_pb::Timestamp& proto) {
+  return base::Time::UnixEpoch() + base::Seconds(proto.seconds()) +
+         base::Nanoseconds(proto.nanos());
+}
+
 void ProcessDownloadKeysResponse(
     std::unique_ptr<DownloadKeysResponseHandler> response_handler,
     TrustedVaultConnection::DownloadNewKeysCallback callback,
@@ -273,7 +312,7 @@ void ProcessDownloadIsRecoverabilityDegradedResponse(
     TrustedVaultConnection::IsRecoverabilityDegradedCallback callback,
     TrustedVaultRequest::HttpStatus http_status,
     const std::string& response_body) {
-  // TODO(crbug.com/1201659): consider special handling when security domain
+  // TODO(crbug.com/40178774): consider special handling when security domain
   // doesn't exist.
   switch (http_status) {
     case TrustedVaultRequest::HttpStatus::kSuccess:
@@ -403,10 +442,45 @@ class DownloadAuthenticationFactorsRegistrationStateRequest
       if (member.member_type() == trusted_vault_pb::SecurityDomainMember::
                                       MEMBER_TYPE_GOOGLE_PASSWORD_MANAGER_PIN &&
           member.member_metadata().has_google_password_manager_pin_metadata()) {
+        const auto& pin_metadata =
+            member.member_metadata().google_password_manager_pin_metadata();
         result_.gpm_pin_metadata.emplace(
-            member.public_key(), member.member_metadata()
-                                     .google_password_manager_pin_metadata()
-                                     .encrypted_pin_hash());
+            member.public_key(), pin_metadata.encrypted_pin_hash(),
+            ToTime(pin_metadata.expiration_time()));
+      } else if (member.member_type() ==
+                 trusted_vault_pb::SecurityDomainMember::
+                     MEMBER_TYPE_ICLOUD_KEYCHAIN) {
+        std::unique_ptr<SecureBoxPublicKey> public_key =
+            SecureBoxPublicKey::CreateByImport(
+                ProtoStringToBytes(member.public_key()));
+        if (!public_key) {
+          continue;
+        }
+        const auto& membership = std::ranges::find_if(
+            member.memberships(),
+            [&security_domain_name](const auto& membership) {
+              return membership.security_domain() == security_domain_name;
+            });
+        CHECK(membership != member.memberships().end())
+            << "iCloud member should have been tested for membership above";
+        std::vector<MemberKeys> member_keys;
+        std::ranges::transform(
+            membership->keys(), std::back_inserter(member_keys),
+            [](const auto& key) {
+              return MemberKeys(key.epoch(),
+                                std::vector<uint8_t>(key.wrapped_key().begin(),
+                                                     key.wrapped_key().end()),
+                                std::vector<uint8_t>(key.member_proof().begin(),
+                                                     key.member_proof().end()));
+            });
+        result_.icloud_keys.emplace_back(std::move(public_key),
+                                         std::move(member_keys));
+      } else if (member.member_type() ==
+                     trusted_vault_pb::SecurityDomainMember::
+                         MEMBER_TYPE_LOCKSCREEN_KNOWLEDGE_FACTOR &&
+                 member.member_metadata().has_lskf_metadata()) {
+        const auto& metadata = member.member_metadata().lskf_metadata();
+        result_.lskf_expiries.push_back(ToTime(metadata.expiration_time()));
       }
     }
 
@@ -442,7 +516,7 @@ GetURLFetchReasonForUMAForJoinSecurityDomainsRequest(
     AuthenticationFactorType authentication_factor_type) {
   return absl::visit(
       base::Overloaded{
-          [](const PhysicalDevice&) {
+          [](const LocalPhysicalDevice&) {
             return TrustedVaultURLFetchReasonForUMA::kRegisterDevice;
           },
           [](const LockScreenKnowledgeFactor&) {
@@ -455,6 +529,9 @@ GetURLFetchReasonForUMAForJoinSecurityDomainsRequest(
           },
           [](const GpmPinMetadata&) {
             return TrustedVaultURLFetchReasonForUMA::kRegisterGpmPin;
+          },
+          [](const ICloudKeychain&) {
+            return TrustedVaultURLFetchReasonForUMA::kRegisterICloudKeychain;
           }},
       authentication_factor_type);
 }
@@ -508,12 +585,13 @@ TrustedVaultConnectionImpl::RegisterAuthenticationFactor(
 }
 
 std::unique_ptr<TrustedVaultConnection::Request>
-TrustedVaultConnectionImpl::RegisterDeviceWithoutKeys(
+TrustedVaultConnectionImpl::RegisterLocalDeviceWithoutKeys(
     const CoreAccountInfo& account_info,
     const SecureBoxPublicKey& device_public_key,
     RegisterAuthenticationFactorCallback callback) {
   return SendJoinSecurityDomainsRequest(
-      account_info, ConstantKeySource(), device_public_key, PhysicalDevice(),
+      account_info, ConstantKeySource(), device_public_key,
+      LocalPhysicalDevice(),
       base::BindOnce(&RunRegisterAuthenticationFactorCallback,
                      std::move(callback)));
 }
@@ -524,7 +602,7 @@ TrustedVaultConnectionImpl::DownloadNewKeys(
     const TrustedVaultKeyAndVersion& last_trusted_vault_key_and_version,
     std::unique_ptr<SecureBoxKeyPair> device_key_pair,
     DownloadNewKeysCallback callback) {
-  // TODO(crbug.com/1413179): consider retries for keys downloading after
+  // TODO(crbug.com/40255601): consider retries for keys downloading after
   // initial failure returned to the upper layers.
   auto request = std::make_unique<TrustedVaultRequest>(
       account_info.account_id, TrustedVaultRequest::HttpMethod::kGet,

@@ -2,12 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/events/ozone/layout/xkb/xkb_keyboard_layout_engine.h"
 
 #include <stddef.h>
 #include <xkbcommon/xkbcommon-names.h>
 
 #include <algorithm>
+#include <string_view>
 #include <utility>
 
 #include "base/containers/span.h"
@@ -684,6 +690,10 @@ XkbKeyboardLayoutEngine::~XkbKeyboardLayoutEngine() {
   }
 }
 
+std::string_view XkbKeyboardLayoutEngine::GetLayoutName() const {
+  return current_layout_name_;
+}
+
 bool XkbKeyboardLayoutEngine::CanSetCurrentLayout() const {
 #if BUILDFLAG(IS_CHROMEOS_ASH)
   return true;
@@ -969,7 +979,7 @@ int XkbKeyboardLayoutEngine::UpdateModifiers(uint32_t depressed,
 
 DomCode XkbKeyboardLayoutEngine::GetDomCodeByKeysym(
     uint32_t keysym,
-    const std::optional<std::vector<base::StringPiece>>& modifiers) const {
+    const std::optional<std::vector<std::string_view>>& modifiers) const {
   // Look up all candidates.
   auto range = std::equal_range(
       xkb_keysym_map_.begin(), xkb_keysym_map_.end(), XkbKeysymMapEntry{keysym},

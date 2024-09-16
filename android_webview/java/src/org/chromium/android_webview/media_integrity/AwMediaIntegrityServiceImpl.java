@@ -16,6 +16,7 @@ import org.chromium.android_webview.AwSettings;
 import org.chromium.android_webview.common.Lifetime;
 import org.chromium.android_webview.common.MediaIntegrityApiStatus;
 import org.chromium.android_webview.common.MediaIntegrityErrorCode;
+import org.chromium.android_webview.common.MediaIntegrityErrorWrapper;
 import org.chromium.android_webview.common.MediaIntegrityProvider;
 import org.chromium.android_webview.common.PlatformServiceBridge;
 import org.chromium.android_webview.common.ValueOrErrorCallback;
@@ -70,9 +71,9 @@ public class AwMediaIntegrityServiceImpl implements WebViewMediaIntegrityService
     private static int sCacheMissCounter;
     private static int sProviderCreatedCounter;
     @NonNull private final RenderFrameHost mRenderFrameHost;
-    private final WebContents mWebContents;
+    @Nullable private final WebContents mWebContents;
 
-    public AwMediaIntegrityServiceImpl(RenderFrameHost renderFrameHost) {
+    public AwMediaIntegrityServiceImpl(@NonNull RenderFrameHost renderFrameHost) {
         mRenderFrameHost = renderFrameHost;
         mWebContents = WebContentsStatics.fromRenderFrameHost(renderFrameHost);
     }
@@ -102,22 +103,50 @@ public class AwMediaIntegrityServiceImpl implements WebViewMediaIntegrityService
             return;
         }
 
+        if (mWebContents == null) {
+            callback.call(WebViewMediaIntegrityErrorCode.INTERNAL_ERROR);
+            return;
+        }
+
+        final RenderFrameHost mainFrame = mRenderFrameHost.getMainFrame();
+        if (mainFrame == null) {
+            callback.call(WebViewMediaIntegrityErrorCode.INTERNAL_ERROR);
+            return;
+        }
+
         final Origin sourceOrigin = mRenderFrameHost.getLastCommittedOrigin();
-        final Origin topLevelOrigin = mRenderFrameHost.getMainFrame().getLastCommittedOrigin();
+        final Origin topLevelOrigin = mainFrame.getLastCommittedOrigin();
         if (sourceOrigin == null || topLevelOrigin == null) {
             callback.call(WebViewMediaIntegrityErrorCode.INTERNAL_ERROR);
             return;
         }
 
         final AwSettings awSettings = AwSettings.fromWebContents(mWebContents);
-        // TODO(crbug.com/330151742): This does not produce the base URL's origin when loading a
-        // page with loadDataWithBaseURL (as getLastCommittedURL and getLastCommittedOrigin do not
-        // agree in that case). Change this to using Origin, which does the right thing.
-        final String sourceOriginString = getOriginStringFromRenderFrame(mRenderFrameHost);
-        if (awSettings == null || sourceOriginString == null) {
+        if (awSettings == null) {
             callback.call(WebViewMediaIntegrityErrorCode.INTERNAL_ERROR);
             return;
         }
+
+        // The GURL-based, string-based, and android.net.Uri-based origin representations are
+        // lossy. They are only used for the API-status check. Prefer using Origin-based origins in
+        // all other cases.
+        final GURL sourceGurl = mRenderFrameHost.getLastCommittedURL();
+        if (sourceGurl == null) {
+            callback.call(WebViewMediaIntegrityErrorCode.INTERNAL_ERROR);
+            return;
+        }
+        final GURL sourceOriginGurl = sourceGurl.getOrigin();
+        final String sourceOriginString = sourceOriginGurl.getValidSpecOrEmpty();
+        if (!Objects.equals(sourceOrigin.getScheme(), sourceOriginGurl.getScheme())
+                || "".equals(sourceOriginString)) {
+            // Note that sourceOrigin and sourceOriginGurl (getLastCommittedOrigin and
+            // getLastCommittedURL) may not agree on the origin in certain situations, including
+            // non-standard URIs and pages loaded via loadDataWithBaseURL. For now, we do not
+            // support these or loadDataWithBaseURL.
+            callback.call(WebViewMediaIntegrityErrorCode.NON_RECOVERABLE_ERROR);
+            return;
+        }
+
         @MediaIntegrityApiStatus
         final int apiStatus = getMediaIntegrityApiStatus(sourceOriginString, awSettings);
         if (apiStatus == MediaIntegrityApiStatus.DISABLED) {
@@ -155,10 +184,10 @@ public class AwMediaIntegrityServiceImpl implements WebViewMediaIntegrityService
                 "Android.WebView.MediaIntegrity.TokenProviderCacheMissesCumulativeV2",
                 ++sCacheMissCounter);
         PlatformServiceBridge.getInstance()
-                .getMediaIntegrityProvider(
+                .getMediaIntegrityProvider2(
                         cloudProjectNumber,
                         /* requestMode= */ apiStatus,
-                        new ValueOrErrorCallback<MediaIntegrityProvider, Integer>() {
+                        new ValueOrErrorCallback<>() {
                             @Override
                             public void onResult(MediaIntegrityProvider provider) {
                                 ThreadUtils.assertOnUiThread();
@@ -177,38 +206,28 @@ public class AwMediaIntegrityServiceImpl implements WebViewMediaIntegrityService
                             }
 
                             @Override
-                            public void onError(Integer error) {
+                            public void onError(MediaIntegrityErrorWrapper error) {
                                 ThreadUtils.assertOnUiThread();
                                 Objects.requireNonNull(error);
-                                callback.call(errorCodeToMojomErrorCode(error));
+                                callback.call(errorCodeToMojomErrorCode(error.value));
                             }
                         });
     }
 
     private @MediaIntegrityApiStatus int getMediaIntegrityApiStatus(
             @NonNull String sourceOriginString, @NonNull AwSettings awSettings) {
-        @MediaIntegrityApiStatus int apiStatus;
-        if ("".equals(sourceOriginString)) {
-            // An empty origin will be produced for many (but not all) non-http/non-https schemes.
-            apiStatus = awSettings.getWebViewIntegrityApiDefaultStatus();
-        } else {
-            apiStatus =
-                    awSettings.getWebViewIntegrityApiStatusForUri(Uri.parse(sourceOriginString));
-        }
+        // An empty origin will be produced for many (but not all) non-http/non-https schemes.
+        // We disallow this in the caller.
+        assert !"".equals(sourceOriginString);
+
+        @MediaIntegrityApiStatus
+        int apiStatus =
+                awSettings.getWebViewIntegrityApiStatusForUri(Uri.parse(sourceOriginString));
         RecordHistogram.recordEnumeratedHistogram(
                 "Android.WebView.MediaIntegrity.ApiStatusV2",
                 apiStatus,
                 MediaIntegrityApiStatus.COUNT);
         return apiStatus;
-    }
-
-    @Nullable
-    private String getOriginStringFromRenderFrame(RenderFrameHost host) {
-        final GURL sourceGurl = host.getLastCommittedURL();
-        if (sourceGurl == null) {
-            return null;
-        }
-        return sourceGurl.getOrigin().getValidSpecOrEmpty();
     }
 
     @Lifetime.WebView
@@ -225,7 +244,7 @@ public class AwMediaIntegrityServiceImpl implements WebViewMediaIntegrityService
                 @NonNull AwBrowserContext awBrowserContext) {
             mProvider = provider;
             mCacheKey = cacheKey;
-            mAwBrowserContext = new WeakReference<AwBrowserContext>(awBrowserContext);
+            mAwBrowserContext = new WeakReference<>(awBrowserContext);
         }
 
         @Override
@@ -243,9 +262,9 @@ public class AwMediaIntegrityServiceImpl implements WebViewMediaIntegrityService
             RecordHistogram.recordCount1000Histogram(
                     "Android.WebView.MediaIntegrity.GetTokenCumulativeV2", ++mRequestCounter);
             // The provider is responsible for any contentBinding validation.
-            mProvider.requestToken(
+            mProvider.requestToken2(
                     contentBinding,
-                    new ValueOrErrorCallback<String, Integer>() {
+                    new ValueOrErrorCallback<>() {
                         @Override
                         public void onResult(String token) {
                             ThreadUtils.assertOnUiThread();
@@ -257,10 +276,10 @@ public class AwMediaIntegrityServiceImpl implements WebViewMediaIntegrityService
                         }
 
                         @Override
-                        public void onError(Integer error) {
+                        public void onError(MediaIntegrityErrorWrapper error) {
                             ThreadUtils.assertOnUiThread();
                             Objects.requireNonNull(error);
-                            if (error == MediaIntegrityErrorCode.TOKEN_PROVIDER_INVALID) {
+                            if (error.value == MediaIntegrityErrorCode.TOKEN_PROVIDER_INVALID) {
                                 // This callback could take an arbitrary amount of time. We use a
                                 // weak reference to avoid making assumptions about AwBrowserContext
                                 // lifetimes.
@@ -272,7 +291,7 @@ public class AwMediaIntegrityServiceImpl implements WebViewMediaIntegrityService
                             }
                             final WebViewMediaIntegrityTokenResponse response =
                                     new WebViewMediaIntegrityTokenResponse();
-                            response.setErrorCode(errorCodeToMojomErrorCode(error));
+                            response.setErrorCode(errorCodeToMojomErrorCode(error.value));
                             callback.call(response);
                         }
                     });

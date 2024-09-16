@@ -21,78 +21,6 @@
 #include "ui/base/cocoa/animation_utils.h"
 #include "ui/gfx/native_widget_types.h"
 
-// A hidden button used only for creating context menus. The only way to
-// programmatically trigger a context menu on iOS is to trigger the primary
-// action of a button that shows a context menu as its primary action.
-@interface ContextMenuHiddenButton : UIButton
-
-// The frame determines the position at which the context menu is shown.
-+ (instancetype)buttonWithFrame:(CGRect)frame
-              contextMenuParams:(content::ContextMenuParams)params
-                 forWebContents:(content::WebContents*)webContents;
-@end
-
-@implementation ContextMenuHiddenButton {
-  content::ContextMenuParams _contextMenuParams;
-  base::WeakPtr<content::WebContents> _webContents;
-}
-
-+ (instancetype)buttonWithFrame:(CGRect)frame
-              contextMenuParams:(content::ContextMenuParams)params
-                 forWebContents:(content::WebContents*)webContents {
-  ContextMenuHiddenButton* button =
-      [ContextMenuHiddenButton buttonWithType:UIButtonTypeSystem];
-  button.hidden = YES;
-  button.userInteractionEnabled = NO;
-  button.contextMenuInteractionEnabled = YES;
-  button.showsMenuAsPrimaryAction = YES;
-  button.frame = frame;
-  button.layer.zPosition = CGFLOAT_MIN;
-  button->_contextMenuParams = params;
-  button->_webContents = webContents->GetWeakPtr();
-  return button;
-}
-
-- (UIContextMenuConfiguration*)contextMenuInteraction:
-                                   (UIContextMenuInteraction*)interaction
-                       configurationForMenuAtLocation:(CGPoint)location {
-  // TODO(crbug.com/333767962): Fill in the context menu using the
-  // ContextMenuParams passed to WebContentsViewIOS::ShowContextMenu. For now,
-  // this just shows a placeholder title and action.
-  UIContextMenuConfiguration* config = [UIContextMenuConfiguration
-      configurationWithIdentifier:nil
-                  previewProvider:nil
-                   actionProvider:^UIMenu* _Nullable(
-                       NSArray<UIMenuElement*>* _Nonnull suggestedActions) {
-                     NSMutableArray* actions = [[NSMutableArray alloc] init];
-                     [actions addObject:[UIAction
-                                            actionWithTitle:@"Action"
-                                                      image:nil
-                                                 identifier:nil
-                                                    handler:^(UIAction* action){
-                                                    }]];
-                     UIMenu* menu = [UIMenu menuWithTitle:@"Title"
-                                                 children:actions];
-                     return menu;
-                   }];
-  [super contextMenuInteraction:interaction
-      configurationForMenuAtLocation:location];
-  return config;
-}
-
-- (void)contextMenuInteraction:(UIContextMenuInteraction*)interaction
-       willEndForConfiguration:(UIContextMenuConfiguration*)configuration
-                      animator:(id<UIContextMenuInteractionAnimating>)animator {
-  [super contextMenuInteraction:interaction
-        willEndForConfiguration:configuration
-                       animator:animator];
-  if (_webContents) {
-    _webContents->NotifyContextMenuClosed(_contextMenuParams.link_followed);
-  }
-}
-
-@end
-
 namespace content {
 
 namespace {
@@ -116,11 +44,6 @@ class WebContentsUIViewHolder {
   UIScrollView* __strong view_;
 };
 
-class WebContentsUIButtonHolder {
- public:
-  UIButton* __strong button_;
-};
-
 std::unique_ptr<WebContentsView> CreateWebContentsView(
     WebContentsImpl* web_contents,
     std::unique_ptr<WebContentsViewDelegate> delegate,
@@ -140,7 +63,6 @@ WebContentsViewIOS::WebContentsViewIOS(
   [ui_view_->view_ setScrollEnabled:NO];
   [ui_view_->view_ setAutoresizingMask:UIViewAutoresizingFlexibleWidth |
                                        UIViewAutoresizingFlexibleHeight];
-  hidden_button_ = std::make_unique<WebContentsUIButtonHolder>();
 }
 
 WebContentsViewIOS::~WebContentsViewIOS() {}
@@ -171,7 +93,11 @@ gfx::Rect WebContentsViewIOS::GetContainerBounds() const {
 
 void WebContentsViewIOS::OnCapturerCountChanged() {}
 
-void WebContentsViewIOS::FullscreenStateChanged(bool is_fullscreen) {}
+void WebContentsViewIOS::FullscreenStateChanged(bool is_fullscreen) {
+  if (is_fullscreen && popup_menu_helper_) {
+    popup_menu_helper_->CloseMenu();
+  }
+}
 
 void WebContentsViewIOS::UpdateWindowControlsOverlay(
     const gfx::Rect& bounding_rect) {}
@@ -235,12 +161,9 @@ DropData* WebContentsViewIOS::GetDropData() const {
   return nullptr;
 }
 
-void WebContentsViewIOS::TransferDragSecurityInfo(WebContentsView* view) {
-  NOTIMPLEMENTED();
-}
-
 gfx::Rect WebContentsViewIOS::GetViewBounds() const {
-  return gfx::Rect();
+  return gfx::Rect(ui_view_->view_.contentSize.width,
+                   ui_view_->view_.contentSize.height);
 }
 
 void WebContentsViewIOS::GotFocus(RenderWidgetHostImpl* render_widget_host) {
@@ -253,17 +176,11 @@ void WebContentsViewIOS::LostFocus(RenderWidgetHostImpl* render_widget_host) {
 
 void WebContentsViewIOS::ShowContextMenu(RenderFrameHost& render_frame_host,
                                          const ContextMenuParams& params) {
-  UIView* view =
-      base::apple::ObjCCastStrict<UIView>(GetContentNativeView().Get());
-  CGRect frame = CGRectMake(params.x, params.y, 0, 0);
-
-  [hidden_button_->button_ removeFromSuperview];
-  hidden_button_->button_ =
-      [ContextMenuHiddenButton buttonWithFrame:frame
-                             contextMenuParams:params
-                                forWebContents:web_contents_];
-  [view addSubview:hidden_button_->button_];
-  [hidden_button_->button_ performPrimaryAction];
+  if (delegate_) {
+    delegate_->ShowContextMenu(render_frame_host, params);
+  } else {
+    DLOG(ERROR) << "Cannot show context menus without a delegate.";
+  }
 }
 
 void WebContentsViewIOS::ShowPopupMenu(
@@ -326,7 +243,7 @@ void WebContentsViewIOS::RenderViewHostChanged(RenderViewHost* old_host,
   }
   web_contents_->UpdateBrowserControlsState(cc::BrowserControlsState::kBoth,
                                             cc::BrowserControlsState::kHidden,
-                                            false);
+                                            false, std::nullopt);
 }
 
 void WebContentsViewIOS::SetOverscrollControllerEnabled(bool enabled) {}

@@ -14,7 +14,7 @@
  */
 
 import '../cr_icon_button/cr_icon_button.js';
-import '../icons.html.js';
+import '../icons_lit.html.js';
 
 import {CrLitElement} from '//resources/lit/v3_0/lit.rollup.js';
 import type {PropertyValues} from '//resources/lit/v3_0/lit.rollup.js';
@@ -51,8 +51,8 @@ export class CrToolbarSelectionOverlayElement extends CrLitElement {
   }
 
   show: boolean = false;
-  cancelLabel: string;
-  selectionLabel: string;
+  cancelLabel: string = '';
+  selectionLabel: string = '';
 
   override firstUpdated() {
     this.setAttribute('role', 'toolbar');
@@ -64,6 +64,10 @@ export class CrToolbarSelectionOverlayElement extends CrLitElement {
     // Parent element is responsible for updating `selectionLabel` when `show`
     // changes.
     if (changedProperties.has('selectionLabel')) {
+      if (changedProperties.get('selectionLabel') === undefined &&
+          this.selectionLabel === '') {
+        return;
+      }
       this.setAttribute('aria-label', this.selectionLabel);
       const announcer = getAnnouncerInstance() as CrA11yAnnouncerElement;
       announcer.announce(this.selectionLabel);

@@ -7,8 +7,6 @@ package org.chromium.chrome.browser.hub;
 import static org.junit.Assert.assertEquals;
 
 import static org.chromium.base.test.transit.TransitAsserts.assertFinalDestination;
-import static org.chromium.chrome.browser.flags.ChromeFeatureList.ANDROID_HUB;
-import static org.chromium.chrome.browser.flags.ChromeFeatureList.SHOW_NTP_AT_STARTUP_ANDROID;
 import static org.chromium.chrome.browser.flags.ChromeFeatureList.START_SURFACE_RETURN_TIME;
 
 import android.os.Build;
@@ -20,29 +18,27 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.test.transit.TransitStation;
-import org.chromium.base.test.transit.Trip;
+import org.chromium.base.test.transit.Station;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
-import org.chromium.chrome.features.start_surface.StartSurfaceConfiguration;
+import org.chromium.chrome.browser.tasks.ReturnToChromeUtil;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.transit.BlankCTATabInitialStatePublicTransitRule;
-import org.chromium.chrome.test.transit.HubIncognitoTabSwitcherStation;
-import org.chromium.chrome.test.transit.HubTabSwitcherAppMenuFacility;
-import org.chromium.chrome.test.transit.HubTabSwitcherStation;
-import org.chromium.chrome.test.transit.NewTabPageStation;
-import org.chromium.chrome.test.transit.PageAppMenuFacility;
-import org.chromium.chrome.test.transit.PageStation;
+import org.chromium.chrome.test.transit.hub.IncognitoTabSwitcherStation;
+import org.chromium.chrome.test.transit.hub.RegularTabSwitcherStation;
+import org.chromium.chrome.test.transit.hub.TabSwitcherAppMenuFacility;
+import org.chromium.chrome.test.transit.ntp.IncognitoNewTabPageStation;
+import org.chromium.chrome.test.transit.ntp.RegularNewTabPageStation;
+import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.chrome.test.util.ChromeApplicationTestUtils;
 
 /** Public transit instrumentation/integration test of Hub. */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
-@EnableFeatures({ANDROID_HUB})
 @Batch(Batch.PER_CLASS)
 public class HubLayoutPublicTransitTest {
     @ClassRule
@@ -56,25 +52,22 @@ public class HubLayoutPublicTransitTest {
     @Test
     @LargeTest
     public void testEnterAndExitHub() {
-        PageStation page = mInitialStateRule.startOnBlankPageBatched();
+        WebPageStation firstPage = mInitialStateRule.startOnBlankPage();
+        RegularTabSwitcherStation tabSwitcher = firstPage.openRegularTabSwitcher();
 
-        HubTabSwitcherStation tabSwitcher = page.openHub(HubTabSwitcherStation.class);
+        firstPage = tabSwitcher.leaveHubToPreviousTabViaBack(WebPageStation.newBuilder());
 
-        PageStation previousTab = tabSwitcher.leaveHubToPreviousTabViaBack();
-
-        assertFinalDestination(previousTab);
+        assertFinalDestination(firstPage);
     }
 
     @Test
     @LargeTest
     public void testEnterHubAndLeaveViaAppMenuNewTab() {
-        PageStation page = mInitialStateRule.startOnBlankPageBatched();
+        WebPageStation firstPage = mInitialStateRule.startOnBlankPage();
+        RegularTabSwitcherStation tabSwitcher = firstPage.openRegularTabSwitcher();
 
-        HubTabSwitcherStation tabSwitcher = page.openHub(HubTabSwitcherStation.class);
-
-        HubTabSwitcherAppMenuFacility appMenu = tabSwitcher.openAppMenu();
-
-        NewTabPageStation newTab = appMenu.openNewTab();
+        TabSwitcherAppMenuFacility appMenu = tabSwitcher.openAppMenu();
+        RegularNewTabPageStation newTab = appMenu.openNewTab();
 
         assertFinalDestination(newTab);
     }
@@ -82,13 +75,11 @@ public class HubLayoutPublicTransitTest {
     @Test
     @LargeTest
     public void testEnterHubAndLeaveViaAppMenuNewIncognitoTab() {
-        PageStation page = mInitialStateRule.startOnBlankPageBatched();
+        WebPageStation firstPage = mInitialStateRule.startOnBlankPage();
+        RegularTabSwitcherStation tabSwitcher = firstPage.openRegularTabSwitcher();
 
-        HubTabSwitcherStation tabSwitcher = page.openHub(HubTabSwitcherStation.class);
-
-        HubTabSwitcherAppMenuFacility appMenu = tabSwitcher.openAppMenu();
-
-        NewTabPageStation newIncognitoTab = appMenu.openNewIncognitoTab();
+        TabSwitcherAppMenuFacility appMenu = tabSwitcher.openAppMenu();
+        IncognitoNewTabPageStation newIncognitoTab = appMenu.openNewIncognitoTab();
 
         assertFinalDestination(newIncognitoTab);
     }
@@ -96,56 +87,50 @@ public class HubLayoutPublicTransitTest {
     @Test
     @LargeTest
     public void testChangeTabSwitcherPanes() {
-        PageStation page = mInitialStateRule.startOnBlankPageBatched();
+        WebPageStation firstPage = mInitialStateRule.startOnBlankPage();
+        IncognitoNewTabPageStation incognitoNewTabPage =
+                firstPage.openGenericAppMenu().openNewIncognitoTab();
 
-        PageAppMenuFacility appMenu = page.openAppMenu();
-        NewTabPageStation incognitoNewTabPage = appMenu.openNewIncognitoTab();
-
-        HubIncognitoTabSwitcherStation incognitoTabSwitcher =
-                incognitoNewTabPage.openHub(HubIncognitoTabSwitcherStation.class);
+        IncognitoTabSwitcherStation incognitoTabSwitcher =
+                incognitoNewTabPage.openIncognitoTabSwitcher();
         assertEquals(
                 incognitoTabSwitcher,
                 incognitoTabSwitcher.selectPane(
-                        PaneId.INCOGNITO_TAB_SWITCHER, HubIncognitoTabSwitcherStation.class));
+                        PaneId.INCOGNITO_TAB_SWITCHER, IncognitoTabSwitcherStation.class));
 
-        HubTabSwitcherStation tabSwitcher =
-                incognitoTabSwitcher.selectPane(PaneId.TAB_SWITCHER, HubTabSwitcherStation.class);
+        RegularTabSwitcherStation tabSwitcher =
+                incognitoTabSwitcher.selectPane(
+                        PaneId.TAB_SWITCHER, RegularTabSwitcherStation.class);
 
         // Go back to a PageStation for BlankCTATabInitialStateRule to reset state.
-        PageStation blankTab = tabSwitcher.selectTabAtIndex(0);
+        WebPageStation blankTab = tabSwitcher.selectTabAtIndex(0, WebPageStation.newBuilder());
         assertFinalDestination(blankTab);
     }
 
     @Test
     @LargeTest
-    @EnableFeatures({SHOW_NTP_AT_STARTUP_ANDROID, START_SURFACE_RETURN_TIME})
+    @EnableFeatures({START_SURFACE_RETURN_TIME})
     public void testExitHubOnStartSurfaceAsNtp() {
-        StartSurfaceConfiguration.START_SURFACE_RETURN_TIME_SECONDS.setForTesting(0);
-        StartSurfaceConfiguration.START_SURFACE_RETURN_TIME_ON_TABLET_SECONDS.setForTesting(0);
+        ReturnToChromeUtil.HOME_SURFACE_RETURN_TIME_SECONDS.setForTesting(0);
 
-        PageStation page = mInitialStateRule.startOnBlankPageBatched();
+        WebPageStation blankPage = mInitialStateRule.startOnBlankPage();
+        RegularNewTabPageStation newTabPage = blankPage.openGenericAppMenu().openNewTab();
+        RegularTabSwitcherStation tabSwitcher = newTabPage.openRegularTabSwitcher();
+        blankPage = tabSwitcher.selectTabAtIndex(0, WebPageStation.newBuilder());
+        tabSwitcher = blankPage.openRegularTabSwitcher();
 
-        PageAppMenuFacility appMenu = page.openAppMenu();
-        NewTabPageStation newTabPage = appMenu.openNewTab();
-
-        HubTabSwitcherStation tabSwitcher = newTabPage.openHub(HubTabSwitcherStation.class);
-        page = tabSwitcher.selectTabAtIndex(0);
-
-        tabSwitcher = page.openHub(HubTabSwitcherStation.class);
         newTabPage = pauseAndResumeActivity(tabSwitcher);
 
         assertFinalDestination(newTabPage);
     }
 
-    private NewTabPageStation pauseAndResumeActivity(TransitStation currentStation) {
-        NewTabPageStation destination =
-                NewTabPageStation.newBuilder()
-                        .withActivityTestRule(sActivityTestRule)
-                        .withIsOpeningTab(false)
-                        .withIsSelectingTab(true)
+    private RegularNewTabPageStation pauseAndResumeActivity(Station currentStation) {
+        RegularNewTabPageStation destination =
+                RegularNewTabPageStation.newBuilder()
+                        .withIsOpeningTabs(0)
+                        .withIsSelectingTabs(1)
                         .build();
-        Trip.travelSync(
-                currentStation,
+        currentStation.travelToSync(
                 destination,
                 () -> {
                     ChromeTabbedActivity cta = sActivityTestRule.getActivity();

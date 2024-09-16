@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import {html} from '//resources/lit/v3_0/lit.rollup.js';
+
 import type {SegmentedButtonOptionElement} from './segmented_button_option.js';
 
 export function getHtml(this: SegmentedButtonOptionElement) {
@@ -15,7 +16,7 @@ export function getHtml(this: SegmentedButtonOptionElement) {
     aria-labelledby="content"
     @keydown="${this.onInputKeydown}">
   <div id="container">
-    <iron-icon icon="cr:check" id="checkmark"></iron-icon>
+    <cr-icon icon="cr:check" id="checkmark"></cr-icon>
     <slot id="prefixIcon" name="prefix-icon"></slot>
     <span id="content"><slot></slot></span>
   </div>

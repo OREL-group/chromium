@@ -5,6 +5,7 @@
 #include "services/metrics/public/cpp/ukm_recorder_impl_utils.h"
 
 #include "base/logging.h"
+#include "base/metrics/histogram_macros.h"
 
 namespace ukm {
 
@@ -45,9 +46,9 @@ void RecordDroppedEntry(uint64_t event_hash, DroppedDataReason reason) {
       static_cast<int>(DroppedDataReason::NUM_DROPPED_DATA_REASONS));
 }
 
-void RecordDroppedWebFeaturesSet(DroppedDataReason reason) {
+void RecordDroppedWebDXFeaturesSet(DroppedDataReason reason) {
   UMA_HISTOGRAM_ENUMERATION(
-      "UKM.WebFeatureSets.Dropped", static_cast<int>(reason),
+      "UKM.WebDXFeatureSets.Dropped", static_cast<int>(reason),
       static_cast<int>(DroppedDataReason::NUM_DROPPED_DATA_REASONS));
 }
 

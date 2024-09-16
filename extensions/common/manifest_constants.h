@@ -66,6 +66,7 @@ inline constexpr char kHideBookmarkButton[] = "hide_bookmark_button";
 inline constexpr char kHomepageURL[] = "homepage_url";
 inline constexpr char kHostPermissions[] = "host_permissions";
 inline constexpr char kIcons[] = "icons";
+inline constexpr char kIconVariants[] = "icon_variants";
 inline constexpr char kId[] = "id";
 inline constexpr char kImeOptionsPage[] = "options_page";
 inline constexpr char kIndicator[] = "indicator";
@@ -695,9 +696,6 @@ inline constexpr char kManifestVersionTooHighWarning[] =
 inline constexpr char16_t kMatchOriginAsFallbackCantHavePaths[] =
     u"The path component for scripts with 'match_origin_as_fallback' must be "
     "'*'.";
-inline constexpr char kMatchOriginAsFallbackRestrictedToMV3[] =
-    "The 'match_origin_as_fallback' property is restricted to extensions with "
-    "'manifest_version' set to 3 or higher.";
 inline constexpr char kMissingFile[] =
     "At least one js or css file is required for 'content_scripts[*]'.";
 inline constexpr char16_t kMultipleOverrides[] =

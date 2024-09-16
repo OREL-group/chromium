@@ -43,7 +43,7 @@ import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.preferences.PrefChangeRegistrar;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.search_engines.TemplateUrlServiceFactory;
-import org.chromium.chrome.browser.signin.SigninAndHistoryOptInActivityLauncherImpl;
+import org.chromium.chrome.browser.signin.SigninAndHistorySyncActivityLauncherImpl;
 import org.chromium.chrome.browser.signin.SyncConsentActivityLauncherImpl;
 import org.chromium.chrome.browser.signin.services.IdentityServicesProvider;
 import org.chromium.chrome.browser.signin.services.SigninManager;
@@ -218,7 +218,7 @@ public class FeedSurfaceMediator
     private final FeedActionDelegate mActionDelegate;
     private final FeedOptionsCoordinator mOptionsCoordinator;
 
-    // It is non-null for NTP on tablets when SurfacePolish is enabled.
+    // It is non-null for NTP on tablets.
     private @Nullable final UiConfig mUiConfig;
     private final DisplayStyleObserver mDisplayStyleObserver = this::onDisplayStyleChanged;
 
@@ -810,16 +810,17 @@ public class FeedSurfaceMediator
      */
     private boolean shouldShowSigninPromo() {
         SyncPromoController.resetNtpSyncPromoLimitsIfHiddenForTooLong();
-        // TODO(crbug.com/41493776): Update the bottom sheet subtitle string.
         AccountPickerBottomSheetStrings bottomSheetStrings =
-                new AccountPickerBottomSheetStrings.Builder(R.string.sign_in_to_chrome).build();
+                new AccountPickerBottomSheetStrings.Builder(
+                                R.string.signin_account_picker_bottom_sheet_title)
+                        .build();
         SyncPromoController promoController =
                 new SyncPromoController(
                         mProfile,
                         bottomSheetStrings,
-                        SigninAccessPoint.NTP_CONTENT_SUGGESTIONS,
+                        SigninAccessPoint.NTP_FEED_TOP_PROMO,
                         SyncConsentActivityLauncherImpl.get(),
-                        SigninAndHistoryOptInActivityLauncherImpl.get());
+                        SigninAndHistorySyncActivityLauncherImpl.get());
         if (!SignInPromo.shouldCreatePromo() || !promoController.canShowSyncPromo()) {
             return false;
         }
@@ -1363,6 +1364,8 @@ public class FeedSurfaceMediator
                 return StreamType.FOR_YOU;
             case StreamKind.FOLLOWING:
                 return StreamType.WEB_FEED;
+            case StreamKind.SUPERVISED_USER:
+                return StreamType.SUPERVISED_USER_FEED;
             default:
                 return StreamType.UNSPECIFIED;
         }

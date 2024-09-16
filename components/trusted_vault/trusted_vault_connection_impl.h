@@ -10,6 +10,7 @@
 
 #include "base/memory/scoped_refptr.h"
 #include "base/time/time.h"
+#include "components/trusted_vault/securebox.h"
 #include "components/trusted_vault/trusted_vault_access_token_fetcher.h"
 #include "components/trusted_vault/trusted_vault_connection.h"
 #include "url/gurl.h"
@@ -55,7 +56,7 @@ class TrustedVaultConnectionImpl : public TrustedVaultConnection {
       AuthenticationFactorType authentication_factor_type,
       RegisterAuthenticationFactorCallback callback) override;
 
-  std::unique_ptr<Request> RegisterDeviceWithoutKeys(
+  std::unique_ptr<Request> RegisterLocalDeviceWithoutKeys(
       const CoreAccountInfo& account_info,
       const SecureBoxPublicKey& device_public_key,
       RegisterAuthenticationFactorCallback callback) override;

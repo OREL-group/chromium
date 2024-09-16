@@ -438,14 +438,22 @@ void DownloadOfflineContentProvider::OnDownloadStarted(DownloadItem* item) {
 }
 
 void DownloadOfflineContentProvider::OnDownloadUpdated(DownloadItem* item) {
+  // Notify user if this download is blocked.
+  bool should_notify =
+      item->GetState() == DownloadItem::INTERRUPTED &&
+      item->GetLastReason() ==
+          download::DOWNLOAD_INTERRUPT_REASON_FILE_BLOCKED &&
+      item->GetInsecureDownloadStatus() !=
+          download::DownloadItem::InsecureDownloadStatus::SILENT_BLOCK;
   // Wait until the target path is determined or the download is canceled.
-  if (item->GetTargetFilePath().empty() &&
+  if (!should_notify && item->GetTargetFilePath().empty() &&
       item->GetState() != DownloadItem::CANCELLED) {
     return;
   }
 
-  if (!ShouldShowDownloadItem(item))
+  if (!should_notify && !ShouldShowDownloadItem(item)) {
     return;
+  }
 
   UpdateDelta update_delta;
   auto offline_item = OfflineItemUtils::CreateOfflineItem(name_space_, item);
@@ -521,8 +529,7 @@ void DownloadOfflineContentProvider::AddCompletedDownloadDone(
       if (profile_ &&
           DownloadPrefs::FromBrowserContext(profile_)->IsAutoOpenPdfEnabled()) {
         item->OpenDownload();
-      } else if (base::FeatureList::IsEnabled(
-                     chrome::android::kOpenDownloadDialog)) {
+      } else {
         open_download_dialog_delegate_.CreateDialog(item);
       }
     }

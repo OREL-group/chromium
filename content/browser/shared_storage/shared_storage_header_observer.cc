@@ -52,12 +52,12 @@ bool IsSharedStorageAllowedByPermissionsPolicy(
                  kEnabled;
 }
 
-int GetMainFrameIdFromRFH(RenderFrameHost* rfh) {
+FrameTreeNodeId GetMainFrameIdFromRFH(RenderFrameHost* rfh) {
   return static_cast<RenderFrameHostImpl*>(rfh->GetOutermostMainFrame())
       ->GetFrameTreeNodeId();
 }
 
-int GetMainFrameIdFromNavigationOrDocumentHandle(
+FrameTreeNodeId GetMainFrameIdFromNavigationOrDocumentHandle(
     NavigationOrDocumentHandle* navigation_or_document_handle) {
   if (auto* navigation_request =
           navigation_or_document_handle->GetNavigationRequest()) {
@@ -67,7 +67,7 @@ int GetMainFrameIdFromNavigationOrDocumentHandle(
   if (auto* rfh = navigation_or_document_handle->GetDocument()) {
     return GetMainFrameIdFromRFH(rfh);
   }
-  return FrameTreeNode::kFrameTreeNodeInvalidId;
+  return FrameTreeNodeId();
 }
 
 }  // namespace
@@ -215,7 +215,7 @@ void SharedStorageHeaderObserver::HeaderReceived(
       // This is the expected outcome in most cases.
       break;
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 
   CHECK(IsSharedStorageAllowedByPermissionsPolicy(permissions_policy_status));
@@ -223,7 +223,7 @@ void SharedStorageHeaderObserver::HeaderReceived(
   if (!IsSharedStorageAllowedBySiteSettings(navigation_or_document_handle,
                                             request_origin,
                                             /*out_debug_message=*/nullptr)) {
-    // TODO(crbug.com/1434529):
+    // TODO(crbug.com/40064101):
     // 1. Log the following error message to console:
     // "'Shared-Storage-Write: shared storage is disabled."
     // 2. Send a non-null `out_debug_message` param and append it to the above
@@ -240,7 +240,7 @@ void SharedStorageHeaderObserver::HeaderReceived(
                     std::make_move_iterator(operations.end()));
 
   std::vector<bool> header_results;
-  int main_frame_id = GetMainFrameIdFromNavigationOrDocumentHandle(
+  FrameTreeNodeId main_frame_id = GetMainFrameIdFromNavigationOrDocumentHandle(
       navigation_or_document_handle);
   while (!to_process.empty()) {
     network::mojom::SharedStorageOperationPtr operation =
@@ -255,12 +255,12 @@ void SharedStorageHeaderObserver::HeaderReceived(
 }
 
 bool SharedStorageHeaderObserver::Invoke(const url::Origin& request_origin,
-                                         int main_frame_id,
+                                         FrameTreeNodeId main_frame_id,
                                          OperationPtr operation) {
   switch (operation->type) {
     case OperationType::kSet:
       if (!operation->key.has_value() || !operation->value.has_value()) {
-        // TODO(crbug.com/1434529): Log the following error message to console:
+        // TODO(crbug.com/40064101): Log the following error message to console:
         // "Shared-Storage-Write: 'set' missing parameter 'key' or 'value'."
         return false;
       }
@@ -269,7 +269,7 @@ bool SharedStorageHeaderObserver::Invoke(const url::Origin& request_origin,
           std::move(operation->value.value()), operation->ignore_if_present);
     case OperationType::kAppend:
       if (!operation->key.has_value() || !operation->value.has_value()) {
-        // TODO(crbug.com/1434529): Log the following error message to console:
+        // TODO(crbug.com/40064101): Log the following error message to console:
         // "Shared-Storage-Write: 'append' missing parameter 'key' or 'value'."
         return false;
       }
@@ -278,7 +278,7 @@ bool SharedStorageHeaderObserver::Invoke(const url::Origin& request_origin,
                     std::move(operation->value.value()));
     case OperationType::kDelete:
       if (!operation->key.has_value()) {
-        // TODO(crbug.com/1434529): Log the following error message to console:
+        // TODO(crbug.com/40064101): Log the following error message to console:
         // "Shared-Storage-Write: 'delete' missing parameter 'key'."
         return false;
       }
@@ -287,14 +287,14 @@ bool SharedStorageHeaderObserver::Invoke(const url::Origin& request_origin,
     case OperationType::kClear:
       return Clear(request_origin, main_frame_id);
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
   return false;
 }
 
 bool SharedStorageHeaderObserver::Set(
     const url::Origin& request_origin,
-    int main_frame_id,
+    FrameTreeNodeId main_frame_id,
     std::string key,
     std::string value,
     network::mojom::OptionalBool ignore_if_present) {
@@ -304,7 +304,7 @@ bool SharedStorageHeaderObserver::Set(
       !base::UTF8ToUTF16(value.c_str(), value.size(), &utf16_value) ||
       !blink::IsValidSharedStorageKeyStringLength(utf16_key.size()) ||
       !blink::IsValidSharedStorageValueStringLength(utf16_value.size())) {
-    // TODO(crbug.com/1434529): Log the following error message to console:
+    // TODO(crbug.com/40064101): Log the following error message to console:
     // "Shared-Storage-Write: 'set' has invalid parameter 'key' or 'value'."
     return false;
   }
@@ -332,7 +332,7 @@ bool SharedStorageHeaderObserver::Set(
 }
 
 bool SharedStorageHeaderObserver::Append(const url::Origin& request_origin,
-                                         int main_frame_id,
+                                         FrameTreeNodeId main_frame_id,
                                          std::string key,
                                          std::string value) {
   std::u16string utf16_key;
@@ -341,7 +341,7 @@ bool SharedStorageHeaderObserver::Append(const url::Origin& request_origin,
       !base::UTF8ToUTF16(value.c_str(), value.size(), &utf16_value) ||
       !blink::IsValidSharedStorageKeyStringLength(utf16_key.size()) ||
       !blink::IsValidSharedStorageValueStringLength(utf16_value.size())) {
-    // TODO(crbug.com/1434529): Log the following error message to console:
+    // TODO(crbug.com/40064101): Log the following error message to console:
     // "Shared-Storage-Write: 'append' has invalid parameter 'key' or 'value'."
     return false;
   }
@@ -362,12 +362,12 @@ bool SharedStorageHeaderObserver::Append(const url::Origin& request_origin,
 }
 
 bool SharedStorageHeaderObserver::Delete(const url::Origin& request_origin,
-                                         int main_frame_id,
+                                         FrameTreeNodeId main_frame_id,
                                          std::string key) {
   std::u16string utf16_key;
   if (!base::UTF8ToUTF16(key.c_str(), key.size(), &utf16_key) ||
       !blink::IsValidSharedStorageKeyStringLength(utf16_key.size())) {
-    // TODO(crbug.com/1434529): Log the following error message to console:
+    // TODO(crbug.com/40064101): Log the following error message to console:
     // "Shared-Storage-Write: 'delete' has invalid parameter 'key'."
     return false;
   }
@@ -388,7 +388,7 @@ bool SharedStorageHeaderObserver::Delete(const url::Origin& request_origin,
 }
 
 bool SharedStorageHeaderObserver::Clear(const url::Origin& request_origin,
-                                        int main_frame_id) {
+                                        FrameTreeNodeId main_frame_id) {
   NotifySharedStorageAccessed(AccessType::kHeaderClear, main_frame_id,
                               request_origin,
                               SharedStorageEventParams::CreateDefault());
@@ -494,7 +494,7 @@ SharedStorageHeaderObserver::DoPermissionsPolicyDoubleCheck(
       // aren't available to requests initiated by service workers.
       [[fallthrough]];
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -521,12 +521,13 @@ bool SharedStorageHeaderObserver::IsSharedStorageAllowedBySiteSettings(
                   : nullptr;
   return GetContentClient()->browser()->IsSharedStorageAllowed(
       storage_partition_->browser_context(), rfh, top_frame_origin,
-      request_origin, out_debug_message);
+      request_origin, out_debug_message,
+      /*out_block_is_site_setting_specific=*/nullptr);
 }
 
 void SharedStorageHeaderObserver::NotifySharedStorageAccessed(
     AccessType type,
-    int main_frame_id,
+    FrameTreeNodeId main_frame_id,
     const url::Origin& request_origin,
     const SharedStorageEventParams& params) {
   storage_partition_->GetSharedStorageWorkletHostManager()

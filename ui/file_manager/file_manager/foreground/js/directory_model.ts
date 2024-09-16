@@ -9,10 +9,10 @@ import type {VolumeInfo} from '../../background/js/volume_info.js';
 import type {VolumeManager} from '../../background/js/volume_manager.js';
 import type {SpliceEvent} from '../../common/js/array_data_model.js';
 import {Aggregator, AsyncQueue} from '../../common/js/async_util.js';
-import {convertURLsToEntries, entriesToURLs, getRootType, isFakeEntry, isGuestOs, isNativeEntry, isOneDriveId, isRecentRootType, isSameEntry, urlToEntry} from '../../common/js/entry_utils.js';
+import {convertURLsToEntries, entriesToURLs, getRootType, isFakeEntry, isGuestOs, isNativeEntry, isOneDrive, isOneDriveId, isOneDrivePlaceholder, isRecentRootType, isSameEntry, urlToEntry} from '../../common/js/entry_utils.js';
 import type {FakeEntry, FilesAppDirEntry, FilesAppEntry, GuestOsPlaceholder, UniversalDirectory} from '../../common/js/files_app_entry_types.js';
 import {type CustomEventMap, FilesEventTarget} from '../../common/js/files_event_target.js';
-import {isDlpEnabled, isDriveFsBulkPinningEnabled} from '../../common/js/flags.js';
+import {isDlpEnabled, isDriveFsBulkPinningEnabled, isSkyvaultV2Enabled} from '../../common/js/flags.js';
 import {recordMediumCount} from '../../common/js/metrics.js';
 import {getEntryLabel} from '../../common/js/translations.js';
 import {testSendMessage} from '../../common/js/util.js';
@@ -26,7 +26,7 @@ import {getFileData, getStore, getVolume, type Store} from '../../state/store.js
 
 import {CROSTINI_CONNECT_ERR, DLP_METADATA_PREFETCH_PROPERTY_NAMES, LIST_CONTAINER_METADATA_PREFETCH_PROPERTY_NAMES} from './constants.js';
 import type {ContentScanner, DirContentsScanFailedEvent, DirContentsScanUpdatedEvent, FileFilter} from './directory_contents.js';
-import {CrostiniMounter, DirectoryContents, DirectoryContentScanner, DriveMetadataSearchContentScanner, EmptyContentScanner, FileListContext, GuestOsMounter, MediaViewContentScanner, RecentContentScanner, SearchV2ContentScanner, TrashContentScanner} from './directory_contents.js';
+import {CrostiniMounter, DirectoryContents, DirectoryContentScanner, DriveMetadataSearchContentScanner, EmptyContentScanner, FileListContext, GuestOsMounter, MediaViewContentScanner, RecentContentScanner, SearchV2ContentScanner, StoreScanner, TrashContentScanner} from './directory_contents.js';
 import {FileListModel} from './file_list_model.js';
 import {FileWatcher, type WatcherDirectoryChangedEvent} from './file_watcher.js';
 import type {MetadataKey} from './metadata/metadata_item.js';
@@ -229,19 +229,12 @@ export class DirectoryModel extends FilesEventTarget<DirectoryModelEventMap> {
     // initiate the actual change and will update to SUCCESS at the end.
     if (state.currentDirectory?.status === PropStatus.STARTED) {
       const fileData = getFileData(state, newURL);
-      if (!fileData) {
-        console.error(
-            `Failed to find in the store the new directory key ${newURL}`);
-        this.store_.dispatch(
-            changeDirectory({toKey: newURL, status: PropStatus.ERROR}));
-        return;
-      }
-      if (fileData.type === EntryType.MATERIALIZED_VIEW) {
+      if (fileData?.type === EntryType.MATERIALIZED_VIEW) {
         this.changeDirectoryFileData(fileData);
         return;
       }
 
-      const entry = fileData.entry;
+      const entry = fileData?.entry;
       if (!entry) {
         // TODO(lucmult): Fix potential race condition in this await/then.
         urlToEntry(newURL)
@@ -254,7 +247,7 @@ export class DirectoryModel extends FilesEventTarget<DirectoryModelEventMap> {
               this.changeDirectoryEntry(entry as DirectoryEntry);
             })
             .catch((error) => {
-              console.error(error);
+              console.warn(error);
               this.store_.dispatch(
                   changeDirectory({toKey: newURL, status: PropStatus.ERROR}));
             });
@@ -376,19 +369,6 @@ export class DirectoryModel extends FilesEventTarget<DirectoryModelEventMap> {
       }
     }
     return true;
-  }
-
-  /**
-   * @return True if entries in the current directory can be deleted. Similar to
-   *     !isReadOnly() except that we allow items in the read-only Trash root to
-   *     be deleted. If there is no entry set, then returns false.
-   */
-  canDeleteEntries(): boolean {
-    const currentDirEntry = this.getCurrentDirEntry();
-    if (currentDirEntry && getRootType(currentDirEntry) === RootType.TRASH) {
-      return true;
-    }
-    return !this.isReadOnly();
   }
 
   /**
@@ -592,17 +572,16 @@ export class DirectoryModel extends FilesEventTarget<DirectoryModelEventMap> {
       const currentDirectoryOnOdfs =
           isOneDriveId(getVolume(state, currentDirectoryFileData)?.providerId);
       if (currentDirectoryOnOdfs) {
-        const {myFilesEntry} = getMyFiles(state);
-        if (!myFilesEntry) {
-          // This can only happen if local user files are disabled.
-          console.warn(
-              'ODFS disabled, but local user files disabled by policy.');
-          // TODO(b/328030489): Navigate to default display root.
-          this.store_.dispatch(changeDirectory({toKey: ''}));
-          return;
-        }
-        const myFilesRootKey = myFilesEntry.toURL();
-        this.store_.dispatch(changeDirectory({toKey: myFilesRootKey}));
+        const tracker = this.createDirectoryChangeTracker();
+        tracker.start();
+        // Normally the default root is MyFiles, however with SkyVault, this
+        // is the volume in the Cloud (OneDrive or GoogleDrive).
+        this.volumeManager_.getDefaultDisplayRoot().then((displayRoot) => {
+          if (displayRoot && !tracker.hasChanged) {
+            this.changeDirectoryEntry(displayRoot);
+          }
+        });
+        tracker.stop();
       }
     }
   }
@@ -1242,6 +1221,7 @@ export class DirectoryModel extends FilesEventTarget<DirectoryModelEventMap> {
     const {myFilesEntry} = getMyFiles(getStore().getState());
     return myFilesEntry;
   }
+
   async changeDirectoryFileData(fileData: FileData): Promise<boolean> {
     if (fileData.entry) {
       const result = await new Promise<boolean>(resolve => {
@@ -1548,6 +1528,20 @@ export class DirectoryModel extends FilesEventTarget<DirectoryModelEventMap> {
         }
       }
     }
+
+    // If the current directory is the OneDrive placeholder and the real
+    // OneDrive is mounted, switch to it.
+    if (isSkyvaultV2Enabled() && currentDir &&
+        isOneDrivePlaceholder(currentDir)) {
+      for (const newVolume of spliceEventDetail.added) {
+        if (isOneDrive(newVolume)) {
+          newVolume.resolveDisplayRoot().then((displayRoot: DirectoryEntry) => {
+            this.changeDirectoryEntry(displayRoot);
+          });
+        }
+      }
+    }
+
     if (spliceEventDetail.added.length !== 1) {
       return;
     }
@@ -1659,12 +1653,14 @@ export class DirectoryModel extends FilesEventTarget<DirectoryModelEventMap> {
   createScannerFactory(
       fileKey: FileKey, entry?: DirectoryEntry|FilesAppEntry, query?: string,
       options?: SearchOptions): () => ContentScanner {
-    if (!entry) {
+    if (!entry && !!fileKey) {
+      // Store-based scanner, it doesn't use Entry. E.g: Materialized View.
       return () => {
-        console.debug(`TODO: Implement scanner for ${fileKey}`);
-        return new EmptyContentScanner();
+        return new StoreScanner(fileKey);
       };
     }
+
+    assert(entry);
 
     const sanitizedQuery = (query || '').trimStart();
     const locationInfo = this.volumeManager_.getLocationInfo(entry);
@@ -1702,6 +1698,11 @@ export class DirectoryModel extends FilesEventTarget<DirectoryModelEventMap> {
     if (rootType === RootType.TRASH) {
       return () => {
         return new TrashContentScanner(this.volumeManager_);
+      };
+    }
+    if (isOneDrivePlaceholder(entry)) {
+      return () => {
+        return new EmptyContentScanner();
       };
     }
     if (sanitizedQuery) {

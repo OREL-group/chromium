@@ -44,13 +44,9 @@ class TestPersonalDataManager : public PersonalDataManager {
 
   // Can be used to inject mock instances.
   void set_address_data_manager(
-      std::unique_ptr<TestAddressDataManager> address_data_manager) {
-    address_data_manager_ = std::move(address_data_manager);
-  }
+      std::unique_ptr<TestAddressDataManager> address_data_manager);
   void set_payments_data_manager(
-      std::unique_ptr<TestPaymentsDataManager> payments_data_manager) {
-    payments_data_manager_ = std::move(payments_data_manager);
-  }
+      std::unique_ptr<TestPaymentsDataManager> payments_data_manager);
 
   // PersonalDataManager overrides.  These functions are overridden as needed
   // for various tests, whether to skip calls to uncreated databases/services,
@@ -59,22 +55,6 @@ class TestPersonalDataManager : public PersonalDataManager {
 
   // Unique to TestPersonalDataManager:
   void SetPrefService(PrefService* pref_service);
-
-  // Clears all local address and payments data.
-  void ClearAllLocalData();
-
-  // All of the following functions simply forward the call to a function of the
-  // same name in the `test_address_data_manager()` or the
-  // `test_payments_data_manager().
-  // They should not be used anymore. Instead, callers should use the function
-  // in the test address/payments data manager instead.
-  // TODO(b/322170538): Migrate existing callers.
-  void ClearProfiles();
-  void AddServerCreditCard(const CreditCard& credit_card);
-  void AddAutofillOfferData(const AutofillOfferData& offer_data);
-  void SetAutofillPaymentMethodsEnabled(bool autofill_payment_methods_enabled);
-  void SetAutofillProfileEnabled(bool autofill_profile_enabled);
-  void SetAutofillWalletImportEnabled(bool autofill_wallet_import_enabled);
 };
 
 }  // namespace autofill

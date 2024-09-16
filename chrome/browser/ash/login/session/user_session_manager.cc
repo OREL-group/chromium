@@ -19,6 +19,7 @@
 #include "ash/constants/ash_switches.h"
 #include "ash/metrics/login_unlock_throughput_recorder.h"
 #include "ash/shell.h"
+#include "ash/wm/window_util.h"
 #include "base/base_paths.h"
 #include "base/check_op.h"
 #include "base/command_line.h"
@@ -33,6 +34,7 @@
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/path_service.h"
 #include "base/scoped_observation.h"
 #include "base/strings/string_number_conversions.h"
@@ -51,17 +53,15 @@
 #include "chrome/browser/ash/arc/arc_migration_guide_notification.h"
 #include "chrome/browser/ash/arc/arc_util.h"
 #include "chrome/browser/ash/base/locale_util.h"
-#include "chrome/browser/ash/boot_times_recorder.h"
+#include "chrome/browser/ash/boot_times_recorder/boot_times_recorder.h"
 #include "chrome/browser/ash/child_accounts/child_policy_observer.h"
-#include "chrome/browser/ash/crosapi/browser_data_back_migrator.h"
-#include "chrome/browser/ash/crosapi/browser_data_migrator.h"
 #include "chrome/browser/ash/drive/file_system_util.h"
-#include "chrome/browser/ash/eol_notification.h"
+#include "chrome/browser/ash/eol/eol_notification.h"
 #include "chrome/browser/ash/first_run/first_run.h"
 #include "chrome/browser/ash/floating_workspace/floating_workspace_service.h"
 #include "chrome/browser/ash/floating_workspace/floating_workspace_util.h"
 #include "chrome/browser/ash/hats/hats_config.h"
-#include "chrome/browser/ash/logging.h"
+#include "chrome/browser/ash/logging/logging.h"
 #include "chrome/browser/ash/login/auth/chrome_safe_mode_delegate.h"
 #include "chrome/browser/ash/login/chrome_restart_request.h"
 #include "chrome/browser/ash/login/demo_mode/demo_session.h"
@@ -86,8 +86,6 @@
 #include "chrome/browser/ash/login/signin/offline_signin_limiter_factory.h"
 #include "chrome/browser/ash/login/signin/token_handle_fetcher.h"
 #include "chrome/browser/ash/login/startup_utils.h"
-#include "chrome/browser/ash/login/ui/input_events_blocker.h"
-#include "chrome/browser/ash/login/ui/login_display_host.h"
 #include "chrome/browser/ash/login/wizard_controller.h"
 #include "chrome/browser/ash/net/alwayson_vpn_pre_connect_url_allowlist_service.h"
 #include "chrome/browser/ash/net/alwayson_vpn_pre_connect_url_allowlist_service_factory.h"
@@ -101,26 +99,27 @@
 #include "chrome/browser/ash/settings/device_settings_service.h"
 #include "chrome/browser/ash/system_web_apps/apps/help_app/help_app_notification_controller.h"
 #include "chrome/browser/ash/tether/tether_service.h"
-#include "chrome/browser/ash/tpm_firmware_update_notification.h"
-#include "chrome/browser/ash/u2f_notification.h"
+#include "chrome/browser/ash/tpm/tpm_firmware_update_notification.h"
+#include "chrome/browser/ash/u2f/u2f_notification.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part_ash.h"
 #include "chrome/browser/first_run/first_run.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/lifetime/application_lifetime_chromeos.h"
 #include "chrome/browser/lifetime/browser_shutdown.h"
+#include "chrome/browser/metrics/first_web_contents_profiler.h"
 #include "chrome/browser/password_manager/profile_password_store_factory.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/signin/chrome_device_id_helper.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
-#include "chrome/browser/signin/signin_features.h"
 #include "chrome/browser/supervised_user/child_accounts/child_account_service_factory.h"
 #include "chrome/browser/sync/desk_sync_service_factory.h"
 #include "chrome/browser/trusted_vault/trusted_vault_service_factory.h"
-#include "chrome/browser/ui/ash/system_tray_client_impl.h"
-#include "chrome/browser/ui/startup/launch_mode_recorder.h"
+#include "chrome/browser/ui/ash/login/input_events_blocker.h"
+#include "chrome/browser/ui/ash/login/login_display_host.h"
+#include "chrome/browser/ui/ash/system/system_tray_client_impl.h"
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
 #include "chrome/common/channel_info.h"
 #include "chrome/common/chrome_constants.h"
@@ -144,9 +143,12 @@
 #include "chromeos/ash/components/network/portal_detector/network_portal_detector.h"
 #include "chromeos/ash/components/settings/cros_settings.h"
 #include "chromeos/ash/components/settings/cros_settings_names.h"
+#include "chromeos/ash/components/standalone_browser/migrator_util.h"
 #include "chromeos/ash/components/tpm/prepare_tpm.h"
 #include "chromeos/dbus/tpm_manager/tpm_manager.pb.h"
 #include "chromeos/dbus/tpm_manager/tpm_manager_client.h"
+#include "chromeos/ui/base/app_types.h"
+#include "chromeos/ui/base/window_properties.h"
 #include "chromeos/ui/vector_icons/vector_icons.h"
 #include "components/account_id/account_id.h"
 #include "components/account_manager_core/account.h"
@@ -165,11 +167,13 @@
 #include "components/session_manager/core/session_manager.h"
 #include "components/session_manager/session_manager_types.h"
 #include "components/signin/public/base/consent_level.h"
+#include "components/signin/public/base/signin_switches.h"
 #include "components/signin/public/identity_manager/account_info.h"
 #include "components/signin/public/identity_manager/accounts_mutator.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/signin/public/identity_manager/primary_account_mutator.h"
 #include "components/signin/public/identity_manager/tribool.h"
+#include "components/startup_metric_utils/browser/startup_metric_utils.h"
 #include "components/supervised_user/core/browser/child_account_service.h"
 #include "components/trusted_vault/trusted_vault_client.h"
 #include "components/trusted_vault/trusted_vault_service.h"
@@ -186,6 +190,7 @@
 #include "content/public/common/content_switches.h"
 #include "rlz/buildflags/buildflags.h"
 #include "third_party/cros_system_api/switches/chrome_switches.h"
+#include "ui/aura/window.h"
 #include "ui/base/ime/ash/input_method_descriptor.h"
 #include "ui/base/ime/ash/input_method_manager.h"
 #include "ui/base/ime/ash/input_method_util.h"
@@ -572,7 +577,7 @@ void MaybeSaveSessionStartedTimeBeforeRestart(Profile* profile) {
 
 // Returns a Base16 encoded SHA1 digest of `data`.
 std::string Sha1Digest(const std::string& data) {
-  return base::HexEncode(base::SHA1HashSpan(base::as_byte_span(data)));
+  return base::HexEncode(base::SHA1Hash(base::as_byte_span(data)));
 }
 
 }  // namespace
@@ -731,8 +736,9 @@ scoped_refptr<Authenticator> UserSessionManager::CreateAuthenticator(
       authenticator_ = injected_authenticator_builder_->Create(consumer);
     } else {
       auto* user_manager = user_manager::UserManager::Get();
-      bool new_user_can_become_owner = !user_manager->IsEnterpriseManaged() &&
-                                       user_manager->GetUsers().empty();
+      bool new_user_can_become_owner =
+          !ash::InstallAttributes::Get()->IsEnterpriseManaged() &&
+          user_manager->GetUsers().empty();
       authenticator_ = new AuthSessionAuthenticator(
           consumer, std::make_unique<ChromeSafeModeDelegate>(),
           base::BindRepeating(&RecordKnownUser), new_user_can_become_owner,
@@ -1512,7 +1518,7 @@ void UserSessionManager::InitProfilePreferences(
         token_observers_.emplace(profile,
                                  std::move(device_account_token_observer));
       } else {
-        NOTREACHED()
+        NOTREACHED_IN_MIGRATION()
             << "Found an existing Gaia token observer for this Profile. "
                "Profile is being erroneously initialized twice?";
       }
@@ -1681,22 +1687,14 @@ void UserSessionManager::FinalizePrepareProfile(Profile* profile) {
   TRACE_EVENT0("login", "UserSessionManager::FinalizePrepareProfile");
   user_manager::UserManager* user_manager = user_manager::UserManager::Get();
   user_manager::User* user = ProfileHelper::Get()->GetUserByProfile(profile);
-  user_manager::KnownUser known_user(g_browser_process->local_state());
   if (user_manager->IsLoggedInAsUserWithGaiaAccount()) {
     const UserContext::AuthFlow auth_flow = user_context_.GetAuthFlow();
     if (auth_flow == UserContext::AUTH_FLOW_GAIA_WITH_SAML ||
         auth_flow == UserContext::AUTH_FLOW_GAIA_WITHOUT_SAML) {
-      const bool using_saml =
-          auth_flow == UserContext::AUTH_FLOW_GAIA_WITH_SAML;
-      const AccountId& account_id = user_context_.GetAccountId();
-      known_user.UpdateUsingSAML(account_id, using_saml);
-      known_user.UpdateIsUsingSAMLPrincipalsAPI(
-          account_id,
-          using_saml ? user_context_.IsUsingSamlPrincipalsApi() : false);
-      user->set_using_saml(using_saml);
-      if (!using_saml) {
-        known_user.ClearPasswordSyncToken(account_id);
-      }
+      user_manager->SetUserUsingSaml(
+          user_context_.GetAccountId(),
+          /*using_saml=*/auth_flow == UserContext::AUTH_FLOW_GAIA_WITH_SAML,
+          user_context_.IsUsingSamlPrincipalsApi());
     }
     PasswordSyncTokenVerifier* password_sync_token_verifier =
         PasswordSyncTokenVerifierFactory::GetForProfile(profile);
@@ -1713,7 +1711,7 @@ void UserSessionManager::FinalizePrepareProfile(Profile* profile) {
         password_sync_token_verifier->CheckForPasswordNotInSync();
       } else {
         // SAML user is not expected to go through other authentication flows.
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
       }
     }
 
@@ -1752,9 +1750,6 @@ void UserSessionManager::FinalizePrepareProfile(Profile* profile) {
         // outlives the `always_on_vpn_manager_` instance.
         service->SetAlwaysOnVpnManager(always_on_vpn_manager_->GetWeakPtr());
       }
-
-      secure_dns_manager_ =
-          std::make_unique<SecureDnsManager>(g_browser_process->local_state());
 
       xdr_manager_ =
           std::make_unique<XdrManager>(g_browser_process->policy_service());
@@ -2028,7 +2023,7 @@ bool UserSessionManager::InitializeUserSession(Profile* profile) {
 
 void UserSessionManager::ProcessAppModeSwitches() {
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  bool in_app_mode = chrome::IsRunningInForcedAppMode();
+  bool in_app_mode = IsRunningInForcedAppMode();
 
   // Are we in kiosk app mode?
   if (in_app_mode) {
@@ -2050,7 +2045,7 @@ void UserSessionManager::RestoreAuthSessionImpl(
     Profile* profile,
     bool restore_from_auth_cookies) {
   CHECK(authenticator_.get() || !restore_from_auth_cookies);
-  if (chrome::IsRunningInForcedAppMode() ||
+  if (IsRunningInForcedAppMode() ||
       base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kDisableGaiaServices)) {
     return;
@@ -2313,28 +2308,8 @@ void UserSessionManager::DoBrowserLaunchInternal(Profile* profile,
     return;
   }
 
-  // Call this before `RestartToApplyPerSessionFlagsIfNeed()` in the login
-  // process.
-  BrowserDataMigratorImpl::ClearMigrationStep(g_browser_process->local_state());
-
   if (RestartToApplyPerSessionFlagsIfNeed(profile, false))
     return;
-
-  const user_manager::User* user =
-      ProfileHelper::Get()->GetUserByProfile(profile);
-  if (BrowserDataMigratorImpl::MaybeRestartToMigrate(
-          user->GetAccountId(), user->username_hash(),
-          crosapi::browser_util::PolicyInitState::kAfterInit)) {
-    LOG(WARNING) << "Restarting chrome to run profile migration.";
-    return;
-  }
-
-  if (BrowserDataBackMigrator::MaybeRestartToMigrateBack(
-          user->GetAccountId(), user->username_hash(),
-          crosapi::browser_util::PolicyInitState::kAfterInit)) {
-    LOG(WARNING) << "Restarting chrome to run backward profile migration.";
-    return;
-  }
 
   if (LoginDisplayHost::default_host()) {
     SystemTrayClientImpl::Get()->SetPrimaryTrayVisible(/*visible=*/true);
@@ -2362,13 +2337,6 @@ void UserSessionManager::DoBrowserLaunchInternal(Profile* profile,
       full_restore::FullRestoreService::GetForProfile(profile)
           ->LaunchBrowserWhenReady();
     }
-  }
-  if (ProfileHelper::IsPrimaryProfile(profile)) {
-    // chrome::SessionRestore is using synchronous mode on Chrome OS,
-    // which means that data is definitely loaded by this moment.
-    Shell::Get()
-        ->login_unlock_throughput_recorder()
-        ->BrowserSessionRestoreDataLoaded();
   }
 
   if (HatsNotificationController::ShouldShowSurveyToProfile(
@@ -2458,6 +2426,10 @@ void UserSessionManager::RespectLocalePreferenceWrapper(
 }
 
 void UserSessionManager::LaunchBrowser(Profile* profile) {
+  if (!has_recorded_first_web_contents_metrics_) {
+    startup_metric_utils::GetBrowser().RecordWebContentsStartTime(
+        base::TimeTicks::Now());
+  }
   StartupBrowserCreator browser_creator;
   chrome::startup::IsFirstRun first_run =
       ::first_run::IsChromeFirstRun() ? chrome::startup::IsFirstRun::kYes
@@ -2466,8 +2438,28 @@ void UserSessionManager::LaunchBrowser(Profile* profile) {
   browser_creator.LaunchBrowser(
       *base::CommandLine::ForCurrentProcess(), profile, base::FilePath(),
       chrome::startup::IsProcessStartup::kYes, first_run,
-      std::make_unique<OldLaunchModeRecorder>(),
       /*restore_tabbed_browser=*/true);
+  if (!has_recorded_first_web_contents_metrics_) {
+    has_recorded_first_web_contents_metrics_ = true;
+    // Another non-browser window may be active even after calling
+    // `LaunchBrowser()` above. Ex: When `ForestFeature` is enabled and the
+    // session is restored, a window from overview mode is still active and
+    // must be closed first before a restored browser window can become active.
+    // In this case, the intent behind capturing "FirstWebContents" metrics has
+    // degraded, so skip the recording.
+    aura::Window* active_window = ash::window_util::GetActiveWindow();
+    const bool is_browser_window_active =
+        active_window && active_window->GetProperty(chromeos::kAppTypeKey) ==
+                             chromeos::AppType::BROWSER;
+    base::UmaHistogramBoolean("Ash.FirstWebContentsProfile.Recorded",
+                              is_browser_window_active);
+    if (is_browser_window_active) {
+      // This location intentionally only records the "FirstWebContents" metrics
+      // for ChromeOS session restores. If the user just logs in and opens a
+      // browser window manually, that is deliberately not counted currently.
+      metrics::BeginFirstWebContentsProfiling();
+    }
+  }
 }
 
 // static
@@ -2510,11 +2502,11 @@ void UserSessionManager::Shutdown() {
   token_handle_util_.reset();
   token_observers_.clear();
   always_on_vpn_manager_.reset();
+  child_policy_observer_.reset();
   u2f_notification_.reset();
   help_app_notification_controller_.reset();
   password_service_voted_.reset();
   password_was_saved_ = false;
-  secure_dns_manager_.reset();
   xdr_manager_.reset();
 }
 

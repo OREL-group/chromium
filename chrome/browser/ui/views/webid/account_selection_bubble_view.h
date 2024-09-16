@@ -17,6 +17,9 @@
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/view.h"
 
+using IdentityProviderDataPtr = scoped_refptr<content::IdentityProviderData>;
+using IdentityRequestAccountPtr =
+    scoped_refptr<content::IdentityRequestAccount>;
 using TokenError = content::IdentityCredentialTokenError;
 
 namespace views {
@@ -35,8 +38,7 @@ class AccountSelectionBubbleView : public views::BubbleDialogDelegateView,
 
  public:
   AccountSelectionBubbleView(
-      const std::u16string& top_frame_for_display,
-      const std::optional<std::u16string>& iframe_for_display,
+      const std::u16string& rp_for_display,
       const std::optional<std::u16string>& idp_title,
       blink::mojom::RpContext rp_context,
       content::WebContents* web_contents,
@@ -50,47 +52,48 @@ class AccountSelectionBubbleView : public views::BubbleDialogDelegateView,
   void InitDialogWidget() override;
 
   void ShowMultiAccountPicker(
-      const std::vector<IdentityProviderDisplayData>& idp_display_data_list,
-      bool show_back_button) override;
+      const std::vector<IdentityRequestAccountPtr>& accounts,
+      const std::vector<IdentityProviderDataPtr>& idp_list,
+      bool show_back_button,
+      bool is_choose_an_account) override;
   void ShowVerifyingSheet(const content::IdentityRequestAccount& account,
-                          const IdentityProviderDisplayData& idp_display_data,
                           const std::u16string& title) override;
 
   void ShowSingleAccountConfirmDialog(
-      const std::u16string& top_frame_for_display,
-      const std::optional<std::u16string>& iframe_for_display,
       const content::IdentityRequestAccount& account,
-      const IdentityProviderDisplayData& idp_display_data,
       bool show_back_button) override;
 
   void ShowFailureDialog(
-      const std::u16string& top_frame_for_display,
-      const std::optional<std::u16string>& iframe_for_display,
       const std::u16string& idp_for_display,
       const content::IdentityProviderMetadata& idp_metadata) override;
 
-  void ShowErrorDialog(const std::u16string& top_frame_for_display,
-                       const std::optional<std::u16string>& iframe_for_display,
-                       const std::u16string& idp_for_display,
+  void ShowErrorDialog(const std::u16string& idp_for_display,
                        const content::IdentityProviderMetadata& idp_metadata,
                        const std::optional<TokenError>& error) override;
 
   void ShowRequestPermissionDialog(
-      const std::u16string& top_frame_for_display,
       const content::IdentityRequestAccount& account,
-      const IdentityProviderDisplayData& idp_display_data) override;
+      const content::IdentityProviderData& idp_data) override;
 
   void ShowSingleReturningAccountDialog(
-      const std::vector<IdentityProviderDisplayData>& idp_data_list) override;
+      const std::vector<IdentityRequestAccountPtr>& accounts,
+      const std::vector<IdentityProviderDataPtr>& idp_list) override;
 
   void ShowLoadingDialog() override;
 
   void CloseDialog() override;
 
+  void UpdateDialogPosition() override;
+
+  void OnAnchorBoundsChanged() override;
+
   std::string GetDialogTitle() const override;
-  std::optional<std::string> GetDialogSubtitle() const override;
 
  private:
+  FRIEND_TEST_ALL_PREFIXES(AccountSelectionBubbleViewTest,
+                           WebContentsLargeEnoughToFitDialog);
+
+  // views::BubbleDialogDelegateView:
   gfx::Rect GetBubbleBounds() override;
 
   // Returns a View containing the logo of the identity provider. Creates the
@@ -99,21 +102,29 @@ class AccountSelectionBubbleView : public views::BubbleDialogDelegateView,
 
   // Returns a View for single account chooser. It contains the account
   // information, disclosure text and a button for the user to confirm the
-  // selection. The size of the `idp_display_data.accounts` vector must be 1.
+  // selection.
   std::unique_ptr<views::View> CreateSingleAccountChooser(
-      const IdentityProviderDisplayData& idp_display_data,
       const content::IdentityRequestAccount& account);
 
-  // Returns a View for multiple account chooser. It contains the info for each
-  // account in a button, so the user can pick an account.
-  std::unique_ptr<views::View> CreateMultipleAccountChooser(
-      const std::vector<IdentityProviderDisplayData>& idp_display_data_list);
+  // Adds a separator as well as a multiple account chooser. The chooser
+  // contains the info for each account in a button, so the user can pick an
+  // account. It also contains mismatch login URLs in the multiple IDP case.
+  void AddSeparatorAndMultipleAccountChooser(
+      const std::vector<IdentityRequestAccountPtr>& accounts,
+      const std::vector<IdentityProviderDataPtr>& idp_list);
+
+  // Adds the accounts provided to the given view. This method does not reorder
+  // the accounts, and assumes they are provided in the correct order.
+  void AddAccounts(const std::vector<IdentityRequestAccountPtr>& accounts,
+                   views::View* accounts_content,
+                   bool is_multi_idp);
 
   // Returns a View containing a single returning account as well as a button to
   // 'choose an account' which will show all accounts and IDPs that are
   // available.
   std::unique_ptr<views::View> CreateSingleReturningAccountChooser(
-      const std::vector<IdentityProviderDisplayData>& idp_display_data_list);
+      const std::vector<IdentityRequestAccountPtr>& accounts,
+      const std::vector<IdentityProviderDataPtr>& idp_list);
 
   // Returns a view containing a button for the user to login to an IDP for
   // which there was a login status mismatch, to be used in the multiple account
@@ -130,8 +141,7 @@ class AccountSelectionBubbleView : public views::BubbleDialogDelegateView,
   // button visibiltiy. `idp_metadata` is not null when we need to set a header
   // image based on the IDP.
   void UpdateHeader(const content::IdentityProviderMetadata& idp_metadata,
-                    const std::u16string subpage_title,
-                    const std::u16string subpage_subtitle,
+                    const std::u16string title,
                     bool show_back_button);
 
   // Removes all children except for `header_view_`.
@@ -143,14 +153,8 @@ class AccountSelectionBubbleView : public views::BubbleDialogDelegateView,
       const std::vector<std::u16string> mismatch_idps,
       const std::vector<std::u16string> non_mismatch_idps);
 
-  // The accessible title.
-  std::u16string accessible_title_;
-
-  // The initial title for the dialog.
+  // The current title for the dialog.
   std::u16string title_;
-
-  // The initial subtitle for the dialog.
-  std::u16string subtitle_;
 
   // The relying party context to show in the title.
   blink::mojom::RpContext rp_context_;
@@ -170,10 +174,6 @@ class AccountSelectionBubbleView : public views::BubbleDialogDelegateView,
 
   // View containing the bubble title.
   raw_ptr<views::Label> title_label_ = nullptr;
-
-  // View containing the bubble subtitle, which is empty if the iframe domain
-  // does not need to be displayed.
-  raw_ptr<views::Label> subtitle_label_ = nullptr;
 
   // View containing the continue button.
   raw_ptr<views::MdTextButton> continue_button_ = nullptr;

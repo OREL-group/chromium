@@ -178,7 +178,7 @@ void SampleVectorBase::Accumulate(Sample value, Count count) {
   Count old_bucket_count = new_bucket_count - count;
   bool record_negative_sample =
       (new_bucket_count >= 0) != (old_bucket_count >= 0) && count > 0;
-  if (UNLIKELY(record_negative_sample)) {
+  if (record_negative_sample) [[unlikely]] {
     RecordNegativeSample(SAMPLES_ACCUMULATE_OVERFLOW, count);
   }
 }
@@ -361,7 +361,7 @@ bool SampleVectorBase::AddSubtractImpl(SampleCountIterator* iter,
     if (min != bucket_ranges_->range(dest_index) ||
         max != bucket_ranges_->range(dest_index + 1)) {
 #if !BUILDFLAG(IS_NACL)
-      // TODO(crbug/1432981): Remove these. They are used to investigate
+      // TODO(crbug.com/40064026): Remove these. They are used to investigate
       // unexpected failures.
       SCOPED_CRASH_KEY_NUMBER("SampleVector", "min", min);
       SCOPED_CRASH_KEY_NUMBER("SampleVector", "max", max);
@@ -370,9 +370,10 @@ bool SampleVectorBase::AddSubtractImpl(SampleCountIterator* iter,
       SCOPED_CRASH_KEY_NUMBER("SampleVector", "range_max",
                               bucket_ranges_->range(dest_index + 1));
 #endif  // !BUILDFLAG(IS_NACL)
-      NOTREACHED() << "sample=" << min << "," << max
-                   << "; range=" << bucket_ranges_->range(dest_index) << ","
-                   << bucket_ranges_->range(dest_index + 1);
+      DUMP_WILL_BE_NOTREACHED()
+          << "sample=" << min << "," << max
+          << "; range=" << bucket_ranges_->range(dest_index) << ","
+          << bucket_ranges_->range(dest_index + 1);
       return false;
     }
 
@@ -651,10 +652,6 @@ PersistentSampleVector::~PersistentSampleVector() = default;
 bool PersistentSampleVector::IsDefinitelyEmpty() const {
   // Not implemented.
   NOTREACHED();
-
-  // Always return false. If we are wrong, this will just make the caller
-  // perform some extra work thinking that |this| is non-empty.
-  return false;
 }
 
 bool PersistentSampleVector::MountExistingCountsStorage() const {

@@ -4,7 +4,6 @@
 
 #include "content/browser/attribution_reporting/attribution_os_level_manager_android.h"
 
-#include <jni.h>
 #include <stddef.h>
 
 #include <iterator>
@@ -13,8 +12,7 @@
 #include <utility>
 #include <vector>
 
-#include "base/android/jni_array.h"
-#include "base/android/scoped_java_ref.h"
+#include "base/android/jni_string.h"
 #include "base/barrier_closure.h"
 #include "base/check.h"
 #include "base/check_op.h"
@@ -36,7 +34,6 @@
 #include "content/browser/attribution_reporting/attribution_reporting.mojom.h"
 #include "content/browser/attribution_reporting/os_registration.h"
 #include "content/browser/browser_thread_impl.h"
-#include "content/public/android/content_jni_headers/AttributionOsLevelManager_jni.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/browsing_data_filter_builder.h"
 #include "content/public/browser/content_browser_client.h"
@@ -44,6 +41,12 @@
 #include "url/android/gurl_android.h"
 #include "url/gurl.h"
 #include "url/origin.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "content/public/android/content_jni_headers/AttributionOsLevelManager_jni.h"
+
+using jni_zero::AttachCurrentThread;
+using jni_zero::ScopedJavaLocalRef;
 
 namespace content {
 
@@ -98,8 +101,7 @@ ApiState ConvertToApiState(int value) {
 
 void GetMeasurementApiStatus() {
   base::ElapsedThreadTimer timer;
-  Java_AttributionOsLevelManager_getMeasurementApiStatus(
-      base::android::AttachCurrentThread());
+  Java_AttributionOsLevelManager_getMeasurementApiStatus(AttachCurrentThread());
   if (timer.is_supported()) {
     base::UmaHistogramTimes("Conversions.GetMeasurementStatusTime",
                             timer.Elapsed());
@@ -125,7 +127,7 @@ static void JNI_AttributionOsLevelManager_OnMeasurementStateReturned(
 
 AttributionOsLevelManagerAndroid::AttributionOsLevelManagerAndroid() {
   jobj_ = Java_AttributionOsLevelManager_Constructor(
-      base::android::AttachCurrentThread(), reinterpret_cast<intptr_t>(this));
+      AttachCurrentThread(), reinterpret_cast<intptr_t>(this));
 
   if (AttributionOsLevelManager::ShouldInitializeApiState()) {
     base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock()})
@@ -135,22 +137,50 @@ AttributionOsLevelManagerAndroid::AttributionOsLevelManagerAndroid() {
 
 AttributionOsLevelManagerAndroid::~AttributionOsLevelManagerAndroid() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  Java_AttributionOsLevelManager_nativeDestroyed(
-      base::android::AttachCurrentThread(), jobj_);
+  Java_AttributionOsLevelManager_nativeDestroyed(AttachCurrentThread(), jobj_);
 }
+
+namespace {
+
+// 3/4 of the Android API calls below have atomic success/failure, while the
+// fourth has success/failure per item.
+
+std::vector<bool> AtomicSuccess(size_t num_items, bool success) {
+  return std::vector<bool>(num_items, success);
+}
+
+void MergeIndividualSuccessAndInvokeCallback(
+    std::vector<bool>& successes,
+    size_t& remaining,
+    base::OnceCallback<void(const std::vector<bool>&)>& callback,
+    size_t i,
+    bool success) {
+  CHECK_GT(remaining, 0u);
+  --remaining;
+
+  successes.at(i) = success;
+
+  if (remaining == 0) {
+    std::move(callback).Run(successes);
+  }
+}
+
+}  // namespace
 
 void AttributionOsLevelManagerAndroid::Register(
     OsRegistration registration,
     const std::vector<bool>& is_debug_key_allowed,
     RegisterCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  CHECK_EQ(registration.registration_items.size(), is_debug_key_allowed.size());
 
-  JNIEnv* env = base::android::AttachCurrentThread();
+  const size_t num_items = registration.registration_items.size();
+  CHECK_EQ(num_items, is_debug_key_allowed.size());
+
+  JNIEnv* env = AttachCurrentThread();
 
   Registrar registrar = registration.registrar;
   attribution_reporting::mojom::RegistrationType type = registration.GetType();
-  std::vector<base::android::ScopedJavaLocalRef<jobject>> registration_urls;
+  std::vector<ScopedJavaLocalRef<jobject>> registration_urls;
   base::ranges::transform(
       registration.registration_items, std::back_inserter(registration_urls),
       [env](const attribution_reporting::OsRegistrationItem& item) {
@@ -160,19 +190,24 @@ void AttributionOsLevelManagerAndroid::Register(
       env, registration.top_level_origin.GetURL());
   std::optional<AttributionInputEvent> input_event = registration.input_event;
 
-  int request_id = next_callback_id_++;
-  pending_registration_callbacks_.emplace(
-      request_id, base::BindOnce(std::move(callback), std::move(registration)));
+  auto bound_callback =
+      base::BindOnce(std::move(callback), std::move(registration));
 
   switch (type) {
     case attribution_reporting::mojom::RegistrationType::kSource: {
       DCHECK(input_event.has_value());
+
+      int request_id = next_callback_id_++;
+      pending_registration_callbacks_.emplace(
+          request_id, base::BindOnce(&AtomicSuccess, num_items)
+                          .Then(std::move(bound_callback)));
+
       switch (registrar) {
         case Registrar::kWeb: {
           auto sources =
               Java_AttributionOsLevelManager_createWebSourceParamsList(
-                  env, is_debug_key_allowed.size());
-          for (size_t i = 0; i < is_debug_key_allowed.size(); ++i) {
+                  env, num_items);
+          for (size_t i = 0; i < num_items; ++i) {
             Java_AttributionOsLevelManager_addWebSourceParams(
                 env, sources, registration_urls[i], is_debug_key_allowed[i]);
           }
@@ -193,10 +228,15 @@ void AttributionOsLevelManagerAndroid::Register(
     case attribution_reporting::mojom::RegistrationType::kTrigger: {
       switch (registrar) {
         case Registrar::kWeb: {
+          int request_id = next_callback_id_++;
+          pending_registration_callbacks_.emplace(
+              request_id, base::BindOnce(&AtomicSuccess, num_items)
+                              .Then(std::move(bound_callback)));
+
           auto triggers =
               Java_AttributionOsLevelManager_createWebTriggerParamsList(
-                  env, is_debug_key_allowed.size());
-          for (size_t i = 0; i < is_debug_key_allowed.size(); ++i) {
+                  env, num_items);
+          for (size_t i = 0; i < num_items; ++i) {
             Java_AttributionOsLevelManager_addWebTriggerParams(
                 env, triggers, registration_urls[i], is_debug_key_allowed[i]);
           }
@@ -205,7 +245,18 @@ void AttributionOsLevelManagerAndroid::Register(
           break;
         }
         case Registrar::kOs: {
-          for (const auto& registration_url : registration_urls) {
+          auto merge_results =
+              base::BindRepeating(&MergeIndividualSuccessAndInvokeCallback,
+                                  base::OwnedRef(std::vector<bool>(num_items)),
+                                  base::OwnedRef(num_items),
+                                  base::OwnedRef(std::move(bound_callback)));
+
+          for (size_t i = 0; const auto& registration_url : registration_urls) {
+            int request_id = next_callback_id_++;
+            pending_registration_callbacks_.emplace(
+                request_id, base::BindOnce(merge_results, i));
+            ++i;
+
             Java_AttributionOsLevelManager_registerAttributionTrigger(
                 env, jobj_, request_id, registration_url);
           }
@@ -227,9 +278,9 @@ void AttributionOsLevelManagerAndroid::ClearData(
     base::OnceClosure done) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  JNIEnv* env = base::android::AttachCurrentThread();
+  JNIEnv* env = AttachCurrentThread();
 
-  std::vector<base::android::ScopedJavaLocalRef<jobject>> j_origins;
+  std::vector<ScopedJavaLocalRef<jobject>> j_origins;
   base::ranges::transform(
       origins, std::back_inserter(j_origins), [env](const url::Origin& origin) {
         return url::GURLAndroid::FromNativeGURL(env, origin.GetURL());

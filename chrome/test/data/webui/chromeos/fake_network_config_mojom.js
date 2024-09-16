@@ -121,6 +121,7 @@ export class FakeNetworkConfig {
 
     this.globalPolicy_ =
         /** @type {!GlobalPolicy} */ ({
+          allowApnModification: true,
           allow_cellular_sim_lock: true,
           allow_only_policy_cellular_networks: false,
           allow_only_policy_networks_to_autoconnect: false,
@@ -239,6 +240,23 @@ export class FakeNetworkConfig {
       managed.connectionState = state;
     }
     this.onActiveNetworksChanged();
+  }
+
+  /**
+   * @param {string} guid
+   * @param {boolean} visible
+   */
+  setWifiNetworkVisibleForTest(guid, visible) {
+    const network = this.networkStates_.find(state => {
+      return state.guid === guid;
+    });
+    assert(!!network, 'Network not found: ' + guid);
+    assert(
+        network.type === NetworkType.kWiFi,
+        'Network visible can only be set on WiFi type');
+    network.typeState.wifi.visible = visible;
+
+    this.onNetworkStateChanged(network);
   }
 
   /**
@@ -679,7 +697,7 @@ export class FakeNetworkConfig {
     });
   }
 
-  /** @param {!GlobalPolicy} globalPolicy */
+  /** @param {!GlobalPolicy|undefined} globalPolicy */
   setGlobalPolicy(globalPolicy) {
     this.globalPolicy_ = globalPolicy;
     this.onPoliciesApplied(/*userhash=*/ '');

@@ -56,7 +56,8 @@ class VIZ_SERVICE_EXPORT TransferableResourceTracker {
   };
 
   explicit TransferableResourceTracker(
-      SharedBitmapManager* shared_bitmap_manager);
+      SharedBitmapManager* shared_bitmap_manager,
+      ReservedResourceIdTracker* id_tracker);
   TransferableResourceTracker(const TransferableResourceTracker&) = delete;
   ~TransferableResourceTracker();
 
@@ -75,14 +76,17 @@ class VIZ_SERVICE_EXPORT TransferableResourceTracker {
   // TODO(vmpstr): Instead of providing a convenience function, we should
   // convert ResourceFrame to be RAII so that it can be automatically
   // "returned".
-  ResourceFrame ImportResources(std::unique_ptr<SurfaceSavedFrame> saved_frame);
+  ResourceFrame ImportResources(SurfaceSavedFrame::FrameResult frame_result,
+                                CompositorFrameTransitionDirective directive);
 
   // Return a frame back to the tracker. This unrefs all of the resources.
   void ReturnFrame(const ResourceFrame& frame);
 
   // Ref count management for the resources returned by `ImportResources`.
   void RefResource(ResourceId id);
-  void UnrefResource(ResourceId id, int count);
+  void UnrefResource(ResourceId id,
+                     int count,
+                     const gpu::SyncToken& sync_token);
 
   bool is_empty() const { return managed_resources_.empty(); }
 
@@ -100,7 +104,8 @@ class VIZ_SERVICE_EXPORT TransferableResourceTracker {
 
   struct TransferableResourceHolder {
     using ResourceReleaseCallback =
-        base::OnceCallback<void(const TransferableResource&)>;
+        base::OnceCallback<void(const TransferableResource&,
+                                const gpu::SyncToken&)>;
 
     TransferableResourceHolder();
     TransferableResourceHolder(const TransferableResource& resource,
@@ -111,9 +116,10 @@ class VIZ_SERVICE_EXPORT TransferableResourceTracker {
 
     TransferableResource resource;
     ResourceReleaseCallback release_callback;
+    gpu::SyncToken release_sync_token;
   };
 
-  ReservedResourceIdTracker id_tracker_;
+  raw_ptr<ReservedResourceIdTracker> id_tracker_;
 
   std::map<ResourceId, TransferableResourceHolder> managed_resources_;
 };

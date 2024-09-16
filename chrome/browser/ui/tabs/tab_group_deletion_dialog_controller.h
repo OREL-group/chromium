@@ -35,9 +35,18 @@ class DeletionDialogController {
 
   // State object that represents the current dialog that is being shown.
   struct DialogState {
-    DialogState(base::OnceClosure on_ok_button_pressed_,
+    DialogState(DialogType type_,
+                ui::DialogModel* dialog_model_,
+                base::OnceClosure on_ok_button_pressed_,
                 base::OnceClosure on_cancel_button_pressed_);
     ~DialogState();
+
+    // The type the dialog was initiated with.
+    DialogType type;
+
+    // A ptr to the original dialog model. Used to access the checkbox value
+    // for setting the preference.
+    raw_ptr<ui::DialogModel> dialog_model;
 
     // Callback that runs when the OK button is pressed.
     base::OnceClosure on_ok_button_pressed;
@@ -62,13 +71,20 @@ class DeletionDialogController {
   void SimulateOkButtonForTesting() { OnDialogOk(); }
 
   // Attempt to show the dialog. The dialog will only show if it is not already
-  // showing.
+  // showing, and if the skip dialog option hasn't been set to true. tab_count
+  // and group_count help construct strings for the dialog.
   bool MaybeShowDialog(DialogType type,
-                       base::OnceCallback<void()> on_ok_callback);
+                       base::OnceCallback<void()> on_ok_callback,
+                       int tab_count,
+                       int group_count);
+
+  void SetPrefsPreventShowingDialogForTesting(bool should_prevent_dialog);
 
  private:
   // Builds a DialogModel for showing the dialog.
-  std::unique_ptr<ui::DialogModel> BuildDialogModel(DialogType type);
+  std::unique_ptr<ui::DialogModel> BuildDialogModel(DialogType type,
+                                                    int tab_count = 0,
+                                                    int group_count = 0);
 
   // Methods that are bound by the DialogModel to call the callbacks.
   void OnDialogOk();

@@ -4,6 +4,8 @@
 
 #include "services/video_effects/video_effects_processor_impl.h"
 
+#include <memory>
+
 #include "base/functional/bind.h"
 #include "base/functional/callback_forward.h"
 #include "base/types/cxx23_to_underlying.h"
@@ -12,6 +14,7 @@
 #include "gpu/ipc/client/gpu_channel_host.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "services/video_effects/public/mojom/video_effects_processor.mojom.h"
+#include "services/video_effects/video_effects_processor_webgpu.h"
 #include "services/video_effects/video_effects_service_impl.h"
 #include "services/viz/public/cpp/gpu/context_provider_command_buffer.h"
 
@@ -108,6 +111,14 @@ bool VideoEffectsProcessorImpl::Initialize() {
   return initialized_;
 }
 
+void VideoEffectsProcessorImpl::SetBackgroundSegmentationModel(
+    base::span<const uint8_t> model_blob) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  background_segmentation_model_blob_.resize(model_blob.size());
+  base::span(background_segmentation_model_blob_).copy_from(model_blob);
+}
+
 bool VideoEffectsProcessorImpl::InitializeGpuState() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   CHECK(!ContextLossesExceedThreshold(num_context_losses_));
@@ -115,25 +126,24 @@ bool VideoEffectsProcessorImpl::InitializeGpuState() {
   // In order to create a Video Effects Processor, we will need to have 2
   // distinct context providers - one for WebGPUInterface, and one for
   // RasterInterface. We will also need a SharedImageInterface.
+  auto gpu_channel_host = gpu_channel_host_provider_->GetGpuChannelHost();
+  CHECK(gpu_channel_host);
+
   scoped_refptr<viz::ContextProviderCommandBuffer> webgpu_context_provider =
-      CreateAndBindContextProvider(
-          gpu_channel_host_provider_->GetGpuChannelHost(),
-          gpu::CONTEXT_TYPE_WEBGPU);
+      CreateAndBindContextProvider(gpu_channel_host, gpu::CONTEXT_TYPE_WEBGPU);
   if (!webgpu_context_provider) {
     return false;
   }
 
   scoped_refptr<viz::ContextProviderCommandBuffer>
       raster_interface_context_provider = CreateAndBindContextProvider(
-          gpu_channel_host_provider_->GetGpuChannelHost(),
-          gpu::CONTEXT_TYPE_OPENGLES2);
+          gpu_channel_host, gpu::CONTEXT_TYPE_OPENGLES2);
   if (!raster_interface_context_provider) {
     return false;
   }
 
   scoped_refptr<gpu::ClientSharedImageInterface> shared_image_interface =
-      gpu_channel_host_provider_->GetGpuChannelHost()
-          ->CreateClientSharedImageInterface();
+      gpu_channel_host->CreateClientSharedImageInterface();
   if (!shared_image_interface) {
     return false;
   }
@@ -143,15 +153,26 @@ bool VideoEffectsProcessorImpl::InitializeGpuState() {
   raster_interface_context_provider_ =
       std::move(raster_interface_context_provider);
   raster_interface_context_provider_->AddObserver(this);
-  shared_image_interface = std::move(shared_image_interface);
+  shared_image_interface_ = std::move(shared_image_interface);
 
-  return true;
+  processor_webgpu_ = std::make_unique<VideoEffectsProcessorWebGpu>(
+      webgpu_context_provider_, raster_interface_context_provider_,
+      shared_image_interface_,
+      base::BindOnce(
+          base::BindOnce(&VideoEffectsProcessorImpl::OnWebGpuProcessorError,
+                         weak_ptr_factory_.GetWeakPtr())));
+  return processor_webgpu_->Initialize();
 }
 
 void VideoEffectsProcessorImpl::OnContextLost() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   initialized_ = false;
+
+  // Before trying to reinitialize GPU state, we should first tear down the
+  // current state.
+  // TODO(bialpio): consider extracting the entire GPU state into a helper
+  // class that can just be nulled out.
 
   if (webgpu_context_provider_) {
     webgpu_context_provider_->RemoveObserver(this);
@@ -164,21 +185,19 @@ void VideoEffectsProcessorImpl::OnContextLost() {
   }
 
   raster_interface_context_provider_.reset();
-
   shared_image_interface_.reset();
+  processor_webgpu_.reset();
 
   ++num_context_losses_;
   if (ContextLossesExceedThreshold(num_context_losses_)) {
-    if (on_unrecoverable_error_) {
-      std::move(on_unrecoverable_error_).Run();
-    }
+    MaybeCallOnUnrecoverableError();
     return;
   }
 
   const bool gpu_initialized = InitializeGpuState();
 
-  if (!gpu_initialized && on_unrecoverable_error_) {
-    std::move(on_unrecoverable_error_).Run();
+  if (!gpu_initialized) {
+    MaybeCallOnUnrecoverableError();
   }
 }
 
@@ -191,8 +210,21 @@ void VideoEffectsProcessorImpl::OnMojoDisconnected() {
   processor_receiver_.reset();
   manager_remote_.reset();
 
-  if (on_unrecoverable_error_) {
-    std::move(on_unrecoverable_error_).Run();
+  MaybeCallOnUnrecoverableError();
+}
+
+void VideoEffectsProcessorImpl::OnWebGpuProcessorError() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  processor_webgpu_.reset();
+
+  processor_webgpu_ = std::make_unique<VideoEffectsProcessorWebGpu>(
+      webgpu_context_provider_, raster_interface_context_provider_,
+      shared_image_interface_,
+      base::BindOnce(&VideoEffectsProcessorImpl::OnWebGpuProcessorError,
+                     weak_ptr_factory_.GetWeakPtr()));
+  if (!processor_webgpu_->Initialize()) {
+    MaybeCallOnUnrecoverableError();
   }
 }
 
@@ -215,8 +247,15 @@ void VideoEffectsProcessorImpl::PostProcess(
     return;
   }
 
-  std::move(callback).Run(
-      mojom::PostProcessResult::NewError(mojom::PostProcessError::kUnknown));
+  processor_webgpu_->PostProcess(
+      std::move(input_frame_data), std::move(input_frame_info),
+      std::move(result_frame_data), result_pixel_format, std::move(callback));
+}
+
+void VideoEffectsProcessorImpl::MaybeCallOnUnrecoverableError() {
+  if (on_unrecoverable_error_) {
+    std::move(on_unrecoverable_error_).Run();
+  }
 }
 
 }  // namespace video_effects

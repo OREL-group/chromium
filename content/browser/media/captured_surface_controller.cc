@@ -47,7 +47,7 @@ void OnZoomLevelChangeOnUI(
   }
 
   int zoom_level =
-      std::round(100 * blink::PageZoomLevelToZoomFactor(
+      std::round(100 * blink::ZoomLevelToZoomFactor(
                            HostZoomMap::GetZoomLevel(captured_wc.get())));
   on_zoom_level_change_callback.Run(zoom_level);
 }
@@ -76,7 +76,7 @@ std::optional<CapturedSurfaceInfo> ResolveCapturedSurfaceOnUI(
   }
 
   int initial_zoom_level = std::round(
-      100 * blink::PageZoomLevelToZoomFactor(HostZoomMap::GetZoomLevel(wc)));
+      100 * blink::ZoomLevelToZoomFactor(HostZoomMap::GetZoomLevel(wc)));
 
   std::unique_ptr<base::CallbackListSubscription,
                   BrowserThread::DeleteOnUIThread>
@@ -129,7 +129,7 @@ CapturedSurfaceControlResult DoSendWheel(
 
   // Scale (x, y).
   const gfx::Size captured_viewport_size =
-      captured_rwhi->GetRootWidgetViewportSize();
+      captured_rwhi->GetRenderInputRouter()->GetRootWidgetViewportSize();
   if (captured_viewport_size.width() < 1 ||
       captured_viewport_size.height() < 1) {
     return CapturedSurfaceControlResult::kUnknownError;
@@ -208,9 +208,9 @@ CapturedSurfaceControlResult DoSetZoomLevel(
   // TODO(crbug.com/328589994): Hard-code kCapturedSurfaceControlTemporaryZoom.
   if (!base::FeatureList::IsEnabled(
           features::kCapturedSurfaceControlTemporaryZoom)) {
-    HostZoomMap::SetZoomLevel(captured_wc.get(),
-                              blink::PageZoomFactorToZoomLevel(
-                                  static_cast<double>(zoom_level) / 100));
+    HostZoomMap::SetZoomLevel(
+        captured_wc.get(),
+        blink::ZoomFactorToZoomLevel(static_cast<double>(zoom_level) / 100));
     return CapturedSurfaceControlResult::kSuccess;
   }
 
@@ -222,9 +222,45 @@ CapturedSurfaceControlResult DoSetZoomLevel(
 
   zoom_map->SetTemporaryZoomLevel(
       captured_wc->GetPrimaryMainFrame()->GetGlobalId(),
-      blink::PageZoomFactorToZoomLevel(static_cast<double>(zoom_level) / 100));
+      blink::ZoomFactorToZoomLevel(static_cast<double>(zoom_level) / 100));
 
   capturer_wci->DidCapturedSurfaceControl();
+
+  return CapturedSurfaceControlResult::kSuccess;
+}
+
+// Return success if all conditions for CSC apply, otherwise fail with the
+// appropriate error code.
+CapturedSurfaceControlResult FinalizeRequestPermission(
+    GlobalRenderFrameHostId capturer_rfh_id,
+    base::WeakPtr<WebContents> captured_wc) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  WebContentsImpl* const capturer_wci =
+      WebContentsImpl::FromRenderFrameHostImpl(
+          RenderFrameHostImpl::FromID(capturer_rfh_id));
+  if (!capturer_wci) {
+    // The capturing frame or tab appears to have closed asynchronously.
+    return CapturedSurfaceControlResult::kCapturerNotFoundError;
+  }
+
+  RenderFrameHost* const captured_rfh =
+      captured_wc ? captured_wc->GetPrimaryMainFrame() : nullptr;
+  if (!captured_rfh) {
+    return CapturedSurfaceControlResult::kCapturedSurfaceNotFoundError;
+  }
+
+  RenderFrameHostImpl* const captured_rfhi =
+      RenderFrameHostImpl::FromID(captured_rfh->GetGlobalId());
+  RenderWidgetHostImpl* const captured_rwhi =
+      captured_rfhi ? captured_rfhi->GetRenderWidgetHost() : nullptr;
+  if (!captured_rwhi) {
+    return CapturedSurfaceControlResult::kCapturedSurfaceNotFoundError;
+  }
+
+  if (capturer_wci == captured_wc.get()) {
+    return CapturedSurfaceControlResult::kDisallowedForSelfCaptureError;
+  }
 
   return CapturedSurfaceControlResult::kSuccess;
 }
@@ -378,6 +414,24 @@ void CapturedSurfaceController::SetZoomLevel(
       base::BindOnce(&DoSetZoomLevel, capturer_rfh_id_, captured_wc_.value(),
                      zoom_level);
 
+  permission_manager_->CheckPermission(
+      ComposeCallbacks(std::move(action_callback), std::move(reply_callback)));
+}
+
+void CapturedSurfaceController::RequestPermission(
+    base::OnceCallback<void(CapturedSurfaceControlResult)> reply_callback) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+
+  if (!captured_wc_.has_value()) {
+    std::move(reply_callback)
+        .Run(CapturedSurfaceControlResult::kCapturedSurfaceNotFoundError);
+    return;
+  }
+
+  // If the permission check is successful, just return success.
+  base::OnceCallback<CapturedSurfaceControlResult(void)> action_callback =
+      base::BindOnce(&FinalizeRequestPermission, capturer_rfh_id_,
+                     captured_wc_.value());
   permission_manager_->CheckPermission(
       ComposeCallbacks(std::move(action_callback), std::move(reply_callback)));
 }

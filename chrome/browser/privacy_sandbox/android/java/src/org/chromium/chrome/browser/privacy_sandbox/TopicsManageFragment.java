@@ -14,6 +14,8 @@ import androidx.preference.Preference;
 import androidx.preference.PreferenceCategory;
 
 import org.chromium.base.metrics.RecordUserAction;
+import org.chromium.base.supplier.ObservableSupplier;
+import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.supplier.Supplier;
 import org.chromium.components.browser_ui.settings.SettingsUtils;
 import org.chromium.ui.modaldialog.DialogDismissalCause;
@@ -37,10 +39,12 @@ public class TopicsManageFragment extends PrivacySandboxSettingsBaseFragment {
 
     private Supplier<ModalDialogManager> mModalDialogManagerSupplier;
 
+    private final ObservableSupplierImpl<String> mPageTitle = new ObservableSupplierImpl<>();
+
     @Override
     public void onCreatePreferences(@Nullable Bundle bundle, @Nullable String s) {
         super.onCreatePreferences(bundle, s);
-        getActivity().setTitle(R.string.settings_topics_page_manage_topics_heading);
+        mPageTitle.set(getString(R.string.settings_topics_page_manage_topics_heading));
         SettingsUtils.addPreferencesFromResource(this, R.xml.topics_manage_preference);
 
         mTopicsCategory = findPreference(MANAGE_TOPICS_PREFERENCE);
@@ -58,6 +62,11 @@ public class TopicsManageFragment extends PrivacySandboxSettingsBaseFragment {
         RecordUserAction.record("Settings.PrivacySandbox.Topics.Manage.PageOpened");
     }
 
+    @Override
+    public ObservableSupplier<String> getPageTitle() {
+        return mPageTitle;
+    }
+
     /**
      * Sets Supplier for {@lnk ModalDialogManager} used to display {@link
      * AutofillDeleteCreditCardConfirmationDialog}.
@@ -69,8 +78,8 @@ public class TopicsManageFragment extends PrivacySandboxSettingsBaseFragment {
 
     private void populateTopics() {
         mTopicsCategory.removeAll();
-        List<Topic> firstLevelTopics = PrivacySandboxBridge.getFirstLevelTopics();
-        var blockedTopics = new HashSet<Topic>(PrivacySandboxBridge.getBlockedTopics());
+        List<Topic> firstLevelTopics = getPrivacySandboxBridge().getFirstLevelTopics();
+        var blockedTopics = new HashSet<Topic>(getPrivacySandboxBridge().getBlockedTopics());
         for (Topic topic : firstLevelTopics) {
             var preference = new TopicSwitchPreference(getContext(), topic);
             preference.setChecked(!blockedTopics.contains(topic));
@@ -84,7 +93,7 @@ public class TopicsManageFragment extends PrivacySandboxSettingsBaseFragment {
         if (!((boolean) newValue)) {
             return handleBlockTopic(topicPreference);
         }
-        PrivacySandboxBridge.setTopicAllowed(topicPreference.getTopic(), true);
+        getPrivacySandboxBridge().setTopicAllowed(topicPreference.getTopic(), true);
         RecordUserAction.record("Settings.PrivacySandbox.Topics.Manage.TopicEnabled");
         return true;
     }
@@ -92,9 +101,9 @@ public class TopicsManageFragment extends PrivacySandboxSettingsBaseFragment {
     private boolean handleBlockTopic(TopicSwitchPreference preference) {
         Topic topic = preference.getTopic();
         // Check if a child level topic is assigned.
-        List<Topic> childTopics = PrivacySandboxBridge.getChildTopicsCurrentlyAssigned(topic);
+        List<Topic> childTopics = getPrivacySandboxBridge().getChildTopicsCurrentlyAssigned(topic);
         if (childTopics.isEmpty()) {
-            PrivacySandboxBridge.setTopicAllowed(topic, false);
+            getPrivacySandboxBridge().setTopicAllowed(topic, false);
             RecordUserAction.record("Settings.PrivacySandbox.Topics.Manage.TopicBlocked");
             return true;
         }
@@ -107,7 +116,7 @@ public class TopicsManageFragment extends PrivacySandboxSettingsBaseFragment {
                         modalDialogManager,
                         dismissalCause -> {
                             if (dismissalCause == DialogDismissalCause.POSITIVE_BUTTON_CLICKED) {
-                                PrivacySandboxBridge.setTopicAllowed(topic, false);
+                                getPrivacySandboxBridge().setTopicAllowed(topic, false);
                                 RecordUserAction.record(
                                         "Settings.PrivacySandbox.Topics.Manage.TopicBlockingConfirmed");
                             } else {

@@ -47,6 +47,7 @@
 #include "third_party/blink/renderer/core/html/forms/form_controller.h"
 #include "third_party/blink/renderer/core/html/forms/form_data.h"
 #include "third_party/blink/renderer/core/html/forms/text_control_inner_elements.h"
+#include "third_party/blink/renderer/core/html/html_br_element.h"
 #include "third_party/blink/renderer/core/html/parser/html_parser_idioms.h"
 #include "third_party/blink/renderer/core/html/shadow/shadow_element_names.h"
 #include "third_party/blink/renderer/core/html_names.h"
@@ -59,6 +60,7 @@
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/text/platform_locale.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
@@ -168,7 +170,6 @@ int HTMLTextAreaElement::scrollHeight() {
 
 void HTMLTextAreaElement::ChildrenChanged(const ChildrenChange& change) {
   HTMLElement::ChildrenChanged(change);
-  SetLastChangeWasNotUserEdit();
   if (is_dirty_)
     SetInnerEditorValue(Value());
   else
@@ -197,16 +198,16 @@ void HTMLTextAreaElement::CollectStyleForPresentationAttribute(
       // Longhands of `white-space: pre-wrap`.
       AddPropertyToPresentationAttributeStyle(
           style, CSSPropertyID::kWhiteSpaceCollapse, CSSValueID::kPreserve);
-      AddPropertyToPresentationAttributeStyle(style, CSSPropertyID::kTextWrap,
-                                              CSSValueID::kWrap);
+      AddPropertyToPresentationAttributeStyle(
+          style, CSSPropertyID::kTextWrapMode, CSSValueID::kWrap);
       AddPropertyToPresentationAttributeStyle(
           style, CSSPropertyID::kOverflowWrap, CSSValueID::kBreakWord);
     } else {
       // Longhands of `white-space: pre`.
       AddPropertyToPresentationAttributeStyle(
           style, CSSPropertyID::kWhiteSpaceCollapse, CSSValueID::kPreserve);
-      AddPropertyToPresentationAttributeStyle(style, CSSPropertyID::kTextWrap,
-                                              CSSValueID::kNowrap);
+      AddPropertyToPresentationAttributeStyle(
+          style, CSSPropertyID::kTextWrapMode, CSSValueID::kNowrap);
       AddPropertyToPresentationAttributeStyle(
           style, CSSPropertyID::kOverflowWrap, CSSValueID::kNormal);
     }
@@ -373,19 +374,25 @@ void HTMLTextAreaElement::SubtreeHasChanged() {
   SetAutofillState(WebAutofillState::kNotFilled);
   UpdatePlaceholderVisibility();
 
+  if (HasDirectionAuto() ||
+      !RuntimeEnabledFeatures::TextInputNotAlwaysDirAutoEnabled()) {
+    // When typing in a textarea, childrenChanged is not called, so we need to
+    // force the directionality check.
+    CalculateAndAdjustAutoDirectionality();
+  }
+
   if (!IsFocused())
     return;
 
-  // When typing in a textarea, childrenChanged is not called, so we need to
-  // force the directionality check.
-  CalculateAndAdjustAutoDirectionality();
-
   DCHECK(GetDocument().IsActive());
+  if (InnerEditorValue().empty()) {
+    GetDocument().GetPage()->GetChromeClient().DidClearValueInTextField(*this);
+  }
   GetDocument().GetPage()->GetChromeClient().DidChangeValueInTextField(*this);
 }
 
 void HTMLTextAreaElement::HandleBeforeTextInsertedEvent(
-    BeforeTextInsertedEvent* event) const {
+    BeforeTextInsertedEvent* event) {
   DCHECK(event);
   DCHECK(GetLayoutObject());
   int signed_max_length = maxLength();
@@ -418,6 +425,11 @@ void HTMLTextAreaElement::HandleBeforeTextInsertedEvent(
   unsigned appendable_length =
       unsigned_max_length > base_length ? unsigned_max_length - base_length : 0;
   event->SetText(SanitizeUserInputValue(event->GetText(), appendable_length));
+
+  if (selection_length == current_length && selection_length != 0 &&
+      !event->GetText().empty()) {
+    GetDocument().GetPage()->GetChromeClient().DidClearValueInTextField(*this);
+  }
 }
 
 String HTMLTextAreaElement::SanitizeUserInputValue(const String& proposed_value,
@@ -553,12 +565,17 @@ void HTMLTextAreaElement::SetValueCommon(const String& new_value,
       break;
   }
 
-  // We set the Autofilled state again because setting the autofill value
-  // triggers JavaScript events and the site may override the autofilled value,
-  // which resets the autofill state. Even if the website modifies the from
-  // control element's content during the autofill operation, we want the state
-  // to show as as autofilled.
-  SetAutofillState(autofill_state);
+  if (!RuntimeEnabledFeatures::AllowJavaScriptToResetAutofillStateEnabled()) {
+    // We set the Autofilled state again because setting the autofill value
+    // triggers JavaScript events and the site may override the autofilled
+    // value, which resets the autofill state. Even if the website modifies the
+    // form control element's content during the autofill operation, we want the
+    // state to show as autofilled.
+    // If AllowJavaScriptToResetAutofillState is enabled, the WebAutofillClient
+    // will monitor JavaScript induced changes and take care of resetting the
+    // autofill state when appropriate.
+    SetAutofillState(autofill_state);
+  }
 }
 
 String HTMLTextAreaElement::defaultValue() const {
@@ -696,7 +713,7 @@ void HTMLTextAreaElement::SetPlaceholderVisibility(bool visible) {
 void HTMLTextAreaElement::CreateInnerEditorElementIfNecessary() const {
   // HTMLTextArea immediately creates the inner-editor, so this function should
   // never be called.
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 bool HTMLTextAreaElement::IsInnerEditorValueEmpty() const {
@@ -763,6 +780,15 @@ String HTMLTextAreaElement::DefaultToolTip() const {
   if (FastHasAttribute(html_names::kNovalidateAttr))
     return String();
   return validationMessage();
+}
+
+void HTMLTextAreaElement::SetFocused(bool is_focused,
+                                     mojom::blink::FocusType focus_type) {
+  // See comment in HTMLInputElement::SetFocused.
+  if (UserHasEditedTheField()) {
+    SetUserHasEditedTheFieldAndBlurred();
+  }
+  TextControlElement::SetFocused(is_focused, focus_type);
 }
 
 }  // namespace blink

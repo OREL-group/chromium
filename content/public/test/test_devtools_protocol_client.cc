@@ -183,7 +183,7 @@ void TestDevToolsProtocolClient::DispatchProtocolMessage(
 void TestDevToolsProtocolClient::AgentHostClosed(
     DevToolsAgentHost* agent_host) {
   if (!agent_host_can_close_)
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
 }
 
 bool TestDevToolsProtocolClient::AllowUnsafeOperations() {
@@ -200,6 +200,11 @@ bool TestDevToolsProtocolClient::MayReadLocalFiles() {
 
 bool TestDevToolsProtocolClient::MayWriteLocalFiles() {
   return may_write_local_files_;
+}
+
+bool TestDevToolsProtocolClient::MayAttachToURL(const GURL& url,
+                                                bool is_webui) {
+  return not_attachable_hosts_.find(url.host()) == not_attachable_hosts_.end();
 }
 
 std::optional<url::Origin>

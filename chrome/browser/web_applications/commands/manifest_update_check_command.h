@@ -51,15 +51,15 @@ struct WebAppInstallInfo;
 class ManifestUpdateCheckCommand
     : public WebAppCommand<AppLock,
                            ManifestUpdateCheckResult,
-                           std::optional<WebAppInstallInfo>>,
+                           std::unique_ptr<WebAppInstallInfo>>,
       public content::WebContentsObserver {
  public:
-  // TODO(crbug.com/1409710): Merge ManifestUpdateDataFetchCommand and
+  // TODO(crbug.com/40254036): Merge ManifestUpdateDataFetchCommand and
   // ManifestUpdateFinalizeCommand into one so we don't have to return optional
   // early exit results to the caller.
   using CompletedCallback = base::OnceCallback<void(
       ManifestUpdateCheckResult check_result,
-      std::optional<WebAppInstallInfo> new_install_info)>;
+      std::unique_ptr<WebAppInstallInfo> new_install_info)>;
 
   ManifestUpdateCheckCommand(
       const GURL& url,
@@ -87,7 +87,6 @@ class ManifestUpdateCheckCommand
       WebAppDataRetriever::CheckInstallabilityCallback next_step_callback);
   void StashNewManifestJson(base::OnceClosure next_step_callback,
                             blink::mojom::ManifestPtr opt_manifest,
-                            const GURL& manifest_url,
                             bool valid_manifest_for_web_app,
                             webapps::InstallableStatusCode installable_status);
   void DownloadNewIconBitmaps(

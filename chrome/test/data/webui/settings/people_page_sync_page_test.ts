@@ -12,10 +12,10 @@ import type {CrExpandButtonElement, CrInputElement, SettingsSyncEncryptionOption
 // <if expr="not chromeos_ash">
 import type {CrDialogElement} from 'chrome://settings/lazy_load.js';
 // </if>
-import type {IronCollapseElement} from 'chrome://settings/lazy_load.js';
+import type {CrCollapseElement} from 'chrome://settings/lazy_load.js';
 import type {CrButtonElement, CrRadioButtonElement, CrRadioGroupElement} from 'chrome://settings/settings.js';
 import {MetricsBrowserProxyImpl} from 'chrome://settings/settings.js';
-import {OpenWindowProxyImpl, PageStatus, Router, routes, StatusAction, SyncBrowserProxyImpl} from 'chrome://settings/settings.js';
+import {OpenWindowProxyImpl, PageStatus, Router, routes, SignedInState, StatusAction, SyncBrowserProxyImpl} from 'chrome://settings/settings.js';
 import {assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {flushTasks, waitBeforeNextRender} from 'chrome://webui-test/polymer_test_util.js';
 import {TestOpenWindowProxy} from 'chrome://webui-test/test_open_window_proxy.js';
@@ -25,8 +25,7 @@ import {isChildVisible, microtasksFinished, eventToPromise} from 'chrome://webui
 import {simulateStoredAccounts} from './sync_test_util.js';
 // </if>
 
-import type {SyncRoutes} from './sync_test_util.js';
-import {getSyncAllPrefs, setupRouterWithSyncRoutes} from './sync_test_util.js';
+import {getSyncAllPrefs} from './sync_test_util.js';
 import {TestMetricsBrowserProxy} from './test_metrics_browser_proxy.js';
 import {TestSyncBrowserProxy} from './test_sync_browser_proxy.js';
 
@@ -44,7 +43,7 @@ suite('SyncSettings', function() {
     document.body.innerHTML = window.trustedTypes!.emptyHTML;
     syncPage = document.createElement('settings-sync-page');
     const router = Router.getInstance();
-    router.navigateTo((router.getRoutes() as SyncRoutes).SYNC);
+    router.navigateTo(router.getRoutes().SYNC);
     // Preferences should exist for embedded
     // 'personalization_options.html'. We don't perform tests on them.
     syncPage.prefs = {
@@ -72,7 +71,7 @@ suite('SyncSettings', function() {
     // enabled.
     webUIListenerCallback('sync-prefs-changed', getSyncAllPrefs());
     syncPage.set('syncStatus', {
-      signedIn: true,
+      signedInState: SignedInState.SYNCING,
       supervisedUser: false,
       statusAction: StatusAction.NO_ACTION,
     });
@@ -84,7 +83,6 @@ suite('SyncSettings', function() {
   });
 
   setup(async function() {
-    setupRouterWithSyncRoutes();
     browserProxy = new TestSyncBrowserProxy();
     SyncBrowserProxyImpl.setInstance(browserProxy);
 
@@ -118,12 +116,12 @@ suite('SyncSettings', function() {
 
     // Navigate away.
     const router = Router.getInstance();
-    router.navigateTo((router.getRoutes() as SyncRoutes).PEOPLE);
+    router.navigateTo(router.getRoutes().PEOPLE);
     await browserProxy.whenCalled('didNavigateAwayFromSyncPage');
 
     // Navigate back to the page.
     browserProxy.resetResolver('didNavigateToSyncPage');
-    router.navigateTo((router.getRoutes() as SyncRoutes).SYNC);
+    router.navigateTo(router.getRoutes().SYNC);
     await browserProxy.whenCalled('didNavigateToSyncPage');
 
     // Remove page element.
@@ -134,7 +132,7 @@ suite('SyncSettings', function() {
     // Recreate page element.
     browserProxy.resetResolver('didNavigateToSyncPage');
     syncPage = document.createElement('settings-sync-page');
-    router.navigateTo((router.getRoutes() as SyncRoutes).SYNC);
+    router.navigateTo(router.getRoutes().SYNC);
     document.body.appendChild(syncPage);
     await browserProxy.whenCalled('didNavigateToSyncPage');
   });
@@ -146,7 +144,7 @@ suite('SyncSettings', function() {
         syncPage.shadowRoot!.querySelector<HTMLElement>('#other-sync-items')!;
 
     syncPage.syncStatus = {
-      signedIn: true,
+      signedInState: SignedInState.SYNCING,
       disabled: false,
       hasError: false,
       statusAction: StatusAction.NO_ACTION,
@@ -172,7 +170,7 @@ suite('SyncSettings', function() {
 
     // Test sync paused state.
     syncPage.syncStatus = {
-      signedIn: true,
+      signedInState: SignedInState.SYNCING,
       disabled: false,
       hasError: true,
       statusAction: StatusAction.REAUTHENTICATE,
@@ -184,7 +182,7 @@ suite('SyncSettings', function() {
 
     // Test passphrase error state.
     syncPage.syncStatus = {
-      signedIn: true,
+      signedInState: SignedInState.SYNCING,
       disabled: false,
       hasError: true,
       statusAction: StatusAction.ENTER_PASSPHRASE,
@@ -200,7 +198,7 @@ suite('SyncSettings', function() {
         syncPage.shadowRoot!.querySelector<HTMLElement>('#sync-section')!;
 
     syncPage.syncStatus = {
-      signedIn: false,
+      signedInState: SignedInState.SIGNED_OUT,
       disabled: false,
       hasError: false,
       statusAction: StatusAction.NO_ACTION,
@@ -217,7 +215,7 @@ suite('SyncSettings', function() {
         syncPage.shadowRoot!.querySelector<HTMLElement>('#sync-section')!;
 
     syncPage.syncStatus = {
-      signedIn: false,
+      signedInState: SignedInState.SIGNED_IN,
       disabled: true,
       hasError: false,
       statusAction: StatusAction.NO_ACTION,
@@ -611,13 +609,12 @@ suite('SyncSettings', function() {
     // Confirm that the page navigates away form the sync setup.
     await browserProxy.whenCalled('didNavigateAwayFromSyncPage');
     const router = Router.getInstance();
-    assertEquals(
-        (router.getRoutes() as SyncRoutes).PEOPLE, router.getCurrentRoute());
+    assertEquals(router.getRoutes().PEOPLE, router.getCurrentRoute());
   });
 
   test('EnterExistingPassphraseDoesNotExistIfSignedOut', async function() {
     syncPage.syncStatus = {
-      signedIn: false,
+      signedInState: SignedInState.SIGNED_IN,
       disabled: false,
       hasError: true,
       statusAction: StatusAction.ENTER_PASSPHRASE,
@@ -751,7 +748,7 @@ suite('SyncSettings', function() {
     syncPage.syncStatus = {
       syncSystemEnabled: true,
       firstSetupInProgress: true,
-      signedIn: true,
+      signedInState: SignedInState.SYNCING,
       statusAction: StatusAction.NO_ACTION,
     };
     flush();
@@ -774,7 +771,7 @@ suite('SyncSettings', function() {
     syncPage.syncStatus = {
       syncSystemEnabled: true,
       firstSetupInProgress: true,
-      signedIn: true,
+      signedInState: SignedInState.SYNCING,
       statusAction: StatusAction.NO_ACTION,
     };
     flush();
@@ -796,7 +793,7 @@ suite('SyncSettings', function() {
     syncPage.syncStatus = {
       syncSystemEnabled: true,
       firstSetupInProgress: true,
-      signedIn: true,
+      signedInState: SignedInState.SYNCING,
       statusAction: StatusAction.NO_ACTION,
     };
     flush();
@@ -806,8 +803,7 @@ suite('SyncSettings', function() {
     const router = Router.getInstance();
     router.navigateTo(routes.BASIC);
     await eventToPromise('cr-dialog-open', syncPage);
-    assertEquals(
-        (router.getRoutes() as SyncRoutes).SYNC, router.getCurrentRoute());
+    assertEquals(router.getRoutes().SYNC, router.getCurrentRoute());
     assertTrue(syncPage.shadowRoot!
                    .querySelector<CrDialogElement>('#setupCancelDialog')!.open);
 
@@ -820,8 +816,7 @@ suite('SyncSettings', function() {
         syncPage.shadowRoot!.querySelector<CrDialogElement>(
             '#setupCancelDialog')!);
     flush();
-    assertEquals(
-        (router.getRoutes() as SyncRoutes).SYNC, router.getCurrentRoute());
+    assertEquals(router.getRoutes().SYNC, router.getCurrentRoute());
     assertFalse(!!syncPage.shadowRoot!.querySelector<CrDialogElement>(
         '#setupCancelDialog'));
 
@@ -846,7 +841,7 @@ suite('SyncSettings', function() {
     syncPage.syncStatus = {
       syncSystemEnabled: true,
       firstSetupInProgress: true,
-      signedIn: true,
+      signedInState: SignedInState.SYNCING,
       statusAction: StatusAction.NO_ACTION,
     };
     flush();
@@ -880,8 +875,7 @@ suite('SyncSettings', function() {
     // Entering passphrase should not display the cancel dialog and should not
     // abort the sync setup.
     const router = Router.getInstance();
-    assertEquals(
-        (router.getRoutes() as SyncRoutes).SYNC, router.getCurrentRoute());
+    assertEquals(router.getRoutes().SYNC, router.getCurrentRoute());
     const setupCancelDialog =
         syncPage.shadowRoot!.querySelector<CrDialogElement>(
             '#setupCancelDialog');
@@ -895,7 +889,7 @@ suite('SyncSettings', function() {
     syncPage.syncStatus = {
       syncSystemEnabled: true,
       firstSetupInProgress: true,
-      signedIn: true,
+      signedInState: SignedInState.SYNCING,
       statusAction: StatusAction.NO_ACTION,
     };
     flush();
@@ -930,8 +924,7 @@ suite('SyncSettings', function() {
     // Creating passphrase should not display the cancel dialog and should not
     // abort the sync setup.
     const router = Router.getInstance();
-    assertEquals(
-        (router.getRoutes() as SyncRoutes).SYNC, router.getCurrentRoute());
+    assertEquals(router.getRoutes().SYNC, router.getCurrentRoute());
     const setupCancelDialog =
         syncPage.shadowRoot!.querySelector<CrDialogElement>(
             '#setupCancelDialog');
@@ -942,7 +935,7 @@ suite('SyncSettings', function() {
     syncPage.syncStatus = {
       syncSystemEnabled: true,
       firstSetupInProgress: true,
-      signedIn: true,
+      signedInState: SignedInState.SYNCING,
       statusAction: StatusAction.NO_ACTION,
     };
     flush();
@@ -950,8 +943,7 @@ suite('SyncSettings', function() {
     // Searching settings while setup is in progress cancels sync.
     const router = Router.getInstance();
     router.navigateTo(
-        (router.getRoutes() as SyncRoutes).BASIC,
-        new URLSearchParams('search=foo'));
+        router.getRoutes().BASIC, new URLSearchParams('search=foo'));
 
     const abort = await browserProxy.whenCalled('didNavigateAwayFromSyncPage');
     assertTrue(abort);
@@ -1027,7 +1019,7 @@ suite('EEAChoiceCountry', function() {
     // enabled.
     webUIListenerCallback('sync-prefs-changed', getSyncAllPrefs());
     syncPage.set('syncStatus', {
-      signedIn: true,
+      signedInState: SignedInState.SYNCING,
       supervisedUser: false,
       statusAction: StatusAction.NO_ACTION,
     });
@@ -1049,7 +1041,7 @@ suite('EEAChoiceCountry', function() {
   test('personalizationCollapse', async function() {
     // The collapse is collapsed by default.
     const personalizationCollapse =
-        syncPage.shadowRoot!.querySelector<IronCollapseElement>(
+        syncPage.shadowRoot!.querySelector<CrCollapseElement>(
             '#personalizationCollapse');
     assertTrue(!!personalizationCollapse);
     assertFalse(personalizationCollapse.opened);
@@ -1110,7 +1102,7 @@ suite('LinkedServicesDisabled', function() {
     // enabled.
     webUIListenerCallback('sync-prefs-changed', getSyncAllPrefs());
     syncPage.set('syncStatus', {
-      signedIn: true,
+      signedInState: SignedInState.SYNCING,
       supervisedUser: false,
       statusAction: StatusAction.NO_ACTION,
     });

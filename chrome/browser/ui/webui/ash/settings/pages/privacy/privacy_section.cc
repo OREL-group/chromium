@@ -16,12 +16,12 @@
 #include "base/strings/utf_string_conversions.h"
 #include "build/branding_buildflags.h"
 #include "build/chromeos_buildflags.h"
+#include "chrome/browser/ash/auth/legacy_fingerprint_engine.h"
 #include "chrome/browser/ash/login/quick_unlock/quick_unlock_utils.h"
 #include "chrome/browser/ash/privacy_hub/privacy_hub_util.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/ash/system/timezone_util.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/ui/ash/auth/legacy_fingerprint_engine.h"
 #include "chrome/browser/ui/webui/ash/settings/os_settings_features_util.h"
 #include "chrome/browser/ui/webui/ash/settings/pages/privacy/metrics_consent_handler.h"
 #include "chrome/browser/ui/webui/ash/settings/pages/privacy/peripheral_data_access_handler.h"
@@ -337,10 +337,6 @@ const std::vector<SearchConcept>& GetPrivacyControlsSearchConcepts() {
   return *tags;
 }
 
-bool IsSecureDnsAvailable() {
-  return ::features::kDnsOverHttpsShowUiParam.Get();
-}
-
 }  // namespace
 
 PrivacySection::PrivacySection(Profile* profile,
@@ -399,8 +395,7 @@ void PrivacySection::AddHandlers(content::WebUI* web_ui) {
 
   web_ui->AddMessageHandler(std::make_unique<PrivacyHubHandler>());
 
-  if (IsSecureDnsAvailable())
-    web_ui->AddMessageHandler(std::make_unique<::settings::SecureDnsHandler>());
+  web_ui->AddMessageHandler(std::make_unique<::settings::SecureDnsHandler>());
 
   // `sync_subsection_` is initialized only if the feature revamp wayfinding is
   // enabled.
@@ -515,8 +510,12 @@ void PrivacySection::AddLoadTimeData(content::WebUIDataSource* html_source) {
        IDS_OS_SETTINGS_PRIVACY_HUB_SPEAK_ON_MUTE_DETECTION_TOGGLE_SUBTEXT},
       {"geolocationAreaTitle",
        IDS_OS_SETTINGS_PRIVACY_HUB_GEOLOCATION_AREA_TITLE},
-      {"geolocationAreaDescription",
-       IDS_OS_SETTINGS_PRIVACY_HUB_GEOLOCATION_AREA_DESCRIPTION},
+      {"geolocationAreaAllowedSubtext",
+       IDS_OS_SETTINGS_PRIVACY_HUB_GEOLOCATION_AREA_ALLOWED_SUBTEXT},
+      {"geolocationAreaOnlyAllowedForSystemSubtext",
+       IDS_OS_SETTINGS_PRIVACY_HUB_GEOLOCATION_AREA_ONLY_ALLOWED_FOR_SYSTEM_SUBTEXT},
+      {"geolocationAreaDisallowedSubtext",
+       IDS_OS_SETTINGS_PRIVACY_HUB_GEOLOCATION_AREA_DISALLOWED_SUBTEXT},
       {"geolocationControlledByPrimaryUserText",
        IDS_OS_SETTINGS_PRIVACY_HUB_GEOLOCATION_PRIMARY_USER_CONTROLLED},
       {"geolocationAccessLevelAllowed",
@@ -525,12 +524,22 @@ void PrivacySection::AddLoadTimeData(content::WebUIDataSource* html_source) {
        IDS_OS_SETTINGS_PRIVACY_HUB_GEOLOCATION_ACCESS_LEVEL_ONLY_ALLOWED_FOR_SYSTEM},
       {"geolocationAccessLevelDisallowed",
        IDS_OS_SETTINGS_PRIVACY_HUB_GEOLOCATION_ACCESS_LEVEL_DISALLOWED},
+      {"geolocationChangeAccessButtonText",
+       IDS_OS_SETTINGS_PRIVACY_HUB_GEOLOCATION_CHANGE_ACCESS_BUTTON_TEXT},
       {"geolocationAllowedModeDescription",
        IDS_OS_SETTINGS_PRIVACY_HUB_GEOLOCATION_ACCESS_LEVEL_DESCRIPTION_ALLOWED},
       {"geolocationOnlyAllowedForSystemModeDescription",
        IDS_OS_SETTINGS_PRIVACY_HUB_GEOLOCATION_ACCESS_LEVEL_DESCRIPTION_ONLY_ALLOWED_FOR_SYSTEM},
       {"geolocationBlockedModeDescription",
        IDS_OS_SETTINGS_PRIVACY_HUB_GEOLOCATION_ACCESS_LEVEL_DESCRIPTION_DISALLOWED},
+      {"geolocationDialogAllowedModeDescription",
+       IDS_OS_SETTINGS_PRIVACY_HUB_GEOLOCATION_ACCESS_LEVEL_DIALOG_DESCRIPTION_ALLOWED},
+      {"geolocationDialogOnlyAllowedForSystemModeDescription",
+       IDS_OS_SETTINGS_PRIVACY_HUB_GEOLOCATION_ACCESS_LEVEL_DIALOG_DESCRIPTION_ONLY_ALLOWED_FOR_SYSTEM},
+      {"geolocationDialogBlockedModeDescription",
+       IDS_OS_SETTINGS_PRIVACY_HUB_GEOLOCATION_ACCESS_LEVEL_DIALOG_DESCRIPTION_DISALLOWED},
+      {"geolocationAccessLevelDialogConfirmButton", IDS_SETTINGS_DONE_BUTTON},
+      {"geolocationAccessLevelDialogCancelButton", IDS_SETTINGS_CANCEL_BUTTON},
       {"geolocationAccuracyToggleText",
        IDS_OS_SETTINGS_PRIVACY_HUB_GEOLOCATION_ACCURACY_TOGGLE_TEXT},
       {"geolocationAccuracyToggleTitle",
@@ -539,8 +548,10 @@ void PrivacySection::AddLoadTimeData(content::WebUIDataSource* html_source) {
        IDS_OS_SETTINGS_PRIVACY_HUB_GEOLOCATION_ADVANCED_AREA_TITLE},
       {"systemGeolocationDialogTitle",
        IDS_SETTINGS_PRIVACY_HUB_GEOLOCATION_DIALOG_TITLE},
-      {"systemGeolocationDialogBody",
-       IDS_SETTINGS_PRIVACY_HUB_GEOLOCATION_DIALOG_BODY},
+      {"systemGeolocationDialogBodyParagraph1",
+       IDS_SETTINGS_PRIVACY_HUB_GEOLOCATION_DIALOG_BODY_PARAGRAPH1},
+      {"systemGeolocationDialogBodyParagraph2",
+       IDS_SETTINGS_PRIVACY_HUB_GEOLOCATION_DIALOG_BODY_PARAGRAPH2},
       {"systemGeolocationDialogConfirmButton",
        IDS_SETTINGS_PRIVACY_HUB_GEOLOCATION_DIALOG_CONFIRM_BUTTON},
       {"systemGeolocationDialogCancelButton",
@@ -577,6 +588,8 @@ void PrivacySection::AddLoadTimeData(content::WebUIDataSource* html_source) {
        IDS_OS_SETTINGS_PRIVACY_HUB_NO_APP_CAN_USE_LOCATION_TEXT},
       {"privacyHubSystemServicesSectionTitle",
        IDS_OS_SETTINGS_PRIVACY_HUB_SYSTEM_SERVICES_SECTION_TITLE},
+      {"privacyHubSystemServicesGeolocationNotConfigured",
+       IDS_OS_SETTINGS_PRIVACY_HUB_SYSTEM_SERVICES_GEOLOCATION_NOT_CONFIGURED},
       {"privacyHubSystemServicesAllowedText",
        IDS_OS_SETTINGS_PRIVACY_HUB_SYSTEM_SERVICES_ALLOWED_TEXT},
       {"privacyHubSystemServicesBlockedText",
@@ -609,6 +622,22 @@ void PrivacySection::AddLoadTimeData(content::WebUIDataSource* html_source) {
        IDS_OS_SETTINGS_PRIVACY_HUB_CAMERA_TOGGLE_NO_CAMERA_CONNECTED_TOOLTIP_TEXT},
       {"privacyHubNoMicrophoneConnectedTooltipText",
        IDS_OS_SETTINGS_PRIVACY_HUB_MICROPHONE_TOGGLE_NO_MICROPHONE_CONNECTED_TOOLTIP_TEXT},
+      {"privacyHubAllowCameraAccessDialogTitle",
+       IDS_OS_SETTINGS_PRIVACY_HUB_ALLOW_CAMERA_ACCESS_DIALOG_TITLE},
+      {"privacyHubAllowLocationAccessDialogTitle",
+       IDS_OS_SETTINGS_PRIVACY_HUB_ALLOW_LOCATION_ACCESS_DIALOG_TITLE},
+      {"privacyHubAllowMicrophoneAccessDialogTitle",
+       IDS_OS_SETTINGS_PRIVACY_HUB_ALLOW_MICROPHONE_ACCESS_DIALOG_TITLE},
+      {"privacyHubAllowCameraAccessDialogBodyText",
+       IDS_OS_SETTINGS_PRIVACY_HUB_ALLOW_CAMERA_ACCESS_DIALOG_BODY_TEXT},
+      {"privacyHubAllowLocationAccessDialogBodyText",
+       IDS_OS_SETTINGS_PRIVACY_HUB_ALLOW_LOCATION_ACCESS_DIALOG_BODY_TEXT},
+      {"privacyHubAllowMicrophoneAccessDialogBodyText",
+       IDS_OS_SETTINGS_PRIVACY_HUB_ALLOW_MICROPHONE_ACCESS_DIALOG_BODY_TEXT},
+      {"privacyHubDialogConfirmButtonLabel",
+       IDS_OS_SETTINGS_PRIVACY_HUB_DIALOG_CONFIRM_BUTTON_LABEL},
+      {"privacyHubDialogCancelButtonLabel",
+       IDS_OS_SETTINGS_PRIVACY_HUB_DIALOG_CANCEL_BUTTON_LABEL},
   };
 
   html_source->AddLocalizedStrings(kLocalizedStrings);
@@ -625,7 +654,7 @@ void PrivacySection::AddLoadTimeData(content::WebUIDataSource* html_source) {
   html_source->AddBoolean("isQuickDimEnabled",
                           ash::features::IsQuickDimEnabled());
   html_source->AddBoolean("isAuthPanelEnabled",
-                          ash::features::IsUseAuthPanelInSettingsEnabled());
+                          ash::features::IsUseAuthPanelInSessionEnabled());
 
   html_source->AddBoolean(
       "isPrivacyHubHatsEnabled",
@@ -660,17 +689,19 @@ void PrivacySection::AddLoadTimeData(content::WebUIDataSource* html_source) {
   html_source->AddString("speakOnMuteDetectionLearnMoreURL",
                          chrome::kSpeakOnMuteDetectionLearnMoreURL);
 
-  html_source->AddString("geolocationAreaLearnMoreURL",
-                         chrome::kPrivacyHubGeolocationLearnMoreURL);
+  html_source->AddString("geolocationAccuracyLearnMoreUrl",
+                         chrome::kPrivacyHubGeolocationAccuracyLearnMoreURL);
 
   html_source->AddString("osSettingsAppId", web_app::kOsSettingsAppId);
 
   html_source->AddString(
-      "authPrompt", l10n_util::GetStringFUTF16(
-                        IDS_SETTINGS_IN_SESSION_AUTH_ORIGIN_NAME_PROMPT,
-                        l10n_util::GetStringUTF16(IDS_SHORT_PRODUCT_OS_NAME)));
+      "authPrompt",
+      l10n_util::GetStringFUTF16(
+          IDS_SETTINGS_IN_SESSION_AUTH_ORIGIN_NAME_PROMPT,
+          l10n_util::GetStringUTF16(
+              IDS_SETTINGS_IN_SESSION_AUTH_ORIGIN_NAME_PROMPT_LOCATION)));
 
-  html_source->AddBoolean("showSecureDnsSetting", IsSecureDnsAvailable());
+  html_source->AddBoolean("showSecureDnsSetting", true);
   html_source->AddBoolean("showSecureDnsOsSettingLink", false);
   html_source->AddBoolean(
       "isDeprecateDnsDialogEnabled",
@@ -690,7 +721,6 @@ void PrivacySection::AddLoadTimeData(content::WebUIDataSource* html_source) {
         l10n_util::GetStringFUTF8(
             IDS_OS_SETTINGS_HW_DATA_USAGE_TOGGLE_DESC,
             l10n_util::GetStringUTF16(IDS_INSTALLED_PRODUCT_OS_NAME)));
-    // TODO(dkuzmin): add learn more link here once available b/190964241
   }
 
   // `sync_subsection_` is initialized only if the feature revamp wayfinding is

@@ -60,7 +60,13 @@ void WebView::EnsureServiceConnection(ExecutionContext* execution_context) {
 void WebView::OnServiceConnectionError() {
   media_integrity_service_remote_.reset();
   for (auto& resolver : provider_resolvers_) {
+    ScriptState* script_state = resolver->GetScriptState();
+    if (!script_state->ContextIsValid()) {
+      continue;
+    }
+    ScriptState::Scope scope(script_state);
     resolver->Reject(MediaIntegrityError::CreateForName(
+        script_state->GetIsolate(),
         V8MediaIntegrityErrorName::Enum::kInternalError));
   }
   provider_resolvers_.clear();
@@ -74,7 +80,20 @@ WebView::getExperimentalMediaIntegrityTokenProvider(
   if (!script_state->ContextIsValid()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       kInvalidContext);
-    return ScriptPromise<MediaIntegrityTokenProvider>();
+    return EmptyPromise();
+  }
+  ScriptState::Scope scope(script_state);
+
+  ExecutionContext* execution_context = ExecutionContext::From(script_state);
+  const SecurityOrigin* origin = execution_context->GetSecurityOrigin();
+  if ((origin->Protocol() != url::kHttpScheme &&
+       origin->Protocol() != url::kHttpsScheme) ||
+      !origin->IsPotentiallyTrustworthy()) {
+    exception_state.ThrowDOMException(
+        DOMExceptionCode::kNotSupportedError,
+        "getExperimentalMediaIntegrityTokenProvider: "
+        "can only be used from trustworthy http/https origins");
+    return EmptyPromise();
   }
 
   ScriptPromiseResolver<MediaIntegrityTokenProvider>* resolver =
@@ -84,6 +103,7 @@ WebView::getExperimentalMediaIntegrityTokenProvider(
 
   if (!params->hasCloudProjectNumber()) {
     resolver->Reject(MediaIntegrityError::CreateForName(
+        script_state->GetIsolate(),
         V8MediaIntegrityErrorName::Enum::kInvalidArgument));
     return promise;
   }
@@ -96,11 +116,11 @@ WebView::getExperimentalMediaIntegrityTokenProvider(
   if (cloud_project_number >
       mojom::blink::WebViewMediaIntegrityService::kMaxCloudProjectNumber) {
     resolver->Reject(MediaIntegrityError::CreateForName(
+        script_state->GetIsolate(),
         V8MediaIntegrityErrorName::Enum::kInvalidArgument));
     return promise;
   }
 
-  ExecutionContext* execution_context = ExecutionContext::From(script_state);
   EnsureServiceConnection(execution_context);
   scoped_refptr<base::SingleThreadTaskRunner> task_runner =
       execution_context->GetTaskRunner(TaskType::kInternalDefault);
@@ -135,9 +155,11 @@ void WebView::OnGetIntegrityProviderResponse(
         DOMExceptionCode::kInvalidStateError, kInvalidContext));
     return;
   }
+  ScriptState::Scope scope(script_state);
 
   if (error.has_value()) {
-    resolver->Reject(MediaIntegrityError::CreateFromMojomEnum(*error));
+    resolver->Reject(MediaIntegrityError::CreateFromMojomEnum(
+        script_state->GetIsolate(), *error));
     return;
   }
 

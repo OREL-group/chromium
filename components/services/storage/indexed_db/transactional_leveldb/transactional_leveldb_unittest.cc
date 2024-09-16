@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include <stddef.h>
+
 #include <algorithm>
 #include <cstring>
 #include <string>
@@ -15,7 +16,6 @@
 #include "base/functional/callback_helpers.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/no_destructor.h"
-#include "base/strings/string_piece.h"
 #include "base/test/simple_test_clock.h"
 #include "base/test/task_environment.h"
 #include "components/services/storage/indexed_db/leveldb/leveldb_state.h"
@@ -30,8 +30,8 @@
 #include "third_party/leveldatabase/leveldb_chrome.h"
 #include "third_party/leveldatabase/src/include/leveldb/comparator.h"
 
-namespace content {
-namespace leveldb_unittest {
+namespace content::indexed_db {
+namespace {
 
 static const size_t kDefaultMaxOpenIteratorsPerDatabase = 50;
 
@@ -165,5 +165,5 @@ TEST(LevelDB, Locking) {
   EXPECT_TRUE(status.ok());
 }
 
-}  // namespace leveldb_unittest
-}  // namespace content
+}  // namespace
+}  // namespace content::indexed_db

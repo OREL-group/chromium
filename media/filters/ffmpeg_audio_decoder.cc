@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/filters/ffmpeg_audio_decoder.h"
 
 #include <stdint.h>
@@ -400,8 +405,7 @@ int FFmpegAudioDecoder::GetAudioBuffer(struct AVCodecContext* s,
 
   // Since this routine is called by FFmpeg when a buffer is required for
   // audio data, use the values supplied by FFmpeg (ignoring the current
-  // settings). FFmpegDecode() gets to determine if the buffer is useable or
-  // not.
+  // settings). FFmpegDecode() gets to determine if the buffer is usable or not.
   AVSampleFormat format = static_cast<AVSampleFormat>(frame->format);
   SampleFormat sample_format =
       AVSampleFormatToSampleFormat(format, s->codec_id);

@@ -22,6 +22,7 @@
 #include "base/token.h"
 #include "base/trace_event/named_trigger.h"
 #include "content/browser/tracing/background_tracing_config_impl.h"
+#include "content/browser/tracing/trace_report/trace_report.mojom.h"
 #include "content/browser/tracing/trace_report/trace_report_database.h"
 #include "content/browser/tracing/trace_report/trace_upload_list.h"
 #include "content/browser/tracing/tracing_scenario.h"
@@ -60,6 +61,14 @@ class BackgroundTracingManagerImpl
         tracing::mojom::BackgroundTracingAgent* agent) = 0;
   };
 
+  // Delegate to store and read application preferences for startup tracing, to
+  // isolate the feature for testing.
+  class PreferenceManager {
+   public:
+    virtual bool GetBackgroundStartupTracingEnabled() const = 0;
+    virtual ~PreferenceManager() = default;
+  };
+
   using ScenarioCountMap = base::flat_map<std::string, size_t>;
   using FinishedProcessingCallback =
       TraceUploadList::FinishedProcessingCallback;
@@ -93,7 +102,7 @@ class BackgroundTracingManagerImpl
 
   CONTENT_EXPORT static BackgroundTracingManagerImpl& GetInstance();
 
-  BackgroundTracingManagerImpl();
+  CONTENT_EXPORT BackgroundTracingManagerImpl();
   ~BackgroundTracingManagerImpl() override;
 
   BackgroundTracingManagerImpl(const BackgroundTracingManagerImpl&) = delete;
@@ -105,17 +114,16 @@ class BackgroundTracingManagerImpl
                                  mojom::ChildProcess* child_process);
 
   void SetReceiveCallback(ReceiveCallback receive_callback) override;
+  bool InitializePerfettoTriggerRules(
+      const perfetto::protos::gen::TracingTriggerRulesConfig& config) override;
   bool InitializeFieldScenarios(
       const perfetto::protos::gen::ChromeFieldTracingConfig& config,
       DataFiltering data_filtering) override;
   std::vector<std::string> AddPresetScenarios(
       const perfetto::protos::gen::ChromeFieldTracingConfig& config,
       DataFiltering data_filtering) override;
-  std::vector<std::pair<std::string, std::string>> GetAllPresetScenarios()
-      const override;
   bool SetEnabledScenarios(
       std::vector<std::string> enabled_scenarios_hashes) override;
-  std::vector<std::string> GetEnabledScenarios() const override;
 
   bool SetActiveScenario(std::unique_ptr<BackgroundTracingConfig>,
                          DataFiltering data_filtering) override;
@@ -135,6 +143,19 @@ class BackgroundTracingManagerImpl
                                BackgroundTracingRule* observer);
   void RemoveNamedTriggerObserver(const std::string& trigger_name,
                                   BackgroundTracingRule* observer);
+
+  // Returns the list of preset scenario hashes and names that were saved,
+  // whether or not enabled.
+  CONTENT_EXPORT std::vector<trace_report::mojom::ScenarioPtr>
+  GetAllFieldScenarios() const;
+  // Returns the list of field scenario hashes and names that were saved,
+  // whether or not enabled.
+  CONTENT_EXPORT std::vector<trace_report::mojom::ScenarioPtr>
+  GetAllPresetScenarios() const;
+
+  // Returns the list of scenario hashes that are currently enabled. These are
+  // either all preset scenarios or all field scenarios.
+  CONTENT_EXPORT std::vector<std::string> GetEnabledScenarios() const;
 
   bool HasTraceToUpload() override;
   void GetTraceToUpload(
@@ -192,6 +213,8 @@ class BackgroundTracingManagerImpl
                                           const std::string& scenario_name,
                                           const std::string& rule_name,
                                           const base::Token& uuid) override;
+  CONTENT_EXPORT void SetPreferenceManagerForTesting(
+      std::unique_ptr<PreferenceManager> preferences);
 
  private:
 #if BUILDFLAG(IS_ANDROID)
@@ -237,6 +260,7 @@ class BackgroundTracingManagerImpl
       preset_scenarios_;
   std::vector<raw_ptr<TracingScenario>> enabled_scenarios_;
   raw_ptr<TracingScenario> active_scenario_{nullptr};
+  std::vector<std::unique_ptr<BackgroundTracingRule>> trigger_rules_;
   ReceiveCallback receive_callback_;
   base::RepeatingCallback<std::string()> system_profile_recorder_;
 
@@ -250,6 +274,8 @@ class BackgroundTracingManagerImpl
   std::set<raw_ptr<tracing::mojom::BackgroundTracingAgent, SetExperimental>>
       agents_;
   std::set<raw_ptr<AgentObserver, SetExperimental>> agent_observers_;
+
+  std::unique_ptr<PreferenceManager> preferences_;
 
   std::map<int, mojo::Remote<tracing::mojom::BackgroundTracingAgentProvider>>
       pending_agents_;

@@ -45,15 +45,16 @@
 #include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/browser/web_applications/web_app_registrar_observer.h"
 #include "chrome/browser/web_applications/web_app_registry_update.h"
+#include "chrome/browser/web_applications/web_app_sync_bridge.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
-#include "components/crx_file/id_util.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "components/webapps/browser/install_result_code.h"
+#include "components/webapps/common/web_app_id.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkColor.h"
@@ -61,6 +62,8 @@
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 #include "ash/constants/ash_features.h"
+#include "ash/constants/ash_switches.h"
+#include "base/test/scoped_command_line.h"
 #include "chrome/browser/ash/crosapi/browser_util.h"
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
@@ -244,7 +247,7 @@ class MockAppRegistrarObserver : public WebAppRegistrarObserver {
     return on_policy_changed_call_count;
   }
 
-  void OnAppRegistrarDestroyed() override { NOTREACHED(); }
+  void OnAppRegistrarDestroyed() override { NOTREACHED_IN_MIGRATION(); }
 
  private:
   int on_policy_changed_call_count = 0;
@@ -357,7 +360,7 @@ class WebAppPolicyManagerTestBase : public ChromeRenderViewHostTestHarness {
     // Need to run the ChromeRenderViewHostTestHarness::SetUp() after the fake
     // user manager set up so that the scoped_user_manager can be destructed in
     // the correct order.
-    // TODO(crbug.com/1463865): Consider setting up a fake user in all Ash web
+    // TODO(crbug.com/40275387): Consider setting up a fake user in all Ash web
     // app tests.
     auto user_manager = std::make_unique<ash::FakeChromeUserManager>();
     auto* fake_user_manager = user_manager.get();
@@ -416,14 +419,14 @@ class WebAppPolicyManagerTestBase : public ChromeRenderViewHostTestHarness {
             }));
     fake_externally_managed_app_manager_->SetHandleUninstallRequestCallback(
         base::BindLambdaForTesting(
-            [this](const GURL& app_url,
-                   ExternalInstallSource install_source) -> bool {
+            [this](const GURL& app_url, ExternalInstallSource install_source)
+                -> webapps::UninstallResultCode {
               std::optional<webapps::AppId> app_id =
                   app_registrar().LookupExternalAppId(app_url);
               if (app_id) {
                 UnregisterApp(*app_id);
               }
-              return true;
+              return webapps::UninstallResultCode::kAppRemoved;
             }));
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
@@ -462,9 +465,7 @@ class WebAppPolicyManagerTestBase : public ChromeRenderViewHostTestHarness {
  protected:
   void InstallPwa(const std::string& url) {
     std::unique_ptr<WebAppInstallInfo> web_app_info =
-        std::make_unique<WebAppInstallInfo>(
-            GenerateManifestIdFromStartUrlOnly(GURL(url)));
-    web_app_info->start_url = GURL(url);
+        WebAppInstallInfo::CreateWithStartUrlForTesting(GURL(url));
     web_app::test::InstallWebApp(profile(), std::move(web_app_info));
   }
 
@@ -585,6 +586,8 @@ class WebAppPolicyManagerTest : public WebAppPolicyManagerTestBase,
 
     if (LacrosEnabledParam()) {
       base::Extend(enabled_features, std::move(lacros_flags));
+      scoped_command_line_.GetProcessCommandLine()->AppendSwitch(
+          ash::switches::kEnableLacrosForTesting);
     } else {
       base::Extend(disabled_features, std::move(lacros_flags));
     }
@@ -594,6 +597,9 @@ class WebAppPolicyManagerTest : public WebAppPolicyManagerTestBase,
   }
 
   base::test::ScopedFeatureList scoped_feature_list_;
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  base::test::ScopedCommandLine scoped_command_line_;
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 };
 
 TEST_P(WebAppPolicyManagerTest, NoPrefValues) {
@@ -1291,6 +1297,26 @@ TEST_P(WebAppPolicyManagerTest, InstallResultHistogram) {
   }
 }
 
+TEST_P(WebAppPolicyManagerTest, InvalidUrlParsingSkipped) {
+  if (ShouldSkipPWASpecificTest()) {
+    return;
+  }
+  base::Value::Dict invalid_url_policy =
+      base::Value::Dict()
+          .Set(kUrlKey, "abcdef")
+          .Set(kDefaultLaunchContainerKey, kDefaultLaunchContainerWindowValue);
+  base::Value::List policy_list;
+  policy_list.Append(std::move(invalid_url_policy));
+  profile()->GetPrefs()->SetList(prefs::kWebAppInstallForceList,
+                                 std::move(policy_list));
+
+  WaitForAppsToSynchronize();
+
+  const auto& install_requests =
+      externally_managed_app_manager().install_requests();
+  EXPECT_EQ(0u, install_requests.size());
+}
+
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 TEST_P(WebAppPolicyManagerTest, DisableSystemWebApps) {
   auto disabled_apps = policy_manager().GetDisabledSystemWebApps();
@@ -1306,14 +1332,23 @@ TEST_P(WebAppPolicyManagerTest, DisableSystemWebApps) {
           .Append(static_cast<int>(policy::SystemFeature::kExplore))
           .Append(static_cast<int>(policy::SystemFeature::kCrosh))
           .Append(static_cast<int>(policy::SystemFeature::kTerminal))
-          .Append(static_cast<int>(policy::SystemFeature::kGallery)));
+          .Append(static_cast<int>(policy::SystemFeature::kGallery))
+          .Append(static_cast<int>(policy::SystemFeature::kPrintJobs))
+          .Append(static_cast<int>(policy::SystemFeature::kKeyShortcuts))
+          .Append(static_cast<int>(policy::SystemFeature::kRecorder)));
   base::RunLoop().RunUntilIdle();
 
   const std::set<ash::SystemWebAppType> expected_disabled_apps{
-      ash::SystemWebAppType::CAMERA,   ash::SystemWebAppType::SETTINGS,
-      ash::SystemWebAppType::SCANNING, ash::SystemWebAppType::HELP,
-      ash::SystemWebAppType::CROSH,    ash::SystemWebAppType::TERMINAL,
-      ash::SystemWebAppType::MEDIA};
+      ash::SystemWebAppType::CAMERA,
+      ash::SystemWebAppType::SETTINGS,
+      ash::SystemWebAppType::SCANNING,
+      ash::SystemWebAppType::HELP,
+      ash::SystemWebAppType::CROSH,
+      ash::SystemWebAppType::TERMINAL,
+      ash::SystemWebAppType::MEDIA,
+      ash::SystemWebAppType::PRINT_MANAGEMENT,
+      ash::SystemWebAppType::SHORTCUT_CUSTOMIZATION,
+      ash::SystemWebAppType::RECORDER};
 
   disabled_apps = policy_manager().GetDisabledSystemWebApps();
   EXPECT_EQ(disabled_apps, expected_disabled_apps);
@@ -1701,10 +1736,8 @@ class WebAppPolicyForceUnregistrationTest : public WebAppTest {
         std::make_unique<WebAppFileHandlerManager>(profile());
     auto protocol_handler_manager =
         std::make_unique<WebAppProtocolHandlerManager>(profile());
-    auto shortcut_manager = std::make_unique<WebAppShortcutManager>(
-        profile(), file_handler_manager.get(), protocol_handler_manager.get());
     auto os_integration_manager = std::make_unique<OsIntegrationManager>(
-        profile(), std::move(shortcut_manager), std::move(file_handler_manager),
+        profile(), std::move(file_handler_manager),
         std::move(protocol_handler_manager));
 
     provider_->SetOsIntegrationManager(std::move(os_integration_manager));
@@ -1737,14 +1770,13 @@ class WebAppPolicyForceUnregistrationTest : public WebAppTest {
       std::map<SquareSizePx, SkBitmap> icon_map,
       const GURL manifest_id) {
     std::unique_ptr<WebAppInstallInfo> info =
-        std::make_unique<WebAppInstallInfo>();
-    info->start_url = manifest_id;
+        std::make_unique<WebAppInstallInfo>(webapps::ManifestId(manifest_id),
+                                            /*start_url=*/manifest_id);
     // The name of the app should also change, otherwise on Mac and Windows, the
     // shortcuts are stored as name(1) and gets wiped out with name.
     info->title = base::UTF8ToUTF16(manifest_id.host());
     info->user_display_mode = web_app::mojom::UserDisplayMode::kStandalone;
     info->icon_bitmaps.any = std::move(icon_map);
-    info->manifest_id = manifest_id;
     base::test::TestFuture<const webapps::AppId&, webapps::InstallResultCode>
         result;
     provider().scheduler().InstallFromInfoWithParams(

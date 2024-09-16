@@ -273,7 +273,7 @@ class AppServiceSystemWebAppItemBrowserTest
     if (browser() == nullptr) {
       // Create a new Ash browser window so test code using browser() can work
       // even when Lacros is the only browser.
-      // TODO(crbug.com/1450158): Remove uses of browser() from such tests.
+      // TODO(crbug.com/40270051): Remove uses of browser() from such tests.
       chrome::NewEmptyWindow(ProfileManager::GetActiveUserProfile());
       SelectFirstBrowser();
     }
@@ -301,7 +301,7 @@ IN_PROC_BROWSER_TEST_P(AppServiceSystemWebAppItemBrowserTest, Activate) {
   // Verify that a launch no longer occurs.
   web_app::WebAppLaunchProcess::SetOpenApplicationCallbackForTesting(
       base::BindLambdaForTesting(
-          [](apps::AppLaunchParams params) { NOTREACHED(); }));
+          [](apps::AppLaunchParams params) { NOTREACHED_IN_MIGRATION(); }));
 
   app_item.PerformActivate(ui::EF_NONE);
 }

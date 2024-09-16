@@ -45,19 +45,19 @@ class IncomingStream::UnderlyingByteSource final
                                 IncomingStream* stream)
       : script_state_(script_state), incoming_stream_(stream) {}
 
-  ScriptPromiseUntyped Pull(ReadableByteStreamController* controller,
-                            ExceptionState& exception_state) override {
+  ScriptPromise<IDLUndefined> Pull(ReadableByteStreamController* controller,
+                                   ExceptionState& exception_state) override {
     DCHECK_EQ(controller, incoming_stream_->controller_);
     incoming_stream_->ReadFromPipeAndEnqueue(exception_state);
-    return ScriptPromiseUntyped::CastUndefined(script_state_.Get());
+    return ToResolvedUndefinedPromise(script_state_.Get());
   }
 
-  ScriptPromiseUntyped Cancel(ExceptionState& exception_state) override {
+  ScriptPromise<IDLUndefined> Cancel(ExceptionState& exception_state) override {
     return Cancel(v8::Undefined(script_state_->GetIsolate()), exception_state);
   }
 
-  ScriptPromiseUntyped Cancel(v8::Local<v8::Value> reason,
-                              ExceptionState& exception_state) override {
+  ScriptPromise<IDLUndefined> Cancel(v8::Local<v8::Value> reason,
+                                     ExceptionState& exception_state) override {
     uint8_t code = 0;
     WebTransportError* exception =
         V8WebTransportError::ToWrappable(script_state_->GetIsolate(), reason);
@@ -65,7 +65,7 @@ class IncomingStream::UnderlyingByteSource final
       code = exception->streamErrorCode().value_or(0);
     }
     incoming_stream_->AbortAndReset(code);
-    return ScriptPromiseUntyped::CastUndefined(script_state_.Get());
+    return ToResolvedUndefinedPromise(script_state_.Get());
   }
 
   ScriptState* GetScriptState() override { return script_state_.Get(); }
@@ -199,7 +199,7 @@ void IncomingStream::ProcessClose() {
   if (fin_received_.value()) {
     ScriptState::Scope scope(script_state_);
     ExceptionState exception_state(script_state_->GetIsolate(),
-                                   ExceptionContextType::kUnknown, "", "");
+                                   v8::ExceptionContext::kUnknown, "", "");
     CloseAbortAndReset(exception_state);
     // Ignore exception because stream will be errored soon.
     if (exception_state.HadException()) {
@@ -239,22 +239,16 @@ void IncomingStream::ReadFromPipeAndEnqueue(ExceptionState& exception_state) {
   }
   DCHECK(!read_pending_);
 
-  const void* buffer = nullptr;
-  size_t buffer_num_bytes = 0;
-  auto result = data_pipe_->BeginReadData(&buffer, &buffer_num_bytes,
-                                          MOJO_BEGIN_READ_DATA_FLAG_NONE);
+  base::span<const uint8_t> buffer;
+  auto result =
+      data_pipe_->BeginReadData(MOJO_BEGIN_READ_DATA_FLAG_NONE, buffer);
   switch (result) {
     case MOJO_RESULT_OK: {
       in_two_phase_read_ = true;
 
-      // SAFETY: `BeginReadData` guarantees that `buffer_num_bytes` is set to
-      // the amount of available space in `buffer`.
-      auto buffer_span = UNSAFE_BUFFERS(
-          base::span(static_cast<const uint8_t*>(buffer), buffer_num_bytes));
-
       // RespondBYOBRequestOrEnqueueBytes() may re-enter this method via pull().
       size_t read_bytes =
-          RespondBYOBRequestOrEnqueueBytes(buffer_span, exception_state);
+          RespondBYOBRequestOrEnqueueBytes(buffer, exception_state);
       if (exception_state.HadException()) {
         return;
       }
@@ -283,7 +277,7 @@ void IncomingStream::ReadFromPipeAndEnqueue(ExceptionState& exception_state) {
       return;
 
     default:
-      NOTREACHED() << "Unexpected result: " << result;
+      NOTREACHED_IN_MIGRATION() << "Unexpected result: " << result;
       return;
   }
 }
@@ -299,9 +293,7 @@ size_t IncomingStream::RespondBYOBRequestOrEnqueueBytes(
   if (ReadableStreamBYOBRequest* request = controller_->byobRequest()) {
     DOMArrayPiece view(request->view().Get());
     size_t byob_response_length = std::min(view.ByteLength(), source.size());
-    view.ByteSpan()
-        .first(byob_response_length)
-        .copy_from(source.first(byob_response_length));
+    view.ByteSpan().copy_prefix_from(source.first(byob_response_length));
     request->respond(script_state_, byob_response_length, exception_state);
     return byob_response_length;
   }

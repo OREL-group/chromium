@@ -14,6 +14,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/timer/elapsed_timer.h"
+#include "components/input/native_web_keyboard_event.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/render_frame_host.h"
@@ -21,7 +22,6 @@
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/input/native_web_keyboard_event.h"
 #include "extensions/browser/bad_message.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_error.h"
@@ -58,7 +58,7 @@ namespace {
 // the UI-less extension background page.
 class NoOpColorProviderSource : public ui::ColorProviderSource {
  public:
-  NoOpColorProviderSource() { color_provider_.GenerateColorMap(); }
+  NoOpColorProviderSource() = default;
   NoOpColorProviderSource(const NoOpColorProviderSource&) = delete;
   NoOpColorProviderSource& operator=(const NoOpColorProviderSource&) = delete;
   ~NoOpColorProviderSource() override = default;
@@ -263,7 +263,7 @@ void ExtensionHost::OnBackgroundEventDispatched(
     int event_id,
     EventDispatchSource dispatch_source,
     bool lazy_background_active_on_dispatch) {
-  // TODO(crbug.com/1441221): Make IsBackgroundPage() a real CHECK. It's
+  // TODO(crbug.com/40909770): Make IsBackgroundPage() a real CHECK. It's
   // effectively a DCHECK right now.
   CHECK(IsBackgroundPage());
   CHECK(BackgroundInfo::HasBackgroundPage(extension()));
@@ -417,7 +417,7 @@ void ExtensionHost::EmitLateAckedEventTask(int event_id) {
             ? "Extensions.Events.DidDispatchToAckSucceed.ExtensionPage"
             : "Extensions.Events.DidDispatchToAckSucceed."
               "ExtensionPersistentPage";
-    // TODO(crbug.com/1470045): Update this histogram once we have a way to
+    // TODO(crbug.com/40277737): Update this histogram once we have a way to
     // ack only for lazy background page events. Until then this could be
     // slightly inaccurate and not perfectly comparable to the service worker
     // version.
@@ -470,7 +470,7 @@ void ExtensionHost::OnEventAck(int event_id,
   // background page. Instead, here we rely on a signal from the renderer that
   // the event ran in the background page and only emit background-related
   // metrics if that's the case.
-  // TODO(crbug.com/1470045): Remove this condition once crbug.com/1470045
+  // TODO(crbug.com/40277737): Remove this condition once crbug.com/1470045
   // allows us to only ack for lazy background page events.
   if (event_has_listener_in_background_context) {
     EmitDispatchTimeMetrics(
@@ -520,7 +520,7 @@ content::JavaScriptDialogManager* ExtensionHost::GetJavaScriptDialogManager(
   return delegate_->GetJavaScriptDialogManager();
 }
 
-void ExtensionHost::AddNewContents(
+content::WebContents* ExtensionHost::AddNewContents(
     WebContents* source,
     std::unique_ptr<WebContents> new_contents,
     const GURL& target_url,
@@ -546,13 +546,15 @@ void ExtensionHost::AddNewContents(
         delegate->AddNewContents(associated_contents, std::move(new_contents),
                                  target_url, disposition, window_features,
                                  user_gesture, was_blocked);
-        return;
+        return nullptr;
       }
     }
   }
 
   delegate_->CreateTab(std::move(new_contents), extension_id_, disposition,
                        window_features, user_gesture);
+
+  return nullptr;
 }
 
 void ExtensionHost::RenderFrameCreated(content::RenderFrameHost* frame_host) {

@@ -421,11 +421,15 @@ void MockMediaSession::ScrubTo(base::TimeDelta seek_time) {
 }
 
 void MockMediaSession::EnterPictureInPicture() {
-  // TODO(crbug.com/1040263): Implement EnterPictureinpicture.
+  // TODO(crbug.com/40113959): Implement EnterPictureinpicture.
 }
 
 void MockMediaSession::ExitPictureInPicture() {
-  // TODO(crbug.com/1040263): Implement ExitPictureinpicture.
+  // TODO(crbug.com/40113959): Implement ExitPictureinpicture.
+}
+
+void MockMediaSession::GetVisibility(GetVisibilityCallback callback) {
+  std::move(callback).Run(false);
 }
 
 void MockMediaSession::SetIsControllable(bool value) {

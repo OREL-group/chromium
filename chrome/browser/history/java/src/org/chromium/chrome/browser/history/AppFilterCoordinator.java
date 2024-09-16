@@ -11,6 +11,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 
+import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -56,6 +57,11 @@ class AppFilterCoordinator implements View.OnLayoutChangeListener {
             this.id = id;
             this.icon = icon;
             this.label = label;
+        }
+
+        /** Return whether the app info object is valid. */
+        public boolean isValid() {
+            return id != null;
         }
 
         @Override
@@ -104,7 +110,9 @@ class AppFilterCoordinator implements View.OnLayoutChangeListener {
         var adapter = new SimpleRecyclerViewAdapter(listItems);
         adapter.registerType(
                 0,
-                (parent) -> layoutInflater.inflate(R.layout.modern_list_item_view, parent, false),
+                (parent) ->
+                        layoutInflater.inflate(
+                                R.layout.modern_list_item_small_icon_view, parent, false),
                 AppFilterViewBinder::bind);
         mItemListView.setAdapter(adapter);
 
@@ -141,9 +149,15 @@ class AppFilterCoordinator implements View.OnLayoutChangeListener {
         }
     }
 
-    /** Open app filter bottom sheet. */
-    public void openSheet() {
+    /**
+     * Open app filter bottom sheet.
+     *
+     * @param currentApp Initial app to be selected at the beginning. If {@code null}, no app will
+     *     be selected.
+     */
+    public void openSheet(@Nullable AppInfo currentApp) {
         updateSheetHeight();
+        mMediator.resetState(currentApp);
         mBottomSheetController.requestShowContent(mSheetContent, true);
     }
 
@@ -157,7 +171,8 @@ class AppFilterCoordinator implements View.OnLayoutChangeListener {
             layoutParams = new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0);
         }
 
-        int rowHeight = mContext.getResources().getDimensionPixelSize(R.dimen.list_item_min_height);
+        int rowHeight =
+                mContext.getResources().getDimensionPixelSize(R.dimen.min_touch_target_size);
         layoutParams.height = calculateSheetHeight(rowHeight, mBaseView.getHeight(), mAppCount);
         mItemListView.setLayoutParams(layoutParams);
     }
@@ -188,5 +203,9 @@ class AppFilterCoordinator implements View.OnLayoutChangeListener {
 
     void setCurrentAppForTesting(String appId) {
         mMediator.setCurrentAppForTesting(appId); // IN-TEST
+    }
+
+    String getCurrentAppIdForTesting() {
+        return mMediator.getCurrentAppIdForTesting(); // IN-TEST
     }
 }

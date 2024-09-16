@@ -9,7 +9,7 @@
 #include <memory>
 #include <vector>
 
-#include "components/bookmarks/browser/bookmark_model.h"
+#include "components/commerce/core/compare/product_group.h"
 #include "components/commerce/core/shopping_service.h"
 #include "components/commerce/core/subscriptions/commerce_subscription.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
@@ -22,6 +22,8 @@ class BookmarkNode;
 namespace commerce {
 
 class AccountChecker;
+class MockClusterManager;
+class MockProductSpecificationsService;
 
 // A mock ShoppingService that allows us to decide the response.
 class MockShoppingService : public commerce::ShoppingService {
@@ -44,6 +46,15 @@ class MockShoppingService : public commerce::ShoppingService {
               (override));
   MOCK_METHOD(const std::vector<commerce::UrlInfo>,
               GetUrlInfosForActiveWebWrappers,
+              (),
+              (override));
+  MOCK_METHOD(
+      void,
+      GetUrlInfosForWebWrappersWithProducts,
+      (base::OnceCallback<void(const std::vector<commerce::UrlInfo>)> callback),
+      (override));
+  MOCK_METHOD(const std::vector<commerce::UrlInfo>,
+              GetUrlInfosForRecentlyViewedWebWrappers,
               (),
               (override));
   MOCK_METHOD(void,
@@ -109,12 +120,8 @@ class MockShoppingService : public commerce::ShoppingService {
   MOCK_METHOD(bool, IsDiscountEligibleToShowOnNavigation, (), (override));
   MOCK_METHOD(bool, IsParcelTrackingEligible, (), (override));
   MOCK_METHOD(void,
-              GetDiscountInfoForUrls,
-              (const std::vector<GURL>& urls, DiscountInfoCallback callback),
-              (override));
-  MOCK_METHOD(bookmarks::BookmarkModel*,
-              GetBookmarkModelUsedForSync,
-              (),
+              GetDiscountInfoForUrl,
+              (const GURL& url, DiscountInfoCallback callback),
               (override));
   MOCK_METHOD(void,
               GetAllParcelStatuses,
@@ -126,9 +133,23 @@ class MockShoppingService : public commerce::ShoppingService {
                base::OnceCallback<void(bool)> callback),
               (override));
   MOCK_METHOD(void,
+              StopTrackingAllParcels,
+              (base::OnceCallback<void(bool)> callback),
+              (override));
+  MOCK_METHOD(void,
               GetProductSpecificationsForUrls,
               (const std::vector<GURL>& urls,
                ProductSpecificationsCallback callback),
+              (override));
+  MOCK_METHOD(ProductSpecificationsService*,
+              GetProductSpecificationsService,
+              (),
+              (override));
+  MOCK_METHOD(ClusterManager*, GetClusterManager, (), (override));
+  MOCK_METHOD(void,
+              QueryHistoryForUrl,
+              (const GURL& url,
+               history::HistoryService::QueryURLCallback callback),
               (override));
 
   // Make this mock permissive for all features but default to providing empty
@@ -161,18 +182,21 @@ class MockShoppingService : public commerce::ShoppingService {
       std::vector<const bookmarks::BookmarkNode*> bookmarks);
   void SetIsPriceInsightsEligible(bool is_eligible);
   void SetIsDiscountEligibleToShowOnNavigation(bool is_eligible);
-  void SetResponseForGetDiscountInfoForUrls(const DiscountsMap& discounts_map);
-  void SetBookmarkModelUsedForSync(bookmarks::BookmarkModel* bookmark_model);
+  void SetResponseForGetDiscountInfoForUrl(
+      const std::vector<DiscountInfo>& infos);
   void SetIsParcelTrackingEligible(bool is_eligible);
   void SetGetAllParcelStatusesCallbackValue(
       std::vector<ParcelTrackingStatus> parcels);
   void SetResponseForGetProductSpecificationsForUrls(
       ProductSpecifications specs);
+  // TODO(b/362316113): Remove once history service is passed through handler
+  // constructor.
+  void SetQueryHistoryForUrlCallbackValue(history::QueryURLResult result);
 
  private:
-  // Since the discount API wants a const ref to some map, keep a default
-  // instance here.
-  DiscountsMap default_discounts_map_;
+  std::unique_ptr<MockProductSpecificationsService>
+      product_specifications_service_;
+  std::unique_ptr<MockClusterManager> cluster_manager_;
 };
 
 }  // namespace commerce

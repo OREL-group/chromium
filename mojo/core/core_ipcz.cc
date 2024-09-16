@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "mojo/core/core_ipcz.h"
 
 #include <algorithm>
@@ -105,7 +110,6 @@ extern "C" {
 
 MojoResult MojoInitializeIpcz(const struct MojoInitializeOptions* options) {
   NOTREACHED();
-  return MOJO_RESULT_OK;
 }
 
 MojoTimeTicks MojoGetTimeTicksNowIpcz() {
@@ -728,7 +732,6 @@ MojoResult MojoUnwrapPlatformSharedMemoryRegionIpcz(
       *access_mode = MOJO_PLATFORM_SHARED_MEMORY_REGION_ACCESS_MODE_UNSAFE;
       break;
     default:
-      *access_mode = MOJO_PLATFORM_SHARED_MEMORY_REGION_ACCESS_MODE_READ_ONLY;
       NOTREACHED();
   }
 
@@ -845,7 +848,6 @@ MojoResult MojoQueryQuotaIpcz(MojoHandle handle,
 
 MojoResult MojoShutdownIpcz(const MojoShutdownOptions* options) {
   NOTREACHED();
-  return MOJO_RESULT_OK;
 }
 
 MojoResult MojoSetDefaultProcessErrorHandlerIpcz(

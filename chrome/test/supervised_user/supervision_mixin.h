@@ -82,6 +82,10 @@ class SupervisionMixin : public InProcessBrowserTestMixin {
   // must not be `kSignedOut`.
   void SignIn(SignInMode mode);
 
+  // Invalidates the access token and Google cookie to put the primary user
+  // in the pending state.
+  void SetPendingStateForPrimaryAccount();
+
   EmbeddedTestServerSetupMixin& embedded_test_server_setup_mixin() {
     return *embedded_test_server_setup_mixin_;
   }
@@ -116,7 +120,8 @@ class SupervisionMixin : public InProcessBrowserTestMixin {
 
 // Enables user-readable output from gtest (instead of binary streams).
 std::ostream& operator<<(std::ostream& stream,
-                         const SupervisionMixin::SignInMode& account_type);
+                         SupervisionMixin::SignInMode sign_in_mode);
+std::string SignInModeAsString(SupervisionMixin::SignInMode sign_in_mode);
 
 }  // namespace supervised_user
 

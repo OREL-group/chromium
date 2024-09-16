@@ -19,20 +19,20 @@
 #import "components/strings/grit/components_strings.h"
 #import "ios/chrome/browser/favicon/model/ios_chrome_favicon_loader_factory.h"
 #import "ios/chrome/browser/feature_engagement/model/tracker_factory.h"
+#import "ios/chrome/browser/location_bar/ui_bundled/location_bar_constants.h"
 #import "ios/chrome/browser/search_engines/model/template_url_service_factory.h"
 #import "ios/chrome/browser/shared/coordinator/layout_guide/layout_guide_util.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/public/commands/application_commands.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
+#import "ios/chrome/browser/shared/public/commands/help_commands.h"
 #import "ios/chrome/browser/shared/public/commands/lens_commands.h"
 #import "ios/chrome/browser/shared/public/commands/load_query_commands.h"
 #import "ios/chrome/browser/shared/public/commands/omnibox_commands.h"
 #import "ios/chrome/browser/shared/public/commands/qr_scanner_commands.h"
 #import "ios/chrome/browser/shared/public/commands/toolbar_commands.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
-#import "ios/chrome/browser/ui/bubble/bubble_presenter.h"
-#import "ios/chrome/browser/ui/location_bar/location_bar_constants.h"
 #import "ios/chrome/browser/ui/omnibox/keyboard_assist/omnibox_assistive_keyboard_delegate.h"
 #import "ios/chrome/browser/ui/omnibox/keyboard_assist/omnibox_assistive_keyboard_mediator.h"
 #import "ios/chrome/browser/ui/omnibox/keyboard_assist/omnibox_assistive_keyboard_views.h"
@@ -83,9 +83,13 @@
 @end
 
 @implementation OmniboxCoordinator {
-  // TODO(crbug.com/818636): use a slimmer subclass of OmniboxView,
+  // TODO(crbug.com/40565663): use a slimmer subclass of OmniboxView,
   // OmniboxPopupViewSuggestionsDelegate instead of OmniboxViewIOS.
   std::unique_ptr<OmniboxViewIOS> _editView;
+
+  // Omnibox client. Stored between init and start, then ownership is passed to
+  // OmniboxView.
+  std::unique_ptr<OmniboxClient> _client;
 
   /// Object handling interactions in the keyboard accessory view.
   OmniboxAssistiveKeyboardMediator* _keyboardMediator;
@@ -93,11 +97,21 @@
   // The handler for ToolbarCommands.
   id<ToolbarCommands> _toolbarHandler;
 }
-@synthesize locationBar = _locationBar;
 @synthesize viewController = _viewController;
 @synthesize mediator = _mediator;
 
 #pragma mark - public
+
+- (instancetype)initWithBaseViewController:(UIViewController*)viewController
+                                   browser:(Browser*)browser
+                             omniboxClient:
+                                 (std::unique_ptr<OmniboxClient>)client {
+  self = [super initWithBaseViewController:viewController browser:browser];
+  if (self) {
+    _client = std::move(client);
+  }
+  return self;
+}
 
 - (void)start {
   DCHECK(!self.popupCoordinator);
@@ -105,16 +119,15 @@
   _toolbarHandler =
       HandlerForProtocol(self.browser->GetCommandDispatcher(), ToolbarCommands);
 
-  BOOL isIncognito = self.browser->GetBrowserState()->IsOffTheRecord();
-
-  self.viewController =
-      [[OmniboxViewController alloc] initWithIncognito:isIncognito];
-
+  self.viewController = [[OmniboxViewController alloc] init];
   self.viewController.defaultLeadingImage =
       GetOmniboxSuggestionIcon(OmniboxSuggestionIconType::kDefaultFavicon);
   self.viewController.textInputDelegate = self;
   self.viewController.layoutGuideCenter =
       LayoutGuideCenterForBrowser(self.browser);
+  self.viewController.isSearchOnlyUI = self.isSearchOnlyUI;
+
+  BOOL isIncognito = self.browser->GetBrowserState()->IsOffTheRecord();
   self.mediator = [[OmniboxMediator alloc]
       initWithIncognito:isIncognito
                 tracker:feature_engagement::TrackerFactory::GetForBrowserState(
@@ -139,14 +152,13 @@
       UrlLoadingBrowserAgent::FromBrowser(self.browser);
   self.viewController.pasteDelegate = self.mediator;
 
-  DCHECK(self.locationBar);
+  DCHECK(_client.get());
 
   id<OmniboxCommands> omniboxHandler =
       HandlerForProtocol(self.browser->GetCommandDispatcher(), OmniboxCommands);
   _editView = std::make_unique<OmniboxViewIOS>(
-      self.textField, self.locationBar, self.browser->GetBrowserState(),
-      omniboxHandler, _toolbarHandler,
-      self.viewController.additionalTextConsumer);
+      self.textField, std::move(_client), self.browser->GetBrowserState(),
+      omniboxHandler, self.focusDelegate, _toolbarHandler, self.viewController);
   self.pasteDelegate = [[OmniboxTextFieldPasteDelegate alloc] init];
   [self.textField setPasteDelegate:self.pasteDelegate];
 
@@ -161,19 +173,13 @@
       self.browser->GetCommandDispatcher(), QRScannerCommands);
   _keyboardMediator.layoutGuideCenter =
       LayoutGuideCenterForBrowser(self.browser);
-  // TODO(crbug.com/1045047): Use HandlerForProtocol after commands protocol
+  // TODO(crbug.com/40670043): Use HandlerForProtocol after commands protocol
   // clean up.
   _keyboardMediator.browserCoordinatorCommandsHandler =
       static_cast<id<BrowserCoordinatorCommands>>(
           self.browser->GetCommandDispatcher());
   _keyboardMediator.omniboxTextField = self.textField;
   _keyboardMediator.delegate = self;
-
-  if (!base::FeatureList::IsEnabled(kEnableStartupImprovements)) {
-    self.keyboardAccessoryView = ConfigureAssistiveKeyboardViews(
-        self.textField, kDotComTLD, _keyboardMediator, templateURLService,
-        self.bubblePresenter);
-  }
 
   if (base::FeatureList::IsEnabled(omnibox::kZeroSuggestPrefetching)) {
     self.zeroSuggestPrefetchHelper = [[ZeroSuggestPrefetchHelper alloc]
@@ -192,7 +198,6 @@
   self.viewController.textChangeDelegate = nil;
   self.returnDelegate.acceptDelegate = nil;
   _editView.reset();
-  self.locationBar = nil;
   self.viewController = nil;
   self.mediator.templateURLService = nullptr;  // Unregister the observer.
   if (self.keyboardAccessoryView) {
@@ -204,6 +209,7 @@
   self.keyboardAccessoryView = nil;
   self.mediator = nil;
   self.returnDelegate = nil;
+  [self.zeroSuggestPrefetchHelper disconnect];
   self.zeroSuggestPrefetchHelper = nil;
 
   [NSNotificationCenter.defaultCenter removeObserver:self];
@@ -218,15 +224,13 @@
 }
 
 - (void)focusOmnibox {
-  if (base::FeatureList::IsEnabled(kEnableStartupImprovements)) {
-    if (!self.keyboardAccessoryView) {
-      TemplateURLService* templateURLService =
-          ios::TemplateURLServiceFactory::GetForBrowserState(
-              self.browser->GetBrowserState());
-      self.keyboardAccessoryView = ConfigureAssistiveKeyboardViews(
-          self.textField, kDotComTLD, _keyboardMediator, templateURLService,
-          self.bubblePresenter);
-    }
+  if (!self.keyboardAccessoryView && !self.isSearchOnlyUI) {
+    TemplateURLService* templateURLService =
+        ios::TemplateURLServiceFactory::GetForBrowserState(
+            self.browser->GetBrowserState());
+    self.keyboardAccessoryView = ConfigureAssistiveKeyboardViews(
+        self.textField, kDotComTLD, _keyboardMediator, templateURLService,
+        HandlerForProtocol(self.browser->GetCommandDispatcher(), HelpCommands));
   }
 
   if (![self.textField isFirstResponder]) {
@@ -242,12 +246,10 @@
     }
 
     [self.textField becomeFirstResponder];
-    if (IsBottomOmniboxSteadyStateEnabled()) {
-      // Ensures that the accessibility system focuses the text field instead of
-      // the popup crbug.com/1469173.
-      UIAccessibilityPostNotification(UIAccessibilityScreenChangedNotification,
-                                      self.textField);
-    }
+    // Ensures that the accessibility system focuses the text field instead of
+    // the popup crbug.com/1469173.
+    UIAccessibilityPostNotification(UIAccessibilityScreenChangedNotification,
+                                    self.textField);
   }
 }
 
@@ -272,7 +274,7 @@
   DCHECK(!_popupCoordinator);
   std::unique_ptr<OmniboxPopupViewIOS> popupView =
       std::make_unique<OmniboxPopupViewIOS>(_editView->controller(),
-                                            self.locationBar, _editView.get());
+                                            _editView.get());
 
   _editView->SetPopupProvider(popupView.get());
 
@@ -314,6 +316,12 @@
 
 - (UIView<TextFieldViewContaining>*)editView {
   return self.viewController.viewContainingTextField;
+}
+
+- (void)setThumbnailImage:(UIImage*)image {
+  if (_editView) {
+    _editView->SetThumbnailImage(image);
+  }
 }
 
 #pragma mark Scribble

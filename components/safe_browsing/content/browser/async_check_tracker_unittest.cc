@@ -8,8 +8,9 @@
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/mock_callback.h"
 #include "base/test/scoped_feature_list.h"
+#include "build/build_config.h"
 #include "components/safe_browsing/content/browser/base_ui_manager.h"
-#include "components/safe_browsing/content/browser/url_checker_on_sb.h"
+#include "components/safe_browsing/content/browser/url_checker_holder.h"
 #include "components/safe_browsing/core/browser/db/v4_protocol_manager_util.h"
 #include "components/safe_browsing/core/browser/safe_browsing_url_checker_impl.h"
 #include "components/safe_browsing/core/common/features.h"
@@ -59,7 +60,12 @@ class AsyncCheckTrackerTest : public content::RenderViewHostTestHarness {
       : RenderViewHostTestHarness(
             content::BrowserTaskEnvironment::REAL_IO_THREAD,
             base::test::TaskEnvironment::TimeSource::MOCK_TIME) {
-    feature_list_.InitWithFeatures({kSafeBrowsingAsyncRealTimeCheck}, {});
+    std::vector<base::test::FeatureRef> enabled = {
+        kSafeBrowsingAsyncRealTimeCheck};
+#if BUILDFLAG(IS_ANDROID)
+    enabled.push_back(kSafeBrowsingSyncCheckerCheckAllowlist);
+#endif
+    feature_list_.InitWithFeatures(enabled, {});
   }
 
   void SetUp() override {
@@ -69,8 +75,9 @@ class AsyncCheckTrackerTest : public content::RenderViewHostTestHarness {
     EXPECT_CALL(mock_web_contents_getter_, Run())
         .WillRepeatedly(testing::Return(nullptr));
     ui_manager_ = base::MakeRefCounted<MockUIManager>();
-    tracker_ = AsyncCheckTracker::GetOrCreateForWebContents(web_contents(),
-                                                            ui_manager_.get());
+    tracker_ = AsyncCheckTracker::GetOrCreateForWebContents(
+        web_contents(), ui_manager_.get(),
+        /*should_sync_checker_check_allowlist=*/false);
   }
 
   void TearDown() override {
@@ -98,7 +105,7 @@ class AsyncCheckTrackerTest : public content::RenderViewHostTestHarness {
       resource.navigation_id = navigation_id;
       ui_manager_->AddUnsafeResource(url_, resource);
     }
-    UrlCheckerOnSB::OnCompleteCheckResult result(
+    UrlCheckerHolder::OnCompleteCheckResult result(
         proceed, /*showed_interstitial=*/true,
         has_post_commit_interstitial_skipped,
         SafeBrowsingUrlCheckerImpl::PerformedCheck::kUrlRealTimeCheck,
@@ -108,8 +115,8 @@ class AsyncCheckTrackerTest : public content::RenderViewHostTestHarness {
   }
 
   void CallTransferUrlChecker(int64_t navigation_id) {
-    auto checker = std::make_unique<UrlCheckerOnSB>(
-        /*delegate_getter=*/base::NullCallback(), /*frame_tree_node_id=*/-1,
+    auto checker = std::make_unique<UrlCheckerHolder>(
+        /*delegate_getter=*/base::NullCallback(), content::FrameTreeNodeId(),
         navigation_id, mock_web_contents_getter_.Get(),
         /*complete_callback=*/base::NullCallback(),
         /*url_real_time_lookup_enabled=*/false,
@@ -120,7 +127,8 @@ class AsyncCheckTrackerTest : public content::RenderViewHostTestHarness {
         /*hash_realtime_service=*/nullptr,
         /*hash_realtime_selection=*/
         hash_realtime_utils::HashRealTimeSelection::kNone,
-        /*is_async_check=*/true, SessionID::InvalidValue());
+        /*is_async_check=*/true, /*check_allowlist_before_hash_database=*/false,
+        SessionID::InvalidValue());
     checker->AddUrlInRedirectChainForTesting(url_);
     tracker_->TransferUrlChecker(std::move(checker));
   }
@@ -137,7 +145,7 @@ TEST_F(AsyncCheckTrackerTest,
        DisplayBlockingPageNotCalled_PendingCheckNotFound) {
   content::MockNavigationHandle handle(url_, main_rfh());
   // This can happen when the complete callback is scheduled before the checker
-  // is scheduled to be deleted on the SB thread. Mock this scenario by not
+  // is scheduled to be deleted on the UI thread. Mock this scenario by not
   // calling CallTransferUrlChecker.
   CallPendingCheckerCompleted(handle.GetNavigationId(), /*proceed=*/false,
                               /*has_post_commit_interstitial_skipped=*/true,
@@ -212,7 +220,6 @@ TEST_F(AsyncCheckTrackerTest, DisplayBlockingPageCalled) {
   EXPECT_EQ(resource.url, url_);
   EXPECT_EQ(resource.render_process_id, main_rfh()->GetGlobalId().child_id);
   EXPECT_EQ(resource.render_frame_token, main_rfh()->GetFrameToken().value());
-  EXPECT_FALSE(resource.should_send_reports);
 
   histograms.ExpectUniqueSample(
       "SafeBrowsing.AsyncCheck.HasPostCommitInterstitialSkipped",
@@ -238,7 +245,6 @@ TEST_F(AsyncCheckTrackerTest,
   EXPECT_EQ(resource.url, url_);
   EXPECT_EQ(resource.render_process_id, main_rfh()->GetGlobalId().child_id);
   EXPECT_EQ(resource.render_frame_token, main_rfh()->GetFrameToken().value());
-  EXPECT_FALSE(resource.should_send_reports);
 }
 
 TEST_F(AsyncCheckTrackerTest, IsMainPageLoadPending) {
@@ -246,7 +252,7 @@ TEST_F(AsyncCheckTrackerTest, IsMainPageLoadPending) {
   content::MockNavigationHandle handle(web_contents());
   UnsafeResource resource;
   resource.threat_type = SBThreatType::SB_THREAT_TYPE_URL_PHISHING;
-  resource.frame_tree_node_id = main_rfh()->GetFrameTreeNodeId();
+  resource.frame_tree_node_id = main_rfh()->GetFrameTreeNodeId().value();
   resource.navigation_id = handle.GetNavigationId();
 
   AsyncCheckTracker* tracker =
@@ -274,7 +280,7 @@ TEST_F(AsyncCheckTrackerTest, IsMainPageLoadPending_NoNavigationId) {
   content::MockNavigationHandle handle(web_contents());
   UnsafeResource resource;
   resource.threat_type = SBThreatType::SB_THREAT_TYPE_URL_PHISHING;
-  resource.frame_tree_node_id = main_rfh()->GetFrameTreeNodeId();
+  resource.frame_tree_node_id = main_rfh()->GetFrameTreeNodeId().value();
 
   EXPECT_TRUE(AsyncCheckTracker::IsMainPageLoadPending(resource));
 
@@ -291,7 +297,7 @@ TEST_F(AsyncCheckTrackerTest,
       kLocalNavigationTimestampsSizeThreshold);
   UnsafeResource resource;
   resource.threat_type = SBThreatType::SB_THREAT_TYPE_URL_PHISHING;
-  resource.frame_tree_node_id = main_rfh()->GetFrameTreeNodeId();
+  resource.frame_tree_node_id = main_rfh()->GetFrameTreeNodeId().value();
 
   std::vector<int64_t> old_navigation_ids;
   for (int i = 0; i < kLocalNavigationTimestampsSizeThreshold; i++) {
@@ -336,7 +342,7 @@ TEST_F(
       kLocalNavigationTimestampsSizeThreshold);
   UnsafeResource resource;
   resource.threat_type = SBThreatType::SB_THREAT_TYPE_URL_PHISHING;
-  resource.frame_tree_node_id = main_rfh()->GetFrameTreeNodeId();
+  resource.frame_tree_node_id = main_rfh()->GetFrameTreeNodeId().value();
 
   content::MockNavigationHandle handle(url_, main_rfh());
   CallDidFinishNavigation(handle, /*has_committed=*/true);
@@ -359,11 +365,29 @@ TEST_F(
   EXPECT_TRUE(AsyncCheckTracker::IsMainPageLoadPending(resource));
 }
 
+TEST_F(AsyncCheckTrackerTest, IsPlatformEligibleForSyncCheckerCheckAllowlist) {
+#if BUILDFLAG(IS_ANDROID)
+  EXPECT_TRUE(
+      AsyncCheckTracker::IsPlatformEligibleForSyncCheckerCheckAllowlist());
+#else
+  EXPECT_FALSE(
+      AsyncCheckTracker::IsPlatformEligibleForSyncCheckerCheckAllowlist());
+#endif
+}
+
+TEST_F(AsyncCheckTrackerTest, GetShouldSyncCheckerCheckAllowlist) {
+  std::unique_ptr<content::WebContents> web_contents = CreateTestWebContents();
+  auto* tracker = AsyncCheckTracker::GetOrCreateForWebContents(
+      web_contents.get(), ui_manager_.get(),
+      /*should_sync_checker_check_allowlist=*/true);
+  EXPECT_TRUE(tracker->should_sync_checker_check_allowlist());
+}
+
 TEST_F(AsyncCheckTrackerTest, GetBlockedPageCommittedTimestamp) {
   content::MockNavigationHandle handle(web_contents());
   UnsafeResource resource;
   resource.threat_type = SBThreatType::SB_THREAT_TYPE_URL_PHISHING;
-  resource.frame_tree_node_id = main_rfh()->GetFrameTreeNodeId();
+  resource.frame_tree_node_id = main_rfh()->GetFrameTreeNodeId().value();
   resource.navigation_id = handle.GetNavigationId();
 
   AsyncCheckTracker* tracker =
@@ -393,7 +417,7 @@ TEST_F(AsyncCheckTrackerTest,
   // triggered by HTTP client hints.
   CallTransferUrlChecker(/*navigation_id=*/2);
   // The previous checker should be deleted. The deletion should happen on the
-  // SB thread.
+  // UI thread.
   EXPECT_EQ(tracker_->PendingCheckersSizeForTesting(), 2u);
 }
 
@@ -459,7 +483,92 @@ TEST_F(AsyncCheckTrackerTest,
   tracker_ = nullptr;
   DeleteContents();
   // Tracker is deleted together with the WebContents. pending checkers that the
-  // tracker currently owns should also be deleted on the SB thread.
+  // tracker currently owns should also be deleted on the UI thread.
 }
+
+class AsyncCheckTrackerTestObserver : public AsyncCheckTracker::Observer {
+ public:
+  void OnAsyncSafeBrowsingCheckCompleted() override {
+    async_check_completed_times_++;
+  }
+  void OnAsyncSafeBrowsingCheckTrackerDestructed() override {
+    tracker_destructed_times_++;
+  }
+  int AsyncCheckCompletedTimes() { return async_check_completed_times_; }
+  int TrackerDestructedTimes() { return tracker_destructed_times_; }
+
+ private:
+  int async_check_completed_times_ = 0;
+  int tracker_destructed_times_ = 0;
+};
+
+class AsyncCheckTrackerObserverTest : public AsyncCheckTrackerTest {
+ protected:
+  AsyncCheckTrackerTestObserver observer_;
+};
+
+TEST_F(AsyncCheckTrackerObserverTest, OnAsyncSafeBrowsingCheckCompleted) {
+  tracker_->AddObserver(&observer_);
+
+  CallTransferUrlChecker(/*navigation_id=*/1);
+  CallPendingCheckerCompleted(/*navigation_id=*/1, /*proceed=*/true,
+                              /*has_post_commit_interstitial_skipped=*/false,
+                              /*all_checks_completed=*/false);
+  // Observer not notified, because all_checks_completed is false.
+  EXPECT_EQ(observer_.AsyncCheckCompletedTimes(), 0);
+
+  CallPendingCheckerCompleted(/*navigation_id=*/1, /*proceed=*/true,
+                              /*has_post_commit_interstitial_skipped=*/false,
+                              /*all_checks_completed=*/true);
+  EXPECT_EQ(observer_.AsyncCheckCompletedTimes(), 1);
+  CallTransferUrlChecker(/*navigation_id=*/2);
+  CallPendingCheckerCompleted(/*navigation_id=*/2, /*proceed=*/true,
+                              /*has_post_commit_interstitial_skipped=*/false,
+                              /*all_checks_completed=*/true);
+  EXPECT_EQ(observer_.AsyncCheckCompletedTimes(), 2);
+
+  tracker_->RemoveObserver(&observer_);
+
+  CallTransferUrlChecker(/*navigation_id=*/3);
+  CallPendingCheckerCompleted(/*navigation_id=*/3, /*proceed=*/true,
+                              /*has_post_commit_interstitial_skipped=*/false,
+                              /*all_checks_completed=*/true);
+  // Observer not notified, because it has removed itself.
+  EXPECT_EQ(observer_.AsyncCheckCompletedTimes(), 2);
+}
+
+TEST_F(AsyncCheckTrackerObserverTest, AsyncCheckTrackerDeletedWhileObserving) {
+  std::unique_ptr<content::WebContents> web_contents = CreateTestWebContents();
+  auto* tracker = AsyncCheckTracker::GetOrCreateForWebContents(
+      web_contents.get(), ui_manager_.get(),
+      /*should_sync_checker_check_allowlist=*/false);
+  tracker->AddObserver(&observer_);
+  EXPECT_TRUE(observer_.IsInObserverList());
+
+  web_contents.reset();
+  // Ensure that the observer is auto removed after the tracker is deleted.
+  EXPECT_FALSE(observer_.IsInObserverList());
+  EXPECT_EQ(observer_.TrackerDestructedTimes(), 1);
+}
+
+#if BUILDFLAG(IS_ANDROID)
+class AsyncCheckTrackerSyncCheckerCheckAllowlistDisabledTest
+    : public AsyncCheckTrackerTest {
+ protected:
+  AsyncCheckTrackerSyncCheckerCheckAllowlistDisabledTest()
+      : AsyncCheckTrackerTest() {
+    feature_list_.InitAndDisableFeature(kSafeBrowsingSyncCheckerCheckAllowlist);
+  }
+
+  base::test::ScopedFeatureList feature_list_;
+};
+
+TEST_F(AsyncCheckTrackerSyncCheckerCheckAllowlistDisabledTest,
+       IsPlatformEligibleForSyncCheckerCheckAllowlist) {
+  EXPECT_FALSE(
+      AsyncCheckTracker::IsPlatformEligibleForSyncCheckerCheckAllowlist());
+}
+
+#endif
 
 }  // namespace safe_browsing

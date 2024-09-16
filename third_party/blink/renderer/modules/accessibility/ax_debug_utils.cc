@@ -98,8 +98,8 @@ std::string ParentChainToStringHelper(const AXObject* obj) {
 
 void CheckTreeConsistency(
     AXObjectCacheImpl& cache,
-    ui::AXTreeSerializer<AXObject*,
-                         HeapVector<Member<AXObject>>,
+    ui::AXTreeSerializer<const AXObject*,
+                         HeapVector<Member<const AXObject>>,
                          ui::AXTreeUpdate*,
                          ui::AXTreeData*,
                          ui::AXNodeData>& serializer,
@@ -133,7 +133,7 @@ void CheckTreeConsistency(
     HeapHashMap<AXID, Member<AXObject>>& all_objects = cache.GetObjects();
     for (const auto& id_to_object_entry : all_objects) {
       AXObject* obj = id_to_object_entry.value;
-      if (obj->LastKnownIsIncludedInTreeValue()) {
+      if (obj->IsIncludedInTree()) {
         if (!serializer.IsInClientTree(obj)) {
           if (obj->IsMissingParent()) {
             msg << "\n* Included node not serialized, is missing parent: "
@@ -142,12 +142,12 @@ void CheckTreeConsistency(
             msg << "\n* Included node not serialized, in closed document: "
                 << obj;
           } else {
-            bool included_state_stale = !obj->AccessibilityIsIncludedInTree();
+            bool included_state_stale = !obj->IsIncludedInTree();
             msg << "\n* Included node not serialized: " << obj;
             if (included_state_stale) {
               msg << "\n  Included state was stale.";
             }
-            msg << "\n  Parent: " << obj->CachedParentObject();
+            msg << "\n  Parent: " << obj->ParentObject();
           }
         }
       }
@@ -156,10 +156,10 @@ void CheckTreeConsistency(
       AXObject* obj = cache.ObjectFromAXID(id);
       if (!obj) {
         msg << "\n* Serialized node does not exist: " << id;
-        if (AXObject* parent = serializer.ParentOf(id)) {
+        if (const AXObject* parent = serializer.ParentOf(id)) {
           msg << "\n* Parent = " << parent;
         }
-      } else if (!obj->LastKnownIsIncludedInTreeValue()) {
+      } else if (!obj->IsIncludedInTree()) {
         msg << "\n* Serialized an unincluded node: " << obj;
       }
     }

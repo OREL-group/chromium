@@ -7,6 +7,7 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -58,7 +59,7 @@ class IsolatedWebAppBrowserTestHarness : public WebAppBrowserTestBase {
   IsolatedWebAppUrlInfo InstallDevModeProxyIsolatedWebApp(
       const url::Origin& origin);
   content::RenderFrameHost* OpenApp(const webapps::AppId& app_id,
-                                    base::StringPiece path = "");
+                                    std::string_view path = "");
   content::RenderFrameHost* NavigateToURLInNewTab(
       Browser* window,
       const GURL& url,
@@ -83,7 +84,7 @@ IsolatedWebAppUrlInfo InstallDevModeProxyIsolatedWebApp(
 
 content::RenderFrameHost* OpenIsolatedWebApp(Profile* profile,
                                              const webapps::AppId& app_id,
-                                             base::StringPiece path = "");
+                                             std::string_view path = "");
 
 void CreateIframe(content::RenderFrameHost* parent_frame,
                   const std::string& iframe_id,
@@ -153,11 +154,12 @@ MATCHER_P2(IwaIs, untranslated_name, isolation_data, "") {
       arg, result_listener);
 }
 
-MATCHER_P4(IsolationDataIs,
+MATCHER_P5(IsolationDataIs,
            location,
            version,
            controlled_frame_partitions,
            pending_update_info,
+           integrity_block_data,
            "") {
   return ExplainMatchResult(
       Optional(
@@ -168,17 +170,23 @@ MATCHER_P4(IsolationDataIs,
                       controlled_frame_partitions),
                 Property("pending_update_info",
                          &WebApp::IsolationData::pending_update_info,
-                         pending_update_info))),
+                         pending_update_info),
+                Field("integrity_block_data",
+                      &WebApp::IsolationData::integrity_block_data,
+                      integrity_block_data))),
       arg, result_listener);
 }
 
-MATCHER_P2(PendingUpdateInfoIs, location, version, "") {
+MATCHER_P3(PendingUpdateInfoIs, location, version, integrity_block_data, "") {
   return ExplainMatchResult(
       Optional(AllOf(
           Field("location", &WebApp::IsolationData::PendingUpdateInfo::location,
                 location),
           Field("version", &WebApp::IsolationData::PendingUpdateInfo::version,
-                version))),
+                version),
+          Field("integrity_block_data",
+                &WebApp::IsolationData::PendingUpdateInfo::integrity_block_data,
+                integrity_block_data))),
       arg, result_listener);
 }
 

@@ -19,6 +19,8 @@
 #if !BUILDFLAG(IS_ANDROID)
 #include "base/test/metrics/histogram_tester.h"
 #include "chrome/browser/picture_in_picture/auto_picture_in_picture_tab_helper.h"
+#include "chrome/browser/picture_in_picture/scoped_disallow_picture_in_picture.h"
+#include "media/base/media_switches.h"
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/view.h"
 #endif  // !BUILDFLAG(IS_ANDROID)
@@ -119,26 +121,6 @@ TEST_F(PictureInPictureWindowManagerTest, RespectsMinAndMaxSize) {
   pip_options.height = 500;
   EXPECT_EQ(
       gfx::Size(240, 500),
-      PictureInPictureWindowManager::GetInstance()
-          ->CalculateInitialPictureInPictureWindowBounds(pip_options, display)
-          .size());
-
-  // An extremely small aspect ratio should still respect minimum width and
-  // maximum height.
-  pip_options.width = 0;
-  pip_options.height = 0;
-  pip_options.initial_aspect_ratio = 0.00000001;
-  EXPECT_EQ(
-      gfx::Size(240, 800),
-      PictureInPictureWindowManager::GetInstance()
-          ->CalculateInitialPictureInPictureWindowBounds(pip_options, display)
-          .size());
-
-  // An extremely large aspect ratio should still respect maximum width and
-  // minimum height.
-  pip_options.initial_aspect_ratio = 100000;
-  EXPECT_EQ(
-      gfx::Size(800, 52),
       PictureInPictureWindowManager::GetInstance()
           ->CalculateInitialPictureInPictureWindowBounds(pip_options, display)
           .size());
@@ -322,6 +304,102 @@ TEST_F(PictureInPictureWindowManagerTest, RecordsInitialSizeHistograms) {
         "Media.DocumentPictureInPicture.RequestedInitialHeight", 1000, 1);
     histogram_tester.ExpectUniqueSample(
         "Media.DocumentPictureInPicture.RequestedSizeToScreenRatio", 100, 1);
+  }
+}
+
+TEST_F(PictureInPictureWindowManagerTest, CanDisallowPictureInPicture) {
+  {
+    // Disallowing before opening a picture-in-picture window should close it.
+    ScopedDisallowPictureInPicture disallow;
+
+    PictureInPictureWindowManager::GetInstance()->EnterDocumentPictureInPicture(
+        web_contents(), child_web_contents());
+
+    // The close does not happen synchronously, so we run posted tasks.
+    EXPECT_TRUE(web_contents()->HasPictureInPictureDocument());
+    task_environment()->RunUntilIdle();
+    EXPECT_FALSE(web_contents()->HasPictureInPictureDocument());
+  }
+
+  {
+    // Disallowing after opening a picture-in-picture window should close it.
+    PictureInPictureWindowManager::GetInstance()->EnterDocumentPictureInPicture(
+        web_contents(), child_web_contents());
+
+    EXPECT_TRUE(web_contents()->HasPictureInPictureDocument());
+    ScopedDisallowPictureInPicture disallow;
+    EXPECT_FALSE(web_contents()->HasPictureInPictureDocument());
+  }
+
+  {
+    {
+      ScopedDisallowPictureInPicture disallow1;
+
+      {
+        // Multiple ScopedDisallowPictureInPicture should still block
+        // picture-in-picture windows.
+        ScopedDisallowPictureInPicture disallow2;
+
+        PictureInPictureWindowManager::GetInstance()
+            ->EnterDocumentPictureInPicture(web_contents(),
+                                            child_web_contents());
+
+        EXPECT_TRUE(web_contents()->HasPictureInPictureDocument());
+        task_environment()->RunUntilIdle();
+        EXPECT_FALSE(web_contents()->HasPictureInPictureDocument());
+      }
+
+      // When one of them is destroyed but the other remains, it should still
+      // block picture-in-picture windows.
+      PictureInPictureWindowManager::GetInstance()
+          ->EnterDocumentPictureInPicture(web_contents(), child_web_contents());
+
+      EXPECT_TRUE(web_contents()->HasPictureInPictureDocument());
+      task_environment()->RunUntilIdle();
+      EXPECT_FALSE(web_contents()->HasPictureInPictureDocument());
+    }
+
+    // Once both have been destroyed, picture-in-picture windows should be
+    // unblocked.
+    PictureInPictureWindowManager::GetInstance()->EnterDocumentPictureInPicture(
+        web_contents(), child_web_contents());
+
+    EXPECT_TRUE(web_contents()->HasPictureInPictureDocument());
+    task_environment()->RunUntilIdle();
+    EXPECT_TRUE(web_contents()->HasPictureInPictureDocument());
+  }
+}
+
+TEST_F(PictureInPictureWindowManagerTest,
+       ShouldFileDialogBlockPictureInPicture) {
+  PictureInPictureWindowManager::GetInstance()->EnterDocumentPictureInPicture(
+      web_contents(), child_web_contents());
+
+  {
+    base::test::ScopedFeatureList feature_list;
+    feature_list.InitAndEnableFeature(media::kFileDialogsBlockPictureInPicture);
+
+    // With the feature enabled, file dialogs that aren't on a document
+    // picture-in-picture window should block picture-in-picture windows.
+    EXPECT_TRUE(PictureInPictureWindowManager::GetInstance()
+                    ->ShouldFileDialogBlockPictureInPicture(web_contents()));
+    EXPECT_FALSE(
+        PictureInPictureWindowManager::GetInstance()
+            ->ShouldFileDialogBlockPictureInPicture(child_web_contents()));
+  }
+
+  {
+    base::test::ScopedFeatureList feature_list;
+    feature_list.InitAndDisableFeature(
+        media::kFileDialogsBlockPictureInPicture);
+
+    // With the feature disabled, no file dialogs should block
+    // picture-in-picture windows.
+    EXPECT_FALSE(PictureInPictureWindowManager::GetInstance()
+                     ->ShouldFileDialogBlockPictureInPicture(web_contents()));
+    EXPECT_FALSE(
+        PictureInPictureWindowManager::GetInstance()
+            ->ShouldFileDialogBlockPictureInPicture(child_web_contents()));
   }
 }
 

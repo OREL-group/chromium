@@ -196,7 +196,7 @@ class SnapSearchResult {
   // then this will be a position inside the range. In the covered case, the
   // result from FindClosestValidArea has a snap_offset_ equal to the
   // intended_position() of the SnapSelectionStrategy.
-  // TODO(crbug.com/1472410): With refactoring it may be possible to replace
+  // TODO(crbug.com/40278621): With refactoring it may be possible to replace
   // snap_offset_ and covered_range_ with a single range field with start == end
   // for "aligned" snap positions.
   float snap_offset_;
@@ -374,6 +374,10 @@ class CC_EXPORT SnapContainerData {
   bool SetTargetSnapAreaElementIds(TargetSnapAreaElementIds ids);
 
   void AddSnapAreaData(SnapAreaData snap_area_data);
+  void UpdateSnapAreaFocus(size_t index, bool has_focus_within) {
+    DCHECK(index < snap_area_list_.size());
+    snap_area_list_[index].has_focus_within = has_focus_within;
+  }
   size_t size() const { return snap_area_list_.size(); }
   const SnapAreaData& at(size_t index) const { return snap_area_list_[index]; }
 

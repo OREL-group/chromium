@@ -8,6 +8,7 @@
 #include "base/android/scoped_java_ref.h"
 #include "base/containers/span.h"
 #include "base/functional/callback.h"
+#include "base/memory/raw_span.h"
 #include "content/public/browser/web_contents.h"
 
 namespace sessions {
@@ -30,11 +31,16 @@ class WebContents;
 //   0: Chrome <= 18
 //   1: Chrome 18 - 25
 //   2: Chrome 26+
-// TODO(https://crbug.com/1520963): Get rid of the old versions and possibly the
+// TODO(crbug.com/41493935): Get rid of the old versions and possibly the
 // version field altogether.
 struct WebContentsStateByteBuffer {
   WebContentsStateByteBuffer(base::android::ScopedJavaLocalRef<jobject>
                                  web_contents_byte_buffer_result,
+                             int saved_state_version);
+
+  // Initialize from a raw span that needs to be owned elsewhere.
+  // `backing_buffer` is never used. Useful for tests.
+  WebContentsStateByteBuffer(base::raw_span<const uint8_t> raw_data,
                              int saved_state_version);
 
   WebContentsStateByteBuffer(const WebContentsStateByteBuffer&) = delete;
@@ -58,7 +64,7 @@ struct WebContentsStateByteBuffer {
   // TODO(ellyjones): is it necessary to cache this view of the buffer? It is
   // very cheap to recompute on the fly as needed, as long as we have the
   // JNIEnv* ready to hand.
-  base::span<const uint8_t> backing_buffer;
+  base::raw_span<const uint8_t> backing_buffer;
   int state_version;
   base::android::ScopedJavaGlobalRef<jobject> java_buffer;
 };
@@ -95,7 +101,7 @@ class WebContentsState {
   // Restores a WebContents from the passed in state using JNI parameters.
   static base::android::ScopedJavaLocalRef<jobject>
   RestoreContentsFromByteBuffer(JNIEnv* env,
-                                jobject state,
+                                const base::android::JavaRef<jobject>& state,
                                 jint saved_state_version,
                                 jboolean initially_hidden,
                                 jboolean no_renderer);
@@ -106,11 +112,42 @@ class WebContentsState {
       bool initially_hidden,
       bool no_renderer);
 
+  // Extracts state and navigation entries from the given Pickle data and
+  // returns whether un-pickling the data succeeded.
+  static bool ExtractNavigationEntries(
+      base::span<const uint8_t> buffer,
+      int saved_state_version,
+      bool* is_off_the_record,
+      int* current_entry_index,
+      std::vector<sessions::SerializedNavigationEntry>* navigations);
+
   // Synthesizes a stub, single-navigation state for a tab that will be loaded
   // lazily.
   static base::android::ScopedJavaLocalRef<jobject>
   CreateSingleNavigationStateAsByteBuffer(
       JNIEnv* env,
+      jstring title,
+      jstring url,
+      jstring referrer_url,
+      jint referrer_policy,
+      const base::android::JavaParamRef<jobject>& initiator_origin,
+      jboolean is_off_the_record);
+
+  // Creates a single navigation entry in a serilized form.
+  static base::Pickle CreateSingleNavigationStateAsPickle(
+      std::u16string title,
+      const GURL& url,
+      content::Referrer referrer,
+      url::Origin initiator_origin,
+      bool is_off_the_record);
+
+  // Appends a single-navigation state to a WebContentsState to be later loaded
+  // lazily.
+  static base::android::ScopedJavaLocalRef<jobject> AppendPendingNavigation(
+      JNIEnv* env,
+      base::span<const uint8_t> buffer,
+      int saved_state_version,
+      jstring title,
       jstring url,
       jstring referrer_url,
       jint referrer_policy,

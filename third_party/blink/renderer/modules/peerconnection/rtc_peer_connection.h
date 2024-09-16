@@ -50,6 +50,7 @@
 #include "third_party/blink/renderer/modules/peerconnection/rtc_peer_connection_controller.h"
 #include "third_party/blink/renderer/modules/peerconnection/rtc_peer_connection_handler.h"
 #include "third_party/blink/renderer/modules/peerconnection/rtc_rtp_transceiver.h"
+#include "third_party/blink/renderer/modules/peerconnection/rtc_rtp_transport.h"
 #include "third_party/blink/renderer/modules/peerconnection/rtc_session_description_enums.h"
 #include "third_party/blink/renderer/modules/peerconnection/rtp_contributing_source_cache.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
@@ -128,7 +129,8 @@ class MODULES_EXPORT RTCPeerConnection final
                                            V8RTCPeerConnectionErrorCallback*,
                                            ExceptionState&);
 
-  ScriptPromise<IDLUndefined> setLocalDescription(ScriptState*);
+  ScriptPromise<IDLUndefined> setLocalDescription(ScriptState*,
+                                                  ExceptionState&);
   ScriptPromise<IDLUndefined> setLocalDescription(
       ScriptState*,
       const RTCSessionDescriptionInit*,
@@ -311,6 +313,8 @@ class MODULES_EXPORT RTCPeerConnection final
   // Called by RTCIceTransport::OnStateChange to update the ice connection
   // state.
   void UpdateIceConnectionState();
+
+  RTCRtpTransport* rtpTransport() { return rtp_transport_; }
 
   void Trace(Visitor*) const override;
 
@@ -548,6 +552,8 @@ class MODULES_EXPORT RTCPeerConnection final
 
   // Insertable streams.
   bool encoded_insertable_streams_;
+
+  Member<RTCRtpTransport> rtp_transport_;
 };
 
 }  // namespace blink

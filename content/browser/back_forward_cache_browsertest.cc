@@ -175,12 +175,12 @@ BackForwardCacheBrowserTest::~BackForwardCacheBrowserTest() {
     std::vector<base::Bucket> samples = histogram_tester().GetAllSamples(
         "BackForwardCache.UnexpectedRendererToBrowserMessage."
         "InterfaceName");
-    // TODO(https://crbug.com/1379490): Remove this.
+    // TODO(crbug.com/40244391): Remove this.
     // This bucket corresponds to the LocalFrameHost interface. It is known to
     // be flaky due calls to `LocalFrameHost::DidFocusFrame()` after entering
     // BFCache. So we ignore it for now by removing it if it's present until we
     // can fix the root cause.
-    // TODO(https://crbug.com/1470528): Remove this.
+    // TODO(crbug.com/40925798): Remove this.
     // As above but `LocalMainFrameHost::DidFirstVisuallyNonEmptyPaint()`.
     std::erase_if(samples, [](base::Bucket bucket) {
       return bucket.min ==
@@ -202,13 +202,10 @@ void BackForwardCacheBrowserTest::NotifyNotRestoredReasons(
 
 void BackForwardCacheBrowserTest::SetUpCommandLine(
     base::CommandLine* command_line) {
-  ContentBrowserTest::SetUpCommandLine(command_line);
   mock_cert_verifier_.SetUpCommandLine(command_line);
 
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      switches::kUseFakeUIForMediaStream);
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      switches::kEnableExperimentalWebPlatformFeatures);
+  command_line->AppendSwitch(switches::kUseFakeUIForMediaStream);
+  command_line->AppendSwitch(switches::kEnableExperimentalWebPlatformFeatures);
   // TODO(sreejakshetty): Initialize ScopedFeatureLists from test constructor.
   EnableFeatureAndSetParams(features::kBackForwardCacheTimeToLiveControl,
                             "time_to_live_seconds", "3600");
@@ -454,7 +451,7 @@ ReasonsMatcher BackForwardCacheBrowserTest::MatchesNotRestoredReasons(
     const std::optional<testing::Matcher<std::string>>& src,
     const std::vector<BlockingDetailsReasonsMatcher>& reasons,
     const std::optional<SameOriginMatcher>& same_origin_details) {
-  // TODO(crbug.com/1523191) Make this matcher display human-friendly messages.
+  // TODO(crbug.com/41496143) Make this matcher display human-friendly messages.
   return testing::Pointee(testing::AllOf(
       id.has_value()
           ? testing::Field(
@@ -496,7 +493,7 @@ ReasonsMatcher BackForwardCacheBrowserTest::MatchesNotRestoredReasons(
 SameOriginMatcher BackForwardCacheBrowserTest::MatchesSameOriginDetails(
     const testing::Matcher<GURL>& url,
     const std::vector<ReasonsMatcher>& children) {
-  // TODO(crbug.com/1523191) Make this matcher display human-friendly messages.
+  // TODO(crbug.com/41496143) Make this matcher display human-friendly messages.
   return testing::Pointee(testing::AllOf(
       testing::Field(
           "url", &blink::mojom::SameOriginBfcacheNotRestoredDetails::url, url),
@@ -510,7 +507,7 @@ BlockingDetailsReasonsMatcher
 BackForwardCacheBrowserTest::MatchesDetailedReason(
     const testing::Matcher<std::string>& name,
     const std::optional<SourceLocationMatcher>& source) {
-  // TODO(crbug.com/1523191) Make this matcher display human-friendly
+  // TODO(crbug.com/41496143) Make this matcher display human-friendly
   // messages.
   return testing::Pointee(testing::AllOf(
       testing::Field("name", &blink::mojom::BFCacheBlockingDetailedReason::name,
@@ -526,7 +523,7 @@ BackForwardCacheBrowserTest::MatchesDetailedReason(
 
 BlockingDetailsMatcher BackForwardCacheBrowserTest::MatchesBlockingDetails(
     const std::optional<SourceLocationMatcher>& source) {
-  // TODO(crbug.com/1523191) Make this matcher display human-friendly messages.
+  // TODO(crbug.com/41496143) Make this matcher display human-friendly messages.
   return testing::Pointee(testing::Field(
       "source", &blink::mojom::BlockingDetails::source,
       source.has_value()
@@ -541,7 +538,7 @@ SourceLocationMatcher BackForwardCacheBrowserTest::MatchesSourceLocation(
     const testing::Matcher<std::string>& function_name,
     const testing::Matcher<uint64_t>& line_number,
     const testing::Matcher<uint64_t>& column_number) {
-  // TODO(crbug.com/1523191) Make this matcher display human-friendly
+  // TODO(crbug.com/41496143) Make this matcher display human-friendly
   // messages.
   return testing::Pointee(testing::AllOf(
       testing::Field("url", &blink::mojom::ScriptSourceLocation::url, url),
@@ -1808,11 +1805,16 @@ IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTest,
 
 // Tests that pagehide handlers of the old RFH are run for bfcached pages even
 // if the page is already hidden (and visibilitychange won't run).
-// Disabled on Linux and Win because of flakiness, see crbug.com/1170802.
-// TODO(crbug.com/1052397): Revisit once build flag switch of lacros-chrome is
+// Disabled on Linux and Win because of flakiness, see crbug.com/40165901.
+// TODO(crbug.com/40118868): Revisit once build flag switch of lacros-chrome is
 // complete.
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
+#define MAYBE_PagehideRunsWhenPageIsHidden DISABLED_PagehideRunsWhenPageIsHidden
+#else
+#define MAYBE_PagehideRunsWhenPageIsHidden PagehideRunsWhenPageIsHidden
+#endif
 IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTest,
-                       PagehideRunsWhenPageIsHidden) {
+                       MAYBE_PagehideRunsWhenPageIsHidden) {
   ASSERT_TRUE(embedded_test_server()->Start());
   GURL url_1(embedded_test_server()->GetURL("a.com", "/title1.html"));
   GURL url_2(embedded_test_server()->GetURL("b.com", "/title2.html"));
@@ -2081,7 +2083,7 @@ IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTest,
 
 // Tests that trying to focus on a BFCached cross-site iframe won't crash.
 // See https://crbug.com/1250218.
-// TODO(crbug.com/1349657): Flaky on linux tsan
+// TODO(crbug.com/40856039): Flaky on linux tsan
 #if BUILDFLAG(IS_LINUX) && defined(THREAD_SANITIZER)
 #define MAYBE_FocusSameSiteSubframeOnPagehide \
   DISABLED_FocusSameSiteSubframeOnPagehide
@@ -2223,7 +2225,7 @@ IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTest, CspSandbox) {
     ASSERT_EQ("sandbox", root_csp[0]->header->header_value);
     ASSERT_EQ(network::mojom::WebSandboxFlags::kAll,
               current_frame_host()->active_sandbox_flags());
-  };
+  }
 
   // 2) Navigate to B. Expect the previous RenderFrameHost to enter the bfcache.
   EXPECT_TRUE(NavigateToURL(shell(), url_b));
@@ -2238,7 +2240,7 @@ IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTest, CspSandbox) {
     ASSERT_EQ(0u, root_csp.size());
     ASSERT_EQ(network::mojom::WebSandboxFlags::kNone,
               current_frame_host()->active_sandbox_flags());
-  };
+  }
 
   // 3) Navigate back and expect the page to be restored, with the correct
   // CSP and sandbox flags.
@@ -2255,7 +2257,7 @@ IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTest, CspSandbox) {
     ASSERT_EQ("sandbox", root_csp[0]->header->header_value);
     ASSERT_EQ(network::mojom::WebSandboxFlags::kAll,
               current_frame_host()->active_sandbox_flags());
-  };
+  }
 }
 
 // Check that about:blank is not cached.
@@ -2336,7 +2338,7 @@ IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTest, RedirectToSelf) {
   EXPECT_EQ(2, controller.GetEntryCount());
   EXPECT_EQ(url_a, controller.GetLastCommittedEntry()->GetURL());
 
-  // TODO(crbug.com/1198030): Investigate whether these navigation results are
+  // TODO(crbug.com/40760515): Investigate whether these navigation results are
   // expected.
   ExpectNotRestored(
       {
@@ -2387,7 +2389,7 @@ IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTest, ReloadDoesntAffectCache) {
   // e.g. if the navigation uses a pre-existing RenderFrameHost and SiteInstance
   // for navigation.
   //
-  // TODO(crbug.com/1176061): Tie BrowsingInstanceSwapResult to
+  // TODO(crbug.com/40747698): Tie BrowsingInstanceSwapResult to
   // NavigationRequest instead and move the SetBrowsingInstanceSwapResult call
   // for navigations to happen at commit time instead.
 
@@ -2900,7 +2902,7 @@ IN_PROC_BROWSER_TEST_P(BackForwardCacheBrowserUnloadHandlerTest,
               kUnloadHandlerExistsInSubFrame);
       break;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 
   // 2) Navigate to B.
@@ -3152,9 +3154,22 @@ class BackForwardCacheWithSubframeNavigationBrowserTest
   // Start a subframe navigation and pause it before `DidCommitNavigation`.
   void NavigateSubframeAndPauseAtDidCommit(FrameTreeNode* ftn,
                                            const GURL& subframe_navigate_url) {
+    // Enforce the creation of speculative RFH to correctly wait for
+    // the commit event.
+    SpeculativeRenderFrameHostObserver observer(web_contents(),
+                                                subframe_navigate_url);
     // We have to pause a navigation before `DidCommitNavigation`, so we don't
     // want to wait for the navigation to finish.
     ASSERT_TRUE(BeginNavigateToURLFromRenderer(ftn, subframe_navigate_url));
+    // Navigation without a URL loader shall always create the speculative RFH
+    // immediately or never create one.
+    // The same-site navigation to the subframe will not create a new
+    // speculative RFH if render document is not enabled for subframes.
+    if (subframe_navigate_url.SchemeIsHTTPOrHTTPS() &&
+        ShouldCreateNewRenderFrameHostOnSameSiteNavigation(
+            /*is_main_frame=*/false, /*is_local_root=*/true)) {
+      observer.Wait();
+    }
 
     // Wait until the navigation is pending commit. Note that the navigation
     // might use a speculative RenderFrameHost, so use that if necessary.
@@ -3240,12 +3255,11 @@ IN_PROC_BROWSER_TEST_P(
   EXPECT_TRUE(WaitForLoadStop(shell()->web_contents()));
 
   RenderFrameHostImplWrapper main_rfh(current_frame_host());
-  RenderFrameHostImplWrapper sub_rfh(
-      main_rfh.get()->child_at(0)->current_frame_host());
+  FrameTreeNode* child_node = main_rfh.get()->child_at(0);
+  RenderFrameHostImplWrapper sub_rfh(child_node->current_frame_host());
 
   // Pause subframe's navigation before `DidCommitNavigation`.
-  NavigateSubframeAndPauseAtDidCommit(main_rfh.get()->child_at(0),
-                                      subframe_navigate_url);
+  NavigateSubframeAndPauseAtDidCommit(child_node, subframe_navigate_url);
 
   // Subframe navigation is ongoing, so `NavigateToURL` cannot be used since
   // this function waits for all frames including subframe to finish loading.

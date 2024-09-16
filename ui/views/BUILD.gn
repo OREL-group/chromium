@@ -8,7 +8,7 @@ import("//build/config/features.gni")
 import("//build/config/ozone.gni")
 import("//build/config/ui.gni")
 import("//build/nocompile.gni")
-import("//components/metrics/generate_histograms_variants_allowlist.gni")
+import("//components/metrics/generate_allowlist_from_histograms_file.gni")
 import("//components/vector_icons/vector_icons.gni")
 import("//skia/features.gni")
 import("//testing/test.gni")
@@ -58,9 +58,10 @@ aggregate_vector_icons("views_vector_icons") {
   ]
 }
 
-generate_histograms_variants_allowlist("bubble_histograms_variant") {
+generate_allowlist_from_histograms_file("bubble_histograms_variant") {
   namespace = "views_metrics"
   input_xml_file = "//tools/metrics/histograms/metadata/views/histograms.xml"
+  tag = "variant"
   output_file = "bubble_histograms_variant.h"
   allow_list_name = "BubbleName"
 }
@@ -84,7 +85,6 @@ component("views") {
     "accessibility/ax_virtual_view.h",
     "accessibility/view_accessibility.h",
     "accessibility/view_accessibility_utils.h",
-    "accessibility/views_ax_tree_manager.h",
     "accessibility/widget_ax_tree_id_map.h",
     "accessible_pane_view.h",
     "actions/action_view_controller.h",
@@ -126,6 +126,7 @@ component("views") {
     "bubble/bubble_border_arrow_utils.h",
     "bubble/bubble_dialog_delegate_view.h",
     "bubble/bubble_dialog_model_host.h",
+    "bubble/bubble_dialog_utils.h",
     "bubble/bubble_frame_view.h",
     "bubble/info_bubble.h",
     "bubble/tooltip_icon.h",
@@ -146,6 +147,7 @@ component("views") {
     "controls/button/label_button_border.h",
     "controls/button/label_button_image_container.h",
     "controls/button/md_text_button.h",
+    "controls/button/md_text_button_with_down_arrow.h",
     "controls/button/menu_button.h",
     "controls/button/menu_button_controller.h",
     "controls/button/radio_button.h",
@@ -366,6 +368,7 @@ component("views") {
     "bubble/bubble_border_arrow_utils.cc",
     "bubble/bubble_dialog_delegate_view.cc",
     "bubble/bubble_dialog_model_host.cc",
+    "bubble/bubble_dialog_utils.cc",
     "bubble/bubble_frame_view.cc",
     "bubble/footnote_container_view.cc",
     "bubble/info_bubble.cc",
@@ -385,6 +388,7 @@ component("views") {
     "controls/button/label_button_border.cc",
     "controls/button/label_button_image_container.cc",
     "controls/button/md_text_button.cc",
+    "controls/button/md_text_button_with_down_arrow.cc",
     "controls/button/menu_button.cc",
     "controls/button/menu_button_controller.cc",
     "controls/button/radio_button.cc",
@@ -597,6 +601,8 @@ component("views") {
     "//ui/base/emoji",
     "//ui/base/ime/init",
     "//ui/base/metadata",
+    "//ui/base/mojom:mojom",
+    "//ui/base/mojom:ui_base_types",
     "//ui/compositor",
     "//ui/display",
     "//ui/events",
@@ -822,10 +828,7 @@ component("views") {
       "windows_stationarity_monitor_aura.cc",
     ]
     if (!is_chromeos_ash) {
-      sources += [
-        "accessibility/views_ax_tree_manager.cc",
-        "accessibility/widget_ax_tree_id_map.cc",
-      ]
+      sources += [ "accessibility/widget_ax_tree_id_map.cc" ]
     }
     if (is_chromeos_lacros) {
       public += [ "corewm/tooltip_lacros.h" ]
@@ -1043,6 +1046,8 @@ source_set("test_support") {
     "interaction/interactive_views_test_internal.cc",
     "interaction/interactive_views_test_internal.h",
     "interaction/polling_view_observer.h",
+    "interaction/view_focus_observer.cc",
+    "interaction/view_focus_observer.h",
     "interaction/widget_focus_observer.cc",
     "interaction/widget_focus_observer.h",
     "layout/animating_layout_manager_test_util.cc",
@@ -1146,6 +1151,7 @@ source_set("test_support") {
   public_deps = [
     "//testing/gmock",
     "//testing/gtest",
+    "//ui/base/mojom:mojom",
   ]
 
   if (is_win) {
@@ -1262,6 +1268,7 @@ test("views_unittests") {
     "controls/combobox/combobox_unittest.cc",
     "controls/editable_combobox/editable_combobox_unittest.cc",
     "controls/editable_combobox/editable_password_combobox_unittest.cc",
+    "controls/focus_ring_unittest.cc",
     "controls/image_view_unittest.cc",
     "controls/label_unittest.cc",
     "controls/link_fragment_unittest.cc",
@@ -1303,6 +1310,8 @@ test("views_unittests") {
     "interaction/interaction_sequence_views_unittest.cc",
     "interaction/interaction_test_util_views_unittest.cc",
     "interaction/interactive_views_test_unittest.cc",
+    "interaction/view_focus_observer_unittest.cc",
+    "interaction/widget_focus_observer_unittest.cc",
     "layout/animating_layout_manager_unittest.cc",
     "layout/box_layout_unittest.cc",
     "layout/box_layout_view_unittest.cc",
@@ -1372,6 +1381,7 @@ test("views_unittests") {
     "//ui/base/dragdrop/mojom",
     "//ui/base/emoji",
     "//ui/base/ime/init",
+    "//ui/base/mojom:mojom",
     "//ui/color",
     "//ui/color:mixers",
     "//ui/compositor:test_support",
@@ -1436,12 +1446,9 @@ test("views_unittests") {
   if (has_native_accessibility) {
     sources += [
       "accessibility/ax_virtual_view_unittest.cc",
+      "accessibility/view_accessibility_unittest.cc",
       "accessibility/view_ax_platform_node_delegate_unittest.cc",
     ]
-
-    if (use_aura) {
-      sources += [ "accessibility/views_ax_tree_manager_unittest.cc" ]
-    }
   }
 
   if (skia_support_skottie) {
@@ -1612,6 +1619,8 @@ source_set("views_interactive_ui_tests") {
     "//ui/resources:ui_test_pak",
     "//ui/strings",
   ]
+
+  public_deps = [ "//ui/base/mojom:mojom" ]
 
   if (is_win) {
     sources += [ "accessibility/ax_system_caret_win_interactive_uitest.cc" ]

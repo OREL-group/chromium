@@ -4,17 +4,24 @@
 
 #include "components/optimization_guide/core/model_execution/model_execution_features_controller.h"
 
+#include "base/command_line.h"
 #include "base/containers/contains.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_split.h"
+#include "components/component_updater/pref_names.h"
+#include "components/optimization_guide/core/feature_registry/mqls_feature_registry.h"
+#include "components/optimization_guide/core/feature_registry/settings_ui_registry.h"
 #include "components/optimization_guide/core/model_execution/feature_keys.h"
 #include "components/optimization_guide/core/model_execution/model_execution_features.h"
 #include "components/optimization_guide/core/model_execution/model_execution_prefs.h"
 #include "components/optimization_guide/core/optimization_guide_prefs.h"
+#include "components/optimization_guide/core/optimization_guide_switches.h"
 #include "components/optimization_guide/core/optimization_guide_util.h"
 #include "components/prefs/pref_service.h"
 #include "components/signin/public/identity_manager/account_info.h"
+#include "third_party/tflite/buildflags.h"
 
 namespace optimization_guide {
 
@@ -136,11 +143,15 @@ bool CanUseModelExecutionFeatures(signin::IdentityManager* identity_manager) {
 
 ModelExecutionFeaturesController::ModelExecutionFeaturesController(
     PrefService* browser_context_profile_service,
-    signin::IdentityManager* identity_manager)
+    signin::IdentityManager* identity_manager,
+    PrefService* local_state,
+    DogfoodStatus dogfood_status)
     : browser_context_profile_service_(browser_context_profile_service),
       identity_manager_(identity_manager),
+      local_state_(local_state),
       features_allowed_for_unsigned_user_(
-          features::internal::GetAllowedFeaturesForUnsignedUser()) {
+          features::internal::GetAllowedFeaturesForUnsignedUser()),
+      dogfood_status_(dogfood_status) {
   CHECK(browser_context_profile_service_);
 
   pref_change_registrar_.Init(browser_context_profile_service_);
@@ -151,7 +162,7 @@ ModelExecutionFeaturesController::ModelExecutionFeaturesController(
   is_signed_in_ = identity_manager && identity_manager->HasPrimaryAccount(
                                           signin::ConsentLevel::kSignin);
   if (is_signed_in_) {
-    can_use_model_execution_features_ =
+    account_allows_model_execution_features_ =
         CanUseModelExecutionFeatures(identity_manager);
   }
 
@@ -199,12 +210,25 @@ bool ModelExecutionFeaturesController::ShouldFeatureBeCurrentlyEnabledForUser(
 
 bool ModelExecutionFeaturesController::
     ShouldFeatureBeCurrentlyAllowedForLogging(
-        UserVisibleFeatureKey feature) const {
+        const MqlsFeatureMetadata* metadata) const {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-  if (!ShouldFeatureBeCurrentlyEnabledForUser(feature)) {
+  std::optional<UserVisibleFeatureKey> feature_key =
+      metadata->user_visible_feature_key();
+  if (feature_key && !ShouldFeatureBeCurrentlyEnabledForUser(*feature_key)) {
     return false;
   }
-  return GetEnterprisePolicyValue(feature) ==
+
+  // For dogfood users only, allow the relevant chrome://flags option to
+  // override the default enterprise policy.
+  bool has_logging_force_enabled =
+      base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kEnableModelQualityDogfoodLogging);
+  if (dogfood_status_ == DogfoodStatus::DOGFOOD && has_logging_force_enabled) {
+    return true;
+  }
+
+  return metadata->enterprise_policy().GetValue(
+             browser_context_profile_service_) ==
          model_execution::prefs::ModelExecutionEnterprisePolicyValue::kAllow;
 }
 
@@ -220,31 +244,62 @@ ModelExecutionFeaturesController::UserValidityResult
 ModelExecutionFeaturesController::GetCurrentUserValidityResult(
     UserVisibleFeatureKey feature) const {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  bool require_account =
+      !base::Contains(features_allowed_for_unsigned_user_, feature);
 
-  // Sign-in check.
-  if (!is_signed_in_ &&
-      !base::Contains(features_allowed_for_unsigned_user_, feature)) {
-    return ModelExecutionFeaturesController::UserValidityResult::
-        kInvalidUnsignedUser;
+  if (require_account) {
+    // Sign-in check.
+    if (!is_signed_in_) {
+      return ModelExecutionFeaturesController::UserValidityResult::
+          kInvalidUnsignedUser;
+    }
+
+    // Check user account is allowed to use model execution, when signed-in.
+    if (!account_allows_model_execution_features_) {
+      return ModelExecutionFeaturesController::UserValidityResult::
+          kInvalidModelExecutionCapability;
+    }
   }
 
-  // Check user account is allowed to use model execution, when signed-in.
-  if (is_signed_in_ && !can_use_model_execution_features_) {
-    return ModelExecutionFeaturesController::UserValidityResult::
-        kInvalidModelExecutionCapability;
-  }
-
-  DCHECK(!is_signed_in_ || can_use_model_execution_features_)
-      << "At this point, the user must be either signed out or allowed to use "
-         "MES";
-
-  if (GetEnterprisePolicyValue(feature) ==
+  const SettingsUiMetadata* metadata =
+      SettingsUiRegistry::GetInstance().GetFeature(feature);
+  CHECK(metadata);
+  if (metadata->enterprise_policy().GetValue(
+          browser_context_profile_service_) ==
       model_execution::prefs::ModelExecutionEnterprisePolicyValue::kDisable) {
     return ModelExecutionFeaturesController::UserValidityResult::
         kInvalidEnterprisePolicy;
   }
 
   return ModelExecutionFeaturesController::UserValidityResult::kValid;
+}
+
+ModelExecutionFeaturesController::SettingsVisibilityResult
+ModelExecutionFeaturesController::ShouldHideHistorySearch() const {
+#if !BUILDFLAG(BUILD_TFLITE_WITH_XNNPACK)
+  return SettingsVisibilityResult::kNotVisibleHardwareUnsupported;
+#else
+  // Component updates policy check.
+  if (!local_state_->GetBoolean(::prefs::kComponentUpdatesEnabled)) {
+    return SettingsVisibilityResult::kNotVisibleEnterprisePolicy;
+  }
+
+  // Performance class check.
+  std::string allowed_classes_string =
+      features::internal::kPerformanceClassListForHistorySearch.Get();
+  if (allowed_classes_string == "*" || allowed_classes_string.empty()) {
+    return SettingsVisibilityResult::kUnknown;
+  }
+
+  int perf_class = local_state_->GetInteger(
+      model_execution::prefs::localstate::kOnDevicePerformanceClass);
+  std::vector<std::string_view> allowed_classes_list = base::SplitStringPiece(
+      allowed_classes_string, ",", base::WhitespaceHandling::TRIM_WHITESPACE,
+      base::SplitResult::SPLIT_WANT_NONEMPTY);
+  return base::Contains(allowed_classes_list, base::ToString(perf_class))
+             ? SettingsVisibilityResult::kUnknown
+             : SettingsVisibilityResult::kNotVisibleHardwareUnsupported;
+#endif
 }
 
 bool ModelExecutionFeaturesController::IsSettingVisible(
@@ -281,6 +336,15 @@ bool ModelExecutionFeaturesController::IsSettingVisible(
     return false;
   }
 
+  // Check feature-specific requirements.
+  if (feature == UserVisibleFeatureKey::kHistorySearch) {
+    SettingsVisibilityResult result = ShouldHideHistorySearch();
+    if (result != SettingsVisibilityResult::kUnknown) {
+      metrics_recorder.SetResult(feature, result);
+      return false;
+    }
+  }
+
   // If the setting is currently enabled by user, then we should show the
   // setting to the user regardless of any other checks.
   if (ShouldFeatureBeCurrentlyEnabledForUser(feature)) {
@@ -296,17 +360,6 @@ bool ModelExecutionFeaturesController::IsSettingVisible(
              : SettingsVisibilityResult::kNotVisibleFieldTrialDisabled;
   metrics_recorder.SetResult(feature, visibility_result);
   return result;
-}
-
-model_execution::prefs::ModelExecutionEnterprisePolicyValue
-ModelExecutionFeaturesController::GetEnterprisePolicyValue(
-    UserVisibleFeatureKey feature) const {
-  const char* enterprise_policy_pref =
-      model_execution::prefs::GetEnterprisePolicyPrefName(feature);
-  CHECK(enterprise_policy_pref);
-  return static_cast<
-      model_execution::prefs::ModelExecutionEnterprisePolicyValue>(
-      browser_context_profile_service_->GetInteger(enterprise_policy_pref));
 }
 
 void ModelExecutionFeaturesController::AddObserver(
@@ -401,11 +454,11 @@ void ModelExecutionFeaturesController::OnPrimaryAccountChanged(
   }
 
   if (!is_signed_in_) {
-    can_use_model_execution_features_ = false;
+    account_allows_model_execution_features_ = false;
     ResetInvalidFeaturePrefs();
     return;
   }
-  can_use_model_execution_features_ =
+  account_allows_model_execution_features_ =
       CanUseModelExecutionFeatures(identity_manager_);
   ResetInvalidFeaturePrefs();
 }
@@ -415,11 +468,11 @@ void ModelExecutionFeaturesController::OnExtendedAccountInfoUpdated(
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   if (!is_signed_in_) {
-    can_use_model_execution_features_ = false;
+    account_allows_model_execution_features_ = false;
     ResetInvalidFeaturePrefs();
     return;
   }
-  can_use_model_execution_features_ =
+  account_allows_model_execution_features_ =
       CanUseModelExecutionFeaturesFromAccountInfo(info);
   ResetInvalidFeaturePrefs();
 }
@@ -434,8 +487,10 @@ void ModelExecutionFeaturesController::ResetInvalidFeaturePrefs() {
     auto pref_state = GetPrefState(feature);
 
     // When the main toggle is enabled, and the feature pref was never disabled
-    // by the user, it can be enabled, if it is visible in settings.
+    // by the user, it can be enabled, if it is visible in settings, and allowed
+    // for automatic turning on.
     if (main_toggle_enabled && IsSettingVisible(feature) &&
+        features::internal::ShouldEnableFeatureWhenMainToggleOn(feature) &&
         (pref_state == prefs::FeatureOptInState::kNotInitialized)) {
       browser_context_profile_service_->SetInteger(
           prefs::GetSettingEnabledPrefName(feature),
@@ -470,6 +525,10 @@ void ModelExecutionFeaturesController::OnMainToggleSettingStatePrefChanged() {
     if (!IsSettingVisible(feature)) {
       continue;
     }
+    if (!features::internal::ShouldEnableFeatureWhenMainToggleOn(feature)) {
+      // Do not change features that don't want to be changed with main toggle.
+      continue;
+    }
     // Set the feature pref the same state as the main toggle.
     browser_context_profile_service_->SetInteger(
         prefs::GetSettingEnabledPrefName(feature),
@@ -484,14 +543,17 @@ void ModelExecutionFeaturesController::InitializePrefListener() {
                               OnMainToggleSettingStatePrefChanged,
                           base::Unretained(this)));
 
+  SettingsUiRegistry& registry = SettingsUiRegistry::GetInstance();
   for (auto feature : kAllUserVisibleFeatureKeys) {
     pref_change_registrar_.Add(
         optimization_guide::prefs::GetSettingEnabledPrefName(feature),
         base::BindRepeating(
             &ModelExecutionFeaturesController::OnFeatureSettingPrefChanged,
             base::Unretained(this), feature));
+    const SettingsUiMetadata* metadata = registry.GetFeature(feature);
+    CHECK(metadata);
     pref_change_registrar_.Add(
-        model_execution::prefs::GetEnterprisePolicyPrefName(feature),
+        metadata->enterprise_policy().name(),
         base::BindRepeating(&ModelExecutionFeaturesController::
                                 OnFeatureEnterprisePolicyPrefChanged,
                             base::Unretained(this), feature));

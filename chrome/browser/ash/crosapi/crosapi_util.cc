@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ash/crosapi/crosapi_util.h"
 
 #include <sys/mman.h>
@@ -42,9 +47,9 @@
 #include "chrome/browser/ui/webui/chrome_web_ui_controller_factory.h"
 #include "chrome/browser/web_applications/preinstalled_web_app_utils.h"
 #include "chrome/browser/web_applications/web_app_utils.h"
-#include "chrome/common/channel_info.h"
 #include "chromeos/ash/components/browser_context_helper/browser_context_helper.h"
 #include "chromeos/ash/components/browser_context_helper/browser_context_types.h"
+#include "chromeos/ash/components/channel/channel_info.h"
 #include "chromeos/ash/components/install_attributes/install_attributes.h"
 #include "chromeos/ash/components/settings/cros_settings.h"
 #include "chromeos/ash/components/settings/cros_settings_names.h"
@@ -68,6 +73,7 @@
 #include "chromeos/crosapi/mojom/automation.mojom.h"
 #include "chromeos/crosapi/mojom/browser_app_instance_registry.mojom.h"
 #include "chromeos/crosapi/mojom/browser_service.mojom.h"
+#include "chromeos/crosapi/mojom/cec_private.mojom.h"
 #include "chromeos/crosapi/mojom/cert_database.mojom.h"
 #include "chromeos/crosapi/mojom/cert_provisioning.mojom.h"
 #include "chromeos/crosapi/mojom/chaps_service.mojom.h"
@@ -96,6 +102,7 @@
 #include "chromeos/crosapi/mojom/embedded_accessibility_helper.mojom.h"
 #include "chromeos/crosapi/mojom/emoji_picker.mojom.h"
 #include "chromeos/crosapi/mojom/extension_info_private.mojom.h"
+#include "chromeos/crosapi/mojom/extension_printer.mojom.h"
 #include "chromeos/crosapi/mojom/eye_dropper.mojom.h"
 #include "chromeos/crosapi/mojom/feedback.mojom.h"
 #include "chromeos/crosapi/mojom/file_change_service_bridge.mojom.h"
@@ -111,6 +118,7 @@
 #include "chromeos/crosapi/mojom/holding_space_service.mojom.h"
 #include "chromeos/crosapi/mojom/identity_manager.mojom.h"
 #include "chromeos/crosapi/mojom/image_writer.mojom.h"
+#include "chromeos/crosapi/mojom/input_methods.mojom.h"
 #include "chromeos/crosapi/mojom/kerberos_in_browser.mojom.h"
 #include "chromeos/crosapi/mojom/keystore_service.mojom.h"
 #include "chromeos/crosapi/mojom/kiosk_session_service.mojom.h"
@@ -120,7 +128,9 @@
 #include "chromeos/crosapi/mojom/login.mojom.h"
 #include "chromeos/crosapi/mojom/login_screen_storage.mojom.h"
 #include "chromeos/crosapi/mojom/login_state.mojom.h"
+#include "chromeos/crosapi/mojom/magic_boost.mojom.h"
 #include "chromeos/crosapi/mojom/mahi.mojom.h"
+#include "chromeos/crosapi/mojom/media_app.mojom.h"
 #include "chromeos/crosapi/mojom/media_ui.mojom.h"
 #include "chromeos/crosapi/mojom/message_center.mojom.h"
 #include "chromeos/crosapi/mojom/metrics.mojom.h"
@@ -138,6 +148,7 @@
 #include "chromeos/crosapi/mojom/policy_service.mojom.h"
 #include "chromeos/crosapi/mojom/power.mojom.h"
 #include "chromeos/crosapi/mojom/prefs.mojom.h"
+#include "chromeos/crosapi/mojom/print_preview_cros.mojom.h"
 #include "chromeos/crosapi/mojom/printing_metrics.mojom.h"
 #include "chromeos/crosapi/mojom/probe_service.mojom.h"
 #include "chromeos/crosapi/mojom/remoting.mojom.h"
@@ -170,6 +181,7 @@
 #include "chromeos/crosapi/mojom/web_app_service.mojom.h"
 #include "chromeos/crosapi/mojom/web_kiosk_service.mojom.h"
 #include "chromeos/crosapi/mojom/web_page_info.mojom.h"
+#include "chromeos/services/chromebox_for_meetings/public/mojom/cfm_service_manager.mojom.h"
 #include "chromeos/services/machine_learning/public/cpp/ml_switches.h"
 #include "chromeos/services/machine_learning/public/mojom/machine_learning_service.mojom.h"
 #include "chromeos/startup/startup.h"
@@ -258,6 +270,12 @@ constexpr std::string_view kAshCapabilities[] = {
     // TODO(b/331715712): Remove this capability once Ash and Lacros are both
     // past M128.
     "b/331715712"
+
+    // Support unknown package types when requesting app installation in
+    // AppInstallServiceAsh.
+    // TODO(b/339548766): Remove this capability once Ash and Lacros are both
+    // past M129.
+    "b/339106891"
 
     // Entries added to this list must record the current milestone + 3 with a
     // TODO for removal.
@@ -416,7 +434,7 @@ constexpr InterfaceVersionEntry MakeInterfaceVersionEntry() {
   return {T::Uuid_, T::Version_};
 }
 
-static_assert(crosapi::mojom::Crosapi::Version_ == 136,
+static_assert(crosapi::mojom::Crosapi::Version_ == 144,
               "If you add a new crosapi, please add it to "
               "kInterfaceVersionEntries below.");
 
@@ -439,8 +457,10 @@ constexpr InterfaceVersionEntry kInterfaceVersionEntries[] = {
     MakeInterfaceVersionEntry<crosapi::mojom::BrowserAppInstanceRegistry>(),
     MakeInterfaceVersionEntry<crosapi::mojom::BrowserServiceHost>(),
     MakeInterfaceVersionEntry<crosapi::mojom::BrowserVersionService>(),
+    MakeInterfaceVersionEntry<crosapi::mojom::CecPrivate>(),
     MakeInterfaceVersionEntry<crosapi::mojom::CertDatabase>(),
     MakeInterfaceVersionEntry<crosapi::mojom::CertProvisioning>(),
+    MakeInterfaceVersionEntry<chromeos::cfm::mojom::CfmServiceContext>(),
     MakeInterfaceVersionEntry<crosapi::mojom::ChapsService>(),
     MakeInterfaceVersionEntry<crosapi::mojom::ChromeAppKioskService>(),
     MakeInterfaceVersionEntry<crosapi::mojom::Clipboard>(),
@@ -468,6 +488,7 @@ constexpr InterfaceVersionEntry kInterfaceVersionEntries[] = {
     MakeInterfaceVersionEntry<crosapi::mojom::EditorPanelManager>(),
     MakeInterfaceVersionEntry<crosapi::mojom::EmojiPicker>(),
     MakeInterfaceVersionEntry<crosapi::mojom::ExtensionInfoPrivate>(),
+    MakeInterfaceVersionEntry<crosapi::mojom::ExtensionPrinterService>(),
     MakeInterfaceVersionEntry<crosapi::mojom::EyeDropper>(),
     MakeInterfaceVersionEntry<crosapi::mojom::Feedback>(),
     MakeInterfaceVersionEntry<crosapi::mojom::FieldTrialService>(),
@@ -484,6 +505,7 @@ constexpr InterfaceVersionEntry kInterfaceVersionEntries[] = {
     MakeInterfaceVersionEntry<crosapi::mojom::HoldingSpaceService>(),
     MakeInterfaceVersionEntry<crosapi::mojom::IdentityManager>(),
     MakeInterfaceVersionEntry<crosapi::mojom::IdleService>(),
+    MakeInterfaceVersionEntry<crosapi::mojom::InputMethods>(),
     MakeInterfaceVersionEntry<crosapi::mojom::ImageWriter>(),
     MakeInterfaceVersionEntry<crosapi::mojom::InputMethodTestInterface>(),
     MakeInterfaceVersionEntry<chromeos::auth::mojom::InSessionAuth>(),
@@ -497,7 +519,9 @@ constexpr InterfaceVersionEntry kInterfaceVersionEntries[] = {
     MakeInterfaceVersionEntry<crosapi::mojom::LoginState>(),
     MakeInterfaceVersionEntry<
         chromeos::machine_learning::mojom::MachineLearningService>(),
+    MakeInterfaceVersionEntry<crosapi::mojom::MagicBoostController>(),
     MakeInterfaceVersionEntry<crosapi::mojom::MahiBrowserDelegate>(),
+    MakeInterfaceVersionEntry<crosapi::mojom::MediaApp>(),
     MakeInterfaceVersionEntry<crosapi::mojom::MediaUI>(),
     MakeInterfaceVersionEntry<crosapi::mojom::MessageCenter>(),
     MakeInterfaceVersionEntry<crosapi::mojom::Metrics>(),
@@ -515,6 +539,7 @@ constexpr InterfaceVersionEntry kInterfaceVersionEntries[] = {
     MakeInterfaceVersionEntry<crosapi::mojom::Power>(),
     MakeInterfaceVersionEntry<crosapi::mojom::Prefs>(),
     MakeInterfaceVersionEntry<crosapi::mojom::NonclosableAppToastService>(),
+    MakeInterfaceVersionEntry<crosapi::mojom::PrintPreviewCrosDelegate>(),
     MakeInterfaceVersionEntry<crosapi::mojom::PrintingMetrics>(),
     MakeInterfaceVersionEntry<crosapi::mojom::PrintingMetricsForProfile>(),
     MakeInterfaceVersionEntry<
@@ -541,6 +566,7 @@ constexpr InterfaceVersionEntry kInterfaceVersionEntries[] = {
     MakeInterfaceVersionEntry<crosapi::mojom::TestController>(),
     MakeInterfaceVersionEntry<crosapi::mojom::TimeZoneService>(),
     MakeInterfaceVersionEntry<crosapi::mojom::TrustedVaultBackend>(),
+    MakeInterfaceVersionEntry<crosapi::mojom::TrustedVaultBackendService>(),
     MakeInterfaceVersionEntry<crosapi::mojom::Tts>(),
     MakeInterfaceVersionEntry<crosapi::mojom::UrlHandler>(),
     MakeInterfaceVersionEntry<crosapi::mojom::VideoCaptureDeviceFactory>(),
@@ -605,17 +631,17 @@ crosapi::mojom::BrowserInitParams::DeviceType ConvertDeviceType(
 }
 
 crosapi::mojom::BrowserInitParams::LacrosSelection GetLacrosSelection(
-    std::optional<browser_util::LacrosSelection> selection) {
+    std::optional<ash::standalone_browser::LacrosSelection> selection) {
   if (!selection.has_value()) {
     return crosapi::mojom::BrowserInitParams::LacrosSelection::kUnspecified;
   }
 
   switch (selection.value()) {
-    case browser_util::LacrosSelection::kRootfs:
+    case ash::standalone_browser::LacrosSelection::kRootfs:
       return crosapi::mojom::BrowserInitParams::LacrosSelection::kRootfs;
-    case browser_util::LacrosSelection::kStateful:
+    case ash::standalone_browser::LacrosSelection::kStateful:
       return crosapi::mojom::BrowserInitParams::LacrosSelection::kStateful;
-    case browser_util::LacrosSelection::kDeployedLocally:
+    case ash::standalone_browser::LacrosSelection::kDeployedLocally:
       return crosapi::mojom::BrowserInitParams::LacrosSelection::kUnspecified;
   }
 }
@@ -634,9 +660,6 @@ mojom::SessionType GetSessionType() {
       return mojom::SessionType::kPublicSession;
     case user_manager::UserType::kKioskApp:
       return mojom::SessionType::kAppKioskSession;
-    case user_manager::UserType::kArcKioskApp:
-      LOG(WARNING) << "Starting as ARC Kiosk App session.";
-      return mojom::SessionType::kRegularSession;
     case user_manager::UserType::kWebKioskApp:
       return mojom::SessionType::kWebKioskSession;
   }
@@ -657,7 +680,7 @@ mojom::DeviceMode GetDeviceMode() {
       return mojom::DeviceMode::kEnterprise;
     case policy::DEPRECATED_DEVICE_MODE_LEGACY_RETAIL_MODE:
       return mojom::DeviceMode::kLegacyRetailMode;
-    case policy::DEVICE_MODE_CONSUMER_KIOSK_AUTOLAUNCH:
+    case policy::DEPRECATED_DEVICE_MODE_CONSUMER_KIOSK_AUTOLAUNCH:
       return mojom::DeviceMode::kConsumerKioskAutolaunch;
     case policy::DEVICE_MODE_DEMO:
       return mojom::DeviceMode::kDemo;
@@ -736,7 +759,7 @@ InitialBrowserAction::~InitialBrowserAction() = default;
 void InjectBrowserInitParams(
     mojom::BrowserInitParams* params,
     bool is_keep_alive_enabled,
-    std::optional<browser_util::LacrosSelection> lacros_selection) {
+    std::optional<ash::standalone_browser::LacrosSelection> lacros_selection) {
   params->crosapi_version = crosapi::mojom::Crosapi::Version_;
   params->deprecated_ash_metrics_enabled_has_value = true;
   PrefService* local_state = g_browser_process->local_state();
@@ -765,7 +788,7 @@ void InjectBrowserInitParams(
   // Lacros.
   // TODO(crbug.com/40948861): Remove after completing the trial.
   variations::LimitedEntropySyntheticTrial limited_entropy_synthetic_trial(
-      local_state);
+      local_state, ash::GetChannel());
   params->limited_entropy_synthetic_trial_seed =
       limited_entropy_synthetic_trial.GetRandomizationSeed(local_state);
 
@@ -777,17 +800,12 @@ void InjectBrowserInitParams(
       params->metrics_service_client_id = client_id;
     }
 
-    std::string_view limited_entropy_randomization_source;
-    if (variations::IsLimitedEntropyModeEnabled(chrome::GetChannel()) &&
-        limited_entropy_synthetic_trial.IsEnabled()) {
-      limited_entropy_randomization_source =
-          metrics_service->GetLimitedEntropyRandomizationSource();
-    }
+    // TODO(crbug.com/352689349): Remove sync'ing of entropy values.
     params->entropy_source = crosapi::mojom::EntropySource::New(
         metrics_service->GetLowEntropySource(),
         metrics_service->GetOldLowEntropySource(),
         metrics_service->GetPseudoLowEntropySource(),
-        std::string(limited_entropy_randomization_source));
+        /*limited_entropy_randomization_source=*/std::string());
   }
 
   if (auto* metrics_services_manager =
@@ -867,6 +885,7 @@ void InjectBrowserInitParams(
   params->is_floss_available = floss::features::IsFlossAvailable();
   params->is_floss_availability_check_needed =
       floss::features::IsFlossAvailabilityCheckNeeded();
+  params->is_llprivacy_available = floss::features::IsLLPrivacyAvailable();
 
   params->is_cloud_gaming_device =
       chromeos::features::IsCloudGamingDeviceEnabled();
@@ -905,23 +924,22 @@ void InjectBrowserInitParams(
   params->is_drivefs_bulk_pinning_available =
       drive::util::IsDriveFsBulkPinningAvailable();
 
-  params->is_sys_ui_downloads_integration_v2_enabled =
-      ash::features::IsSysUiDownloadsIntegrationV2Enabled();
+  params->is_sys_ui_downloads_integration_v2_enabled = true;
 
   params->is_cros_battery_saver_available =
       ash::features::IsBatterySaverAvailable();
 
-  params->is_app_install_service_uri_enabled =
-      chromeos::features::IsAppInstallServiceUriEnabled();
+  // TODO(b/346683858): Remove in M130.
+  params->is_app_install_service_uri_enabled = true;
 
   params->is_desk_profiles_enabled =
       chromeos::features::IsDeskProfilesEnabled();
 
-  params->is_cros_web_app_shortcut_ui_update_enabled =
-      chromeos::features::IsCrosWebAppShortcutUiUpdateEnabled();
+  // TODO(b/352513798): Remove in M131.
+  params->is_cros_web_app_shortcut_ui_update_enabled = false;
 
-  params->is_cros_shortstand_enabled =
-      chromeos::features::IsCrosShortstandEnabled();
+  // TODO(b/352513798): Remove in M131.
+  params->is_cros_shortstand_enabled = false;
 
   params->should_disable_chrome_compose_on_chromeos =
       chromeos::features::ShouldDisableChromeComposeOnChromeOS();
@@ -932,20 +950,27 @@ void InjectBrowserInitParams(
   params->is_file_system_provider_cloud_file_system_enabled =
       chromeos::features::IsFileSystemProviderCloudFileSystemEnabled();
 
-  params->is_cros_web_app_install_dialog_enabled =
-      chromeos::features::IsCrosWebAppInstallDialogEnabled();
+  // TODO(b/346683858): Remove in M130.
+  params->is_cros_web_app_install_dialog_enabled = true;
 
   params->is_orca_enabled = chromeos::features::IsOrcaEnabled();
 
   params->is_orca_use_l10n_strings_enabled =
       chromeos::features::IsOrcaUseL10nStringsEnabled();
 
-  params->is_cros_mall_enabled = chromeos::features::IsCrosMallEnabled();
+  params->is_orca_internationalize_enabled =
+      chromeos::features::IsOrcaInternationalizeEnabled();
+
+  params->is_cros_mall_web_app_enabled =
+      chromeos::features::IsCrosMallWebAppEnabled();
 
   params->is_mahi_enabled = chromeos::features::IsMahiEnabled();
 
   params->is_container_app_preinstall_enabled =
       chromeos::features::IsContainerAppPreinstallEnabled();
+
+  params->is_file_system_provider_content_cache_enabled =
+      chromeos::features::IsFileSystemProviderContentCacheEnabled();
 }
 
 template <typename BrowserParams>
@@ -982,15 +1007,12 @@ void InjectBrowserPostLoginParams(BrowserParams* params,
   params->is_current_user_ephemeral = IsCurrentUserEphemeral();
   params->enable_lacros_tts_support =
       tts_crosapi_util::ShouldEnableLacrosTtsSupport();
-
-  params->is_mahi_supported_with_correct_feature_key =
-      chromeos::MahiManager::IsSupportedWithCorrectFeatureKey();
 }
 
 mojom::BrowserInitParamsPtr GetBrowserInitParams(
     InitialBrowserAction initial_browser_action,
     bool is_keep_alive_enabled,
-    std::optional<browser_util::LacrosSelection> lacros_selection,
+    std::optional<ash::standalone_browser::LacrosSelection> lacros_selection,
     bool include_post_login_params) {
   mojom::BrowserInitParamsPtr params = mojom::BrowserInitParams::New();
   InjectBrowserInitParams(params.get(), is_keep_alive_enabled,
@@ -1013,7 +1035,7 @@ mojom::BrowserPostLoginParamsPtr GetBrowserPostLoginParams(
 base::ScopedFD CreateStartupData(
     InitialBrowserAction initial_browser_action,
     bool is_keep_alive_enabled,
-    std::optional<LacrosSelection> lacros_selection,
+    std::optional<ash::standalone_browser::LacrosSelection> lacros_selection,
     bool include_post_login_params) {
   const auto& data = GetBrowserInitParams(
       std::move(initial_browser_action), is_keep_alive_enabled,
@@ -1198,7 +1220,6 @@ policy::CloudPolicyCore* GetCloudPolicyCoreForUser(
       return broker ? broker->core() : nullptr;
     }
     case user_manager::UserType::kGuest:
-    case user_manager::UserType::kArcKioskApp:
       return nullptr;
   }
 }
@@ -1220,7 +1241,6 @@ policy::ComponentCloudPolicyService* GetComponentCloudPolicyServiceForUser(
       return broker ? broker->component_policy_service() : nullptr;
     }
     case user_manager::UserType::kGuest:
-    case user_manager::UserType::kArcKioskApp:
       return nullptr;
   }
 }

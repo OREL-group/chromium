@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/gpu/chromeos/generic_dmabuf_video_frame_mapper.h"
 
 #include <sys/mman.h>
@@ -80,7 +85,7 @@ bool IsFormatSupported(VideoPixelFormat format) {
       PIXEL_FORMAT_I420,
       PIXEL_FORMAT_NV12,
       PIXEL_FORMAT_YV12,
-      PIXEL_FORMAT_P016LE,
+      PIXEL_FORMAT_P010LE,
 
       // Compressed format.
       PIXEL_FORMAT_MJPEG,
@@ -106,7 +111,7 @@ GenericDmaBufVideoFrameMapper::GenericDmaBufVideoFrameMapper(
 
 scoped_refptr<VideoFrame> GenericDmaBufVideoFrameMapper::MapFrame(
     scoped_refptr<const FrameResource> video_frame,
-    int permissions) const {
+    int permissions) {
   if (!video_frame) {
     LOG(ERROR) << "Video frame is nullptr";
     return nullptr;

@@ -24,10 +24,12 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/web_applications/manifest_update_utils.h"
 #include "chrome/browser/web_applications/os_integration/os_integration_manager.h"
+#include "chrome/browser/web_applications/proto/web_app_install_state.pb.h"
 #include "chrome/browser/web_applications/web_app_command_manager.h"
 #include "chrome/browser/web_applications/web_app_command_scheduler.h"
 #include "chrome/browser/web_applications/web_app_constants.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
+#include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/common/chrome_features.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/content_settings/core/common/content_settings_types.h"
@@ -40,10 +42,6 @@
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 #include "chrome/browser/web_applications/web_app_system_web_app_delegate_map_utils.h"
-#endif
-
-#if BUILDFLAG(IS_CHROMEOS)
-#include "chromeos/constants/chromeos_features.h"
 #endif
 
 class Profile;
@@ -93,9 +91,7 @@ class ManifestUpdateManager::PreUpdateWebContentsObserver
 
  private:
   bool IsInvalidRenderFrameHost(content::RenderFrameHost* render_frame_host) {
-    return (!render_frame_host ||
-            render_frame_host->GetParentOrOuterDocument() ||
-            !render_frame_host->IsInPrimaryMainFrame());
+    return !render_frame_host || !render_frame_host->IsInPrimaryMainFrame();
   }
 
   // content::WebContentsObserver:
@@ -214,7 +210,9 @@ void ManifestUpdateManager::MaybeUpdate(
   }
 
   if (!app_id.has_value() ||
-      !provider_->registrar_unsafe().IsLocallyInstalled(*app_id)) {
+      !provider_->registrar_unsafe().IsInstallState(
+          *app_id, {proto::INSTALLED_WITHOUT_OS_INTEGRATION,
+                    proto::INSTALLED_WITH_OS_INTEGRATION})) {
     NotifyResult(url, app_id, ManifestUpdateResult::kNoAppInScope);
     return;
   }
@@ -242,16 +240,6 @@ void ManifestUpdateManager::MaybeUpdate(
     NotifyResult(url, *app_id, ManifestUpdateResult::kAppIsIsolatedWebApp);
     return;
   }
-
-#if BUILDFLAG(IS_CHROMEOS)
-  if (provider_->registrar_unsafe().IsShortcutApp(*app_id) &&
-      chromeos::features::IsCrosShortstandEnabled()) {
-    // When create shortcut ignores manifest, we should not update manifest for
-    // shortcuts.
-    NotifyResult(url, *app_id, ManifestUpdateResult::kShortcutIgnoresManifest);
-    return;
-  }
-#endif
 
   if (base::Contains(update_stages_, *app_id)) {
     return;
@@ -324,7 +312,7 @@ void ManifestUpdateManager::OnManifestCheckAwaitAppWindowClose(
     const GURL& url,
     const webapps::AppId& app_id,
     ManifestUpdateCheckResult check_result,
-    std::optional<WebAppInstallInfo> install_info) {
+    std::unique_ptr<WebAppInstallInfo> install_info) {
   auto update_stage_it = update_stages_.find(app_id);
   if (update_stage_it == update_stages_.end()) {
     // If the web_app already has already been uninstalled after the
@@ -349,7 +337,6 @@ void ManifestUpdateManager::OnManifestCheckAwaitAppWindowClose(
 
   UpdateStage& update_stage = update_stage_it->second;
   CHECK_EQ(update_stage.stage, UpdateStage::Stage::kCheckingManifestDiff);
-  update_stage.stage = UpdateStage::Stage::kPendingAppWindowClose;
 
   if (check_result != ManifestUpdateCheckResult::kAppUpdateNeeded) {
     OnUpdateStopped(url, app_id,
@@ -357,7 +344,7 @@ void ManifestUpdateManager::OnManifestCheckAwaitAppWindowClose(
     return;
   }
 
-  CHECK(install_info.has_value());
+  CHECK(install_info);
 
   Profile* profile = Profile::FromBrowserContext(contents->GetBrowserContext());
   auto keep_alive = std::make_unique<ScopedKeepAlive>(
@@ -367,42 +354,6 @@ void ManifestUpdateManager::OnManifestCheckAwaitAppWindowClose(
     profile_keep_alive = std::make_unique<ScopedProfileKeepAlive>(
         profile, ProfileKeepAliveOrigin::kWebAppUpdate);
   }
-
-  if (base::FeatureList::IsEnabled(
-          features::kWebAppManifestImmediateUpdating) ||
-      BypassWindowCloseWaitingForTesting()) {
-    StartManifestWriteAfterWindowsClosed(url, app_id, std::move(keep_alive),
-                                         std::move(profile_keep_alive),
-                                         std::move(install_info.value()));
-  } else {
-    provider_->ui_manager().NotifyOnAllAppWindowsClosed(
-        app_id,
-        base::BindOnce(
-            &ManifestUpdateManager::StartManifestWriteAfterWindowsClosed,
-            weak_factory_.GetWeakPtr(), url, app_id, std::move(keep_alive),
-            std::move(profile_keep_alive), std::move(install_info.value())));
-    UpdatePendingCallback* callback =
-        GetUpdatePendingCallbackMutableForTesting();  // IN-TEST
-    if (!callback->is_null())
-      std::move(*callback).Run(url);
-  }
-}
-
-void ManifestUpdateManager::StartManifestWriteAfterWindowsClosed(
-    const GURL& url,
-    const webapps::AppId& app_id,
-    std::unique_ptr<ScopedKeepAlive> keep_alive,
-    std::unique_ptr<ScopedProfileKeepAlive> profile_keep_alive,
-    WebAppInstallInfo install_info) {
-  auto update_stage_it = update_stages_.find(app_id);
-  if (update_stage_it == update_stages_.end()) {
-    // If the web_app already has already been uninstalled after the
-    // manifest update data fetch has happened, then we can early exit.
-    return;
-  }
-
-  UpdateStage& update_stage = update_stage_it->second;
-  CHECK_EQ(update_stage.stage, UpdateStage::Stage::kPendingAppWindowClose);
 
   provider_->scheduler().ScheduleManifestUpdateFinalize(
       url, app_id, std::move(install_info), std::move(keep_alive),
@@ -522,17 +473,6 @@ bool ManifestUpdateManager::HasUpdatesPendingLoadFinishForTesting() {
 void ManifestUpdateManager::SetLoadFinishedCallbackForTesting(
     base::OnceClosure load_finished_callback) {
   load_finished_callback_ = std::move(load_finished_callback);
-}
-
-base::flat_set<webapps::AppId>
-ManifestUpdateManager::GetAppsPendingWindowsClosingForTesting() {
-  base::flat_set<webapps::AppId> apps_pending_window_closed;
-  for (const auto& data : update_stages_) {
-    if (data.second.stage == UpdateStage::Stage::kPendingAppWindowClose) {
-      apps_pending_window_closed.emplace(data.first);
-    }
-  }
-  return apps_pending_window_closed;
 }
 
 bool ManifestUpdateManager::IsAppPendingPageAndManifestUrlLoadForTesting(

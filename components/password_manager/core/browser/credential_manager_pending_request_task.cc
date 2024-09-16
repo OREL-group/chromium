@@ -18,6 +18,8 @@
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/user_metrics.h"
 #include "base/ranges/algorithm.h"
+#include "build/build_config.h"
+#include "build/buildflag.h"
 #include "components/affiliations/core/browser/affiliation_utils.h"
 #include "components/password_manager/core/browser/credential_manager_utils.h"
 #include "components/password_manager/core/browser/form_fetcher_impl.h"
@@ -30,6 +32,10 @@
 #include "net/cert/cert_status_flags.h"
 #include "url/gurl.h"
 #include "url/origin.h"
+
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+#include "device/fido/features.h"
+#endif
 
 namespace password_manager {
 namespace {
@@ -78,7 +84,7 @@ void FilterDuplicatesInFederatedCredentials(
       });
 
   for (auto& form : forms) {
-    CHECK(!form->federation_origin.opaque());
+    CHECK(form->federation_origin.IsValid());
     // |forms| contains credentials from both the profile and account stores.
     // Therefore, it could potentially contains duplicate federated
     // credentials. In case of duplicates, favor the account store version.
@@ -102,7 +108,7 @@ void FilterIrrelevantForms(std::vector<std::unique_ptr<PasswordForm>>& forms,
       return true;
     }
 
-    if (form->federation_origin.opaque()) {
+    if (!form->IsFederatedCredential()) {
       // Remove passwords if they shouldn't be included.
       return !include_passwords;
     }
@@ -149,9 +155,10 @@ CredentialManagerPendingRequestTask::CredentialManagerPendingRequestTask(
   form_fetcher_->Fetch();
   form_fetcher_->AddConsumer(this);
 
-  for (const GURL& federation : request_federations)
+  for (const GURL& federation : request_federations) {
     federations_.insert(
         url::Origin::Create(federation.DeprecatedGetOriginAsURL()).Serialize());
+  }
 }
 
 CredentialManagerPendingRequestTask::~CredentialManagerPendingRequestTask() {
@@ -162,8 +169,8 @@ void CredentialManagerPendingRequestTask::OnFetchCompleted() {
   std::vector<std::unique_ptr<PasswordForm>> all_matches;
   base::ranges::transform(form_fetcher_->GetFederatedMatches(),
                           std::back_inserter(all_matches),
-                          [](const PasswordForm* form) {
-                            return std::make_unique<PasswordForm>(*form);
+                          [](const PasswordForm& form) {
+                            return std::make_unique<PasswordForm>(form);
                           });
   // GetFederatedMatches() comes with duplicates, filter them immediately.
   FilterDuplicatesInFederatedCredentials(all_matches);
@@ -225,17 +232,16 @@ void CredentialManagerPendingRequestTask::ProcessForms(
 
     if (!results.empty()) {
       std::vector<PasswordForm> non_federated_matches;
-      std::vector<raw_ptr<const PasswordForm, VectorExperimental>>
-          federated_matches;
+      std::vector<PasswordForm> federated_matches;
       for (const auto& result : results) {
         if (result->IsFederatedCredential()) {
-          federated_matches.emplace_back(result.get());
+          federated_matches.emplace_back(*result.get());
         } else {
           non_federated_matches.emplace_back(*result.get());
         }
       }
       delegate_->client()->PasswordWasAutofilled(
-          non_federated_matches, origin_, &federated_matches,
+          non_federated_matches, origin_, federated_matches,
           /*was_autofilled_on_pageload=*/false);
     }
     if (can_use_autosignin) {
@@ -249,6 +255,26 @@ void CredentialManagerPendingRequestTask::ProcessForms(
     delegate_->SendCredential(std::move(send_callback_), CredentialInfo());
     return;
   }
+
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+  // TODO(https://crbug.com/358119268): This is prototyping code only. For now,
+  // rely on the Ambient Sign-in bubble whenever the flag is enabled. In the
+  // future it might depend on new `mediation` value. Also, this might not be
+  // right place to branch from the CredentialManagement handler path toward
+  // new UI, and this should be revisited before turning this into shipping
+  // code. See:
+  // https://chromium-review.googlesource.com/c/chromium/src/+/5829785/comment/5d18ceaa_513033a7/
+  // Initially this is only supported on desktop Chrome.
+  if (base::FeatureList::IsEnabled(device::kWebAuthnAmbientSignin)) {
+    delegate_->client()->ShowCredentialsInAmbientBubble(
+        std::move(results),
+        base::BindOnce(
+            &CredentialManagerPendingRequestTaskDelegate::SendPasswordForm,
+            base::Unretained(delegate_), std::move(send_callback_),
+            mediation_));
+    return;
+  }
+#endif
 
   if (results.empty()) {
     LogCredentialManagerGetResult(

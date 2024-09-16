@@ -247,6 +247,10 @@ IN_PROC_BROWSER_TEST_P(ImmersiveModeBrowserViewTest,
   // Open a new app window.
   Browser* app_browser =
       CreateBrowserForApp("test_browser_app", browser()->profile());
+  // TODO(neis): Move this into the CreateBrowser* functions.
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+  ui_test_utils::CreateAsyncWidgetRequestWaiter(*browser()).Wait();
+#endif
 
   BrowserView* app_view = BrowserView::GetBrowserViewForBrowser(app_browser);
   chromeos::ImmersiveFullscreenControllerTestApi(
@@ -318,8 +322,8 @@ IN_PROC_BROWSER_TEST_P(ImmersiveModeBrowserViewTest,
   EXPECT_FALSE(IsShelfVisible());
 
   // Make sure the fullscreen control popup doesn't show up.
-  ui::MouseEvent mouse_move(ui::ET_MOUSE_MOVED, gfx::Point(1, 1), gfx::Point(),
-                            base::TimeTicks(), 0, 0);
+  ui::MouseEvent mouse_move(ui::EventType::kMouseMoved, gfx::Point(1, 1),
+                            gfx::Point(), base::TimeTicks(), 0, 0);
   ASSERT_TRUE(browser_view->fullscreen_control_host_for_test());
   browser_view->fullscreen_control_host_for_test()->OnMouseEvent(mouse_move);
   EXPECT_FALSE(browser_view->fullscreen_control_host_for_test()->IsVisible());
@@ -345,15 +349,15 @@ IN_PROC_BROWSER_TEST_P(ImmersiveModeBrowserViewTest,
   EXPECT_TRUE(browser_view->GetWidget()->IsFullscreen());
   EXPECT_FALSE(browser_view->immersive_mode_controller()->IsEnabled());
 #if BUILDFLAG(IS_CHROMEOS_LACROS)
-  // TODO(crbug.com/1466385): Enable this assertion once the bug is fixed (at
+  // TODO(crbug.com/40276379): Enable this assertion once the bug is fixed (at
   // the moment PinWindow returns too early).
 #else
   EXPECT_FALSE(IsShelfVisible());
 #endif
 
   // Make sure the fullscreen control popup doesn't show up.
-  ui::MouseEvent mouse_move(ui::ET_MOUSE_MOVED, gfx::Point(1, 1), gfx::Point(),
-                            base::TimeTicks(), 0, 0);
+  ui::MouseEvent mouse_move(ui::EventType::kMouseMoved, gfx::Point(1, 1),
+                            gfx::Point(), base::TimeTicks(), 0, 0);
   ASSERT_TRUE(browser_view->fullscreen_control_host_for_test());
   browser_view->fullscreen_control_host_for_test()->OnMouseEvent(mouse_move);
   EXPECT_FALSE(browser_view->fullscreen_control_host_for_test()->IsVisible());

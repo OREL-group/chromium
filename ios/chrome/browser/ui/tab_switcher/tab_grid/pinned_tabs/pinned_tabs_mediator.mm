@@ -13,11 +13,11 @@
 #import "base/scoped_multi_source_observation.h"
 #import "ios/chrome/browser/default_browser/model/utils.h"
 #import "ios/chrome/browser/drag_and_drop/model/drag_item_util.h"
-#import "ios/chrome/browser/main/model/browser_util.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
 #import "ios/chrome/browser/shared/model/browser/browser_list.h"
 #import "ios/chrome/browser/shared/model/browser/browser_list_factory.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
+#import "ios/chrome/browser/shared/model/web_state_list/browser_util.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list_observer_bridge.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_opener.h"
@@ -84,14 +84,10 @@ web::WebStateID GetActivePinnedTabID(WebStateList* web_state_list) {
   std::unique_ptr<
       base::ScopedMultiSourceObservation<web::WebState, web::WebStateObserver>>
       _scopedWebStateObservation;
-
-  // ItemID of the dragged tab. Used to check if the dropped tab is from the
-  // same Chrome window.
-  web::WebStateID _dragItemID;
 }
 
 - (instancetype)initWithConsumer:(id<PinnedTabCollectionConsumer>)consumer {
-  if (self = [super init]) {
+  if ((self = [super init])) {
     DCHECK(IsPinnedTabsEnabled());
     _consumer = consumer;
     _webStateListObserverBridge =
@@ -313,22 +309,6 @@ web::WebStateID GetActivePinnedTabID(WebStateList* web_state_list) {
   return CreateTabDragItem(webState);
 }
 
-- (UIDragItem*)dragItemForTabGroupItem:(TabGroupItem*)tabGroupItem {
-  NOTREACHED_NORETURN() << "There is no tab groups in the pinned tabs section";
-}
-
-- (void)dragWillBeginForTabSwitcherItem:(TabSwitcherItem*)item {
-  _dragItemID = item.identifier;
-}
-
-- (void)dragWillBeginForTabGroupItem:(TabGroupItem*)item {
-  NOTREACHED_NORETURN() << "There is no tab groups in the pinned tabs section";
-}
-
-- (void)dragSessionDidEnd {
-  _dragItemID = web::WebStateID();
-}
-
 - (UIDropOperation)dropOperationForDropSession:(id<UIDropSession>)session
                                        toIndex:(NSUInteger)destinationIndex {
   UIDragItem* dragItem = session.localDragSession.items.firstObject;
@@ -360,56 +340,50 @@ web::WebStateID GetActivePinnedTabID(WebStateList* web_state_list) {
 - (void)dropItem:(UIDragItem*)dragItem
                toIndex:(NSUInteger)destinationIndex
     fromSameCollection:(BOOL)fromSameCollection {
+  WebStateList* webStateList = self.webStateList;
+
   // Tab move operations only originate from Chrome so a local object is used.
   // Local objects allow synchronous drops, whereas NSItemProvider only allows
   // asynchronous drops.
   if ([dragItem.localObject isKindOfClass:[TabInfo class]]) {
     TabInfo* tabInfo = static_cast<TabInfo*>(dragItem.localObject);
-    if (!fromSameCollection) {
-      // Try to pin the tab. If the returned index is invalid that means the
-      // tab lives in another Browser.
-      int tabIndex = SetWebStatePinnedState(self.webStateList, tabInfo.tabID,
-                                            /*pin_state=*/true);
-      if (tabIndex == WebStateList::kInvalidIndex) {
-        BrowserList* browserList =
-            BrowserListFactory::GetForBrowserState(self.browserState);
-        BrowserAndIndex tabBrowserAndIndex = FindBrowserAndIndex(
-            tabInfo.tabID, browserList->AllRegularBrowsers());
-        if (!tabBrowserAndIndex.browser) {
-          // This could happen if the tab is deleted during a drag-and-drop
-          // action.
-          return;
-        }
 
-        // Move tab across Browsers.
-        base::UmaHistogramEnumeration(kUmaPinnedViewDragOrigin,
-                                      DragItemOrigin::kOtherBrwoser);
-        const WebStateList::InsertionParams params =
-            WebStateList::InsertionParams::AtIndex(destinationIndex).Pinned();
-        MoveTabToBrowser(tabInfo.tabID, self.browser, params);
-        return;
-      }
-      base::UmaHistogramEnumeration(kUmaPinnedViewDragOrigin,
-                                    DragItemOrigin::kSameBrowser);
-    } else {
-      base::UmaHistogramEnumeration(kUmaPinnedViewDragOrigin,
-                                    DragItemOrigin::kSameCollection);
-    }
+    // Try to pin the tab, if pinned nothing happens.
+    SetWebStatePinnedState(webStateList, tabInfo.tabID,
+                           /*pin_state=*/true);
 
-    // Reorder tabs.
-    int sourceIndex = GetWebStateIndex(self.webStateList,
-                                       WebStateSearchCriteria{
+    int sourceWebStateIndex =
+        GetWebStateIndex(webStateList, WebStateSearchCriteria{
                                            .identifier = tabInfo.tabID,
                                            .pinned_state = PinnedState::kPinned,
                                        });
-    if (sourceIndex != WebStateList::kInvalidIndex &&
-        destinationIndex != NSNotFound &&
-        static_cast<int>(destinationIndex) <
-            self.webStateList->pinned_tabs_count()) {
-      self.webStateList->MoveWebStateAt(sourceIndex, destinationIndex);
+
+    if (sourceWebStateIndex == WebStateList::kInvalidIndex) {
+      // Move tab across Browsers.
+      base::UmaHistogramEnumeration(kUmaPinnedViewDragOrigin,
+                                    DragItemOrigin::kOtherBrowser);
+      const WebStateList::InsertionParams params =
+          WebStateList::InsertionParams::AtIndex(destinationIndex).Pinned();
+      MoveTabToBrowser(tabInfo.tabID, self.browser, params);
+      return;
     }
+
+    if (fromSameCollection) {
+      base::UmaHistogramEnumeration(kUmaPinnedViewDragOrigin,
+                                    DragItemOrigin::kSameCollection);
+    } else {
+      base::UmaHistogramEnumeration(kUmaPinnedViewDragOrigin,
+                                    DragItemOrigin::kSameBrowser);
+    }
+
+    // Reorder tabs.
+    const auto insertionParams =
+        WebStateList::InsertionParams::AtIndex(destinationIndex);
+    MoveWebStateWithIdentifierToInsertionParams(
+        tabInfo.tabID, insertionParams, webStateList, fromSameCollection);
     return;
   }
+
   base::UmaHistogramEnumeration(kUmaPinnedViewDragOrigin,
                                 DragItemOrigin::kOther);
 
@@ -429,6 +403,8 @@ web::WebStateID GetActivePinnedTabID(WebStateList* web_state_list) {
     [placeholderContext deletePlaceholder];
     return;
   }
+  base::UmaHistogramEnumeration(kUmaPinnedViewDragOrigin,
+                                DragItemOrigin::kOther);
 
   __weak __typeof(self) weakSelf = self;
   auto loadHandler =
@@ -441,11 +417,6 @@ web::WebStateID GetActivePinnedTabID(WebStateList* web_state_list) {
         });
       };
   [itemProvider loadObjectOfClass:[NSURL class] completionHandler:loadHandler];
-}
-
-- (NSArray<UIDragItem*>*)allSelectedDragItems {
-  NOTREACHED_NORETURN() << "You should not be able to drag and drop multiple "
-                           "items. There is no selection mode in pinned tabs.";
 }
 
 #pragma mark - Private
@@ -468,20 +439,6 @@ web::WebStateID GetActivePinnedTabID(WebStateList* web_state_list) {
 
 // Returns the `UIDropOperation` corresponding to the given `tabInfo`.
 - (UIDropOperation)dropOperationForTabInfo:(TabInfo*)tabInfo {
-  // If the dropped tab is from the same Chrome window and has been removed,
-  // cancel the drop operation.
-  if (_dragItemID == tabInfo.tabID) {
-    const BOOL tabExists =
-        GetWebStateIndex(self.webStateList,
-                         WebStateSearchCriteria{
-                             .identifier = tabInfo.tabID,
-                             .pinned_state = PinnedState::kPinned,
-                         }) != WebStateList::kInvalidIndex;
-    if (!tabExists) {
-      return UIDropOperationCancel;
-    }
-  }
-
   if (tabInfo.incognito) {
     return UIDropOperationForbidden;
   }

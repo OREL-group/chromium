@@ -25,6 +25,7 @@
 #include "base/trace_event/memory_dump_provider.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
+#include "components/viz/common/frame_sinks/begin_frame_source.h"
 #include "components/viz/service/display_embedder/compositor_gpu_thread.h"
 #include "components/viz/service/viz_service_export.h"
 #include "gpu/command_buffer/client/gpu_memory_buffer_manager.h"
@@ -89,6 +90,12 @@ namespace media {
 class MediaGpuChannelManager;
 }  // namespace media
 
+#if !BUILDFLAG(IS_CHROMEOS)
+namespace webnn {
+class WebNNContextProviderImpl;
+}  // namespace webnn
+#endif
+
 namespace viz {
 
 class VulkanContextProvider;
@@ -109,7 +116,8 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl
 #if BUILDFLAG(IS_WIN)
       public gl::DirectCompositionOverlayCapsObserver,
 #endif
-      public mojom::GpuService {
+      public mojom::GpuService,
+      public BeginFrameObserverBase {
  public:
   struct VIZ_SERVICE_EXPORT InitParams {
     InitParams();
@@ -301,6 +309,17 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl
   bool IsExiting() const override;
   gpu::Scheduler* GetGpuScheduler() override;
 
+  // BeginFrameObserverBase implementation, which called from
+  // VizCompositorThread.
+  bool OnBeginFrameDerivedImpl(const BeginFrameArgs& args) override;
+  void OnBeginFrameSourcePausedChanged(bool paused) override;
+
+  using RequestBeginFrameForGpuServiceCB =
+      base::RepeatingCallback<void(bool toggle)>;
+  void SetRequestBeginFrameForGpuServiceCB(RequestBeginFrameForGpuServiceCB cb);
+  void SetMjpegDecodeAcceleratorBeginFrameCB(
+      std::optional<base::RepeatingClosure> cb);
+
 #if BUILDFLAG(IS_WIN)
   // DirectCompositionOverlayCapsObserver implementation.
   // Update overlay info and HDR status on the GPU process and send the updated
@@ -336,10 +355,6 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl
     return gpu_memory_buffer_factory_.get();
   }
 
-  gpu::MailboxManager* mailbox_manager() {
-    return gpu_channel_manager_->mailbox_manager();
-  }
-
   gpu::SharedImageManager* shared_image_manager() {
     return gpu_channel_manager_->shared_image_manager();
   }
@@ -355,6 +370,8 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl
   gpu::SyncPointManager* sync_point_manager() {
     return gpu_channel_manager_->sync_point_manager();
   }
+
+  gpu::Scheduler* gpu_scheduler() { return gpu_channel_manager_->scheduler(); }
 
   scoped_refptr<base::SingleThreadTaskRunner>& main_runner() {
     return main_runner_;
@@ -539,11 +556,13 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl
 #endif
   }
 
+  void OnBeginFrameOnIO(const BeginFrameArgs& args);
+
   scoped_refptr<base::SingleThreadTaskRunner> main_runner_;
   scoped_refptr<base::SingleThreadTaskRunner> io_runner_;
 
 #if BUILDFLAG(IS_FUCHSIA)
-  // TODO(crbug.com/1340041): Fuchsia does not support FIDL communication from
+  // TODO(crbug.com/40850116): Fuchsia does not support FIDL communication from
   // ThreadPool's worker threads.
   std::unique_ptr<base::Thread> vea_thread_;
 #endif
@@ -581,6 +600,12 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl
   // Display compositor gpu thread.
   std::unique_ptr<CompositorGpuThread> compositor_gpu_thread_;
 
+  // Toggle gpu service on begin frame source which is used in main thread.
+  RequestBeginFrameForGpuServiceCB request_begin_frame_for_gpu_service_cb_;
+  // Used in GPU IO thread.
+  std::optional<base::RepeatingClosure>
+      mjpeg_decode_accelerator_begin_frame_cb_;
+
   // On some platforms (e.g. android webview), SyncPointManager,
   // SharedImageManager and Scheduler come from external sources.
   std::unique_ptr<gpu::SyncPointManager> owned_sync_point_manager_;
@@ -604,6 +629,10 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl
 #endif
 #if BUILDFLAG(SKIA_USE_DAWN)
   std::unique_ptr<gpu::DawnContextProvider> dawn_context_provider_;
+#endif
+
+#if !BUILDFLAG(IS_CHROMEOS)
+  std::unique_ptr<webnn::WebNNContextProviderImpl> webnn_context_provider_;
 #endif
 
   std::unique_ptr<gpu::GpuMemoryBufferFactory> gpu_memory_buffer_factory_;

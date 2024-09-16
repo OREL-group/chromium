@@ -88,10 +88,10 @@ class RequestHandler:
             "is_test_image": True,
             "os_version": "local-dev",
             "textdirection": "ltr",
-            "video_capture_disallowed": False,
+            "cca_disallowed": False,
             "timeLapse": True,
-            "auto_qr": True,
             "digital_zoom": True,
+            "preview_ocr": True,
             "super_res": True,
         }
         load_time_data.update(self._load_grd_strings())
@@ -182,6 +182,7 @@ class RequestHandler:
         mojo_files = [
             "camera_app_helper.mojom",
             "events_sender.mojom",
+            "ocr.mojom",
             "types.mojom",
         ]
         # TODO(pihsun): This doesn't handle possible enum name collision
@@ -306,7 +307,6 @@ class RequestHandler:
             ),
             # These two files are not compiled and need to be served from
             # self.cca_root.
-            _Route("/js/lib/analytics.js", self._handle_static_file),
             _Route("/js/lib/ffmpeg.js", self._handle_static_file),
             # All other .js files.
             _Route(

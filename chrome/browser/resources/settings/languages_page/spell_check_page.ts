@@ -8,6 +8,9 @@
  */
 
 import 'chrome://resources/cr_elements/cr_button/cr_button.js';
+// <if expr="_google_chrome or not is_macosx">
+import 'chrome://resources/cr_elements/cr_collapse/cr_collapse.js';
+// </if>
 import 'chrome://resources/cr_elements/cr_link_row/cr_link_row.js';
 import 'chrome://resources/cr_elements/cr_toggle/cr_toggle.js';
 import 'chrome://resources/cr_elements/icons.html.js';
@@ -16,11 +19,8 @@ import 'chrome://resources/cr_elements/cr_shared_style.css.js';
 import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
 import 'chrome://resources/js/action_link.js';
 import 'chrome://resources/cr_elements/action_link.css.js';
-// <if expr="_google_chrome or not is_macosx">
-import 'chrome://resources/polymer/v3_0/iron-collapse/iron-collapse.js';
-// </if>
 import 'chrome://resources/polymer/v3_0/iron-flex-layout/iron-flex-layout-classes.js';
-import 'chrome://resources/polymer/v3_0/iron-icon/iron-icon.js';
+import 'chrome://resources/cr_elements/cr_icon/cr_icon.js';
 import '../controls/controlled_radio_button.js';
 import '../controls/settings_radio_group.js';
 import '../controls/settings_toggle_button.js';

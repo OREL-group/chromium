@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/ui/tabs/organization/tab_organization.h"
+
 #include <memory>
 #include <string>
 
@@ -11,13 +13,13 @@
 #include "chrome/browser/ui/tabs/organization/logging_util.h"
 #include "chrome/browser/ui/tabs/organization/metrics.h"
 #include "chrome/browser/ui/tabs/organization/tab_data.h"
-#include "chrome/browser/ui/tabs/organization/tab_organization.h"
 #include "chrome/browser/ui/tabs/organization/tab_organization_request.h"
 #include "chrome/browser/ui/tabs/organization/tab_organization_session.h"
 #include "chrome/browser/ui/tabs/tab_enums.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/tabs/test_tab_strip_model_delegate.h"
+#include "chrome/browser/ui/tabs/test_util.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/optimization_guide/core/model_quality/feature_type_map.h"
 #include "components/optimization_guide/core/model_quality/model_quality_log_entry.h"
@@ -149,6 +151,7 @@ class TabOrganizationTest : public testing::Test {
 
   const std::unique_ptr<TestTabStripModelDelegate> delegate_;
   const std::unique_ptr<TabStripModel> tab_strip_model_;
+  tabs::PreventTabFeatureInitialization prevent_;
 };
 
 class SessionObserver : public TabOrganizationSession::Observer {
@@ -189,8 +192,8 @@ TEST_F(TabOrganizationTest, TabDataTabStripModelConstructor) {
   EXPECT_EQ(tab_strip_model(), tab_data.original_tab_strip_model());
   EXPECT_EQ(web_contents->GetLastCommittedURL(), tab_data.original_url());
 
-  // TODO(1476012) Add a check for TabID once TabStripModel::Tab has the new
-  // handle.
+  // TODO(crbug.com/40070608) Add a check for TabID once TabStripModel::Tab has
+  // the new handle.
 }
 
 // Check that TabData isn't updated when the tabstrip updates.
@@ -245,7 +248,7 @@ TEST_F(TabOrganizationTest, TabDataOnDestroyWebContentsReplaceUpdatesContents) {
   std::unique_ptr<content::WebContents> new_contents = CreateWebContents();
   content::WebContents* new_contents_ptr = new_contents.get();
   EXPECT_EQ(tab_data->web_contents(), old_contents);
-  tab_strip_model()->ReplaceWebContentsAt(
+  tab_strip_model()->DiscardWebContentsAt(
       tab_strip_model()->GetIndexOfWebContents(old_contents),
       std::move(new_contents));
   EXPECT_EQ(tab_data->web_contents(), new_contents_ptr);
@@ -331,7 +334,7 @@ TEST_F(TabOrganizationTest, TabDataObserverTest) {
   // replace the contents which should result in an update call.
   std::unique_ptr<content::WebContents> new_contents = CreateWebContents();
   content::WebContents* new_contents_ptr = new_contents.get();
-  tab_strip_model()->ReplaceWebContentsAt(
+  tab_strip_model()->DiscardWebContentsAt(
       tab_strip_model()->GetIndexOfWebContents(old_contents),
       std::move(new_contents));
   EXPECT_EQ(observer.update_call_count, 1);
@@ -493,6 +496,27 @@ TEST_F(TabOrganizationTest, TabOrganizationIsValidForOrganizing) {
       std::make_unique<TabData>(tab_strip_model(), tab_3);
   organization.AddTabData(std::move(tab_data_3));
   EXPECT_FALSE(organization.IsValidForOrganizing());
+
+  TabOrganization pre_existing_organization({}, {u"default_name"}, 2);
+
+  content::WebContents* grouped_tab_1 = AddTab();
+  std::unique_ptr<TabData> grouped_tab_data_1 =
+      std::make_unique<TabData>(tab_strip_model(), grouped_tab_1);
+  pre_existing_organization.AddTabData(std::move(grouped_tab_data_1));
+
+  content::WebContents* grouped_tab_2 = AddTab();
+  std::unique_ptr<TabData> grouped_tab_data_2 =
+      std::make_unique<TabData>(tab_strip_model(), grouped_tab_2);
+  pre_existing_organization.AddTabData(std::move(grouped_tab_data_2));
+  // The minimum number of tabs is met, but there are no tabs new to the group.
+  EXPECT_FALSE(pre_existing_organization.IsValidForOrganizing());
+
+  content::WebContents* grouped_tab_3 = AddTab();
+  std::unique_ptr<TabData> grouped_tab_data_3 =
+      std::make_unique<TabData>(tab_strip_model(), grouped_tab_3);
+  pre_existing_organization.AddTabData(std::move(grouped_tab_data_3));
+  // There is one tab new to the group.
+  EXPECT_TRUE(pre_existing_organization.IsValidForOrganizing());
 }
 
 TEST_F(TabOrganizationTest, TabOrganizationNoUniqueTabDatas) {
@@ -1180,54 +1204,6 @@ TEST_F(TabOrganizationTest, TabOrganizationSessionRequestOnLogResultsCalled) {
   // Log Results and expect the log_results_callback to be called.
   session.reset();
   EXPECT_EQ(log_callback_called_times, 1);
-}
-
-TEST_F(TabOrganizationTest, ActiveTabExcludesOrganizationsWithoutIt) {
-  std::unique_ptr<TabOrganizationRequest> request =
-      std::make_unique<TabOrganizationRequest>();
-  TabOrganizationRequest* request_ptr = request.get();
-
-  std::vector<TabOrganizationResponse::Organization> response_organizations;
-
-  std::vector<TabData::TabID> ids_to_group_with_active_tab;
-  auto* const active_tab_web_contents = AddTab();
-  request->AddTabData(
-      std::make_unique<TabData>(tab_strip_model(), active_tab_web_contents));
-  const auto base_tab_id = request->tab_datas()[0]->tab_id();
-  request->SetBaseTabID(base_tab_id);
-  ids_to_group_with_active_tab.emplace_back(base_tab_id);
-  for (int i = 0; i < 2; i++) {
-    TabData* tab_to_group_data = request->AddTabData(
-        std::make_unique<TabData>(tab_strip_model(), AddTab()));
-    ids_to_group_with_active_tab.emplace_back(tab_to_group_data->tab_id());
-  }
-  TabOrganizationResponse::Organization organization_1(
-      u"label1", std::move(ids_to_group_with_active_tab));
-  response_organizations.emplace_back(std::move(organization_1));
-
-  std::vector<TabData::TabID> ids_to_group_without_active_tab;
-  for (int i = 0; i < 2; i++) {
-    TabData* tab_to_group_data = request->AddTabData(
-        std::make_unique<TabData>(tab_strip_model(), AddTab()));
-    ids_to_group_without_active_tab.emplace_back(tab_to_group_data->tab_id());
-  }
-  TabOrganizationResponse::Organization organization_2(
-      u"label2", std::move(ids_to_group_without_active_tab));
-  response_organizations.emplace_back(std::move(organization_2));
-
-  std::unique_ptr<TabOrganizationResponse> response =
-      std::make_unique<TabOrganizationResponse>(response_organizations);
-
-  std::unique_ptr<TabOrganizationSession> session =
-      std::make_unique<TabOrganizationSession>(
-          std::move(request), TabOrganizationEntryPoint::kNone);
-
-  session->StartRequest();
-  request_ptr->CompleteRequestForTesting(std::move(response));
-
-  EXPECT_EQ(1u, session->tab_organizations().size());
-  EXPECT_EQ(active_tab_web_contents,
-            session->tab_organizations()[0]->tab_datas()[0]->web_contents());
 }
 
 // Logging Util

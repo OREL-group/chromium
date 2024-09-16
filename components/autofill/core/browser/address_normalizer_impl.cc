@@ -70,8 +70,7 @@ void FormatPhoneNumberToE164(AutofillProfile* profile,
                              const std::string& region_code,
                              const std::string& app_locale) {
   const std::string formatted_number = i18n::FormatPhoneForResponse(
-      base::UTF16ToUTF8(
-          profile->GetInfo(AutofillType(PHONE_HOME_WHOLE_NUMBER), app_locale)),
+      base::UTF16ToUTF8(profile->GetInfo(PHONE_HOME_WHOLE_NUMBER, app_locale)),
       region_code);
 
   profile->SetRawInfo(PHONE_HOME_WHOLE_NUMBER,
@@ -282,7 +281,7 @@ void AddressNormalizerImpl::StartAddressNormalization(
     const base::android::JavaParamRef<jobject>& jprofile,
     jint jtimeout_seconds,
     const base::android::JavaParamRef<jobject>& jdelegate) {
-  // TODO(crbug.com/1484006): Check if existing profile needs to be passed.
+  // TODO(crbug.com/40282123): Check if existing profile needs to be passed.
   AutofillProfile profile = AutofillProfile::CreateFromJavaObject(
       jprofile, /*existing_profile=*/nullptr, app_locale_);
 

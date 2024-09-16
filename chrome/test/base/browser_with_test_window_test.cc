@@ -46,7 +46,7 @@
 #include "chrome/browser/ash/crosapi/crosapi_manager.h"
 #include "chrome/browser/ash/crosapi/idle_service_ash.h"
 #include "chrome/browser/ash/crosapi/test_crosapi_dependency_registry.h"
-#include "chrome/browser/chromeos/kcer/kcer_factory.h"
+#include "chrome/browser/browser_process.h"
 #include "chromeos/ash/components/browser_context_helper/annotated_account_id.h"
 #include "components/user_manager/fake_user_manager.h"
 #include "components/user_manager/scoped_user_manager.h"
@@ -78,7 +78,11 @@ void BrowserWithTestWindowTest::SetUp() {
     user_manager_.Reset(std::make_unique<user_manager::FakeUserManager>(
         g_browser_process->local_state()));
   }
-  ash_test_helper_.SetUp();
+  {
+    ash::AshTestHelper::InitParams ash_init;
+    ash_init.local_state = g_browser_process->local_state();
+    ash_test_helper_.SetUp(std::move(ash_init));
+  }
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS_LACROS)
@@ -143,12 +147,15 @@ void BrowserWithTestWindowTest::TearDown() {
   }
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-  kcer::KcerFactory::Shutdown();  // Depends on `manager_`.
   manager_.reset();
   kiosk_chrome_app_manager_.reset();
 #endif
 
   user_performance_tuning_manager_environment_.TearDown();
+
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  ash_test_helper_.TearDown();
+#endif
 
   // Calling DeleteAllTestingProfiles() first can cause issues in some tests, if
   // they're still holding a ScopedProfileKeepAlive.
@@ -160,7 +167,6 @@ void BrowserWithTestWindowTest::TearDown() {
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-  ash_test_helper_.TearDown();
   test_views_delegate_.reset();
   user_manager_.Reset();
 #elif defined(TOOLKIT_VIEWS)

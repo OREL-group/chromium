@@ -51,7 +51,7 @@ CoreAccountId AccountsMutatorImpl::AddOrUpdateAccount(
 #endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
 ) {
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 #endif
   CoreAccountId account_id =
       account_tracker_service_->SeedAccountInfo(gaia_id, email, access_point);
@@ -93,7 +93,7 @@ void AccountsMutatorImpl::RemoveAccount(
     const CoreAccountId& account_id,
     signin_metrics::SourceForRefreshTokenOperation source) {
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 #endif
   token_service_->RevokeCredentials(account_id, source);
 }
@@ -101,7 +101,7 @@ void AccountsMutatorImpl::RemoveAccount(
 void AccountsMutatorImpl::RemoveAllAccounts(
     signin_metrics::SourceForRefreshTokenOperation source) {
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 #endif
   token_service_->RevokeAllCredentials(source);
 }
@@ -109,7 +109,7 @@ void AccountsMutatorImpl::RemoveAllAccounts(
 void AccountsMutatorImpl::InvalidateRefreshTokenForPrimaryAccount(
     signin_metrics::SourceForRefreshTokenOperation source) {
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 #endif
   DCHECK(primary_account_manager_->HasPrimaryAccount(ConsentLevel::kSignin));
   CoreAccountInfo primary_account_info =
@@ -123,8 +123,7 @@ void AccountsMutatorImpl::InvalidateRefreshTokenForPrimaryAccount(
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
 void AccountsMutatorImpl::MoveAccount(AccountsMutator* target,
                                       const CoreAccountId& account_id) {
-  if (switches::IsExplicitBrowserSigninUIOnDesktopEnabled(
-          switches::ExplicitBrowserSigninPhase::kFull) &&
+  if (switches::IsExplicitBrowserSigninUIOnDesktopEnabled() &&
       primary_account_manager_->GetPrimaryAccountId(
           signin::ConsentLevel::kSignin) == account_id) {
     // Remove to avoid the primary account remaining in the original

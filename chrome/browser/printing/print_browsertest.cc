@@ -23,7 +23,6 @@
 #include "base/path_service.h"
 #include "base/ranges/algorithm.h"
 #include "base/run_loop.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/test/scoped_feature_list.h"
@@ -258,7 +257,7 @@ class TestPrintRenderFrame
 
   // mojom::PrintRenderFrameInterceptorForTesting
   mojom::PrintRenderFrame* GetForwardingInterface() override {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return nullptr;
   }
   void PrintFrameContent(mojom::PrintFrameContentParamsPtr params,
@@ -369,13 +368,13 @@ class TestPrintViewManagerForDLP : public TestPrintViewManager {
 
   void PrintPreviewRejectedForTesting() override {
     DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-    run_loop_->Quit();
+    TestPrintViewManager::PrintPreviewRejectedForTesting();
     allowance_ = PrintAllowance::kDisallowed;
   }
 
   void PrintPreviewAllowedForTesting() override {
     DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-    run_loop_->Quit();
+    TestPrintViewManager::PrintPreviewAllowedForTesting();
     allowance_ = PrintAllowance::kAllowed;
   }
 
@@ -550,6 +549,13 @@ void PrintBrowserTest::SetPrinterLanguageTypeForSubsequentContexts(
       printer_language_type);
 }
 #endif
+
+void PrintBrowserTest::SetUserSettingsPageRangesForSubsequentContext(
+    const PageRanges& page_ranges) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  test_printing_context_factory_.SetUserSettingsPageRangesForSubsequentContext(
+      page_ranges);
+}
 
 void PrintBrowserTest::SetNewDocumentJobId(int job_id) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
@@ -1271,7 +1277,8 @@ IN_PROC_BROWSER_TEST_F(PrintBrowserTest,
   client->CompositeDocument(
       kDefaultDocumentCookie, main_frame,
       *TestPrintRenderFrame::GetDefaultDidPrintContentParams(),
-      ui::AXTreeUpdate(), GetCompositorDocumentType(), base::DoNothing());
+      ui::AXTreeUpdate(), mojom::GenerateDocumentOutline::kNone,
+      GetCompositorDocumentType(), base::DoNothing());
   ASSERT_TRUE(client->GetCompositeRequest(kDefaultDocumentCookie));
   // `requested_subframes_` should be empty.
   ASSERT_TRUE(client->requested_subframes_.empty());
@@ -1679,7 +1686,7 @@ IN_PROC_BROWSER_TEST_F(SitePerProcessPrintExtensionBrowserTest,
 
 // Printing frame content for the main frame of a generic webpage with N-up
 // printing. This is a regression test for https://crbug.com/937247
-// TODO(crbug.com/1371776): Fix flakiness and re-enable.
+// TODO(crbug.com/40870686): Fix flakiness and re-enable.
 IN_PROC_BROWSER_TEST_F(PrintBrowserTest, DISABLED_PrintNup) {
   ASSERT_TRUE(embedded_test_server()->Started());
   GURL url(embedded_test_server()->GetURL("/printing/7_pages.html"));
@@ -1703,7 +1710,7 @@ IN_PROC_BROWSER_TEST_F(PrintBrowserTest, DISABLED_PrintNup) {
 }
 
 // Site per process version of PrintBrowserTest.PrintNup.
-// TODO(crbug.com/1371776): Fix flakiness and re-enable.
+// TODO(crbug.com/40870686): Fix flakiness and re-enable.
 IN_PROC_BROWSER_TEST_F(SitePerProcessPrintBrowserTest, DISABLED_PrintNup) {
   ASSERT_TRUE(embedded_test_server()->Started());
   GURL url(embedded_test_server()->GetURL("/printing/7_pages.html"));
@@ -2013,7 +2020,7 @@ IN_PROC_BROWSER_TEST_P(PrintPrerenderBrowserTest, QuietBlockWithWindowPrint) {
   GURL prerender_url =
       embedded_test_server()->GetURL("/printing/prerendering.html");
 
-  int prerender_id = prerender_helper_.AddPrerender(
+  content::FrameTreeNodeId prerender_id = prerender_helper_.AddPrerender(
       prerender_url, /*eagerness=*/std::nullopt, GetTargetHint());
   auto* prerender_web_contents =
       content::WebContents::FromFrameTreeNodeId(prerender_id);
@@ -2046,7 +2053,7 @@ IN_PROC_BROWSER_TEST_P(PrintPrerenderBrowserTest,
   GURL prerender_url =
       embedded_test_server()->GetURL("/printing/prerendering.html");
 
-  int prerender_id = prerender_helper_.AddPrerender(
+  content::FrameTreeNodeId prerender_id = prerender_helper_.AddPrerender(
       prerender_url, /*eagerness=*/std::nullopt, GetTargetHint());
   auto* prerender_web_contents =
       content::WebContents::FromFrameTreeNodeId(prerender_id);
@@ -2176,7 +2183,7 @@ std::string GetDocumentDataTypeTestSuffix(
     const testing::TestParamInfo<DocumentDataType>& info) {
   switch (info.param) {
     case DocumentDataType::kUnknown:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
     case DocumentDataType::kPdf:
       return "Pdf";
     case DocumentDataType::kXps:

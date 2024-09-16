@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/updater/win/ui/progress_wnd.h"
 
 #include <memory>
@@ -69,7 +74,7 @@ int GetPriority(CompletionCodes code) {
     }
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return -1;
 }
 
@@ -242,7 +247,7 @@ LRESULT ProgressWnd::OnClickedButton(WORD notify_code,
           events_sink_->DoReboot();
           break;
         default:
-          NOTREACHED();
+          NOTREACHED_IN_MIGRATION();
       }
       break;
     case IDC_BUTTON2:
@@ -252,7 +257,7 @@ LRESULT ProgressWnd::OnClickedButton(WORD notify_code,
         case States::STATE_COMPLETE_REBOOT:
           break;
         default:
-          NOTREACHED();
+          NOTREACHED_IN_MIGRATION();
       }
       break;
     case IDC_CLOSE:
@@ -262,11 +267,11 @@ LRESULT ProgressWnd::OnClickedButton(WORD notify_code,
           return CompleteWnd::OnClickedButton(notify_code, id, wnd_ctl,
                                               handled);
         default:
-          NOTREACHED();
+          NOTREACHED_IN_MIGRATION();
       }
       break;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 
   handled = true;
@@ -290,7 +295,7 @@ LRESULT ProgressWnd::OnInstallStopped(UINT msg,
       HandleCancelRequest();
       break;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
   }
 

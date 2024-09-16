@@ -7,6 +7,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/metrics/payments/mandatory_reauth_metrics.h"
+#include "components/autofill/core/browser/payments/payments_autofill_client.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/strings/grit/components_branded_strings.h"
 #include "components/strings/grit/components_strings.h"
@@ -103,12 +104,12 @@ void MandatoryReauthManager::StartDeviceAuthentication(
       l10n_util::GetStringUTF16(IDS_PAYMENTS_AUTOFILL_FILLING_MANDATORY_REAUTH),
       std::move(authentication_complete_callback));
 #elif BUILDFLAG(IS_ANDROID)
-  // TODO(crbug.com/1427216): Convert this to
+  // TODO(crbug.com/40261690): Convert this to
   // DeviceAuthenticator::AuthenticateWithMessage() with the correct message
   // once it is supported. Currently, the message is "Verify it's you".
   Authenticate(std::move(authentication_complete_callback));
 #else
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 #endif
 }
 
@@ -202,7 +203,7 @@ bool MandatoryReauthManager::ShouldOfferOptin(
 }
 
 void MandatoryReauthManager::StartOptInFlow() {
-  client_->ShowMandatoryReauthOptInPrompt(
+  client_->GetPaymentsAutofillClient()->ShowMandatoryReauthOptInPrompt(
       base::BindOnce(&MandatoryReauthManager::OnUserAcceptedOptInPrompt,
                      weak_ptr_factory_.GetWeakPtr()),
       base::BindOnce(&MandatoryReauthManager::OnUserCancelledOptInPrompt,
@@ -223,14 +224,14 @@ void MandatoryReauthManager::OnUserAcceptedOptInPrompt() {
           &MandatoryReauthManager::OnOptInAuthenticationStepCompleted,
           weak_ptr_factory_.GetWeakPtr()));
 #elif BUILDFLAG(IS_ANDROID)
-  // TODO(crbug.com/1427216): Convert this to
+  // TODO(crbug.com/40261690): Convert this to
   // DeviceAuthenticator::AuthenticateWithMessage() with the correct message
   // once it is supported. Currently, the message is "Verify it's you".
   Authenticate(base::BindOnce(
       &MandatoryReauthManager::OnOptInAuthenticationStepCompleted,
       weak_ptr_factory_.GetWeakPtr()));
 #else
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 #endif
 }
 
@@ -247,7 +248,8 @@ void MandatoryReauthManager::OnOptInAuthenticationStepCompleted(bool success) {
         ->payments_data_manager()
         .SetPaymentMethodsMandatoryReauthEnabled(
             /*enabled=*/true);
-    client_->ShowMandatoryReauthOptInConfirmation();
+    client_->GetPaymentsAutofillClient()
+        ->ShowMandatoryReauthOptInConfirmation();
   } else {
     client_->GetPersonalDataManager()
         ->payments_data_manager()

@@ -2,8 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/updater/util/util.h"
 
+#include <algorithm>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -18,7 +24,6 @@
 #endif  // BUILDFLAG(IS_WIN)
 
 #include "base/base_paths.h"
-#include "base/check_op.h"
 #include "base/command_line.h"
 #include "base/files/file.h"
 #include "base/files/file_enumerator.h"
@@ -389,6 +394,14 @@ bool DeleteExcept(const std::optional<base::FilePath>& except) {
         }
       });
   return delete_success;
+}
+
+int GetDownloadProgress(int64_t downloaded_bytes, int64_t total_bytes) {
+  if (downloaded_bytes == -1 || total_bytes == -1 || total_bytes == 0) {
+    return -1;
+  }
+  return 100 * std::clamp(static_cast<double>(downloaded_bytes) / total_bytes,
+                          0.0, 1.0);
 }
 
 }  // namespace updater

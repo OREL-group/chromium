@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -47,6 +52,7 @@
 #include "chrome/browser/chromeos/policy/dlp/test/mock_dlp_rules_manager.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
+#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_paths.h"
@@ -763,11 +769,12 @@ IN_PROC_BROWSER_TEST_F(FileManagerPrivateApiTest, GetPdfThumbnail) {
 
   {
     base::ScopedAllowBlockingForTesting allow_io;
-    base::FilePath source = base::PathService::CheckedGet(chrome::DIR_TEST_DATA)
-                                .AppendASCII("pdf")
-                                .AppendASCII("test.pdf");
-    base::FilePath destination = downloads.AppendASCII("test.pdf");
-    ASSERT_TRUE(base::CopyFile(source, destination));
+    base::FilePath source_dir =
+        base::PathService::CheckedGet(chrome::DIR_TEST_DATA).AppendASCII("pdf");
+    ASSERT_TRUE(base::CopyFile(source_dir.AppendASCII("test.pdf"),
+                               downloads.AppendASCII("test.pdf")));
+    ASSERT_TRUE(base::CopyFile(source_dir.AppendASCII("combobox_form.pdf"),
+                               downloads.AppendASCII("combobox_form.pdf")));
   }
 
   EXPECT_TRUE(RunExtensionTest("image_loader_private/get_pdf_thumbnail",

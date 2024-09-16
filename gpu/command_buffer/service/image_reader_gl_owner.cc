@@ -19,6 +19,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/not_fatal_until.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task/bind_post_task.h"
@@ -46,10 +47,10 @@ bool IsSurfaceControl(TextureOwner::Mode mode) {
     case TextureOwner::Mode::kAImageReaderInsecure:
       return false;
     case TextureOwner::Mode::kSurfaceTextureInsecure:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return false;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return false;
 }
 
@@ -328,7 +329,7 @@ void ImageReaderGLOwner::UpdateTexImage() {
     default:
       LOG(ERROR) << "AImageReader: Unknown error: " << return_code;
       // No other error code should be returned.
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return;
   }
   base::ScopedFD scoped_acquire_fence_fd(acquire_fence_fd);
@@ -360,8 +361,8 @@ ImageReaderGLOwner::GetAHardwareBuffer() {
     return nullptr;
   }
 
-  // TODO(1179206): We suspect that buffer is already freed here and it causes
-  // crash later. Trying to crash earlier.
+  // TODO(crbug.com/40749597): We suspect that buffer is already freed here and
+  // it causes crash later. Trying to crash earlier.
   base::AndroidHardwareBufferCompat::GetInstance().Acquire(buffer);
   base::AndroidHardwareBufferCompat::GetInstance().Release(buffer);
 
@@ -435,7 +436,7 @@ void ImageReaderGLOwner::ReleaseRefOnImageLocked(AImage* image,
   AssertAcquiredDrDcLock();
 
   auto it = image_refs_.find(image);
-  DCHECK(it != image_refs_.end());
+  CHECK(it != image_refs_.end(), base::NotFatalUntil::M130);
 
   auto& image_ref = it->second;
   DCHECK_GT(image_ref.count, 0u);

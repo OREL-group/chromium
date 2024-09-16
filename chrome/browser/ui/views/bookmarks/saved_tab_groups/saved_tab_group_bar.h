@@ -11,8 +11,11 @@
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/ui/views/bookmarks/saved_tab_groups/saved_tab_group_button.h"
 #include "chrome/browser/ui/views/bookmarks/saved_tab_groups/saved_tab_group_everything_menu.h"
+#include "chrome/browser/ui/views/user_education/browser_feature_promo_controller.h"
 #include "components/saved_tab_groups/saved_tab_group_model.h"
 #include "components/saved_tab_groups/saved_tab_group_model_observer.h"
+#include "components/saved_tab_groups/tab_group_sync_service.h"
+#include "components/saved_tab_groups/types.h"
 #include "content/public/browser/page.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/views/accessible_pane_view.h"
@@ -31,21 +34,24 @@ class Widget;
 
 namespace tab_groups {
 
+class TabGroupSyncService;
 class SavedTabGroupButton;
 class SavedTabGroupDragData;
+class SavedTabGroupOverflowButton;
 
 // The view for accessing SavedTabGroups from the bookmarks bar. Is responsible
 // for rendering the SavedTabGroupButtons with the bounds that are defined by
 // its parent, BookmarkBarView.
 class SavedTabGroupBar : public views::AccessiblePaneView,
                          public SavedTabGroupModelObserver,
+                         public TabGroupSyncService::Observer,
                          public views::WidgetObserver {
   METADATA_HEADER(SavedTabGroupBar, views::AccessiblePaneView)
 
  public:
   SavedTabGroupBar(Browser* browser, bool animations_enabled);
   SavedTabGroupBar(Browser* browser,
-                   SavedTabGroupModel* saved_tab_group_model,
+                   TabGroupSyncService* tab_group_service,
                    bool animations_enabled);
   SavedTabGroupBar(const SavedTabGroupBar&) = delete;
   SavedTabGroupBar& operator=(const SavedTabGroupBar&) = delete;
@@ -58,9 +64,7 @@ class SavedTabGroupBar : public views::AccessiblePaneView,
   }
 
   content::PageNavigator* page_navigator() { return page_navigator_; }
-
-  // views::AccessiblePaneView
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
+  views::View* overflow_button() { return overflow_button_; }
 
   // views::View
   bool GetDropFormats(int* formats,
@@ -77,20 +81,34 @@ class SavedTabGroupBar : public views::AccessiblePaneView,
 
   // SavedTabGroupModelObserver
   void SavedTabGroupAddedLocally(const base::Uuid& guid) override;
-  void SavedTabGroupRemovedLocally(const SavedTabGroup* removed_group) override;
+  void SavedTabGroupRemovedLocally(const SavedTabGroup& removed_group) override;
   void SavedTabGroupLocalIdChanged(const base::Uuid& saved_group_id) override;
   void SavedTabGroupUpdatedLocally(
       const base::Uuid& group_guid,
-      const std::optional<base::Uuid>& tab_guid = std::nullopt) override;
+      const std::optional<base::Uuid>& tab_guid) override;
   void SavedTabGroupReorderedLocally() override;
   void SavedTabGroupReorderedFromSync() override;
-  void SavedTabGroupTabsReorderedLocally(const base::Uuid& group_guid) override;
+  void SavedTabGroupTabMovedLocally(const base::Uuid& group_guid,
+                                    const base::Uuid& tab_guid) override;
   void SavedTabGroupAddedFromSync(const base::Uuid& guid) override;
   void SavedTabGroupRemovedFromSync(
-      const SavedTabGroup* removed_group) override;
+      const SavedTabGroup& removed_group) override;
   void SavedTabGroupUpdatedFromSync(
       const base::Uuid& group_guid,
-      const std::optional<base::Uuid>& tab_guid = std::nullopt) override;
+      const std::optional<base::Uuid>& tab_guid) override;
+
+  // TabGroupSyncService::Observer
+  void OnInitialized() override;
+  void OnTabGroupAdded(const SavedTabGroup& group,
+                       TriggerSource source) override;
+  void OnTabGroupUpdated(const SavedTabGroup& group,
+                         TriggerSource source) override;
+  void OnTabGroupLocalIdChanged(
+      const base::Uuid& sync_id,
+      const std::optional<LocalTabGroupID>& local_id) override;
+  void OnTabGroupRemoved(const base::Uuid& sync_id,
+                         TriggerSource source) override;
+  void OnTabGroupsReordered(TriggerSource source) override;
 
   // WidgetObserver
   void OnWidgetDestroying(views::Widget* widget) override;
@@ -145,8 +163,15 @@ class SavedTabGroupBar : public views::AccessiblePaneView,
   // Find the button that matches `guid`.
   views::View* GetButton(const base::Uuid& guid);
 
+  // Returns the index of the group.
+  std::optional<size_t> GetIndexOfGroup(const base::Uuid& guid) const;
+
   // The callback that the button calls when clicked by a user.
   void OnTabGroupButtonPressed(const base::Uuid& id, const ui::Event& event);
+
+  // Creates the overflow button that houses saved tab groups that are not
+  // visible in the SavedTabGroupBar.
+  std::unique_ptr<SavedTabGroupOverflowButton> CreateOverflowButton();
 
   // When called, display a bubble which shows all the groups that are saved
   // and not visible. Each entry in the bubble, when clicked, should open the
@@ -172,7 +197,7 @@ class SavedTabGroupBar : public views::AccessiblePaneView,
   // Updates the visibilites of all buttons up to `last_index_visible`. The
   // overflow button will be displayed based on `should_show_overflow`.
   void UpdateButtonVisibilities(bool should_show_overflow,
-                                size_t last_visible_button_index);
+                                int last_visible_button_index);
 
   // Returns true if we should show the overflow button because there is not
   // enough space to display all the buttons or if there are more buttons than
@@ -197,6 +222,9 @@ class SavedTabGroupBar : public views::AccessiblePaneView,
   // Paints the drop indicator, if one should be shown.
   void MaybePaintDropIndicatorInBar(gfx::Canvas* canvas);
 
+  // Maybe show the promo if a group was closed from the tabstrip.
+  void MaybeShowClosePromo(const base::Uuid& saved_group_id);
+
   // Calculates the index in the saved tab groups bar at which we should show a
   // drop indicator, or nullopt if we should not show an indicator in the bar.
   std::optional<int> CalculateDropIndicatorIndexInBar() const;
@@ -216,13 +244,14 @@ class SavedTabGroupBar : public views::AccessiblePaneView,
   // Used to show the overflow menu when clicked.
   raw_ptr<views::BubbleDialogDelegate> bubble_delegate_ = nullptr;
 
-  // The model this tab group bar listens to.
-  raw_ptr<SavedTabGroupModel> saved_tab_group_model_;
+  // The service used to manage and query SavedTabGroups.
+  raw_ptr<TabGroupSyncService> tab_group_service_ = nullptr;
 
   // The page navigator used to create tab groups
   raw_ptr<content::PageNavigator, AcrossTasksDanglingUntriaged>
       page_navigator_ = nullptr;
-  raw_ptr<Browser> browser_;
+
+  raw_ptr<Browser> browser_ = nullptr;
 
   // During a drag and drop session, `drag_data_` owns the state for the drag.
   std::unique_ptr<SavedTabGroupDragData> drag_data_;

@@ -278,8 +278,8 @@ void AutoEnrollmentController::Start() {
                             weak_ptr_factory_.GetWeakPtr()),
         g_browser_process->local_state(), psm_rlwe_client_factory_,
         device_management_service_, shared_url_loader_factory_,
-        ash::SystemClockClient::Get(), state_keys_broker_,
-        device_settings_service_);
+        state_keys_broker_, device_settings_service_,
+        ash::OobeConfiguration::Get());
 
     enrollment_state_fetcher_->Start();
     return;
@@ -411,7 +411,7 @@ void AutoEnrollmentController::OnOwnershipStatusCheckDone(
           // The ownership check is only triggered if
           // `auto_enrollment_check_type_` indicates that an auto-enrollment
           // check should be done.
-          NOTREACHED();
+          NOTREACHED_IN_MIGRATION();
           break;
       }
       return;

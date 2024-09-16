@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/events/velocity_tracker/velocity_tracker.h"
 
 #include <stddef.h>
@@ -10,7 +15,6 @@
 #include <ostream>
 
 #include "base/check_op.h"
-#include "base/feature_list.h"
 #include "base/notreached.h"
 #include "build/build_config.h"
 #include "ui/events/velocity_tracker/motion_event.h"
@@ -242,22 +246,11 @@ VelocityTrackerStrategy* CreateStrategy(VelocityTracker::Strategy strategy) {
     case VelocityTracker::INT2:
       return new IntegratingVelocityTrackerStrategy(2);
   }
-  NOTREACHED() << "Unrecognized velocity tracker strategy: " << strategy;
+  NOTREACHED_IN_MIGRATION()
+      << "Unrecognized velocity tracker strategy: " << strategy;
   // Quadratic regression is a safe default.
   return CreateStrategy(VelocityTracker::STRATEGY_DEFAULT);
 }
-
-// We updated the timestamp used in AddMovement to correctly use the latest.
-// However we would like to confirm if an increase in jank seen is a measurement
-// only change caused by the timestamp accuracy. This feature re-enables using
-// the oldest timestamp from the event for the purpose of validation.
-//
-// This is only to validate whether this change was the cause of the jank
-// regression.
-//
-// TODO(b/332930087): clean this up after the validation has been completed.
-BASE_DECLARE_FEATURE(kUseOldestTimestamp){"UseOldestTimestamp",
-                                          base::FEATURE_DISABLED_BY_DEFAULT};
 
 }  // namespace
 
@@ -383,10 +376,7 @@ void VelocityTracker::AddMovement(const MotionEvent& event) {
     positions[index].x = event.GetX(i);
     positions[index].y = event.GetY(i);
   }
-  AddMovement(base::FeatureList::IsEnabled(kUseOldestTimestamp)
-                  ? event.GetEventTime()
-                  : event.GetLatestEventTime(),
-              id_bits, positions);
+  AddMovement(event.GetLatestEventTime(), id_bits, positions);
 }
 
 bool VelocityTracker::GetVelocity(uint32_t id,
@@ -505,18 +495,11 @@ static bool SolveLeastSquares(const float* x,
                               uint32_t n,
                               float* out_b,
                               float* out_det) {
-  // MSVC does not support variable-length arrays (used by the original Android
-  // implementation of this function).
-#if defined(COMPILER_MSVC)
-  const uint32_t M_ARRAY_LENGTH =
+  constexpr uint32_t M_ARRAY_LENGTH =
       LeastSquaresVelocityTrackerStrategy::kHistorySize;
-  const uint32_t N_ARRAY_LENGTH = Estimator::kMaxDegree;
+  constexpr uint32_t N_ARRAY_LENGTH = Estimator::kMaxDegree;
   DCHECK_LE(m, M_ARRAY_LENGTH);
   DCHECK_LE(n, N_ARRAY_LENGTH);
-#else
-  const uint32_t M_ARRAY_LENGTH = m;
-  const uint32_t N_ARRAY_LENGTH = n;
-#endif
 
   // Expand the X vector to a matrix A, pre-multiplied by the weights.
   float a[N_ARRAY_LENGTH][M_ARRAY_LENGTH];  // column-major order

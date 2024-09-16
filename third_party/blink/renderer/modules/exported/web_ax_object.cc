@@ -81,7 +81,7 @@ mojom::blink::ScrollAlignment::Behavior ToBlinkScrollAlignmentBehavior(
     case ax::mojom::ScrollAlignment::kScrollAlignmentClosestEdge:
       return mojom::blink::ScrollAlignment::Behavior::kClosestEdge;
   }
-  NOTREACHED() << alignment;
+  NOTREACHED_IN_MIGRATION() << alignment;
 }
 }  // namespace
 
@@ -492,7 +492,7 @@ static ax::mojom::TextAffinity ToAXAffinity(TextAffinity affinity) {
     case TextAffinity::kDownstream:
       return ax::mojom::TextAffinity::kDownstream;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return ax::mojom::TextAffinity::kDownstream;
   }
 }
@@ -738,14 +738,14 @@ WebDocument WebAXObject::GetDocument() const {
   return WebDocument(document);
 }
 
-bool WebAXObject::AccessibilityIsIgnored() const {
+bool WebAXObject::IsIgnored() const {
   if (IsDetached())
     return false;
 
-  return private_->AccessibilityIsIgnored();
+  return private_->IsIgnored();
 }
 
-bool WebAXObject::AccessibilityIsIncludedInTree() const {
+bool WebAXObject::IsIncludedInTree() const {
   if (IsDetached())
     return false;
 
@@ -755,7 +755,7 @@ bool WebAXObject::AccessibilityIsIncludedInTree() const {
       << "Document lifecycle must be at LayoutClean or later, was "
       << private_->GetDocument()->Lifecycle().GetState();
 
-  return private_->AccessibilityIsIncludedInTree();
+  return private_->IsIncludedInTree();
 }
 
 unsigned WebAXObject::ColumnCount() const {
@@ -855,6 +855,7 @@ WebAXObject WebAXObject::NextOnLine() const {
   if (IsDetached())
     return WebAXObject();
 
+  ScopedFreezeAXCache freeze(private_->AXObjectCache());
   return WebAXObject(private_.Get()->NextOnLine());
 }
 
@@ -862,6 +863,7 @@ WebAXObject WebAXObject::PreviousOnLine() const {
   if (IsDetached())
     return WebAXObject();
 
+  ScopedFreezeAXCache freeze(private_->AXObjectCache());
   return WebAXObject(private_.Get()->PreviousOnLine());
 }
 
@@ -1109,6 +1111,15 @@ WebAXObject WebAXObject::FromWebDocumentByID(const WebDocument& web_document,
   const Document* document = web_document.ConstUnwrap<Document>();
   auto* cache = To<AXObjectCacheImpl>(document->ExistingAXObjectCache());
   return cache ? WebAXObject(cache->ObjectFromAXID(ax_id)) : WebAXObject();
+}
+
+// static
+WebAXObject WebAXObject::FromWebDocumentFirstWithRole(
+    const WebDocument& web_document,
+    ax::mojom::blink::Role role) {
+  const Document* document = web_document.ConstUnwrap<Document>();
+  auto* cache = To<AXObjectCacheImpl>(document->ExistingAXObjectCache());
+  return cache ? WebAXObject(cache->FirstObjectWithRole(role)) : WebAXObject();
 }
 
 // static

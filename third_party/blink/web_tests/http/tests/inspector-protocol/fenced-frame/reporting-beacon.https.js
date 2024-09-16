@@ -65,12 +65,15 @@
   // The initial request should have no headers.
   testRunner.log('request url: ' + request.params.documentURL);
   testRunner.log('request headers: ' + request.params.headers);
+  testRunner.log('request data: ' + request.params.request.postData);
 
   // Then the requestExtraInfo specifies the headers.
   testRunner.log('requestExtraInfo has same requestId: '
       + (request.requestId === requestExtraInfo.requestId));
   testRunner.log('requestExtraInfo has headers: '
       + (Object.keys(requestExtraInfo.params.headers).length > 0));
+  testRunner.log('requestExtraInfo referer: '
+      + requestExtraInfo.params.headers.Referer);
 
   // The request should succeed with a 200 status code.
   testRunner.log('responseReceived has same requestId: '

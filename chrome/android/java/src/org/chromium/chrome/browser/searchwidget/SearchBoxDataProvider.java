@@ -43,7 +43,7 @@ class SearchBoxDataProvider implements LocationBarDataProvider {
      * @param context current context
      */
     /* package */ void initialize(Context context) {
-        mPrimaryColor = ChromeColors.getPrimaryBackgroundColor(context, isIncognito());
+        mPrimaryColor = ChromeColors.getPrimaryBackgroundColor(context, isIncognitoBranded());
     }
 
     @Override
@@ -57,7 +57,12 @@ class SearchBoxDataProvider implements LocationBarDataProvider {
     }
 
     @Override
-    public boolean isInOverviewAndShowingOmnibox() {
+    public boolean isIncognitoBranded() {
+        return false;
+    }
+
+    @Override
+    public boolean isOffTheRecord() {
         return false;
     }
 
@@ -106,7 +111,7 @@ class SearchBoxDataProvider implements LocationBarDataProvider {
     public GURL getCurrentGurl() {
         if (GURL.isEmptyOrInvalid(mGurl)) {
             assert LibraryLoader.getInstance().isInitialized();
-            mGurl = new GURL(SearchActivityPreferencesManager.getCurrent().searchEngineUrl);
+            mGurl = SearchActivityPreferencesManager.getCurrent().searchEngineUrl;
         }
 
         return mGurl;
@@ -123,7 +128,7 @@ class SearchBoxDataProvider implements LocationBarDataProvider {
     }
 
     @Override
-    public int getPageClassification(boolean isFocusedFromFakebox, boolean isPrefetch) {
+    public int getPageClassification(boolean isPrefetch) {
         return mPageClassification;
     }
 

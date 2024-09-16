@@ -35,13 +35,8 @@ class QuickStartController
       public TargetDeviceBootstrapController::Observer,
       public bluetooth_config::mojom::SystemPropertiesObserver {
  public:
-  // QuickStart flow entry point locations.
-  enum class EntryPoint {
-    WELCOME_SCREEN,
-    NETWORK_SCREEN,
-    GAIA_INFO_SCREEN,
-    GAIA_SCREEN,
-  };
+  using AbortFlowReason = QuickStartMetrics::AbortFlowReason;
+  using EntryPoint = QuickStartMetrics::EntryPoint;
 
   // Main state used by the controller.
   // TODO(b:283965994) - Finalize states.
@@ -57,17 +52,6 @@ class QuickStartController
     CONTINUING_AFTER_ENROLLMENT_CHECKS,
     FALLBACK_URL_FLOW_ON_GAIA_SCREEN,
     SETUP_COMPLETE,
-  };
-
-  enum class AbortFlowReason {
-    USER_CLICKED_BACK,
-    USER_CLICKED_CANCEL,
-    SIGNIN_SCHOOL,
-    ENTERPRISE_ENROLLMENT,
-    QUICK_START_FLOW_COMPLETE,
-    ERROR,
-    // Child accounts are not yet supported.
-    ADD_CHILD,
   };
 
   // Implemented by the QuickStartScreen
@@ -106,7 +90,12 @@ class QuickStartController
     std::string avatar_url = "";
   };
 
-  using EntryPointButtonVisibilityCallback = base::OnceCallback<void(bool)>;
+  // EntryPointButtonVisibilityCallback is a RepeatingCallback since the
+  // bluetooth adapter may not be present and powered the first time it's
+  // invoked. The bluetooth adapter asynchronously affects the feature support
+  // status and thus the entry point visibility.
+  using EntryPointButtonVisibilityCallback =
+      base::RepeatingCallback<void(bool)>;
   using UiState = UiDelegate::UiState;
 
   QuickStartController();
@@ -141,9 +130,8 @@ class QuickStartController
 
   // Accessors methods to be used by the UI for retrieving data. It is an error
   // to retrieve these values when they do not exist.
-  QRCode::PixelData GetQrCode() { return qr_code_data_.value(); }
+  QRCode GetQrCode() { return qr_code_.value(); }
   std::string GetPin() { return pin_.value(); }
-  std::string GetDiscoverableName() { return discoverable_name_.value(); }
   UserInfo GetUserInfo() { return user_info_; }
   std::string GetWiFiName() { return wifi_name_.value(); }
   std::string GetFallbackUrl() { return fallback_url_.value(); }
@@ -166,7 +154,7 @@ class QuickStartController
 
   // Exposes TargetDeviceBootstrapController::PrepareForUpdate() to the OOBE
   // UpdateScreen and ConsumerUpdateScreen.
-  void PrepareForUpdate();
+  void PrepareForUpdate(bool is_forced);
 
   // Resumes current session if an update is aborted on
   // the OOBE UpdateScreen or ConsumerUpdateScreen.
@@ -254,11 +242,8 @@ class QuickStartController
   // Bookkeeping where the quick start flow started and ended.
   std::optional<EntryPoint> entry_point_, exit_point_;
 
-  // Discoverable name to be used on the UI. e.g.: Chromebook (123)
-  std::optional<std::string> discoverable_name_;
-
   // QR Code to be shown on the UI when requested.
-  std::optional<QRCode::PixelData> qr_code_data_;
+  std::optional<QRCode> qr_code_;
 
   // PIN to be shown on the UI when requested.
   std::optional<std::string> pin_;
@@ -300,6 +285,14 @@ class QuickStartController
   // Whether OOBE is transitioning to the QuickStartScreen. Used for recording
   // UI metrics.
   bool is_transitioning_to_quick_start_screen_ = false;
+
+  bool should_resume_quick_start_after_update_ = false;
+
+  // Used for sanity checks in order to discard unrequested data from the phone.
+  // Similar checks exist on the TargetDeviceBootstrapController level.
+  bool did_request_wifi_credentials_ = false;
+  bool did_request_account_info_ = false;
+  bool did_request_account_transfer_ = false;
 
   base::ScopedObservation<OobeUI, OobeUI::Observer> observation_{this};
   base::WeakPtrFactory<QuickStartController> weak_ptr_factory_{this};

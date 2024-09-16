@@ -16,22 +16,17 @@
 #include "base/test/test_simple_task_runner.h"
 #include "chromeos/ash/components/multidevice/remote_device_test_util.h"
 #include "chromeos/ash/components/tether/fake_connection_preserver.h"
+#include "chromeos/ash/components/tether/fake_host_connection.h"
 #include "chromeos/ash/components/tether/message_wrapper.h"
 #include "chromeos/ash/components/tether/mock_tether_host_response_recorder.h"
 #include "chromeos/ash/components/tether/proto/tether.pb.h"
 #include "chromeos/ash/components/tether/proto_test_util.h"
-#include "chromeos/ash/services/device_sync/public/cpp/fake_device_sync_client.h"
-#include "chromeos/ash/services/secure_channel/public/cpp/client/fake_client_channel.h"
-#include "chromeos/ash/services/secure_channel/public/cpp/client/fake_connection_attempt.h"
-#include "chromeos/ash/services/secure_channel/public/cpp/client/fake_secure_channel_client.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using testing::_;
 using testing::StrictMock;
 
-namespace ash {
-
-namespace tether {
+namespace ash::tether {
 
 namespace {
 
@@ -51,65 +46,32 @@ class TetherAvailabilityOperationTest : public testing::Test {
 
  protected:
   TetherAvailabilityOperationTest()
-      : local_device_(multidevice::RemoteDeviceRefBuilder()
-                          .SetPublicKey("local device")
-                          .Build()),
-        remote_device_(multidevice::CreateRemoteDeviceRefListForTest(1)[0]) {}
+      : tether_host_(TetherHost(multidevice::CreateRemoteDeviceRefForTest())) {}
 
   void SetUp() override {
-    fake_device_sync_client_.set_local_device_metadata(local_device_);
+    fake_host_connection_factory_ =
+        std::make_unique<FakeHostConnection::Factory>();
 
-    operation_ = ConstructOperation();
-    operation_->Initialize();
-
-    ConnectAuthenticatedChannelForDevice(remote_device_);
-  }
-
-  multidevice::RemoteDeviceRef GetOperationRemoteDevice(
-      TetherAvailabilityOperation* operation) const {
-    return operation->remote_device();
-  }
-
-  std::unique_ptr<TetherAvailabilityOperation> ConstructOperation() {
-    auto connection_attempt =
-        std::make_unique<secure_channel::FakeConnectionAttempt>();
-    connection_attempt_ = connection_attempt.get();
-    fake_secure_channel_client_.set_next_listen_connection_attempt(
-        remote_device_, local_device_, std::move(connection_attempt));
-
-    auto operation = std::make_unique<TetherAvailabilityOperation>(
-        remote_device_,
+    operation_ = std::make_unique<TetherAvailabilityOperation>(
+        tether_host_,
         base::BindOnce(&TetherAvailabilityOperationTest::OnResponse,
                        weak_ptr_factory_.GetWeakPtr()),
-        &fake_device_sync_client_, &fake_secure_channel_client_,
+        fake_host_connection_factory_.get(),
         &mock_tether_host_response_recorder_, &fake_connection_preserver_);
 
     test_clock_.SetNow(base::Time::UnixEpoch());
     test_task_runner_ = base::MakeRefCounted<base::TestSimpleTaskRunner>();
-    operation->SetTestDoubles(&test_clock_, test_task_runner_);
-
-    return operation;
+    operation_->SetTestDoubles(&test_clock_, test_task_runner_);
   }
 
-  void ConnectAuthenticatedChannelForDevice(
-      multidevice::RemoteDeviceRef remote_device) {
-    auto fake_client_channel =
-        std::make_unique<secure_channel::FakeClientChannel>();
-    connection_attempt_->NotifyConnection(std::move(fake_client_channel));
-  }
-
-  void OnResponse(std::optional<ScannedDeviceResult> result) {
+  void OnResponse(std::optional<ScannedDeviceInfo> result) {
     received_result_ = result;
   }
 
-  std::optional<ScannedDeviceResult> received_result_;
-  const multidevice::RemoteDeviceRef local_device_;
-  const multidevice::RemoteDeviceRef remote_device_;
+  std::optional<ScannedDeviceInfo> received_result_;
+  const TetherHost tether_host_;
 
-  raw_ptr<secure_channel::FakeConnectionAttempt, DanglingUntriaged>
-      connection_attempt_;
-  device_sync::FakeDeviceSyncClient fake_device_sync_client_;
-  secure_channel::FakeSecureChannelClient fake_secure_channel_client_;
+  std::unique_ptr<FakeHostConnection::Factory> fake_host_connection_factory_;
   StrictMock<MockTetherHostResponseRecorder>
       mock_tether_host_response_recorder_;
   FakeConnectionPreserver fake_connection_preserver_;
@@ -125,29 +87,31 @@ class TetherAvailabilityOperationTest : public testing::Test {
 
 TEST_F(TetherAvailabilityOperationTest,
        SendsTetherAvailabilityRequestOnceAuthenticated) {
-  std::unique_ptr<TetherAvailabilityOperation> operation = ConstructOperation();
-  operation->Initialize();
+  // Setup the host connection.
+  fake_host_connection_factory_->SetupConnectionAttempt(tether_host_);
 
-  // Create the client channel to the remote device.
-  auto fake_client_channel =
-      std::make_unique<secure_channel::FakeClientChannel>();
-
-  // No requests as a result of creating the client channel.
-  auto& sent_messages = fake_client_channel->sent_messages();
-  EXPECT_EQ(0u, sent_messages.size());
-
-  // Connect and authenticate the client channel.
-  connection_attempt_->NotifyConnection(std::move(fake_client_channel));
+  // Start the operation.
+  operation_->Initialize();
 
   // Verify the TetherAvailabilityRequest message is sent.
   auto message_wrapper =
       std::make_unique<MessageWrapper>(TetherAvailabilityRequest());
   std::string expected_payload = message_wrapper->ToRawMessage();
+
+  auto& sent_messages = fake_host_connection_factory_
+                            ->GetActiveConnection(tether_host_.GetDeviceId())
+                            ->sent_messages();
   EXPECT_EQ(1u, sent_messages.size());
-  EXPECT_EQ(expected_payload, sent_messages[0].first);
+  EXPECT_EQ(expected_payload, sent_messages[0].first->ToRawMessage());
 }
 
 TEST_F(TetherAvailabilityOperationTest, RecordsResponseDuration) {
+  // Setup the host connection.
+  fake_host_connection_factory_->SetupConnectionAttempt(tether_host_);
+
+  // Start the operation.
+  operation_->Initialize();
+
   static constexpr base::TimeDelta kTetherAvailabilityResponseTime =
       base::Seconds(3);
 
@@ -171,6 +135,11 @@ TEST_F(TetherAvailabilityOperationTest, ErrorResponses) {
       TetherAvailabilityResponse_ResponseCode_UNKNOWN_ERROR,
       TetherAvailabilityResponse_ResponseCode_NO_RECEPTION,
       TetherAvailabilityResponse_ResponseCode_NO_SIM_CARD};
+  // Setup the host connection.
+  fake_host_connection_factory_->SetupConnectionAttempt(tether_host_);
+
+  // Start the operation.
+  operation_->Initialize();
 
   for (auto response_code : kErrorResponseCodes) {
     // No response should be recorded.
@@ -217,8 +186,7 @@ TEST_F(TetherAvailabilityOperationTest, NotificationsDisabled) {
            .last_requested_preserved_connection_device_id()
            .empty();
   EXPECT_FALSE(connection_preserved);
-  EXPECT_EQ(received_result_.value().error(),
-            ScannedDeviceInfoError::kNotificationsDisabled);
+  EXPECT_FALSE(received_result_.value().notifications_enabled);
 }
 
 TEST_F(TetherAvailabilityOperationTest,
@@ -243,20 +211,20 @@ TEST_F(TetherAvailabilityOperationTest,
            .last_requested_preserved_connection_device_id()
            .empty();
   EXPECT_FALSE(connection_preserved);
-  EXPECT_EQ(received_result_.value().error(),
-            ScannedDeviceInfoError::kNotificationsDisabled);
+  EXPECT_FALSE(received_result_.value().notifications_enabled);
 }
 
 TEST_F(TetherAvailabilityOperationTest, TetherAvailable) {
   // The scanned device is recorded.
   EXPECT_CALL(
       mock_tether_host_response_recorder_,
-      RecordSuccessfulTetherAvailabilityResponse(remote_device_.GetDeviceId()));
+      RecordSuccessfulTetherAvailabilityResponse(tether_host_.GetDeviceId()));
 
   // The observer is notified of the scanned device.
   DeviceStatus device_status = CreateFakeDeviceStatus();
-  ScannedDeviceInfo scanned_device(remote_device_, device_status,
-                                   false /* setup_required */);
+  ScannedDeviceInfo scanned_device(
+      tether_host_.GetDeviceId(), tether_host_.GetName(), device_status,
+      false /* setup_required */, /*notifications_enabled=*/true);
 
   // Respond with TETHER_AVAILABLE response code and the device info and status.
   TetherAvailabilityResponse response;
@@ -269,24 +237,25 @@ TEST_F(TetherAvailabilityOperationTest, TetherAvailable) {
   test_task_runner_->RunUntilIdle();
 
   // Connection is preserved.
-  EXPECT_EQ(remote_device_.GetDeviceId(),
+  EXPECT_EQ(tether_host_.GetDeviceId(),
             fake_connection_preserver_
                 .last_requested_preserved_connection_device_id());
 
   EXPECT_TRUE(received_result_.has_value());
-  EXPECT_EQ(received_result_.value().value(), scanned_device);
+  EXPECT_EQ(received_result_.value(), scanned_device);
 }
 
 TEST_F(TetherAvailabilityOperationTest, LastProvisioningFailed) {
   // The scanned device is recorded.
   EXPECT_CALL(
       mock_tether_host_response_recorder_,
-      RecordSuccessfulTetherAvailabilityResponse(remote_device_.GetDeviceId()));
+      RecordSuccessfulTetherAvailabilityResponse(tether_host_.GetDeviceId()));
 
   // The observer is notified of the scanned device.
   DeviceStatus device_status = CreateFakeDeviceStatus();
-  ScannedDeviceInfo scanned_device(remote_device_, device_status,
-                                   false /* setup_required */);
+  ScannedDeviceInfo scanned_device(
+      tether_host_.GetDeviceId(), tether_host_.GetName(), device_status,
+      false /* setup_required */, /*notifications_enabled=*/true);
   std::vector<ScannedDeviceInfo> scanned_devices({scanned_device});
 
   // Respond with TETHER_AVAILABLE response code and the device info and status.
@@ -298,26 +267,27 @@ TEST_F(TetherAvailabilityOperationTest, LastProvisioningFailed) {
   operation_->OnMessageReceived(std::move(message));
 
   // Connection is preserved.
-  EXPECT_EQ(remote_device_.GetDeviceId(),
+  EXPECT_EQ(tether_host_.GetDeviceId(),
             fake_connection_preserver_
                 .last_requested_preserved_connection_device_id());
 
   test_task_runner_->RunUntilIdle();
 
-  EXPECT_EQ(scanned_device, received_result_.value().value());
+  EXPECT_EQ(scanned_device, received_result_.value());
 }
 
 TEST_F(TetherAvailabilityOperationTest, SetupRequired) {
   // The scanned device is recorded.
   EXPECT_CALL(
       mock_tether_host_response_recorder_,
-      RecordSuccessfulTetherAvailabilityResponse(remote_device_.GetDeviceId()));
+      RecordSuccessfulTetherAvailabilityResponse(tether_host_.GetDeviceId()));
 
   // The observer is notified that the scanned device has the |setup_required|
   // flag set.
   DeviceStatus device_status = CreateFakeDeviceStatus();
-  ScannedDeviceInfo scanned_device(remote_device_, device_status,
-                                   true /* setup_required */);
+  ScannedDeviceInfo scanned_device(
+      tether_host_.GetDeviceId(), tether_host_.GetName(), device_status,
+      true /* setup_required */, /*notifications_enabled=*/true);
   std::vector<ScannedDeviceInfo> scanned_devices({scanned_device});
 
   // Respond with SETUP_NEEDED response code and the device info and status.
@@ -331,12 +301,10 @@ TEST_F(TetherAvailabilityOperationTest, SetupRequired) {
   test_task_runner_->RunUntilIdle();
 
   // Connection is preserved.
-  EXPECT_EQ(remote_device_.GetDeviceId(),
+  EXPECT_EQ(tether_host_.GetDeviceId(),
             fake_connection_preserver_
                 .last_requested_preserved_connection_device_id());
-  EXPECT_EQ(scanned_device, received_result_.value().value());
+  EXPECT_EQ(scanned_device, received_result_.value());
 }
 
-}  // namespace tether
-
-}  // namespace ash
+}  // namespace ash::tether

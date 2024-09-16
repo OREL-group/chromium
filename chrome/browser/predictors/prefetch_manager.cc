@@ -10,7 +10,9 @@
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/not_fatal_until.h"
 #include "base/task/single_thread_task_runner.h"
 #include "chrome/browser/predictors/predictors_features.h"
 #include "chrome/browser/predictors/predictors_switches.h"
@@ -214,7 +216,7 @@ blink::mojom::ResourceType GetResourceType(
     case network::mojom::RequestDestination::kFont:
       return blink::mojom::ResourceType::kFontResource;
     default:
-      NOTREACHED() << destination;
+      NOTREACHED_IN_MIGRATION() << destination;
   }
   return blink::mojom::ResourceType::kSubResource;
 }
@@ -286,8 +288,7 @@ void PrefetchManager::PrefetchUrl(
   std::vector<std::unique_ptr<blink::URLLoaderThrottle>> throttles =
       content::CreateContentBrowserURLLoaderThrottles(
           request, profile_, std::move(wc_getter),
-          /*navigation_ui_data=*/nullptr,
-          content::RenderFrameHost::kNoFrameTreeNodeId,
+          /*navigation_ui_data=*/nullptr, content::FrameTreeNodeId(),
           /*navigation_id=*/std::nullopt);
 
   auto client = std::make_unique<network::EmptyURLLoaderClient>();
@@ -305,6 +306,9 @@ void PrefetchManager::PrefetchUrl(
           features::kLoadingPredictorPrefetchUseReadAndDiscardBody)) {
     options |= network::mojom::kURLLoadOptionReadAndDiscardBody;
   }
+
+  base::UmaHistogramBoolean("Navigation.Prefetch.IsHttps",
+                            request.url.SchemeIsCryptographic());
 
   std::unique_ptr<blink::ThrottlingURLLoader> loader =
       blink::ThrottlingURLLoader::CreateLoaderAndStart(
@@ -338,6 +342,24 @@ void PrefetchManager::OnPrefetchFinished(
   if (observer_for_testing_)
     observer_for_testing_->OnPrefetchFinished(info.url, job->url, status);
 
+  // TODO(ricea): Remove these histograms in October 2024 and make a note of the
+  // results in https://crbug.com/335524391.
+  if (status.error_code == net::OK && status.decoded_body_length > 0) {
+    if (status.decoded_body_length > status.encoded_body_length) {
+      // Assume it was compressed.
+      base::UmaHistogramCounts10000(
+          "Navigation.Prefetch.CompressedBodySize",
+          static_cast<int>(status.encoded_body_length / 1024));
+    } else {
+      // The cast to int will overflow if we prefetch a resource over a terabyte
+      // in size, but I'm hoping that will never happen.
+      base::UmaHistogramCounts10000(
+          "Navigation.Prefetch.UncompressedBodySize",
+          static_cast<int>(status.encoded_body_length / 1024));
+    }
+  }
+
+  // Cannot access the fields of `status` after this point.
   loader.reset();
   client.reset();
   job.reset();
@@ -388,7 +410,7 @@ void PrefetchManager::TryToLaunchPrefetchJobs() {
 void PrefetchManager::AllPrefetchJobsForUrlFinished(PrefetchInfo& info) {
   DCHECK(info.is_done());
   auto it = prefetch_info_.find(info.url);
-  DCHECK(it != prefetch_info_.end());
+  CHECK(it != prefetch_info_.end(), base::NotFatalUntil::M130);
   DCHECK(&info == it->second.get());
 
   if (delegate_)

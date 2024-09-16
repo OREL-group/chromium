@@ -20,7 +20,6 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/autofill/content/browser/content_autofill_driver.h"
-#include "components/autofill/content/browser/content_autofill_driver_factory.h"
 #include "components/autofill/core/browser/autocomplete_history_manager.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/personal_data_manager_test_utils.h"
@@ -48,6 +47,8 @@ namespace autofill {
 namespace {
 
 using ::base::UTF8ToUTF16;
+using ::testing::_;
+using ::testing::AssertionResult;
 using ::testing::ElementsAre;
 using ::testing::Field;
 using ::testing::IsEmpty;
@@ -55,15 +56,10 @@ using ::testing::IsEmpty;
 const char kDefaultAutocompleteInputId[] = "n300";
 const char kSimpleFormFileName[] = "autocomplete_simple_form.html";
 
-}  // namespace
-
 class AutocompleteTest : public InProcessBrowserTest {
  protected:
   void SetUpOnMainThread() override {
     active_browser_ = browser();
-
-    // Don't want Keychain coming up on Mac.
-    test::DisableSystemServices(pref_service());
 
     ASSERT_TRUE(embedded_test_server()->Start());
   }
@@ -75,13 +71,12 @@ class AutocompleteTest : public InProcessBrowserTest {
     // causing this test to fail.
     base::RunLoop().RunUntilIdle();
     // Make sure to close any showing popups prior to tearing down the UI.
-    ContentAutofillDriverFactory::FromWebContents(web_contents())
-        ->DriverForFrame(web_contents()->GetPrimaryMainFrame())
+    ContentAutofillDriver::GetForRenderFrameHost(
+        web_contents()->GetPrimaryMainFrame())
         ->GetAutofillManager()
         .client()
-        .HideAutofillPopup(PopupHidingReason::kTabGone);
+        .HideAutofillSuggestions(SuggestionHidingReason::kTabGone);
     active_browser_ = nullptr;
-    test::ReenableSystemServices();
   }
 
   // Necessary to avoid flakiness or failure due to input arriving
@@ -118,12 +113,12 @@ class AutocompleteTest : public InProcessBrowserTest {
 
     // Simulate a mouse click to submit the form because form submissions not
     // triggered by user gestures are ignored.
-    TestAutofillManagerWaiter waiter(manager(),
-                                     {AutofillManagerEvent::kFormSubmitted});
+    TestAutofillManagerSingleEventWaiter submission_waiter(
+        manager(), &AutofillManager::Observer::OnFormSubmitted);
     content::SimulateMouseClick(
         active_browser_->tab_strip_model()->GetActiveWebContents(), 0,
         blink::WebMouseEvent::Button::kLeft);
-    ASSERT_TRUE(waiter.Wait(1));
+    ASSERT_TRUE(std::move(submission_waiter).Wait());
 
     if (!should_skip_save) {
       // Wait for data to have been saved in the DB.
@@ -151,8 +146,8 @@ class AutocompleteTest : public InProcessBrowserTest {
   }
 
   AutofillManager& manager() {
-    return ContentAutofillDriverFactory::FromWebContents(web_contents())
-        ->DriverForFrame(web_contents()->GetPrimaryMainFrame())
+    return ContentAutofillDriver::GetForRenderFrameHost(
+               web_contents()->GetPrimaryMainFrame())
         ->GetAutofillManager();
   }
 
@@ -166,9 +161,10 @@ class AutocompleteTest : public InProcessBrowserTest {
     std::vector<Suggestion> suggestions;
     EXPECT_CALL(callback, Run).WillOnce(testing::SaveArg<1>(&suggestions));
     EXPECT_TRUE(autocomplete_history_manager()->OnGetSingleFieldSuggestions(
+        /*form_structure=*/nullptr,
         test::CreateTestFormField(/*label=*/"", input_name, prefix,
                                   FormControlType::kInputText),
-        manager().client(), callback.Get(), SuggestionsContext()));
+        /*autofill_field=*/nullptr, manager().client(), callback.Get()));
 
     // Make sure the DB task gets executed.
     WaitForPendingDBTasks(*GetWebDataService());
@@ -296,5 +292,7 @@ IN_PROC_BROWSER_TEST_F(AutocompleteTest,
               SuggestionVectorMainTextsAre(Suggestion::Text(
                   UTF8ToUTF16(test_value), Suggestion::Text::IsPrimary(true))));
 }
+
+}  // namespace
 
 }  // namespace autofill

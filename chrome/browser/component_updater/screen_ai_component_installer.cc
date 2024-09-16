@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/component_updater/screen_ai_component_installer.h"
 
 #include "base/files/file_path.h"
@@ -69,23 +74,8 @@ void ScreenAIComponentInstallerPolicy::ComponentReady(
   VLOG(1) << "Screen AI Component ready, version " << version.GetString()
           << " in " << install_dir.value();
 
-  // Verifying library availability requires I/O and hence a blocking thread.
-  base::ThreadPool::PostTaskAndReplyWithResult(
-      FROM_HERE,
-      {base::MayBlock(), base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
-      base::BindOnce(&screen_ai::ScreenAIInstallState::VerifyLibraryAvailablity,
-                     install_dir),
-      base::BindOnce(
-          [](base::FilePath install_dir, bool library_available) {
-            auto* state = screen_ai::ScreenAIInstallState::GetInstance();
-            if (library_available) {
-              state->SetComponentFolder(install_dir);
-            } else {
-              state->SetState(
-                  screen_ai::ScreenAIInstallState::State::kDownloadFailed);
-            }
-          },
-          install_dir));
+  screen_ai::ScreenAIInstallState::GetInstance()->SetComponentFolder(
+      install_dir);
 }
 
 bool ScreenAIComponentInstallerPolicy::VerifyInstallation(

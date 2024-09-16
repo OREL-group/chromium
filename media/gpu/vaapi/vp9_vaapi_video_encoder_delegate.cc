@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/gpu/vaapi/vp9_vaapi_video_encoder_delegate.h"
 
 #include <algorithm>
@@ -53,8 +58,8 @@ uint8_t QindexToQuantizer(uint8_t q_index) {
   return std::size(kQuantizerToQindex) - 1;
 }
 
-// TODO(crbug.com/752720): remove this in favor of std::gcd if c++17 is enabled
-// to use.
+// TODO(crbug.com/40533712): remove this in favor of std::gcd if c++17 is
+// enabled to use.
 int GCD(int a, int b) {
   return a == 0 ? b : GCD(b % a, a);
 }
@@ -302,7 +307,7 @@ bool VP9VaapiVideoEncoderDelegate::Initialize(
   }
 
   if (config.bitrate.mode() == Bitrate::Mode::kVariable) {
-    DVLOGF(1) << "Invalid configuraiton. VBR is not supported for VP9.";
+    DVLOGF(1) << "Invalid configuration. VBR is not supported for VP9.";
     return false;
   }
 
@@ -643,7 +648,7 @@ Vp9FrameHeader VP9VaapiVideoEncoderDelegate::GetDefaultFrameHeader(
     const bool keyframe) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  Vp9FrameHeader hdr{};
+  Vp9FrameHeader hdr;
   DCHECK(!visible_size_.IsEmpty());
   hdr.frame_width = visible_size_.width();
   hdr.frame_height = visible_size_.height();
@@ -769,7 +774,7 @@ bool VP9VaapiVideoEncoderDelegate::SubmitFrameParameters(
   VAEncSequenceParameterBufferVP9 seq_param = {};
 
   const auto& frame_header = pic->frame_hdr;
-  // TODO(crbug.com/811912): Double check whether the
+  // TODO(crbug.com/41370458): Double check whether the
   // max_frame_width or max_frame_height affects any of the memory
   // allocation and tighten these values based on that.
   constexpr gfx::Size kMaxFrameSize(4096, 4096);
@@ -785,14 +790,13 @@ bool VP9VaapiVideoEncoderDelegate::SubmitFrameParameters(
   pic_param.frame_width_dst = frame_header->render_width;
   pic_param.frame_height_dst = frame_header->render_height;
 
-  pic_param.reconstructed_frame = pic->AsVaapiVP9Picture()->GetVASurfaceID();
+  pic_param.reconstructed_frame = pic->AsVaapiVP9Picture()->va_surface_id();
   DCHECK_NE(pic_param.reconstructed_frame, VA_INVALID_ID);
 
   for (size_t i = 0; i < kVp9NumRefFrames; i++) {
     auto ref_pic = ref_frames.GetFrame(i);
     pic_param.reference_frames[i] =
-        ref_pic ? ref_pic->AsVaapiVP9Picture()->GetVASurfaceID()
-                : VA_INVALID_ID;
+        ref_pic ? ref_pic->AsVaapiVP9Picture()->va_surface_id() : VA_INVALID_ID;
   }
 
   pic_param.coded_buf = job.coded_buffer_id();

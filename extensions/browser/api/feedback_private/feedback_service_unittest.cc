@@ -161,7 +161,7 @@ class FeedbackServiceTest : public ApiUnitTest {
                                 /*load_system_info=*/false,
                                 /*send_tab_titles=*/send_tab_titles,
                                 /*send_histograms=*/true,
-                                /*send_bluetooth_logs=*/true,
+                                /*send_bluetooth_logs=*/false,
                                 /*send_wifi_debug_logs=*/false,
                                 /*send_autofill_metadata=*/false};
 
@@ -196,7 +196,7 @@ class FeedbackServiceTest : public ApiUnitTest {
     ASSERT_TRUE(base::CreateDirectory(test_file_dir));
 
     const base::FilePath test_file =
-        test_file_dir.Append("iwlwifi_firmware_dumps.tar.zst");
+        test_file_dir.Append("wifi_firmware_dumps.tar.zst");
     ASSERT_TRUE(base::WriteFile(test_file, "Test file content"));
 
     EXPECT_CALL(*mock_uploader_, QueueReport).Times(1);
@@ -222,11 +222,51 @@ class FeedbackServiceTest : public ApiUnitTest {
 
     // Verify the attachment is added if and only if send_wifi_debug_logs is
     // true.
-    constexpr char kWifiDumpName[] = "iwlwifi_firmware_dumps.tar.zst";
+    constexpr char kWifiDumpName[] = "wifi_firmware_dumps.tar.zst";
     if (send_wifi_debug_logs) {
       VerifyAttachment(kWifiDumpName, "TestData", feedback_data_);
     } else {
       EXPECT_FALSE(FindAttachment(kWifiDumpName, feedback_data_));
+    }
+  }
+
+  void TestSendFeedbackConcerningBluetoothDebugLogs(bool send_bluetooth_logs) {
+    const FeedbackParams params{/*is_internal_email=*/false,
+                                /*load_system_info=*/true,
+                                /*send_tab_titles=*/false,
+                                /*send_histograms=*/false,
+                                /*send_bluetooth_logs=*/send_bluetooth_logs,
+                                /*send_wifi_debug_logs=*/false,
+                                /*send_autofill_metadata=*/false};
+
+    EXPECT_CALL(*mock_uploader_, QueueReport).Times(1);
+    base::MockCallback<SendFeedbackCallback> mock_callback;
+    EXPECT_CALL(mock_callback, Run(true));
+
+    auto mock_delegate = std::make_unique<MockFeedbackPrivateDelegate>();
+    EXPECT_CALL(*mock_delegate, FetchSystemInformation(_, _)).Times(1);
+    EXPECT_CALL(*mock_delegate, FetchExtraLogs(_, _)).Times(1);
+
+    if (send_bluetooth_logs) {
+      ash::DebugDaemonClient::InitializeFake();
+    }
+    auto feedback_service = base::MakeRefCounted<FeedbackService>(
+        browser_context(), mock_delegate.get());
+    feedback_service->SetLogFilesRootPathForTesting(scoped_temp_dir_.GetPath());
+
+    RunUntilFeedbackIsSent(feedback_service, params, mock_callback.Get());
+    if (ash::DebugDaemonClient::Get()) {
+      ash::DebugDaemonClient::Shutdown();
+    }
+    EXPECT_EQ(1u, feedback_data_->sys_info()->count(kFakeKey));
+
+    // Verify the attachment is added if and only if send_bluetooth_logs is
+    // true.
+    constexpr char kBluetoothDumpName[] = "bluetooth_firmware_dumps.tar.zst";
+    if (send_bluetooth_logs) {
+      VerifyAttachment(kBluetoothDumpName, "TestData", feedback_data_);
+    } else {
+      EXPECT_FALSE(FindAttachment(kBluetoothDumpName, feedback_data_));
     }
   }
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
@@ -256,7 +296,7 @@ TEST_F(FeedbackServiceTest, SendFeedbackWithoutSysInfo) {
                               /*load_system_info=*/false,
                               /*send_tab_titles=*/true,
                               /*send_histograms=*/true,
-                              /*send_bluetooth_logs=*/true,
+                              /*send_bluetooth_logs=*/false,
                               /*send_wifi_debug_logs=*/false,
                               /*send_autofill_metadata=*/false};
 
@@ -276,7 +316,7 @@ TEST_F(FeedbackServiceTest, SendFeedbackLoadSysInfo) {
                               /*load_system_info=*/true,
                               /*send_tab_titles=*/true,
                               /*send_histograms=*/true,
-                              /*send_bluetooth_logs=*/true,
+                              /*send_bluetooth_logs=*/false,
                               /*send_wifi_debug_logs=*/false,
                               /*send_autofill_metadata=*/false};
 
@@ -299,7 +339,7 @@ TEST_F(FeedbackServiceTest, SendFeedbackLoadSysInfo) {
                     feedback::FeedbackReport::kMemUsageWithTabTitlesKey));
 }
 
-// TODO(crbug.com/1439227): Re-enable this test
+// TODO(crbug.com/40908623): Re-enable this test
 TEST_F(FeedbackServiceTest, DISABLED_SendFeedbackDoNotSendTabTitles) {
   TestSendFeedbackConcerningTabTitles(false);
   EXPECT_EQ(0u, feedback_data_->sys_info()->count(
@@ -319,7 +359,7 @@ TEST_F(FeedbackServiceTest, SendFeedbackAutofillMetadata) {
                               /*load_system_info=*/false,
                               /*send_tab_titles=*/false,
                               /*send_histograms=*/true,
-                              /*send_bluetooth_logs=*/true,
+                              /*send_bluetooth_logs=*/false,
                               /*send_wifi_debug_logs=*/false,
                               /*send_autofill_metadata=*/true};
   feedback_data_->set_autofill_metadata("Autofill Metadata");
@@ -340,6 +380,14 @@ TEST_F(FeedbackServiceTest, SendFeedbackWithWifiDebugLogs) {
 
 TEST_F(FeedbackServiceTest, SendFeedbackWithoutWifiDebugLogs) {
   TestSendFeedbackConcerningWifiDebugLogs(/*send_wifi_debug_logs=*/false);
+}
+
+TEST_F(FeedbackServiceTest, SendFeedbackWithBluetoothDebugLogs) {
+  TestSendFeedbackConcerningBluetoothDebugLogs(/*send_bluetooth_logs=*/true);
+}
+
+TEST_F(FeedbackServiceTest, SendFeedbackWithoutBluetoothDebugLogs) {
+  TestSendFeedbackConcerningBluetoothDebugLogs(/*send_bluetooth_logs=*/false);
 }
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 

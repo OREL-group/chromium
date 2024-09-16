@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include "base/files/file_path.h"
 #include "base/test/test_future.h"
@@ -24,6 +25,7 @@
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/browser/web_applications/web_app_registry_update.h"
+#include "chrome/browser/web_applications/web_app_sync_bridge.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/web_package/signed_web_bundles/signed_web_bundle_id.h"
@@ -60,6 +62,9 @@ void CommitNavigation(std::unique_ptr<content::NavigationSimulator> simulator) {
 }  // namespace
 
 IsolatedWebAppBrowserTestHarness::IsolatedWebAppBrowserTestHarness() {
+  // Note: We cannot enable blink::features::kControlledFrame here since there
+  // are tests that inherit from this class which depend on being able to start
+  // without kControlledFrame in their feature list.
   iwa_scoped_feature_list_.InitWithFeatures(
       {features::kIsolatedWebApps, features::kIsolatedWebAppDevMode,
        blink::features::kUnrestrictedUsb},
@@ -90,7 +95,7 @@ Browser* IsolatedWebAppBrowserTestHarness::GetBrowserFromFrame(
 
 content::RenderFrameHost* IsolatedWebAppBrowserTestHarness::OpenApp(
     const webapps::AppId& app_id,
-    base::StringPiece path) {
+    std::string_view path) {
   return OpenIsolatedWebApp(profile(), app_id, path);
 }
 
@@ -141,7 +146,7 @@ IsolatedWebAppUrlInfo InstallDevModeProxyIsolatedWebApp(
 
 content::RenderFrameHost* OpenIsolatedWebApp(Profile* profile,
                                              const webapps::AppId& app_id,
-                                             base::StringPiece path) {
+                                             std::string_view path) {
   WebAppRegistrar& registrar =
       WebAppProvider::GetForWebApps(profile)->registrar_unsafe();
   const WebApp* app = registrar.GetAppById(app_id);
@@ -173,7 +178,8 @@ void CreateIframe(content::RenderFrameHost* parent_frame,
               document.body.appendChild(f);
             });
         )",
-                                         iframe_id, url, permissions_policy)));
+                                         iframe_id, url, permissions_policy),
+                      content::EXECUTE_SCRIPT_NO_USER_GESTURE));
 }
 
 // TODO(crbug.com/40274184): This function should probably be built on top of

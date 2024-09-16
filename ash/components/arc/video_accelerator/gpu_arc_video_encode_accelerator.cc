@@ -78,7 +78,7 @@ void GpuArcVideoEncodeAccelerator::BitstreamBufferReady(
   DVLOGF(2) << "id=" << bitstream_buffer_id;
   DCHECK(client_);
   auto iter = use_bitstream_cbs_.find(bitstream_buffer_id);
-  DCHECK(iter != use_bitstream_cbs_.end());
+  CHECK(iter != use_bitstream_cbs_.end());
   std::move(iter->second)
       .Run(metadata.payload_size_bytes, metadata.key_frame,
            metadata.timestamp.InMicroseconds());
@@ -202,11 +202,8 @@ void GpuArcVideoEncodeAccelerator::Encode(
           gfx::BufferUsage::VEA_READ_CAMERA_AND_CPU_READ_WRITE,
           base::NullCallback());
 
-  gpu::MailboxHolder dummy_mailbox[media::VideoFrame::kMaxPlanes];
   auto frame = media::VideoFrame::WrapExternalGpuMemoryBuffer(
       gfx::Rect(visible_size_), visible_size_, std::move(gpu_memory_buffer),
-      dummy_mailbox /* mailbox_holders */,
-      base::NullCallback() /* mailbox_holder_release_cb_ */,
       base::Microseconds(timestamp));
   if (!frame) {
     DLOG(ERROR) << "Failed to create VideoFrame";

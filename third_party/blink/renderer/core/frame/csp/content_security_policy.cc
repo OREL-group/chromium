@@ -118,7 +118,7 @@ bool CheckHeaderTypeMatches(
           return header_type == ContentSecurityPolicyType::kEnforce;
       }
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return false;
 }
 
@@ -231,8 +231,10 @@ static WebFeature GetUseCounterType(ContentSecurityPolicyType type) {
     case ContentSecurityPolicyType::kReport:
       return WebFeature::kContentSecurityPolicyReportOnly;
   }
-  NOTREACHED();
-  return WebFeature::kNumberOfFeatures;
+  NOTREACHED_IN_MIGRATION();
+  // Use kPageVisits here which is not a valid use counter, as this is never
+  // supposed to be reached.
+  return WebFeature::kPageVisits;
 }
 
 ContentSecurityPolicy::ContentSecurityPolicy()
@@ -503,9 +505,8 @@ void ContentSecurityPolicy::FillInCSPHashValues(
     DigestValue digest;
     if (static_cast<int32_t>(algorithm_map.csp_hash_algorithm) &
         hash_algorithms_used) {
-      bool digest_success =
-          ComputeDigest(algorithm_map.algorithm, utf8_source.data(),
-                        utf8_source.size(), digest);
+      bool digest_success = ComputeDigest(
+          algorithm_map.algorithm, base::as_byte_span(utf8_source), digest);
       if (digest_success) {
         csp_hash_values.push_back(network::mojom::blink::CSPHashSource::New(
             algorithm_map.csp_hash_algorithm, Vector<uint8_t>(digest)));
@@ -1466,8 +1467,6 @@ const char* ContentSecurityPolicy::GetDirectiveName(CSPDirectiveName type) {
       return "manifest-src";
     case CSPDirectiveName::MediaSrc:
       return "media-src";
-    case CSPDirectiveName::NavigateTo:
-      return "navigate-to";
     case CSPDirectiveName::ObjectSrc:
       return "object-src";
     case CSPDirectiveName::ReportTo:
@@ -1500,11 +1499,11 @@ const char* ContentSecurityPolicy::GetDirectiveName(CSPDirectiveName type) {
       return "worker-src";
 
     case CSPDirectiveName::Unknown:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return "";
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return "";
 }
 
@@ -1535,8 +1534,6 @@ CSPDirectiveName ContentSecurityPolicy::GetDirectiveType(const String& name) {
     return CSPDirectiveName::ManifestSrc;
   if (name == "media-src")
     return CSPDirectiveName::MediaSrc;
-  if (name == "navigate-to")
-    return CSPDirectiveName::NavigateTo;
   if (name == "object-src")
     return CSPDirectiveName::ObjectSrc;
   if (name == "report-to")
@@ -1613,6 +1610,15 @@ bool ContentSecurityPolicy::AllowFencedFrameOpaqueURL() const {
     }
   }
   return true;
+}
+
+bool ContentSecurityPolicy::HasEnforceFrameAncestorsDirectives() {
+  return base::ranges::any_of(policies_, [](const auto& csp) {
+    return csp->header->type ==
+               network::mojom::ContentSecurityPolicyType::kEnforce &&
+           csp->directives.Contains(
+               network::mojom::CSPDirectiveName::FrameAncestors);
+  });
 }
 
 void ContentSecurityPolicy::Count(WebFeature feature) const {

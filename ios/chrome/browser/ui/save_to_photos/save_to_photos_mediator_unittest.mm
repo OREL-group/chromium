@@ -14,12 +14,13 @@
 #import "components/signin/public/base/consent_level.h"
 #import "components/signin/public/identity_manager/identity_test_utils.h"
 #import "components/strings/grit/components_strings.h"
+#import "ios/chrome/browser/account_picker/ui_bundled/account_picker_configuration.h"
 #import "ios/chrome/browser/photos/model/photos_metrics.h"
 #import "ios/chrome/browser/photos/model/photos_service_factory.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
 #import "ios/chrome/browser/shared/model/browser/test/test_browser.h"
-#import "ios/chrome/browser/shared/model/browser_state/test_chrome_browser_state.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
+#import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/chrome/browser/shared/public/commands/application_commands.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
 #import "ios/chrome/browser/shared/public/commands/manage_storage_alert_commands.h"
@@ -28,7 +29,6 @@
 #import "ios/chrome/browser/signin/model/fake_system_identity_manager.h"
 #import "ios/chrome/browser/signin/model/identity_manager_factory.h"
 #import "ios/chrome/browser/signin/model/identity_test_environment_browser_state_adaptor.h"
-#import "ios/chrome/browser/ui/account_picker/account_picker_configuration.h"
 #import "ios/chrome/browser/ui/save_to_photos/save_to_photos_mediator.h"
 #import "ios/chrome/browser/ui/save_to_photos/save_to_photos_mediator_delegate.h"
 #import "ios/chrome/browser/web/model/image_fetch/image_fetch_tab_helper.h"
@@ -124,7 +124,7 @@ class SaveToPhotosMediatorTest : public PlatformTest {
         IdentityManagerFactory::GetInstance(),
         base::BindRepeating(IdentityTestEnvironmentBrowserStateAdaptor::
                                 BuildIdentityManagerForTests));
-    browser_state_ = builder.Build();
+    browser_state_ = std::move(builder).Build();
     browser_ = std::make_unique<TestBrowser>(browser_state_.get());
     web_state_ = std::make_unique<web::FakeWebState>();
     FakeImageFetchTabHelper::CreateForWebState(web_state_.get());
@@ -171,7 +171,7 @@ class SaveToPhotosMediatorTest : public PlatformTest {
         ChromeAccountManagerServiceFactory::GetForBrowserState(
             browser_state_.get());
     signin::IdentityManager* identity_manager =
-        IdentityManagerFactory::GetForBrowserState(browser_state_.get());
+        IdentityManagerFactory::GetForProfile(browser_state_.get());
     return [[SaveToPhotosMediator alloc]
             initWithPhotosService:photos_service
                       prefService:pref_service
@@ -184,7 +184,7 @@ class SaveToPhotosMediatorTest : public PlatformTest {
   // Sign-in with a fake account.
   void SignIn() {
     signin::MakePrimaryAccountAvailable(
-        IdentityManagerFactory::GetForBrowserState(browser_state_.get()),
+        IdentityManagerFactory::GetForProfile(browser_state_.get()),
         base::SysNSStringToUTF8(fake_identity_.userEmail),
         signin::ConsentLevel::kSignin);
   }

@@ -49,7 +49,12 @@ MagnifierE2ETest = class extends E2ETestBase {
 
   /** @override */
   get featureList() {
-    return {enabled: ['features::kAccessibilityMagnifierFollowsSts']};
+    return {
+      enabled: [
+        'features::kAccessibilityMagnifierFollowsChromeVox',
+        'features::kAccessibilityMagnifierFollowsSts',
+      ],
+    };
   }
 };
 
@@ -219,10 +224,11 @@ TEST_F(
     });
 
 AX_TEST_F('MagnifierE2ETest', 'IgnoresRootNodeFocus', async function() {
+  await this.runWithLoadedTree('');
+
   const magnifier = accessibilityCommon.getMagnifierForTest();
   magnifier.setIsInitializingForTest(false);
 
-  await this.runWithLoadedTree('');
   chrome.accessibilityPrivate.onMagnifierBoundsChanged.addListener(
       (newBounds) => {
         throw new Error(
@@ -325,9 +331,6 @@ AX_TEST_F('MagnifierE2ETest', 'OnCaretBoundsChanged', async function() {
 
 TEST_F('MagnifierE2ETest', 'ScreenMagnifierFocusFollowingPref', function() {
   this.newCallback(async () => {
-    await importModule(
-        'Magnifier', '/accessibility_common/magnifier/magnifier.js');
-
     // Disable focus following for full screen magnifier, and verify prefs and
     // state.
     await this.setPref(Magnifier.Prefs.SCREEN_MAGNIFIER_FOCUS_FOLLOWING, false);
@@ -350,8 +353,6 @@ TEST_F(
     'MagnifierE2ETest', 'ScreenMagnifierSelectToSpeakFollowingPref',
     function() {
       this.newCallback(async () => {
-        await importModule(
-            'Magnifier', '/accessibility_common/magnifier/magnifier.js');
         // Disable select to speak following for full screen magnifier, and
         // verify prefs and state.
         await this.setPref(
@@ -378,8 +379,6 @@ TEST_F(
     'MagnifierE2ETest', 'FullscreenMagnifierDoesNotFollowStsWhenPrefOff',
     function() {
       this.newCallback(async () => {
-        await importModule(
-            'Magnifier', '/accessibility_common/magnifier/magnifier.js');
         // Disable select to speak following for full screen magnifier, and
         // verify prefs and state.
         await this.setPref(
@@ -406,8 +405,6 @@ TEST_F(
 TEST_F(
     'MagnifierE2ETest', 'FullscreenMagnifierFollowsStsWhenPrefOn', function() {
       this.newCallback(async () => {
-        await importModule(
-            'Magnifier', '/accessibility_common/magnifier/magnifier.js');
         // Disable select to speak following for full screen magnifier, and
         // verify prefs and state.
         await this.setPref(
@@ -423,6 +420,81 @@ TEST_F(
         magnifier.lastMouseMovedTime_ = undefined;
         assertEquals(count, 0);
         magnifier.onSelectToSpeakFocusChanged_({
+          left: 2,
+          top: 4,
+          width: 5,
+          height: 7,
+        });
+        assertEquals(count, 1);
+      })();
+    });
+
+TEST_F('MagnifierE2ETest', 'ScreenMagnifierChromeVoxFollowingPref', function() {
+  this.newCallback(async () => {
+    // Disable ChromeVox following for full screen magnifier, and
+    // verify prefs and state.
+    await this.setPref(
+        Magnifier.Prefs.SCREEN_MAGNIFIER_CHROMEVOX_FOCUS_FOLLOWING, false);
+    magnifier = accessibilityCommon.getMagnifierForTest();
+    magnifier.setIsInitializingForTest(false);
+    assertEquals(magnifier.type, Magnifier.Type.FULL_SCREEN);
+    assertFalse(magnifier.shouldFollowChromeVoxFocus());
+
+    // Enable ChromeVox following for full screen magnifier, and
+    // verify prefs and state.
+    await this.setPref(
+        Magnifier.Prefs.SCREEN_MAGNIFIER_CHROMEVOX_FOCUS_FOLLOWING, true);
+    magnifier = accessibilityCommon.getMagnifierForTest();
+    magnifier.setIsInitializingForTest(false);
+    assertEquals(magnifier.type, Magnifier.Type.FULL_SCREEN);
+    assertTrue(magnifier.shouldFollowChromeVoxFocus());
+  })();
+});
+
+TEST_F(
+    'MagnifierE2ETest', 'ScreenMagnifierChromeVoxDoesNotFollowWhenPrefOff',
+    function() {
+      this.newCallback(async () => {
+        // Disable ChromeVox following for full screen magnifier, and
+        // verify prefs and state.
+        await this.setPref(
+            Magnifier.Prefs.SCREEN_MAGNIFIER_CHROMEVOX_FOCUS_FOLLOWING, false);
+        magnifier = accessibilityCommon.getMagnifierForTest();
+        magnifier.setIsInitializingForTest(false);
+        assertEquals(magnifier.type, Magnifier.Type.FULL_SCREEN);
+        assertFalse(magnifier.shouldFollowChromeVoxFocus());
+
+        let count = 0;
+        chrome.accessibilityPrivate.moveMagnifierToRect = () => (count += 1);
+        assertEquals(count, 0);
+        magnifier.onChromeVoxFocusChanged_({
+          left: 2,
+          top: 4,
+          width: 5,
+          height: 7,
+        });
+        assertEquals(count, 0);
+      })();
+    });
+
+TEST_F(
+    'MagnifierE2ETest', 'ScreenMagnifierChromeVoxFollowsWhenPrefOn',
+    function() {
+      this.newCallback(async () => {
+        // Disable ChromeVox following for full screen magnifier, and
+        // verify prefs and state.
+        await this.setPref(
+            Magnifier.Prefs.SCREEN_MAGNIFIER_CHROMEVOX_FOCUS_FOLLOWING, true);
+        magnifier = accessibilityCommon.getMagnifierForTest();
+        magnifier.setIsInitializingForTest(false);
+        assertEquals(magnifier.type, Magnifier.Type.FULL_SCREEN);
+        assertTrue(magnifier.shouldFollowChromeVoxFocus());
+
+        let count = 0;
+        chrome.accessibilityPrivate.moveMagnifierToRect = () => (count += 1);
+        magnifier.lastMouseMovedTime_ = undefined;
+        assertEquals(count, 0);
+        magnifier.onChromeVoxFocusChanged_({
           left: 2,
           top: 4,
           width: 5,

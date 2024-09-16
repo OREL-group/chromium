@@ -26,7 +26,7 @@ XcodeIOSSimulatorRuntimeBuildTagRegx = r'ios_runtime_build:(.*)'
 XcodeIOSSimulatorRuntimeVersionTagRegx = r'ios_runtime_version:(.*)'
 XcodeIOSSimulatorRuntimeDMGCipdPath = 'infra_internal/ios/xcode/ios_runtime_dmg'
 
-# TODO(crbug.com/1441931): remove Legacy Download once iOS 15.5 is deprecated
+# TODO(crbug.com/40910268): remove Legacy Download once iOS 15.5 is deprecated
 IOS_SIM_RUNTIME_BUILTIN_STATE = ['Legacy Download', 'Bundled with Xcode']
 
 
@@ -54,7 +54,7 @@ def _using_new_mac_toolchain(mac_toolchain):
   download single runtimes. Legacy mac_toolchain can only download Xcode package
   as a whole package. The function tells the difference by checking the
   existence of a new command line switch in new version.
-  TODO(crbug.com/1191260): Remove this util function when the new mac_toolchain
+  TODO(crbug.com/40174473): Remove this util function when the new mac_toolchain
   version is rolled to everywhere using this script.
   """
   cmd = [
@@ -219,7 +219,7 @@ def select(xcode_app_path):
       '-s',
       xcode_app_path,
   ]
-  LOGGER.debug('Selecting XCode with command %s and "xcrun simctl list".' % cmd)
+  LOGGER.debug('Selecting Xcode with command %s and "xcrun simctl list".' % cmd)
   output = subprocess.check_output(
       cmd, stderr=subprocess.STDOUT).decode('utf-8')
 
@@ -243,7 +243,7 @@ def _install_xcode(mac_toolchain, xcode_build_version, xcode_path,
   include runtimes, even though it's installed with new mac_toolchain and
   "-with-runtime=False" switch.
 
-  TODO(crbug.com/1191260): Remove the last argument when the new mac_toolchain
+  TODO(crbug.com/40174473): Remove the last argument when the new mac_toolchain
   version is rolled to everywhere using this script.
 
   Args:
@@ -440,6 +440,10 @@ def install_runtime_dmg(mac_toolchain, runtime_cache_folder, ios_version,
     LOGGER.debug(
         'Runtime %s already exists, no need to install from mac_toolchain',
         runtime_build_to_install)
+  # TODO(crbug.com/349660173): See if this can be removed after the release of
+  # subsequent Xcode16 betas
+  if using_xcode_16_or_higher():
+    iossim_util.delete_other_ios18_runtimes(runtime_build_to_install)
 
 
 def version():
@@ -455,7 +459,7 @@ def version():
       'xcodebuild',
       '-version',
   ]
-  LOGGER.debug('Checking XCode version with command: %s' % cmd)
+  LOGGER.debug('Checking Xcode version with command: %s' % cmd)
 
   output = subprocess.check_output(cmd).decode('utf-8')
   output = output.splitlines()
@@ -490,6 +494,13 @@ def using_xcode_15_or_higher():
       '15.0') <= distutils.version.LooseVersion(version()[0])
 
 
+def using_xcode_16_or_higher():
+  """Returns true if using Xcode version 16 or higher."""
+  LOGGER.debug('Checking if Xcode version is 16 or higher')
+  return distutils.version.LooseVersion(
+      '16.0') <= distutils.version.LooseVersion(version()[0])
+
+
 def install_xcode(mac_toolchain_cmd, xcode_build_version, xcode_path,
                   runtime_cache_prefix, ios_version):
   """Installs the requested Xcode build version.
@@ -516,7 +527,7 @@ def install_xcode(mac_toolchain_cmd, xcode_build_version, xcode_path,
         # Depending on infra project, runtime named cache might not be
         # deployed. Create the dir if it doesn't exist since xcode_util
         # assumes it exists.
-        # TODO(crbug.com/1191260): Raise error instead of creating dirs after
+        # TODO(crbug.com/40174473): Raise error instead of creating dirs after
         # runtime named cache is deployed everywhere.
         os.makedirs(runtime_cache_folder)
     # install() installs the Xcode & iOS runtime, and returns a bool

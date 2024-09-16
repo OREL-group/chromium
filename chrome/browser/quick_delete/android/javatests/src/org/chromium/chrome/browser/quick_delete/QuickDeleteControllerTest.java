@@ -22,7 +22,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
-import static org.chromium.content_public.browser.test.util.TestThreadUtils.runOnUiThreadBlocking;
+import static org.chromium.base.ThreadUtils.runOnUiThreadBlocking;
 import static org.chromium.ui.test.util.ViewUtils.onViewWaiting;
 
 import android.app.Instrumentation;
@@ -49,6 +49,7 @@ import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.base.test.util.JniMocker;
+import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.browsing_data.BrowsingDataBridge;
 import org.chromium.chrome.browser.browsing_data.BrowsingDataBridgeJni;
@@ -60,9 +61,11 @@ import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.layouts.LayoutTestUtils;
 import org.chromium.chrome.browser.layouts.LayoutType;
+import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
 import org.chromium.chrome.browser.settings.SettingsActivity;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabTestUtils;
+import org.chromium.chrome.browser.tabmodel.TabClosureParams;
 import org.chromium.chrome.browser.ui.appmenu.AppMenuTestSupport;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
@@ -129,7 +132,11 @@ public class QuickDeleteControllerTest {
     @After
     public void tearDown() {
         // Close all tabs
-        runOnUiThreadBlocking(() -> mActivity.getCurrentTabModel().closeAllTabs(false));
+        runOnUiThreadBlocking(
+                () ->
+                        mActivity
+                                .getCurrentTabModel()
+                                .closeTabs(TabClosureParams.closeAllTabs().build()));
     }
 
     private void openQuickDeleteDialog() {
@@ -166,7 +173,7 @@ public class QuickDeleteControllerTest {
         onViewWaiting(withId(R.id.positive_button)).perform(click());
 
         // Wait for browsing data deletion to complete.
-        mCallbackHelper.waitForFirst();
+        mCallbackHelper.waitForOnly();
 
         LayoutTestUtils.waitForLayout(mActivity.getLayoutManager(), LayoutType.TAB_SWITCHER);
     }
@@ -178,7 +185,7 @@ public class QuickDeleteControllerTest {
         onViewWaiting(withId(R.id.positive_button)).perform(click());
 
         // Wait for browsing data deletion to complete.
-        mCallbackHelper.waitForFirst();
+        mCallbackHelper.waitForOnly();
 
         onViewWaiting(
                         withText(
@@ -213,7 +220,7 @@ public class QuickDeleteControllerTest {
         onViewWaiting(withId(R.id.positive_button)).perform(click());
 
         // Wait for browsing data deletion to complete.
-        mCallbackHelper.waitForFirst();
+        mCallbackHelper.waitForOnly();
 
         onViewWaiting(withText(R.string.quick_delete_snackbar_all_time_message))
                 .check(matches(isDisplayed()));
@@ -225,14 +232,17 @@ public class QuickDeleteControllerTest {
         openQuickDeleteDialog();
 
         HistogramWatcher histogramWatcher =
-                HistogramWatcher.newSingleRecordWatcher(
-                        QuickDeleteMetricsDelegate.HISTOGRAM_NAME,
-                        QuickDeleteMetricsDelegate.QuickDeleteAction.DELETE_CLICKED);
+                HistogramWatcher.newBuilder()
+                        .expectBooleanRecord("Privacy.QuickDelete.TabsEnabled", true)
+                        .expectIntRecord(
+                                QuickDeleteMetricsDelegate.HISTOGRAM_NAME,
+                                QuickDeleteMetricsDelegate.QuickDeleteAction.DELETE_CLICKED)
+                        .build();
 
         onViewWaiting(withId(R.id.positive_button)).perform(click());
 
         // Wait for browsing data deletion to complete.
-        mCallbackHelper.waitForFirst();
+        mCallbackHelper.waitForOnly();
 
         histogramWatcher.assertExpected();
     }
@@ -249,7 +259,7 @@ public class QuickDeleteControllerTest {
         onViewWaiting(withId(R.id.positive_button)).perform(click());
 
         // Wait for browsing data deletion to complete.
-        mCallbackHelper.waitForFirst();
+        mCallbackHelper.waitForOnly();
 
         histogramWatcher.assertExpected();
     }
@@ -276,7 +286,7 @@ public class QuickDeleteControllerTest {
         onViewWaiting(withId(R.id.positive_button)).perform(click());
 
         // Wait for browsing data deletion to complete.
-        mCallbackHelper.waitForFirst();
+        mCallbackHelper.waitForOnly();
 
         assertDataTypesCleared(
                 TimePeriod.LAST_15_MINUTES,
@@ -309,7 +319,7 @@ public class QuickDeleteControllerTest {
         onViewWaiting(withId(R.id.positive_button)).perform(click());
 
         // Wait for browsing data deletion to complete.
-        mCallbackHelper.waitForFirst();
+        mCallbackHelper.waitForOnly();
 
         assertDataTypesCleared(
                 TimePeriod.LAST_HOUR,
@@ -392,5 +402,23 @@ public class QuickDeleteControllerTest {
                                 .waitForMonitorWithTimeout(activityMonitor, ACTIVITY_WAIT_LONG_MS);
 
         assertTrue(activity.getMainFragment() instanceof ClearBrowsingDataFragmentAdvanced);
+    }
+
+    @Test
+    @MediumTest
+    @Restriction(Restriction.RESTRICTION_TYPE_INTERNET)
+    public void testQuickDeleteTabsNotClosed_WithMultiInstance() {
+        MultiWindowUtils.setInstanceCountForTesting(3);
+        HistogramWatcher histogramWatcher =
+                HistogramWatcher.newSingleRecordWatcher("Privacy.QuickDelete.TabsEnabled", false);
+
+        mActivityTestRule.loadUrl("https://www.google.com/");
+        assertEquals(1, mActivity.getCurrentTabModel().getCount());
+
+        openQuickDeleteDialog();
+
+        onViewWaiting(withId(R.id.positive_button)).perform(click());
+        assertEquals(1, mActivity.getCurrentTabModel().getCount());
+        histogramWatcher.assertExpected();
     }
 }

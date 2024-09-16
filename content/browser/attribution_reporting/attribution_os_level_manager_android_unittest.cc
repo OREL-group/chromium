@@ -11,8 +11,11 @@
 
 #include "base/functional/callback.h"
 #include "base/run_loop.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/test_timeouts.h"
 #include "base/time/time.h"
 #include "components/attribution_reporting/os_registration.h"
 #include "components/attribution_reporting/registrar.h"
@@ -45,8 +48,21 @@ class AttributionOsLevelManagerAndroidTest : public ::testing::Test {
 };
 
 TEST_F(AttributionOsLevelManagerAndroidTest, GetMeasurementStatusTimeMetric) {
+  static constexpr char kGetMeasurementStatusTimeMetric[] =
+      "Conversions.GetMeasurementStatusTime";
+
   task_environment_.RunUntilIdle();
-  histogram_tester_.ExpectTotalCount("Conversions.GetMeasurementStatusTime", 1);
+
+  // The task is run from a background thread, wait for it.
+  while (histogram_tester_.GetAllSamples(kGetMeasurementStatusTimeMetric)
+             .empty()) {
+    base::RunLoop run_loop;
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+        FROM_HERE, run_loop.QuitClosure(), TestTimeouts::tiny_timeout());
+    run_loop.Run();
+  }
+
+  histogram_tester_.ExpectTotalCount(kGetMeasurementStatusTimeMetric, 1);
 }
 
 // Simple test to ensure that JNI calls work properly.
@@ -86,12 +102,12 @@ TEST_F(AttributionOsLevelManagerAndroidTest, Register) {
             test_case.input_event, /*is_within_fenced_frame=*/false,
             /*render_frame_id=*/GlobalRenderFrameHostId(), test_case.registrar),
         is_debug_key_allowed,
-        base::BindLambdaForTesting(
-            [&](const OsRegistration& registration, bool success) {
-              // We don't check `success` here because the measurement API may
-              // or may not be available depending on the Android version.
-              run_loop.Quit();
-            }));
+        base::BindLambdaForTesting([&](const OsRegistration& registration,
+                                       const std::vector<bool>& success) {
+          // We don't check `success` here because the measurement API may
+          // or may not be available depending on the Android version.
+          run_loop.Quit();
+        }));
 
     run_loop.Run();
   }

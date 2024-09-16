@@ -9,6 +9,7 @@ import android.content.Context;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import org.chromium.base.Callback;
 import org.chromium.base.Token;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
@@ -17,12 +18,10 @@ import org.chromium.chrome.browser.tab.TabCreationState;
 import org.chromium.chrome.browser.tab.TabLaunchType;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
-import org.chromium.chrome.browser.tabmodel.TabModelSelectorObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorTabModelObserver;
 import org.chromium.chrome.browser.tasks.tab_groups.TabGroupColorUtils;
 import org.chromium.chrome.browser.tasks.tab_groups.TabGroupModelFilter;
 import org.chromium.chrome.browser.tasks.tab_groups.TabGroupModelFilterObserver;
-import org.chromium.chrome.browser.tasks.tab_groups.TabGroupTitleUtils;
 import org.chromium.chrome.browser.ui.messages.snackbar.Snackbar;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
 
@@ -35,13 +34,11 @@ import java.util.Locale;
  * and shows a undo snackbar.
  */
 public class UndoGroupSnackbarController implements SnackbarManager.SnackbarController {
-    private static final int INVALID_COLOR_ID = -1;
-
     private final Context mContext;
     private final TabModelSelector mTabModelSelector;
     private final SnackbarManager mSnackbarManager;
     private final TabGroupModelFilterObserver mTabGroupModelFilterObserver;
-    private final TabModelSelectorObserver mTabModelSelectorObserver;
+    private final Callback<TabModel> mCurrentTabModelObserver;
     private final TabModelSelectorTabModelObserver mTabModelSelectorTabModelObserver;
 
     private class TabUndoInfo {
@@ -51,6 +48,7 @@ public class UndoGroupSnackbarController implements SnackbarManager.SnackbarCont
         public final @Nullable Token tabOriginalTabGroupId;
         public final String destinationGroupTitle;
         public final int destinationGroupColorId;
+        public final boolean destinationGroupTitleCollapsed;
 
         TabUndoInfo(
                 Tab tab,
@@ -58,13 +56,15 @@ public class UndoGroupSnackbarController implements SnackbarManager.SnackbarCont
                 int rootId,
                 @Nullable Token tabGroupId,
                 String destinationGroupTitle,
-                int destinationGroupColorId) {
+                int destinationGroupColorId,
+                boolean destinationGroupTitleCollapsed) {
             this.tab = tab;
             this.tabOriginalIndex = tabIndex;
             this.tabOriginalRootId = rootId;
             this.tabOriginalTabGroupId = tabGroupId;
             this.destinationGroupTitle = destinationGroupTitle;
             this.destinationGroupColorId = destinationGroupColorId;
+            this.destinationGroupTitleCollapsed = destinationGroupTitleCollapsed;
         }
     }
 
@@ -83,13 +83,22 @@ public class UndoGroupSnackbarController implements SnackbarManager.SnackbarCont
         mTabGroupModelFilterObserver =
                 new TabGroupModelFilterObserver() {
                     @Override
+                    public void willMoveTabOutOfGroup(Tab movedTab, int newRootId) {
+                        // Fix for b/338511492 is to dismiss the snackbar if an ungroup operation
+                        // happens because information that allowed the group action to be undone
+                        // may no longer be usable (incorrect indices, group IDs, etc.).
+                        mSnackbarManager.dismissSnackbars(UndoGroupSnackbarController.this);
+                    }
+
+                    @Override
                     public void didCreateGroup(
                             List<Tab> tabs,
                             List<Integer> tabOriginalIndex,
                             List<Integer> originalRootId,
                             List<Token> originalTabGroupId,
                             String destinationGroupTitle,
-                            int destinationGroupColorId) {
+                            int destinationGroupColorId,
+                            boolean destinationGroupTitleCollapsed) {
                         assert tabs.size() == tabOriginalIndex.size();
 
                         List<TabUndoInfo> tabUndoInfo = new ArrayList<>();
@@ -106,7 +115,8 @@ public class UndoGroupSnackbarController implements SnackbarManager.SnackbarCont
                                             rootId,
                                             tabGroupId,
                                             destinationGroupTitle,
-                                            destinationGroupColorId));
+                                            destinationGroupColorId,
+                                            destinationGroupTitleCollapsed));
                         }
                         showUndoGroupSnackbar(tabUndoInfo);
                     }
@@ -119,15 +129,12 @@ public class UndoGroupSnackbarController implements SnackbarManager.SnackbarCont
                         mTabModelSelector.getTabModelFilterProvider().getTabModelFilter(true))
                 .addTabGroupObserver(mTabGroupModelFilterObserver);
 
-        mTabModelSelectorObserver =
-                new TabModelSelectorObserver() {
-                    @Override
-                    public void onTabModelSelected(TabModel newModel, TabModel oldModel) {
-                        mSnackbarManager.dismissSnackbars(UndoGroupSnackbarController.this);
-                    }
+        mCurrentTabModelObserver =
+                (tabModel) -> {
+                    mSnackbarManager.dismissSnackbars(UndoGroupSnackbarController.this);
                 };
 
-        mTabModelSelector.addObserver(mTabModelSelectorObserver);
+        mTabModelSelector.getCurrentTabModelSupplier().addObserver(mCurrentTabModelObserver);
 
         mTabModelSelectorTabModelObserver =
                 new TabModelSelectorTabModelObserver(mTabModelSelector) {
@@ -141,7 +148,7 @@ public class UndoGroupSnackbarController implements SnackbarManager.SnackbarCont
                     }
 
                     @Override
-                    public void willCloseTab(Tab tab, boolean animate, boolean didCloseAlone) {
+                    public void willCloseTab(Tab tab, boolean didCloseAlone) {
                         mSnackbarManager.dismissSnackbars(UndoGroupSnackbarController.this);
                     }
 
@@ -153,12 +160,13 @@ public class UndoGroupSnackbarController implements SnackbarManager.SnackbarCont
     }
 
     /**
-     * Cleans up this class, removes {@link TabModelSelectorObserver} from {@link TabModelSelector}
-     * and {@link TabGroupModelFilterObserver} from {@link TabGroupModelFilter}.
+     * Cleans up this class, removes {@link Callback<TabModel>} from {@link
+     * TabModelSelector#getCurrentTabModelSupplier()} and {@link TabGroupModelFilterObserver} from
+     * {@link TabGroupModelFilter}.
      */
     public void destroy() {
         if (mTabModelSelector != null) {
-            mTabModelSelector.removeObserver(mTabModelSelectorObserver);
+            mTabModelSelector.getCurrentTabModelSupplier().removeObserver(mCurrentTabModelObserver);
             ((TabGroupModelFilter)
                             mTabModelSelector.getTabModelFilterProvider().getTabModelFilter(false))
                     .removeTabGroupObserver(mTabGroupModelFilterObserver);
@@ -201,33 +209,36 @@ public class UndoGroupSnackbarController implements SnackbarManager.SnackbarCont
 
     @Override
     public void onDismissNoAction(Object actionData) {
+        TabGroupModelFilter filter =
+                (TabGroupModelFilter)
+                        mTabModelSelector.getTabModelFilterProvider().getCurrentTabModelFilter();
+
         // Delete the original tab group titles and colors of the merging tabs once the merge is
         // committed.
         for (TabUndoInfo info : (List<TabUndoInfo>) actionData) {
-            if (info.tab.getRootId() == info.tabOriginalRootId) continue;
+            int rootId = info.tabOriginalRootId;
+            if (info.tab.getRootId() == rootId) continue;
 
-            TabGroupTitleUtils.deleteTabGroupTitle(info.tabOriginalRootId);
-
-            if (ChromeFeatureList.sTabGroupParityAndroid.isEnabled()) {
-                TabGroupColorUtils.deleteTabGroupColor(info.tabOriginalRootId);
-            }
+            filter.deleteTabGroupVisualData(rootId);
         }
     }
 
     private void undo(List<TabUndoInfo> data) {
         assert data.size() != 0;
 
-        TabGroupModelFilter tabGroupModelFilter =
+        TabGroupModelFilter filter =
                 (TabGroupModelFilter)
                         mTabModelSelector.getTabModelFilterProvider().getCurrentTabModelFilter();
+        TabUndoInfo firstInfo = data.get(0);
+        int firstRootId = firstInfo.tab.getRootId();
 
         // The new rootID will be the destination tab group being merged to. If that destination
         // tab group had no title previously, on undo it may inherit a title from the group that
         // was merged to it, and persist when merging with other tabs later on. This check deletes
         // the group title for that rootID on undo since the destination group never had a group
         // title to begin with, and the merging tabs still have the original group title stored.
-        if (data.get(0).destinationGroupTitle == null) {
-            TabGroupTitleUtils.deleteTabGroupTitle(data.get(0).tab.getRootId());
+        if (firstInfo.destinationGroupTitle == null) {
+            filter.deleteTabGroupTitle(firstRootId);
         }
 
         if (ChromeFeatureList.sTabGroupParityAndroid.isEnabled()) {
@@ -236,14 +247,22 @@ public class UndoGroupSnackbarController implements SnackbarManager.SnackbarCont
             // merge, delete that color id on undo. This check deletes the group color for that
             // destination rootID, as all tabs still currently share that ID before the undo
             // operation is performed.
-            if (data.get(0).destinationGroupColorId == INVALID_COLOR_ID) {
-                TabGroupColorUtils.deleteTabGroupColor(data.get(0).tab.getRootId());
+            if (firstInfo.destinationGroupColorId == TabGroupColorUtils.INVALID_COLOR_ID) {
+                filter.deleteTabGroupColor(firstRootId);
+            }
+        }
+
+        // The action of merging expands the destination group. If it was originally collapsed, we
+        // need to restore that state.
+        if (ChromeFeatureList.sTabStripGroupCollapse.isEnabled()) {
+            if (firstInfo.destinationGroupTitleCollapsed) {
+                filter.setTabGroupCollapsed(firstRootId, true);
             }
         }
 
         for (int i = data.size() - 1; i >= 0; i--) {
             TabUndoInfo info = data.get(i);
-            tabGroupModelFilter.undoGroupedTab(
+            filter.undoGroupedTab(
                     info.tab,
                     info.tabOriginalIndex,
                     info.tabOriginalRootId,

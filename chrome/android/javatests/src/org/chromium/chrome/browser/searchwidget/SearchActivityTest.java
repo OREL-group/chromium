@@ -37,6 +37,7 @@ import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.ApplicationStatus;
 import org.chromium.base.Callback;
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
@@ -45,12 +46,12 @@ import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.CriteriaNotSatisfiedException;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.DoNotBatch;
-import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.JniMocker;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
+import org.chromium.chrome.browser.WarmupManager;
 import org.chromium.chrome.browser.app.metrics.LaunchCauseMetrics;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.chrome.browser.customtabs.CustomTabActivityTestRule;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.locale.LocaleManager;
 import org.chromium.chrome.browser.locale.LocaleManagerDelegate;
@@ -61,17 +62,14 @@ import org.chromium.chrome.browser.omnibox.suggestions.AutocompleteControllerJni
 import org.chromium.chrome.browser.omnibox.suggestions.CachedZeroSuggestionsManager;
 import org.chromium.chrome.browser.omnibox.voice.VoiceRecognitionHandler;
 import org.chromium.chrome.browser.profiles.ProfileManager;
-import org.chromium.chrome.browser.search_engines.DefaultSearchEnginePromoDialog;
-import org.chromium.chrome.browser.search_engines.DefaultSearchEnginePromoDialog.DefaultSearchEnginePromoDialogObserver;
 import org.chromium.chrome.browser.search_engines.SearchEnginePromoType;
 import org.chromium.chrome.browser.search_engines.TemplateUrlServiceFactory;
 import org.chromium.chrome.browser.searchwidget.SearchActivity.SearchActivityDelegate;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.ui.searchactivityutils.SearchActivityClient.IntentOrigin;
-import org.chromium.chrome.browser.ui.searchactivityutils.SearchActivityClient.SearchType;
+import org.chromium.chrome.browser.ui.searchactivityutils.SearchActivityExtras.IntentOrigin;
+import org.chromium.chrome.browser.ui.searchactivityutils.SearchActivityExtras.SearchType;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
-import org.chromium.chrome.test.MultiActivityTestRule;
 import org.chromium.chrome.test.R;
 import org.chromium.chrome.test.util.ActivityTestUtils;
 import org.chromium.chrome.test.util.OmniboxTestUtils;
@@ -79,9 +77,9 @@ import org.chromium.components.metrics.OmniboxEventProtos.OmniboxEventProto.Page
 import org.chromium.components.omnibox.AutocompleteMatch;
 import org.chromium.components.omnibox.AutocompleteMatchBuilder;
 import org.chromium.components.omnibox.AutocompleteResult;
+import org.chromium.components.omnibox.OmniboxFeatures;
 import org.chromium.components.omnibox.OmniboxSuggestionType;
 import org.chromium.components.search_engines.TemplateUrl;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.content_public.common.ContentUrlConstants;
 import org.chromium.ui.test.util.DeviceRestriction;
 import org.chromium.url.GURL;
@@ -104,10 +102,7 @@ import java.util.concurrent.Callable;
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 @DoNotBatch(reason = "Test start up behaviors.")
 public class SearchActivityTest {
-    private static final String TEST_PNG_IMAGE_FILE_EXTENSION = ".png";
-
-    private static class TestDelegate extends SearchActivityDelegate
-            implements DefaultSearchEnginePromoDialogObserver {
+    private static class TestDelegate extends SearchActivityDelegate {
         public final CallbackHelper shouldDelayNativeInitializationCallback = new CallbackHelper();
         public final CallbackHelper showSearchEngineDialogIfNeededCallback = new CallbackHelper();
         public final CallbackHelper onFinishDeferredInitializationCallback = new CallbackHelper();
@@ -117,7 +112,6 @@ public class SearchActivityTest {
         public boolean shouldDelayDeferredInitialization;
         public boolean shouldShowRealSearchDialog;
 
-        public DefaultSearchEnginePromoDialog shownPromoDialog;
         public Callback<Boolean> onSearchEngineFinalizedCallback;
 
         @Override
@@ -133,7 +127,7 @@ public class SearchActivityTest {
             showSearchEngineDialogIfNeededCallback.notifyCalled();
 
             if (shouldShowRealSearchDialog) {
-                TestThreadUtils.runOnUiThreadBlocking(
+                ThreadUtils.runOnUiThreadBlocking(
                         () -> {
                             LocaleManager.getInstance()
                                     .setDelegateForTest(
@@ -172,17 +166,13 @@ public class SearchActivityTest {
         public void onFinishDeferredInitialization() {
             onFinishDeferredInitializationCallback.notifyCalled();
         }
-
-        @Override
-        public void onDialogShown(DefaultSearchEnginePromoDialog dialog) {
-            shownPromoDialog = dialog;
-            onPromoDialogShownCallback.notifyCalled();
-        }
     }
 
-    public @Rule MultiActivityTestRule mTestRule = new MultiActivityTestRule();
     public @Rule ChromeTabbedActivityTestRule mActivityTestRule =
             new ChromeTabbedActivityTestRule();
+    // Needed for CT connection cleanup.
+    public @Rule CustomTabActivityTestRule mCustomTabActivityTestRule =
+            new CustomTabActivityTestRule();
     public @Rule JniMocker mJniMocker = new JniMocker();
     public @Rule MockitoRule mMockitoRule = MockitoJUnit.rule();
 
@@ -216,7 +206,6 @@ public class SearchActivityTest {
 
         mTestDelegate = new TestDelegate();
         SearchActivity.setDelegateForTests(mTestDelegate);
-        DefaultSearchEnginePromoDialog.setObserverForTests(mTestDelegate);
     }
 
     private AutocompleteMatch buildDummyAutocompleteMatch(String url) {
@@ -237,7 +226,28 @@ public class SearchActivityTest {
 
     @Test
     @SmallTest
-    public void testOmniboxSuggestionContainerAppears() throws Exception {
+    public void testOmniboxSuggestionContainerAppears_defaultRetainOmniboxOnFocus()
+            throws Exception {
+        testOmniboxSuggestionContainerAppears();
+    }
+
+    @Test
+    @SmallTest
+    public void testOmniboxSuggestionContainerAppears_shouldNotRetainOmniboxOnFocus()
+            throws Exception {
+        OmniboxFeatures.setShouldRetainOmniboxOnFocusForTesting(Boolean.FALSE);
+        testOmniboxSuggestionContainerAppears();
+    }
+
+    @Test
+    @SmallTest
+    public void testOmniboxSuggestionContainerAppears_shouldRetainOmniboxOnFocus()
+            throws Exception {
+        OmniboxFeatures.setShouldRetainOmniboxOnFocusForTesting(Boolean.TRUE);
+        testOmniboxSuggestionContainerAppears();
+    }
+
+    private void testOmniboxSuggestionContainerAppears() throws Exception {
         startSearchActivity();
 
         // Wait for the Activity to fully load.
@@ -245,19 +255,45 @@ public class SearchActivityTest {
         mTestDelegate.showSearchEngineDialogIfNeededCallback.waitForCallback(0);
         mTestDelegate.onFinishDeferredInitializationCallback.waitForCallback(0);
 
-        // Type in anything.  It should force the suggestions to appear.
+        // Focus empty omnibox.  It should force the suggestions to appear.
         mOmnibox.requestFocus();
-        verify(mAutocompleteController, times(1))
+        verify(mAutocompleteController)
                 .startZeroSuggest(
                         eq(""),
                         any(/* DSE URL*/ ),
                         eq(PageClassification.ANDROID_SEARCH_WIDGET_VALUE),
-                        eq(""));
+                        eq(""),
+                        /* isOnFocusContext= */ eq(false));
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () ->
                         mOnSuggestionsReceivedListener.onSuggestionsReceived(
-                                buildDummyAutocompleteResult(), "inline text", true));
+                                buildDummyAutocompleteResult(), true));
+        mOmnibox.checkSuggestionsShown();
+
+        // Type in anything.
+        mOmnibox.typeText("text", /* commit= */ false);
+        mOmnibox.checkText(Matchers.equalTo("text"), null);
+
+        // Clear omnibox focus. This should always clear uncommitted text and hide suggestions.
+        mOmnibox.sendKey(KeyEvent.KEYCODE_ESCAPE);
+        mOmnibox.checkText(Matchers.isEmptyString(), null);
+        mOmnibox.checkSuggestionsShown(false);
+
+        // Refocusing omnibox should once again force the suggestions to appear.
+        mOmnibox.requestFocus();
+        verify(mAutocompleteController, times(2))
+                .startZeroSuggest(
+                        eq(""),
+                        any(/* DSE URL*/ ),
+                        eq(PageClassification.ANDROID_SEARCH_WIDGET_VALUE),
+                        eq(""),
+                        /* isOnFocusContext= */ eq(false));
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () ->
+                        mOnSuggestionsReceivedListener.onSuggestionsReceived(
+                                buildDummyAutocompleteResult(), true));
         mOmnibox.checkSuggestionsShown();
     }
 
@@ -306,18 +342,13 @@ public class SearchActivityTest {
         mTestDelegate.shouldDelayLoadingNative = true;
         final SearchActivity searchActivity = startSearchActivity(0, /* isVoiceSearch= */ true);
         final SearchActivityLocationBarLayout locationBar =
-                (SearchActivityLocationBarLayout)
-                        searchActivity.findViewById(R.id.search_location_bar);
+                searchActivity.findViewById(R.id.search_location_bar);
 
         LocationBarCoordinator locationBarCoordinator =
                 searchActivity.getLocationBarCoordinatorForTesting();
         locationBarCoordinator.setVoiceRecognitionHandlerForTesting(mHandler);
         locationBar.beginQuery(
-                IntentOrigin.SEARCH_WIDGET,
-                SearchType.VOICE,
-                /* optionalText= */ null,
-                mHandler,
-                null);
+                IntentOrigin.SEARCH_WIDGET, SearchType.VOICE, /* optionalText= */ null, null);
         verify(mHandler, times(0))
                 .startVoiceRecognition(
                         VoiceRecognitionHandler.VoiceInteractionSource.SEARCH_WIDGET);
@@ -327,8 +358,8 @@ public class SearchActivityTest {
         Assert.assertEquals(0, mTestDelegate.onFinishDeferredInitializationCallback.getCallCount());
 
         // Start loading native, then let the activity finish initialization.
-        TestThreadUtils.runOnUiThreadBlocking(
-                () -> searchActivity.startDelayedNativeInitialization());
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> searchActivity.startDelayedNativeInitializationForTests());
 
         Assert.assertEquals(
                 1, mTestDelegate.shouldDelayNativeInitializationCallback.getCallCount());
@@ -338,6 +369,12 @@ public class SearchActivityTest {
         verify(mHandler)
                 .startVoiceRecognition(
                         VoiceRecognitionHandler.VoiceInteractionSource.SEARCH_WIDGET);
+        CriteriaHelper.pollUiThread(
+                () -> {
+                    return WarmupManager.getInstance().hasSpareWebContents()
+                            || WarmupManager.getInstance()
+                                    .hasSpareTab(ProfileManager.getLastUsedRegularProfile());
+                });
     }
 
     @Test
@@ -356,8 +393,8 @@ public class SearchActivityTest {
         verifyNoMoreInteractions(mAutocompleteController);
 
         // Start loading native, then let the activity finish initialization.
-        TestThreadUtils.runOnUiThreadBlocking(
-                () -> searchActivity.startDelayedNativeInitialization());
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> searchActivity.startDelayedNativeInitializationForTests());
 
         verifyNoMoreInteractions(mAutocompleteController);
 
@@ -399,9 +436,9 @@ public class SearchActivityTest {
                 () -> {
                     // Finish initialization.  It should notice the URL is queued up and start the
                     // browser.
-                    TestThreadUtils.runOnUiThreadBlocking(
+                    ThreadUtils.runOnUiThreadBlocking(
                             () -> {
-                                searchActivity.startDelayedNativeInitialization();
+                                searchActivity.startDelayedNativeInitializationForTests();
                             });
 
                     Assert.assertEquals(
@@ -417,7 +454,7 @@ public class SearchActivityTest {
     @Test
     @SmallTest
     public void testZeroSuggestBeforeNativeIsLoaded() {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     LocaleManager.getInstance()
                             .setDelegateForTest(
@@ -444,6 +481,7 @@ public class SearchActivityTest {
 
     @Test
     @SmallTest
+    @DisabledTest(message = "crbug.com/346528506")
     public void testTypeBeforeDeferredInitialization() throws Exception {
         // Start the Activity.  It should pause and assume that a promo dialog has appeared.
         mTestDelegate.shouldDelayDeferredInitialization = true;
@@ -463,8 +501,7 @@ public class SearchActivityTest {
         // - no typed suggestions fetches.
         verifyNoMoreInteractions(mAutocompleteController);
 
-        TestThreadUtils.runOnUiThreadBlocking(
-                mTestDelegate.onSearchEngineFinalizedCallback.bind(true));
+        ThreadUtils.runOnUiThreadBlocking(mTestDelegate.onSearchEngineFinalizedCallback.bind(true));
 
         // Let the initialization finish completely.
         Assert.assertEquals(
@@ -478,55 +515,8 @@ public class SearchActivityTest {
                         eq(""),
                         any(/* DSE URL */ ),
                         eq(PageClassification.ANDROID_SEARCH_WIDGET_VALUE),
-                        any());
-    }
-
-    // If SEARCH_ENGINE_PROMO_DIALOG_REWRITE is enabled the dialog is not dismissable by the user.
-    @Test
-    @SmallTest
-    @Features.DisableFeatures(ChromeFeatureList.SEARCH_ENGINE_PROMO_DIALOG_REWRITE)
-    public void testRealPromoDialogDismissWithoutSelectionLegacy() throws Exception {
-        // Start the Activity.  It should pause when the promo dialog appears.
-        mTestDelegate.shouldShowRealSearchDialog = true;
-        SearchActivity activity = startSearchActivity();
-        mTestDelegate.shouldDelayNativeInitializationCallback.waitForCallback(0);
-        mTestDelegate.showSearchEngineDialogIfNeededCallback.waitForCallback(0);
-        mTestDelegate.onPromoDialogShownCallback.waitForCallback(0);
-        Assert.assertEquals(0, mTestDelegate.onFinishDeferredInitializationCallback.getCallCount());
-
-        // Dismiss the dialog without acting on it.
-        TestThreadUtils.runOnUiThreadBlocking(() -> mTestDelegate.shownPromoDialog.dismiss());
-
-        // SearchActivity should realize the failure case and prevent the user from using it.
-        CriteriaHelper.pollUiThread(
-                () -> {
-                    List<Activity> activities = ApplicationStatus.getRunningActivities();
-                    if (activities.isEmpty()) return;
-
-                    Criteria.checkThat(activities, Matchers.hasSize(1));
-                    Criteria.checkThat(activities.get(0), Matchers.is(activity));
-                    Criteria.checkThat(activity.isFinishing(), Matchers.is(true));
-                });
-        Assert.assertEquals(
-                1, mTestDelegate.shouldDelayNativeInitializationCallback.getCallCount());
-        Assert.assertEquals(1, mTestDelegate.showSearchEngineDialogIfNeededCallback.getCallCount());
-        Assert.assertEquals(0, mTestDelegate.onFinishDeferredInitializationCallback.getCallCount());
-    }
-
-    @Test
-    @DisabledTest(message = "crbug.com/1166647")
-    @SmallTest
-    public void testNewIntentDiscardsQuery() {
-        final SearchActivity searchActivity = startSearchActivity();
-        // Note: we should not need to request focus here.
-        mOmnibox.requestFocus();
-        mOmnibox.typeText("first query", false);
-
-        // Start the Activity again by firing another copy of the same Intent.
-        SearchActivity restartedActivity = startSearchActivity(1, /* isVoiceSearch= */ false);
-        Assert.assertEquals(searchActivity, restartedActivity);
-
-        mOmnibox.checkText(Matchers.isEmptyString(), null);
+                        any(),
+                        /* isOnFocusContext= */ eq(false));
     }
 
     @Test
@@ -539,14 +529,14 @@ public class SearchActivityTest {
 
         LocationBarCoordinator locationBarCoordinator =
                 searchActivity.getLocationBarCoordinatorForTesting();
-        UrlBar urlBar = (UrlBar) searchActivity.findViewById(R.id.url_bar);
-        TestThreadUtils.runOnUiThreadBlocking(
+        UrlBar urlBar = searchActivity.findViewById(R.id.url_bar);
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     locationBarCoordinator.onUrlChangedForTesting();
                     Assert.assertTrue(urlBar.getText().toString().isEmpty());
                 });
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     locationBarCoordinator.clearOmniboxFocus();
                     locationBarCoordinator.onUrlChangedForTesting();
@@ -556,9 +546,10 @@ public class SearchActivityTest {
 
     @Test
     @SmallTest
+    @DisabledTest(message = "crbug.com/346528506")
     public void testupdateAnchorViewLayout() {
         SearchActivity searchActivity = startSearchActivity();
-        View anchorView = searchActivity.getAnchorViewForTesting();
+        View anchorView = searchActivity.findViewById(R.id.toolbar);
         var layoutParams = anchorView.getLayoutParams();
 
         int focusedHeight =
@@ -637,7 +628,7 @@ public class SearchActivityTest {
     private void setUrlBarText(final Activity activity, final String url) {
         CriteriaHelper.pollUiThread(
                 () -> {
-                    UrlBar urlBar = (UrlBar) activity.findViewById(R.id.url_bar);
+                    UrlBar urlBar = activity.findViewById(R.id.url_bar);
                     try {
                         Criteria.checkThat(
                                 "UrlBar not focusable", urlBar.isFocusable(), Matchers.is(true));
@@ -648,9 +639,9 @@ public class SearchActivityTest {
                         throw ex;
                     }
                 });
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    UrlBar urlBar = (UrlBar) activity.findViewById(R.id.url_bar);
+                    UrlBar urlBar = activity.findViewById(R.id.url_bar);
                     urlBar.setText(url);
                 });
     }

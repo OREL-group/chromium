@@ -15,12 +15,13 @@
 #include "components/prefs/testing_pref_service.h"
 #include "components/signin/internal/identity_manager/account_tracker_service.h"
 #include "components/signin/internal/identity_manager/fake_profile_oauth2_token_service.h"
+#include "components/signin/internal/identity_manager/primary_account_manager.h"
 #include "components/signin/internal/identity_manager/profile_oauth2_token_service_delegate.h"
 #include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/base/signin_pref_names.h"
 #include "components/signin/public/base/test_signin_client.h"
-#include "components/signin/public/identity_manager/access_token_constants.h"
 #include "components/signin/public/identity_manager/access_token_info.h"
+#include "components/signin/public/identity_manager/access_token_restriction.h"
 #include "components/signin/public/identity_manager/identity_test_utils.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "google_apis/gaia/gaia_constants.h"
@@ -51,6 +52,9 @@ const char kIdTokenEmptyServices[] =
     "dummy-header."
     "eyAic2VydmljZXMiOiBbXSB9"  // payload: { "services": [] }
     ".dummy-signature";
+
+const char kPriviligedConsumerName[] = "extensions_identity_api";
+
 }  // namespace
 
 class AccessTokenFetcherTest
@@ -67,17 +71,14 @@ class AccessTokenFetcherTest
         access_token_info_("access token",
                            base::Time::Now() + base::Hours(1),
                            std::string(kIdTokenEmptyServices)),
-        account_tracker_(CreateAccountTrackerService()),
-        primary_account_manager_(&signin_client_,
-                                 &token_service_,
-                                 account_tracker_.get()) {
+        account_tracker_(CreateAccountTrackerService()) {
     AccountTrackerService::RegisterPrefs(pref_service_.registry());
     ProfileOAuth2TokenService::RegisterProfilePrefs(pref_service_.registry());
     PrimaryAccountManager::RegisterProfilePrefs(pref_service_.registry());
 
     account_tracker_->Initialize(&pref_service_, base::FilePath());
-    primary_account_manager_.Initialize();
-
+    primary_account_manager_ = std::make_unique<PrimaryAccountManager>(
+        &signin_client_, &token_service_, account_tracker_.get());
     token_service_.AddAccessTokenDiagnosticsObserver(this);
   }
 
@@ -89,7 +90,7 @@ class AccessTokenFetcherTest
                                   const std::string& email,
                                   ConsentLevel consent_level) {
     CoreAccountInfo account_info = AddAccount(gaia_id, email);
-    primary_account_manager_.SetPrimaryAccountInfo(
+    primary_account_manager_->SetPrimaryAccountInfo(
         account_info, consent_level,
         signin_metrics::AccessPoint::ACCESS_POINT_UNKNOWN);
 
@@ -151,9 +152,9 @@ class AccessTokenFetcherTest
       AccessTokenFetcher::Mode mode) {
     std::set<std::string> scopes{"scope"};
     return std::make_unique<AccessTokenFetcher>(
-        account_id, "test_consumer", &token_service_, &primary_account_manager_,
-        url_loader_factory, scopes, std::move(callback), mode,
-        RequireSyncConsentForScopeVerification());
+        account_id, "test_consumer", &token_service_,
+        primary_account_manager_.get(), url_loader_factory, scopes,
+        std::move(callback), mode, RequireSyncConsentForScopeVerification());
   }
 
   AccountTrackerService* account_tracker() { return account_tracker_.get(); }
@@ -177,6 +178,10 @@ class AccessTokenFetcherTest
                                                     : ConsentLevel::kSignin;
   }
 
+  const PrimaryAccountManager& primary_account_manager() {
+    return *primary_account_manager_;
+  }
+
  private:
   std::unique_ptr<AccountTrackerService> CreateAccountTrackerService() {
 #if BUILDFLAG(IS_ANDROID)
@@ -193,7 +198,7 @@ class AccessTokenFetcherTest
       std::string oauth_consumer_name = "test_consumer") {
     return std::make_unique<AccessTokenFetcher>(
         account_id, oauth_consumer_name, &token_service_,
-        &primary_account_manager_, scopes, std::move(callback), mode,
+        primary_account_manager_.get(), scopes, std::move(callback), mode,
         RequireSyncConsentForScopeVerification());
   }
 
@@ -212,7 +217,7 @@ class AccessTokenFetcherTest
   FakeProfileOAuth2TokenService token_service_;
   AccessTokenInfo access_token_info_;
   std::unique_ptr<AccountTrackerService> account_tracker_;
-  PrimaryAccountManager primary_account_manager_;
+  std::unique_ptr<PrimaryAccountManager> primary_account_manager_;
   base::OnceClosure on_access_token_request_callback_;
 };
 
@@ -473,7 +478,7 @@ TEST_P(AccessTokenFetcherTest, RefreshTokenRevoked) {
   // fetcher should *not* retry.
   EXPECT_CALL(
       callback,
-      Run(GoogleServiceAuthError(GoogleServiceAuthError::REQUEST_CANCELED),
+      Run(GoogleServiceAuthError(GoogleServiceAuthError::USER_NOT_SIGNED_UP),
           AccessTokenInfo()));
   token_service()->RevokeCredentials(account_id);
 }
@@ -738,6 +743,14 @@ TEST_P(AccessTokenFetcherTest, FetcherWithCustomURLLoaderFactory) {
 
 // APIs consent tests.
 
+TEST_P(AccessTokenFetcherTest, FetcherWithUnrestrictedOAuth2Scope) {
+  CoreAccountInfo account = AddAccount(kTestGaiaId, kTestEmail);
+  EXPECT_FALSE(primary_account_manager().HasPrimaryAccount(
+      signin::ConsentLevel::kSignin));
+  VerifyScopeAccess(account.account_id, "test_consumer",
+                    {GaiaConstants::kGoogleUserInfoEmail});
+}
+
 // Tests that a request with a consented client accessing an OAuth2 API
 // that requires sync consent is fulfilled.
 TEST_P(AccessTokenFetcherTest, FetcherWithConsentedClientAccessToConsentAPI) {
@@ -770,39 +783,30 @@ TEST_P(AccessTokenFetcherTest,
 // Tests that a request with a privileged client accessing a privileged OAuth2
 // API is fulfilled.
 TEST_P(AccessTokenFetcherTest,
-       FetcherWithPriveledgedClientAccessToPriveledgedAPI) {
-  EXPECT_FALSE(GetPrivilegedOAuth2Consumers().empty());
-  for (const std::string& privileged_client : GetPrivilegedOAuth2Consumers()) {
-    CoreAccountId account_id =
-        SetPrimaryAccount(kTestGaiaId, kTestEmail, ConsentLevel::kSignin);
-    VerifyScopeAccess(account_id, privileged_client,
-                      {GaiaConstants::kAnyApiOAuth2Scope});
-  }
+       FetcherWithPriviledgedClientAccessToPriveledgedAPI) {
+  CoreAccountId account_id =
+      SetPrimaryAccount(kTestGaiaId, kTestEmail, ConsentLevel::kSignin);
+  VerifyScopeAccess(account_id, kPriviligedConsumerName,
+                    {GaiaConstants::kAnyApiOAuth2Scope});
 }
 
 // Tests that a request with a privileged client accessing an OAuth2 API
 // that requires sync consent is fulfilled.
 TEST_P(AccessTokenFetcherTest, FetcherWithPriveledgedClientAccessToConsentAPI) {
-  EXPECT_FALSE(GetPrivilegedOAuth2Consumers().empty());
-  for (const std::string& privileged_client : GetPrivilegedOAuth2Consumers()) {
-    CoreAccountId account_id =
-        SetPrimaryAccount(kTestGaiaId, kTestEmail, ConsentLevel::kSignin);
-    VerifyScopeAccess(account_id, privileged_client,
-                      {GaiaConstants::kOAuth1LoginScope});
-  }
+  CoreAccountId account_id =
+      SetPrimaryAccount(kTestGaiaId, kTestEmail, ConsentLevel::kSignin);
+  VerifyScopeAccess(account_id, kPriviligedConsumerName,
+                    {GaiaConstants::kOAuth1LoginScope});
 }
 
 // Tests that a request with a privileged client accessing an OAuth2 API
 // that does not require consent is fulfilled.
 TEST_P(AccessTokenFetcherTest,
        FetcherWithPriveledgedClientAccessToUnconsentedAPI) {
-  EXPECT_FALSE(GetPrivilegedOAuth2Consumers().empty());
-  for (const std::string& privileged_client : GetPrivilegedOAuth2Consumers()) {
-    CoreAccountId account_id =
-        SetPrimaryAccount(kTestGaiaId, kTestEmail, ConsentLevel::kSignin);
-    VerifyScopeAccess(account_id, privileged_client,
-                      {GaiaConstants::kChromeSafeBrowsingOAuth2Scope});
-  }
+  CoreAccountId account_id =
+      SetPrimaryAccount(kTestGaiaId, kTestEmail, ConsentLevel::kSignin);
+  VerifyScopeAccess(account_id, kPriviligedConsumerName,
+                    {GaiaConstants::kChromeSafeBrowsingOAuth2Scope});
 }
 
 // Tests that a request with an unconsented client accessing an OAuth2 API
@@ -811,8 +815,10 @@ TEST_P(AccessTokenFetcherTest,
        FetcherWithUnconsentedClientAccessToPrivelegedAPI) {
   CoreAccountId account_id =
       SetPrimaryAccount(kTestGaiaId, kTestEmail, ConsentLevel::kSignin);
-  EXPECT_CHECK_DEATH(VerifyScopeAccess(account_id, "test_consumer",
-                                       {GaiaConstants::kAnyApiOAuth2Scope}));
+  EXPECT_CHECK_DEATH_WITH(
+      VerifyScopeAccess(account_id, "test_consumer",
+                        {GaiaConstants::kAnyApiOAuth2Scope}),
+      "You are attempting to access a privileged scope");
 }
 
 // Tests that a request with a consented client accessing a privileged OAuth2
@@ -821,8 +827,10 @@ TEST_P(AccessTokenFetcherTest,
        FetcherWithConsentedClientAccessToPrivilegedAPI) {
   CoreAccountId account_id =
       SetPrimaryAccount(kTestGaiaId, kTestEmail, GetTargetConsentLevel());
-  EXPECT_CHECK_DEATH(VerifyScopeAccess(account_id, "test_consumer",
-                                       {GaiaConstants::kAnyApiOAuth2Scope}));
+  EXPECT_CHECK_DEATH_WITH(
+      VerifyScopeAccess(account_id, "test_consumer",
+                        {GaiaConstants::kAnyApiOAuth2Scope}),
+      "You are attempting to access a privileged scope");
 }
 
 }  // namespace signin

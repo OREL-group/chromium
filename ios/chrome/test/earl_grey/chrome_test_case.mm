@@ -16,8 +16,8 @@
 #import "base/strings/string_util.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
+#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_feature.h"
 #import "ios/chrome/browser/policy/model/policy_earl_grey_utils.h"
-#import "ios/chrome/browser/ui/ntp/new_tab_page_feature.h"
 #import "ios/chrome/browser/web/model/features.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
@@ -54,7 +54,7 @@ NSArray* multitaskingTests() {
     @"testContextMenuOpenInNewTab",     // ContextMenuTestCase
     @"testContextMenuOpenInNewWindow",  // ContextMenuTestCase
     @"testSwitchToMain",                // CookiesTestCase
-    // TODO(crbug.com/1422238) Re-enable this flaky test on multitasking.
+    // TODO(crbug.com/40896793) Re-enable this flaky test on multitasking.
     // @"testSwitchToIncognito",              // CookiesTestCase
     @"testFindDefaultFormAssistControls",  // FormInputTestCase
     @"testTabDeletion",                    // TabUsageRecorderTestCase
@@ -64,22 +64,21 @@ NSArray* multitaskingTests() {
     @"testSignInPopUpAccountOnSyncSettings",   // AccountCollectionsTestCase
     @"testAutofillProfileEditing",             // AutofillSettingsTestCase
     @"testAccessibilityOfBlockPopupSettings",  // BlockPopupsTestCase
-    // TODO(crbug.com/1485297): Failing on ios-simulator-full-configs.
-    // @"testClearCookies",                       // SettingsTestCase
-    @"testAccessibilityOfTranslateSettings",  // TranslateUITestCase
+    @"testClearCookies",                       // SettingsTestCase
+    @"testAccessibilityOfTranslateSettings",   // TranslateUITestCase
 
     // UI tests
     @"testActivityServiceControllerPrintAfterRedirectionToUnprintablePage",
     // ActivityServiceControllerTestCase
     @"testDismissOnDestroy",  // AlertCoordinatorTestCase
-    // TODO(crbug.com/1475206): Re-enable this test.
+    // TODO(crbug.com/40927812): Re-enable this test.
     // @"testAddRemoveBookmark",       // BookmarksTestCase
     @"testJavaScriptInOmnibox",        // BrowserViewControllerTestCase
     @"testChooseCastReceiverChooser",  // CastReceiverTestCase
     @"testErrorPage",                  // ErrorPageTestCase
     @"testFindInPage",                 // FindInPageTestCase
     @"testDismissFirstRun",            // FirstRunTestCase
-    // TODO(crbug.com/872788) Failing after move to Xcode 10.
+    // TODO(crbug.com/41407180) Failing after move to Xcode 10.
     // @"testLongPDFScroll",                         // FullscreenTestCase
     @"testDeleteHistory",                         // HistoryUITestCase
     @"testInfobarsDismissOnNavigate",             // InfobarTestCase
@@ -103,7 +102,7 @@ NSArray* multitaskingTests() {
   ]];
 
   if (base::ios::IsRunningOnIOS17OrLater()) {
-    // TODO(crbug.com/1469233): Test is failing on iOS17.
+    // TODO(crbug.com/40925281): Test is failing on iOS17.
     [tests removeObject:@"testQRScannerUIIsShown"];
   }
   return tests;
@@ -224,6 +223,7 @@ void ResetAuthentication() {
   ResetAuthentication();
 
   // Reset any remaining sign-in state from previous tests.
+  [ChromeEarlGrey killWebKitNetworkProcess];
   [ChromeEarlGrey signOutAndClearIdentities];
   if (![ChromeTestCase isStartupTest]) {
     [ChromeEarlGrey openNewTab];
@@ -256,6 +256,7 @@ void ResetAuthentication() {
     [ChromeEarlGrey stopAllWebStatesLoading];
 
     // Clear any remaining test accounts and signed in users.
+    [ChromeEarlGrey killWebKitNetworkProcess];
     [ChromeEarlGrey signOutAndClearIdentities];
 
     [[self class] enableMockAuthentication];

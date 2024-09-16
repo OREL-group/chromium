@@ -22,6 +22,7 @@
 #include "content/public/test/content_mock_cert_verifier.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "content/shell/browser/shell.h"
+#include "content/test/content_browser_test_base.h"
 #include "net/base/features.h"
 #include "net/base/filename_util.h"
 #include "net/dns/mock_host_resolver.h"
@@ -30,24 +31,11 @@
 #include "net/test/embedded_test_server/http_response.h"
 #include "net/test/spawned_test_server/spawned_test_server.h"
 #include "net/test/test_data_directory.h"
+#include "third_party/blink/public/common/features.h"
 
 namespace content {
 
-class ContentSecurityPolicyBrowserTest : public ContentBrowserTest {
- protected:
-  void SetUpOnMainThread() override {
-    host_resolver()->AddRule("*", "127.0.0.1");
-    ASSERT_TRUE(embedded_test_server()->Start());
-  }
-
-  WebContentsImpl* web_contents() const {
-    return static_cast<WebContentsImpl*>(shell()->web_contents());
-  }
-
-  RenderFrameHostImpl* current_frame_host() {
-    return web_contents()->GetPrimaryMainFrame();
-  }
-};
+using ContentSecurityPolicyBrowserTest = ContentBrowserTestBase;
 
 // Test that the console error message for a Content Security Policy violation
 // triggered by web assembly compilation does not mention the keyword
@@ -232,10 +220,10 @@ IN_PROC_BROWSER_TEST_F(ContentSecurityPolicyBrowserTest, FileURLs) {
     GURL element_url = net::FilePathToFileURL(TestFilePath(
         test_case.element_name == "iframe" ? "empty.html" : "blank.jpg"));
     element_url = element_url.ReplaceComponents(*test_case.element_host);
-    TestNavigationObserver load_observer(shell()->web_contents());
+    TestNavigationObserver load_observer(web_contents());
 
     EXPECT_TRUE(
-        ExecJs(current_frame_host(),
+        ExecJs(main_frame_host(),
                JsReplace(R"(
           var violation = new Promise(resolve => {
             document.addEventListener("securitypolicyviolation", (e) => {
@@ -262,7 +250,7 @@ IN_PROC_BROWSER_TEST_F(ContentSecurityPolicyBrowserTest, FileURLs) {
       // Since iframes always trigger the onload event, we need to be more
       // careful checking whether the iframe was blocked or not.
       load_observer.Wait();
-      const url::Origin child_origin = current_frame_host()
+      const url::Origin child_origin = main_frame_host()
                                            ->child_at(0)
                                            ->current_frame_host()
                                            ->GetLastCommittedOrigin();
@@ -282,13 +270,13 @@ IN_PROC_BROWSER_TEST_F(ContentSecurityPolicyBrowserTest, FileURLs) {
     } else {
       std::string expect_message =
           test_case.expect_allowed ? "allowed" : "blocked";
-      EXPECT_EQ(expect_message, EvalJs(current_frame_host(), "promise"))
+      EXPECT_EQ(expect_message, EvalJs(main_frame_host(), "promise"))
           << element_url << " in " << document_url << " with CSPs \""
           << test_case.csp << "\" should be " << expect_message;
     }
 
     if (!test_case.expect_allowed) {
-      EXPECT_EQ("got violation", EvalJs(current_frame_host(), "violation"));
+      EXPECT_EQ("got violation", EvalJs(main_frame_host(), "violation"));
     }
   }
 }
@@ -306,8 +294,66 @@ IN_PROC_BROWSER_TEST_F(ContentSecurityPolicyBrowserTest, CSPAttributeTooLong) {
   EXPECT_TRUE(NavigateToURL(shell(), url));
   ASSERT_TRUE(console_observer.Wait());
 
-  EXPECT_EQ(current_frame_host()->child_count(), 1u);
-  EXPECT_FALSE(current_frame_host()->child_at(0)->csp_attribute());
+  EXPECT_EQ(main_frame_host()->child_count(), 1u);
+  EXPECT_FALSE(main_frame_host()->child_at(0)->csp_attribute());
+}
+
+class TransparentPlaceholderImageContentSecurityPolicyBrowserTest
+    : public ContentSecurityPolicyBrowserTest,
+      public ::testing::WithParamInterface<bool> {
+ public:
+  TransparentPlaceholderImageContentSecurityPolicyBrowserTest() {
+    if (GetParam()) {
+      feature_list_.InitAndEnableFeature(
+          blink::features::kSimplifyLoadingTransparentPlaceholderImage);
+    } else {
+      feature_list_.InitAndDisableFeature(
+          blink::features::kSimplifyLoadingTransparentPlaceholderImage);
+    }
+  }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+};
+
+INSTANTIATE_TEST_SUITE_P(
+    TransparentPlaceholderImageContentSecurityPolicyBrowserTest,
+    TransparentPlaceholderImageContentSecurityPolicyBrowserTest,
+    testing::Bool());
+
+IN_PROC_BROWSER_TEST_P(
+    TransparentPlaceholderImageContentSecurityPolicyBrowserTest,
+    ImgSrcPolicyEnforced) {
+  const char* page = R"(
+    data:text/html,
+    <meta http-equiv="Content-Security-Policy" content="img-src 'none';">
+    <img src="data:image/gif;base64,R0lGODlhAQABAIAAAP///////yH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==">
+  )";
+
+  GURL url(page);
+  WebContentsConsoleObserver console_observer(web_contents());
+  console_observer.SetPattern(
+      "Refused to load the image "
+      "'data:image/gif;base64,R0lGODlhAQABAIAAAP///////"
+      "yH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==' because it violates the following "
+      "Content Security Policy directive: \"img-src 'none'\".\n");
+  EXPECT_TRUE(NavigateToURL(shell(), url));
+  ASSERT_TRUE(console_observer.Wait());
+}
+
+IN_PROC_BROWSER_TEST_P(
+    TransparentPlaceholderImageContentSecurityPolicyBrowserTest,
+    ImgSrcPolicyReported) {
+  GURL url = embedded_test_server()->GetURL("/csp_report_only_data_url.html");
+
+  WebContentsConsoleObserver console_observer(web_contents());
+  console_observer.SetPattern(
+      "[Report Only] Refused to load the image "
+      "'data:image/gif;base64,R0lGODlhAQABAIAAAP///////"
+      "yH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==' because it violates the following "
+      "Content Security Policy directive: \"img-src 'none'\".\n");
+  EXPECT_TRUE(NavigateToURL(shell(), url));
+  ASSERT_TRUE(console_observer.Wait());
 }
 
 namespace {

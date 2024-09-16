@@ -7,7 +7,9 @@ package org.chromium.chrome.browser.site_settings;
 import org.chromium.base.Callback;
 import org.chromium.chrome.browser.privacy_sandbox.PrivacySandboxBridge;
 import org.chromium.chrome.browser.privacy_sandbox.Topic;
+import org.chromium.chrome.browser.profiles.Profile;
 
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -28,83 +30,95 @@ public class FakeRwsPrivacySandboxBridge implements PrivacySandboxBridge.Natives
     }
 
     @Override
-    public boolean isPrivacySandboxRestricted() {
+    public boolean isPrivacySandboxRestricted(Profile profile) {
         return false;
     }
 
     @Override
-    public boolean isRestrictedNoticeEnabled() {
+    public boolean isRestrictedNoticeEnabled(Profile profile) {
         return false;
     }
 
     @Override
-    public boolean isFirstPartySetsDataAccessEnabled() {
+    public boolean isFirstPartySetsDataAccessEnabled(Profile profile) {
         return true;
     }
 
     @Override
-    public boolean isFirstPartySetsDataAccessManaged() {
+    public boolean isFirstPartySetsDataAccessManaged(Profile profile) {
         return true;
     }
 
     @Override
-    public boolean isPartOfManagedFirstPartySet(String origin) {
+    public boolean isPartOfManagedFirstPartySet(Profile profile, String origin) {
         return mRwsMembers.contains(origin);
     }
 
     @Override
-    public void setFirstPartySetsDataAccessEnabled(boolean enabled) {}
+    public void setFirstPartySetsDataAccessEnabled(Profile profile, boolean enabled) {}
 
     @Override
-    public String getFirstPartySetOwner(String memberOrigin) {
+    public String getFirstPartySetOwner(Profile profile, String memberOrigin) {
         return mRwsMembers.contains(memberOrigin.replace("http://", "")) ? mRwsOwner : "";
     }
 
     @Override
-    public Topic[] getCurrentTopTopics() {
+    public List<Topic> getCurrentTopTopics(Profile profile) {
         return null;
     }
 
     @Override
-    public Topic[] getBlockedTopics() {
+    public List<Topic> getBlockedTopics(Profile profile) {
         return null;
     }
 
     @Override
-    public Topic[] getFirstLevelTopics() {
+    public List<Topic> getFirstLevelTopics(Profile profile) {
         return null;
     }
 
     @Override
-    public Topic[] getChildTopicsCurrentlyAssigned(int topicId, int taxonomyVersion) {
+    public List<Topic> getChildTopicsCurrentlyAssigned(
+            Profile profile, int topicId, int taxonomyVersion) {
         return null;
     }
 
     @Override
-    public void setTopicAllowed(int topicId, int taxonomyVersion, boolean allowed) {}
+    public void setTopicAllowed(
+            Profile profile, int topicId, int taxonomyVersion, boolean allowed) {}
 
     @Override
-    public void getFledgeJoiningEtldPlusOneForDisplay(Callback<String[]> callback) {}
+    public void getFledgeJoiningEtldPlusOneForDisplay(
+            Profile profile, Callback<String[]> callback) {}
 
     @Override
-    public String[] getBlockedFledgeJoiningTopFramesForDisplay() {
+    public List<String> getBlockedFledgeJoiningTopFramesForDisplay(Profile profile) {
         return null;
     }
 
     @Override
-    public void setFledgeJoiningAllowed(String topFrameEtldPlus1, boolean allowed) {}
+    public void setFledgeJoiningAllowed(
+            Profile profile, String topFrameEtldPlus1, boolean allowed) {}
 
     @Override
-    public int getRequiredPromptType() {
+    public int getRequiredPromptType(Profile profile, int surfaceType) {
         return 0;
     }
 
     @Override
-    public void promptActionOccurred(int action) {}
+    public void promptActionOccurred(Profile profile, int action, int surfaceType) {}
 
     @Override
-    public void topicsToggleChanged(boolean newValue) {}
+    public void topicsToggleChanged(Profile profile, boolean newValue) {}
 
     @Override
-    public void setAllPrivacySandboxAllowedForTesting() {}
+    public void setAllPrivacySandboxAllowedForTesting(Profile profile) {}
+
+    @Override
+    public void recordActivityType(Profile profile, int activityType) {}
+
+    @Override
+    public boolean isConsentCountry() {
+        return false;
+    }
 }

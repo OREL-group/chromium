@@ -15,6 +15,7 @@
 #include "components/sync/base/passphrase_enums.h"
 #include "components/sync/engine/nigori/nigori.h"
 #include "components/sync/engine/sync_string_conversions.h"
+#include "components/sync/protocol/nigori_specifics.pb.h"
 #include "components/sync/service/sync_service.h"
 #include "components/sync/service/trusted_vault_histograms.h"
 
@@ -26,11 +27,13 @@ namespace {
 // numeric values should never be reused. Keep in sync with
 // TrustedVaultFetchKeysAttempt in
 // tools/metrics/histograms/metadata/sync/enums.xml.
+// LINT.IfChange(TrustedVaultFetchKeysAttempt)
 enum class TrustedVaultFetchKeysAttemptForUMA {
   kFirstAttempt = 0,
   kSecondAttempt = 1,
   kMaxValue = kSecondAttempt
 };
+// LINT.ThenChange(/tools/metrics/histograms/metadata/sync/enums.xml:TrustedVaultFetchKeysAttempt)
 
 // A SyncEncryptionHandler::Observer implementation that simply posts all calls
 // to another task runner.
@@ -73,7 +76,7 @@ class SyncEncryptionObserverProxy : public SyncEncryptionHandler::Observer {
             observer_));
   }
 
-  void OnEncryptedTypesChanged(ModelTypeSet encrypted_types,
+  void OnEncryptedTypesChanged(DataTypeSet encrypted_types,
                                bool encrypt_everything) override {
     task_runner_->PostTask(
         FROM_HERE,
@@ -212,7 +215,7 @@ bool SyncServiceCrypto::IsPassphraseRequired() const {
       return true;
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return false;
 }
 
@@ -256,7 +259,7 @@ void SyncServiceCrypto::SetEncryptionPassphrase(const std::string& passphrase) {
       // TODO(crbug.com/40904402): this is currently reachable on iOS due to
       // discrepancy in UI code. Fix iOS implementation and avoid using more
       // strict checks here until this is done.
-      NOTREACHED()
+      DUMP_WILL_BE_NOTREACHED()
           << "Can not set explicit passphrase when decryption is needed.";
       return;
   }
@@ -350,7 +353,7 @@ bool SyncServiceCrypto::IsTrustedVaultKeyRequiredStateKnown() const {
     case RequiredUserAction::kTrustedVaultRecoverabilityDegraded:
       return true;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return false;
 }
 
@@ -361,7 +364,8 @@ std::optional<PassphraseType> SyncServiceCrypto::GetPassphraseType() const {
 
 void SyncServiceCrypto::SetSyncEngine(const CoreAccountInfo& account_info,
                                       SyncEngine* engine) {
-  DCHECK(engine);
+  CHECK(engine);
+  CHECK(!state_.engine);
   state_.account_info = account_info;
   state_.engine = engine;
 
@@ -392,7 +396,7 @@ void SyncServiceCrypto::SetSyncEngine(const CoreAccountInfo& account_info,
     case RequiredUserAction::kTrustedVaultRecoverabilityDegraded:
       // Neither keys nor the recoverability state are fetched during engine
       // initialization.
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
   }
 }
@@ -405,7 +409,7 @@ SyncServiceCrypto::GetEncryptionObserverProxy() {
       base::SequencedTaskRunner::GetCurrentDefault());
 }
 
-ModelTypeSet SyncServiceCrypto::GetEncryptedDataTypes() const {
+DataTypeSet SyncServiceCrypto::GetAllEncryptedDataTypes() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(state_.encrypted_types.HasAll(AlwaysEncryptedUserTypes()));
   // We may be called during the setup process before we're
@@ -432,7 +436,7 @@ bool SyncServiceCrypto::HasCryptoError() const {
       return true;
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return false;
 }
 
@@ -525,13 +529,13 @@ void SyncServiceCrypto::OnTrustedVaultKeyAccepted() {
   delegate_->ReconfigureDataTypesDueToCrypto();
 }
 
-void SyncServiceCrypto::OnEncryptedTypesChanged(ModelTypeSet encrypted_types,
+void SyncServiceCrypto::OnEncryptedTypesChanged(DataTypeSet encrypted_types,
                                                 bool encrypt_everything) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   state_.encrypted_types = encrypted_types;
   state_.encrypt_everything = encrypt_everything;
   DVLOG(1) << "Encrypted types changed to "
-           << ModelTypeSetToDebugString(state_.encrypted_types)
+           << DataTypeSetToDebugString(state_.encrypted_types)
            << " (encrypt everything is set to "
            << (state_.encrypt_everything ? "true" : "false") << ")";
   DCHECK(state_.encrypted_types.HasAll(AlwaysEncryptedUserTypes()));

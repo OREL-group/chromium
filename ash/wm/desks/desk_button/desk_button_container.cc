@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "ash/public/cpp/desk_profiles_delegate.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shelf/desk_button_widget.h"
 #include "ash/shelf/shelf.h"
 #include "ash/shell.h"
@@ -72,7 +73,8 @@ void DeskButtonContainer::OnFirstSessionStarted() {
   }
 }
 
-gfx::Size DeskButtonContainer::CalculatePreferredSize() const {
+gfx::Size DeskButtonContainer::CalculatePreferredSize(
+    const views::SizeBounds& available_size) const {
   if (zero_state_) {
     return {kDeskButtonContainerWidthVertical, GetPreferredLength()};
   }
@@ -201,7 +203,7 @@ std::u16string DeskButtonContainer::GetTitleForView(
   } else if (view == next_desk_button_) {
     return next_desk_button_->GetTitle();
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 void DeskButtonContainer::Init(DeskButtonWidget* desk_button_widget) {
@@ -243,7 +245,7 @@ void DeskButtonContainer::UpdateUi(const Desk* active_desk) {
                             : views::CreateThemedRoundedRectBackground(
                                   cros_tokens::kCrosSysSystemOnBase,
                                   kDeskButtonContainerCornerRadius));
-  desk_button_->set_zero_state(zero_state_);
+  desk_button_->SetZeroState(zero_state_);
   desk_button_->UpdateUi(active_desk);
   prev_desk_button_->UpdateUi(active_desk);
   next_desk_button_->UpdateUi(active_desk);
@@ -255,7 +257,7 @@ void DeskButtonContainer::UpdateUiAndLayoutIfNeeded(const Desk* active_desk) {
   UpdateUi(active_desk);
 
   if (GetPreferredSize() != old_preferred_size) {
-    desk_button_widget_->delegate_view()->DeprecatedLayoutImmediately();
+    desk_button_widget_->delegate_view()->InvalidateLayout();
   }
 }
 void DeskButtonContainer::HandleLocaleChange() {
@@ -268,9 +270,9 @@ void DeskButtonContainer::MaybeShowContextMenu(views::View* source,
                                                ui::LocatedEvent* event) {
   if (!desk_button_->is_activated()) {
     ui::MenuSourceType source_type = ui::MenuSourceType::MENU_SOURCE_MOUSE;
-    if (event->type() == ui::ET_GESTURE_LONG_PRESS) {
+    if (event->type() == ui::EventType::kGestureLongPress) {
       source_type = ui::MenuSourceType::MENU_SOURCE_LONG_PRESS;
-    } else if (event->type() == ui::ET_GESTURE_LONG_TAP) {
+    } else if (event->type() == ui::EventType::kGestureLongTap) {
       source_type = ui::MenuSourceType::MENU_SOURCE_LONG_TAP;
     }
     gfx::Point location_in_screen(event->location());

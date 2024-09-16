@@ -14,10 +14,14 @@ namespace {
 
 const gfx::VectorIcon& GetVectorIconForPickerCategory(PickerCategory category) {
   switch (category) {
-    case PickerCategory::kEditor:
+    case PickerCategory::kEditorWrite:
       // TODO: b/322926823 - Use correct icons.
       return kPencilIcon;
-    case PickerCategory::kExpressions:
+    case PickerCategory::kEditorRewrite:
+      // TODO: b/322926823 - Use correct icons.
+      return kPencilIcon;
+    case PickerCategory::kEmojisGifs:
+    case PickerCategory::kEmojis:
       return kPickerEmojiIcon;
     case PickerCategory::kLinks:
       return kPickerBrowsingHistoryIcon;
@@ -26,23 +30,11 @@ const gfx::VectorIcon& GetVectorIconForPickerCategory(PickerCategory category) {
     case PickerCategory::kDriveFiles:
       return kPickerDriveFilesIcon;
     case PickerCategory::kLocalFiles:
-      return kPickerLocalFilesIcon;
+      return kFilesAppIcon;
     case PickerCategory::kDatesTimes:
       return kPickerCalendarIcon;
     case PickerCategory::kUnitsMaths:
       return kPickerUnitsMathsIcon;
-    case PickerCategory::kUpperCase:
-      return kPickerUpperCaseIcon;
-    case PickerCategory::kLowerCase:
-      return kPickerLowerCaseIcon;
-    case PickerCategory::kSentenceCase:
-      return kPickerSentenceCaseIcon;
-    case PickerCategory::kTitleCase:
-      return kPickerTitleCaseIcon;
-    case PickerCategory::kCapsOn:
-      return kPickerCapsLockOnIcon;
-    case PickerCategory::kCapsOff:
-      return kPickerCapsLockOffIcon;
   }
 }
 

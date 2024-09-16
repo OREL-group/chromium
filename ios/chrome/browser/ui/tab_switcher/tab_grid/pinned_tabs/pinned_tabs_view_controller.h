@@ -29,19 +29,13 @@ class WebStateID;
             (PinnedTabsViewController*)pinnedTabsViewController
              didSelectItemWithID:(web::WebStateID)itemID;
 
-// Tells the delegate that the the number of items in `pinnedTabsViewController`
-// changed to `count`.
-- (void)pinnedTabsViewController:
-            (PinnedTabsViewController*)pinnedTabsViewController
-              didChangeItemCount:(NSUInteger)count;
-
 // Tells the delegate that the item with `itemID` was moved.
 - (void)pinnedTabsViewControllerDidMoveItem:
     (PinnedTabsViewController*)pinnedTabsViewController;
 
 // Tells the delegate that the item with `itemID` was removed.
 - (void)pinnedTabsViewController:(PinnedTabsViewController*)gridViewController
-             didRemoveItemWIthID:(web::WebStateID)itemID;
+             didRemoveItemWithID:(web::WebStateID)itemID;
 
 // Tells the delegate that the `pinnedTabsViewController` visibility has
 // changed.
@@ -62,6 +56,10 @@ class WebStateID;
 
 // Tells the delegate that a drag session did end.
 - (void)pinnedViewControllerDragSessionDidEnd:
+    (PinnedTabsViewController*)pinnedTabsViewController;
+
+// Tells the delegate that a context menu has been requested.
+- (void)pinnedViewControllerDidRequestContextMenu:
     (PinnedTabsViewController*)pinnedTabsViewController;
 
 @end

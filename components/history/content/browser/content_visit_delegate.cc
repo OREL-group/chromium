@@ -12,7 +12,9 @@
 #include "components/history/core/browser/history_database.h"
 #include "components/history/core/browser/history_db_task.h"
 #include "components/history/core/browser/history_service.h"
+#include "components/visitedlink/browser/partitioned_visitedlink_writer.h"
 #include "components/visitedlink/browser/visitedlink_writer.h"
+#include "components/visitedlink/core/visited_link.h"
 #include "net/base/schemeful_site.h"
 #include "third_party/blink/public/common/features.h"
 #include "url/gurl.h"
@@ -36,6 +38,28 @@ class URLIteratorFromURLs : public visitedlink::VisitedLinkWriter::URLIterator {
  private:
   std::vector<GURL>::const_iterator itr_;
   std::vector<GURL>::const_iterator end_;
+};
+
+// Creates a VisitedLinkIterator from std::vector<VisitedLink>. Allows us to
+// efficiently delete a list of VisitedLinks from the partitioned hashtable.
+class VisitedLinkIteratorFromLinks
+    : public visitedlink::PartitionedVisitedLinkWriter::VisitedLinkIterator {
+ public:
+  explicit VisitedLinkIteratorFromLinks(const std::vector<VisitedLink>& links)
+      : itr_(links.begin()), end_(links.end()) {}
+
+  VisitedLinkIteratorFromLinks(const VisitedLinkIteratorFromLinks&) = delete;
+  VisitedLinkIteratorFromLinks& operator=(const VisitedLinkIteratorFromLinks&) =
+      delete;
+
+  // visitedlink::PartitionedVisitedLinkWriter::VisitedLinkIterator
+  // implementation.
+  const VisitedLink& NextVisitedLink() override { return *(itr_++); }
+  bool HasNextVisitedLink() const override { return itr_ != end_; }
+
+ private:
+  std::vector<VisitedLink>::const_iterator itr_;
+  std::vector<VisitedLink>::const_iterator end_;
 };
 
 // IterateUrlsDBTask bridge HistoryBackend::URLEnumerator to
@@ -151,7 +175,9 @@ ContentVisitDelegate::ContentVisitDelegate(
   // time. Callers of either `partitioned_writer_` or `visitedlink_writer_`
   // should ensure the pointer is not null before use.
   if (base::FeatureList::IsEnabled(
-          blink::features::kPartitionVisitedLinkDatabase)) {
+          blink::features::kPartitionVisitedLinkDatabase) ||
+      base::FeatureList::IsEnabled(
+          blink::features::kPartitionVisitedLinkDatabaseWithSelfLinks)) {
     partitioned_writer_ =
         std::make_unique<visitedlink::PartitionedVisitedLinkWriter>(
             browser_context, this);
@@ -172,7 +198,9 @@ bool ContentVisitDelegate::Init(HistoryService* history_service) {
   // time. Callers of either `partitioned_writer_` or `visitedlink_writer_`
   // should ensure the pointer is not null before use.
   if (base::FeatureList::IsEnabled(
-          blink::features::kPartitionVisitedLinkDatabase)) {
+          blink::features::kPartitionVisitedLinkDatabase) ||
+      base::FeatureList::IsEnabled(
+          blink::features::kPartitionVisitedLinkDatabaseWithSelfLinks)) {
     DCHECK(partitioned_writer_);
     return partitioned_writer_->Init();
   }
@@ -180,53 +208,74 @@ bool ContentVisitDelegate::Init(HistoryService* history_service) {
   return visitedlink_writer_->Init();
 }
 
-// TODO(crbug.com/41483930): Add support for adding/deleting visited links in
-// the partitioned hashtable, and move the check for
-// `kPartitionVisitedLinkDatabase` to HistoryService, where this function is
-// called.
 void ContentVisitDelegate::AddURL(const GURL& url) {
+  // Not all callers of AddURL will have partitioning disabled. We should
+  // only add URLs when the unpartitioned table is available.
   if (visitedlink_writer_) {
     visitedlink_writer_->AddURL(url);
   }
 }
 
-// TODO(crbug.com/41483930): Add support for adding/deleting visited links in
-// the partitioned hashtable, and move the check for
-// `kPartitionVisitedLinkDatabase` to HistoryService, where this function is
-// called.
 void ContentVisitDelegate::AddURLs(const std::vector<GURL>& urls) {
+  // Not all callers of AddURLs will have partitioning disabled. We should
+  // only add URLs when the unpartitioned table is available.
   if (visitedlink_writer_) {
     visitedlink_writer_->AddURLs(urls);
   }
 }
 
-// TODO(crbug.com/41483930): Add support for adding/deleting visited links in
-// the partitioned hashtable, and move the check for
-// `kPartitionVisitedLinkDatabase` to HistoryService, where this function is
-// called.
 void ContentVisitDelegate::DeleteURLs(const std::vector<GURL>& urls) {
+  // Not all callers of DeleteURLs will have partitioning disabled. We should
+  // only delete URLs when the unpartitioned table is available.
   if (visitedlink_writer_) {
     URLIteratorFromURLs iterator(urls);
     visitedlink_writer_->DeleteURLs(&iterator);
   }
 }
 
-// TODO(crbug.com/41483930): Add support for adding/deleting visited links in
-// the partitioned hashtable, and move the check for
-// `kPartitionVisitedLinkDatabase` to HistoryService, where this function is
-// called.
 void ContentVisitDelegate::DeleteAllURLs() {
+  // Not all callers of DeleteAllURLs will have partitioning disabled. We should
+  // only delete URLs when the unpartitioned table is available.
   if (visitedlink_writer_) {
     visitedlink_writer_->DeleteAllURLs();
   }
 }
 
+void ContentVisitDelegate::AddVisitedLink(const VisitedLink& link) {
+  // Not all callers of AddVisitedLink will have partitioning enabled. We should
+  // only add visited links when the partitioned table is available.
+  if (partitioned_writer_) {
+    partitioned_writer_->AddVisitedLink(link);
+  }
+}
+
+void ContentVisitDelegate::DeleteVisitedLinks(
+    const std::vector<VisitedLink>& links) {
+  // Not all callers of DeleteVisitedLinks will have partitioning enabled. We
+  // should only delete visited links when the partitioned table is available.
+  if (partitioned_writer_) {
+    VisitedLinkIteratorFromLinks iterator(links);
+    partitioned_writer_->DeleteVisitedLinks(&iterator);
+  }
+}
+
+void ContentVisitDelegate::DeleteAllVisitedLinks() {
+  // Not all callers of DeleteAllVisitedLinks will have partitioning enabled. We
+  // should only delete visited links when the partitioned table is available.
+  if (partitioned_writer_) {
+    partitioned_writer_->DeleteAllVisitedLinks();
+  }
+}
+
 std::optional<uint64_t> ContentVisitDelegate::GetOrAddOriginSalt(
     const url::Origin& origin) {
-  // This function should only be called when `kPartitionVisitedLinkDatabase` is
-  // enabled, meaning partitioned_writer_ should be constructed and init.
-  DCHECK(partitioned_writer_);
-  return partitioned_writer_->GetOrAddOriginSalt(origin);
+  // This function should only be called when `kPartitionVisitedLinkDatabase` or
+  // `kPartitionVisitedLinkDatabaseWithSelfLinks` is enabled, meaning
+  // partitioned_writer_ should be constructed and init.
+  if (partitioned_writer_) {
+    return partitioned_writer_->GetOrAddOriginSalt(origin);
+  }
+  return std::nullopt;
 }
 
 void ContentVisitDelegate::RebuildTable(

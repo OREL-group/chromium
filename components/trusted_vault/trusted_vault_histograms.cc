@@ -36,9 +36,11 @@ std::string GetTrustedVaultURLFetchReasonSuffix(
     case TrustedVaultURLFetchReasonForUMA::
         kDownloadAuthenticationFactorsRegistrationState:
       return "DownloadAuthenticationFactorsRegistrationState";
+    case TrustedVaultURLFetchReasonForUMA::kRegisterICloudKeychain:
+      return "RegisterICloudKeychain";
   }
 
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 std::string GetRecoveryKeyStoreURLFetchReasonSuffix(
@@ -48,7 +50,7 @@ std::string GetRecoveryKeyStoreURLFetchReasonSuffix(
       return "UpdateRecoveryKeyStore";
   }
 
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 }  // namespace
@@ -73,7 +75,7 @@ SecurityDomainIdOrInvalidForUma GetSecurityDomainIdOrInvalidForUma(
     case SecurityDomainId::kPasskeys:
       return SecurityDomainIdOrInvalidForUma::kPasskeys;
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 void RecordTrustedVaultHintDegradedRecoverabilityChangedReason(

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/capture/video/chromeos/request_manager.h"
 
 #include <sync/sync.h>
@@ -14,7 +19,6 @@
 
 #include "base/containers/contains.h"
 #include "base/functional/bind.h"
-#include "base/functional/callback_helpers.h"
 #include "base/posix/safe_strerror.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/task/single_thread_task_runner.h"
@@ -27,6 +31,7 @@
 #include "media/capture/video/chromeos/video_capture_features_chromeos.h"
 #include "mojo/public/cpp/platform/platform_handle.h"
 #include "mojo/public/cpp/system/platform_handle.h"
+#include "third_party/abseil-cpp/absl/cleanup/cleanup.h"
 
 namespace media {
 
@@ -1159,8 +1164,7 @@ void RequestManager::SubmitCapturedJpegBuffer(uint32_t frame_number,
         FROM_HERE, "Failed to map GPU memory buffer");
     return;
   }
-  base::ScopedClosureRunner unmap_gmb(base::BindOnce(
-      [](gfx::GpuMemoryBuffer* gmb) { gmb->Unmap(); }, base::Unretained(gmb)));
+  absl::Cleanup unmap_gmb = [gmb] { gmb->Unmap(); };
 
   const Camera3JpegBlob* header = reinterpret_cast<Camera3JpegBlob*>(
       reinterpret_cast<const uintptr_t>(gmb->memory(0)) +

@@ -64,6 +64,12 @@ class SettingsPrivateApiTest : public ExtensionApiTest,
   }
 
  protected:
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    command_line->AppendSwitch(
+        "safe-browsing-treat-user-as-advanced-protection");
+    ExtensionApiTest::SetUpCommandLine(command_line);
+  }
+
   bool RunSettingsSubtest(const std::string& subtest) {
     return RunExtensionTest("settings_private", {.custom_arg = subtest.c_str()},
                             {.load_as_component = true});
@@ -117,9 +123,6 @@ IN_PROC_BROWSER_TEST_P(SettingsPrivateApiTest, GetRecommendedPref) {
 }
 
 IN_PROC_BROWSER_TEST_P(SettingsPrivateApiTest, GetDisabledPref) {
-  HostContentSettingsMapFactory::GetForProfile(profile())
-      ->SetDefaultContentSetting(ContentSettingsType::COOKIES,
-                                 ContentSetting::CONTENT_SETTING_BLOCK);
   EXPECT_TRUE(RunSettingsSubtest("getDisabledPref")) << message_;
 }
 
@@ -132,7 +135,7 @@ IN_PROC_BROWSER_TEST_P(SettingsPrivateApiTest, GetPartiallyManagedPref) {
       content_settings::PartitionKey::GetDefaultForTesting());
   content_settings::TestUtils::OverrideProvider(
       HostContentSettingsMapFactory::GetForProfile(profile()),
-      std::move(provider), HostContentSettingsMap::POLICY_PROVIDER);
+      std::move(provider), content_settings::ProviderType::kPolicyProvider);
   EXPECT_TRUE(RunSettingsSubtest("getPartiallyManagedPref")) << message_;
 }
 
@@ -153,7 +156,7 @@ IN_PROC_BROWSER_TEST_P(SettingsPrivateApiTest, GetManagedByParentPref) {
       content_settings::PartitionKey::GetDefaultForTesting());
   content_settings::TestUtils::OverrideProvider(
       HostContentSettingsMapFactory::GetForProfile(profile()),
-      std::move(provider), HostContentSettingsMap::SUPERVISED_PROVIDER);
+      std::move(provider), content_settings::ProviderType::kSupervisedProvider);
   EXPECT_TRUE(RunSettingsSubtest("getManagedByParentPref")) << message_;
 }
 

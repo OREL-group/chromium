@@ -4,8 +4,14 @@
 
 #include "services/webnn/tflite/op_resolver.h"
 
+#include "services/webnn/public/mojom/webnn_context_provider.mojom.h"
 #include "third_party/tflite/buildflags.h"
 #include "third_party/tflite/src/tensorflow/lite/kernels/builtin_op_kernels.h"
+
+#if BUILDFLAG(BUILD_TFLITE_WITH_NNAPI)
+#include "third_party/tflite/src/tensorflow/lite/core/c/c_api_types.h"
+#include "third_party/tflite/src/tensorflow/lite/delegates/nnapi/nnapi_delegate.h"
+#endif
 
 #if BUILDFLAG(BUILD_TFLITE_WITH_XNNPACK)
 #include "third_party/tflite/src/tensorflow/lite/tflite_with_xnnpack_optional.h"
@@ -13,7 +19,7 @@
 
 namespace webnn::tflite {
 
-OpResolver::OpResolver() {
+OpResolver::OpResolver(const mojom::CreateContextOptions& options) {
   AddBuiltin(::tflite::BuiltinOperator_ABS,
              ::tflite::ops::builtin::Register_ABS());
   AddBuiltin(::tflite::BuiltinOperator_AVERAGE_POOL_2D,
@@ -28,6 +34,10 @@ OpResolver::OpResolver() {
              ::tflite::ops::builtin::Register_ARG_MIN(),
              /* min_version = */ 1,
              /* max_version = */ 2);
+  AddBuiltin(::tflite::BuiltinOperator_BATCH_MATMUL,
+             ::tflite::ops::builtin::Register_BATCH_MATMUL(),
+             /* min_version = */ 1,
+             /* max_version = */ 4);
   AddBuiltin(::tflite::BuiltinOperator_CONCATENATION,
              ::tflite::ops::builtin::Register_CONCATENATION(),
              /* min_version = */ 1,
@@ -62,6 +72,10 @@ OpResolver::OpResolver() {
              /* max_version = */ 3);
   AddBuiltin(::tflite::BuiltinOperator_EXP,
              ::tflite::ops::builtin::Register_EXP());
+  AddBuiltin(::tflite::BuiltinOperator_BROADCAST_TO,
+             ::tflite::ops::builtin::Register_BROADCAST_TO(),
+             /* min_version = */ 2,
+             /* max_version = */ 3);
   AddBuiltin(::tflite::BuiltinOperator_FLOOR,
              ::tflite::ops::builtin::Register_FLOOR());
   AddBuiltin(::tflite::BuiltinOperator_FULLY_CONNECTED,
@@ -72,6 +86,10 @@ OpResolver::OpResolver() {
              ::tflite::ops::builtin::Register_GATHER(),
              /* min_version = */ 1,
              /* max_version = */ 3);
+  AddBuiltin(::tflite::BuiltinOperator_GELU,
+             ::tflite::ops::builtin::Register_GELU(),
+             /* min_version = */ 1,
+             /* max_version = */ 2);
   AddBuiltin(::tflite::BuiltinOperator_GREATER,
              ::tflite::ops::builtin::Register_GREATER(),
              /* min_version = */ 1,
@@ -137,6 +155,8 @@ OpResolver::OpResolver() {
              /* max_version = */ 2);
   AddBuiltin(::tflite::BuiltinOperator_POW,
              ::tflite::ops::builtin::Register_POW());
+  AddBuiltin(::tflite::BuiltinOperator_PRELU,
+             ::tflite::ops::builtin::Register_PRELU());
   AddBuiltin(::tflite::BuiltinOperator_REDUCE_PROD,
              ::tflite::ops::builtin::Register_REDUCE_PROD());
   AddBuiltin(::tflite::BuiltinOperator_REDUCE_MAX,
@@ -152,6 +172,8 @@ OpResolver::OpResolver() {
              /* max_version = */ 2);
   AddBuiltin(::tflite::BuiltinOperator_RELU_N1_TO_1,
              ::tflite::ops::builtin::Register_RELU_N1_TO_1());
+  AddBuiltin(::tflite::BuiltinOperator_RELU_0_TO_1,
+             ::tflite::ops::builtin::Register_RELU_0_TO_1());
   AddBuiltin(::tflite::BuiltinOperator_RELU6,
              ::tflite::ops::builtin::Register_RELU6(), /* min_version = */ 1,
              /* max_version = */ 2);
@@ -169,6 +191,10 @@ OpResolver::OpResolver() {
              ::tflite::ops::builtin::Register_SELECT_V2());
   AddBuiltin(::tflite::BuiltinOperator_SIN,
              ::tflite::ops::builtin::Register_SIN());
+  AddBuiltin(::tflite::BuiltinOperator_SIGN,
+             ::tflite::ops::builtin::Register_SIGN(),
+             /* min_version = */ 1,
+             /* max_version = */ 2);
   AddBuiltin(::tflite::BuiltinOperator_SLICE,
              ::tflite::ops::builtin::Register_SLICE(),
              /* min_version = */ 1,
@@ -179,6 +205,10 @@ OpResolver::OpResolver() {
              /* max_version = */ 3);
   AddBuiltin(::tflite::BuiltinOperator_SPLIT_V,
              ::tflite::ops::builtin::Register_SPLIT_V(),
+             /* min_version = */ 1,
+             /* max_version = */ 2);
+  AddBuiltin(::tflite::BuiltinOperator_SQUEEZE,
+             ::tflite::ops::builtin::Register_SQUEEZE(),
              /* min_version = */ 1,
              /* max_version = */ 2);
   AddBuiltin(::tflite::BuiltinOperator_SQRT,
@@ -198,6 +228,23 @@ OpResolver::OpResolver() {
              ::tflite::ops::builtin::Register_TRANSPOSE(),
              /* min_version = */ 1,
              /* max_version = */ 4);
+  AddBuiltin(::tflite::BuiltinOperator_TRANSPOSE_CONV,
+             ::tflite::ops::builtin::Register_TRANSPOSE_CONV(),
+             /* min_version = */ 1,
+             /* max_version = */ 3);
+
+#if BUILDFLAG(BUILD_TFLITE_WITH_NNAPI)
+  if (options.device == mojom::CreateContextOptions::Device::kNpu) {
+    delegate_creators_.push_back([](TfLiteContext* context) {
+      return std::unique_ptr<TfLiteDelegate, void (*)(TfLiteDelegate*)>(
+          new ::tflite::StatefulNnApiDelegate(), [](TfLiteDelegate* delegate) {
+            // Cast `delegate` back to a C++ object type so that the correct
+            // destructor is invoked.
+            delete static_cast<::tflite::StatefulNnApiDelegate*>(delegate);
+          });
+    });
+  }
+#endif
 
 #if BUILDFLAG(BUILD_TFLITE_WITH_XNNPACK)
   delegate_creators_.push_back([](TfLiteContext* context) {

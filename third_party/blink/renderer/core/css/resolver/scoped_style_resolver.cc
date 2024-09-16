@@ -26,6 +26,11 @@
  * DAMAGE.
  */
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/core/css/resolver/scoped_style_resolver.h"
 
 #include "third_party/blink/renderer/core/animation/document_timeline.h"
@@ -111,15 +116,14 @@ void ScopedStyleResolver::AddCounterStyleRules(const RuleSet& rule_set) {
 void ScopedStyleResolver::AppendActiveStyleSheets(
     unsigned index,
     const ActiveStyleSheetVector& active_sheets) {
-  for (auto* active_iterator = active_sheets.begin() + index;
-       active_iterator != active_sheets.end(); active_iterator++) {
-    CSSStyleSheet* sheet = active_iterator->first;
+  for (const auto& active_sheet : base::span(active_sheets).subspan(index)) {
+    CSSStyleSheet* sheet = active_sheet.first;
     media_query_result_flags_.Add(sheet->GetMediaQueryResultFlags());
-    if (!active_iterator->second) {
+    if (!active_sheet.second) {
       continue;
     }
-    const RuleSet& rule_set = *active_iterator->second;
-    active_style_sheets_.push_back(*active_iterator);
+    const RuleSet& rule_set = *active_sheet.second;
+    active_style_sheets_.push_back(active_sheet);
     AddKeyframeRules(rule_set);
     AddFontFaceRules(rule_set);
     AddCounterStyleRules(rule_set);
@@ -141,7 +145,7 @@ void ScopedStyleResolver::CollectFeaturesTo(
     StyleSheetContents* contents = sheet->Contents();
     if (contents->HasOneClient() ||
         visited_shared_style_sheet_contents.insert(contents).is_new_entry) {
-      features.Merge(contents->GetRuleSet().Features());
+      features.Merge(rule_set->Features());
     }
   }
 }
@@ -230,20 +234,21 @@ void ScopedStyleResolver::KeyframesRulesAdded(const TreeScope& tree_scope) {
     had_unresolved_keyframes = true;
   }
 
+  StyleChangeReasonForTracing reason = StyleChangeReasonForTracing::Create(
+      style_change_reason::kKeyframesRuleChange);
   if (had_unresolved_keyframes) {
     // If an animation ended up not being started because no @keyframes
     // rules were found for the animation-name, we need to recalculate style
     // for the elements in the scope, including its shadow host if
     // applicable.
     InvalidationRootForTreeScope(tree_scope)
-        .SetNeedsStyleRecalc(kSubtreeStyleChange,
-                             StyleChangeReasonForTracing::Create(
-                                 style_change_reason::kStyleSheetChange));
+        .SetNeedsStyleRecalc(kSubtreeStyleChange, reason);
     return;
   }
 
   // If we have animations running, added/removed @keyframes may affect these.
-  tree_scope.GetDocument().Timeline().InvalidateKeyframeEffects(tree_scope);
+  tree_scope.GetDocument().Timeline().InvalidateKeyframeEffects(tree_scope,
+                                                                reason);
 }
 
 namespace {
@@ -302,7 +307,7 @@ void ScopedStyleResolver::CollectMatchingSlottedRules(
 
 void ScopedStyleResolver::CollectMatchingPartPseudoRules(
     ElementRuleCollector& collector,
-    PartNames& part_names,
+    PartNames* part_names,
     bool for_shadow_pseudo) {
   ForAllStylesheets(collector, [&](const MatchRequest& match_request) {
     collector.CollectMatchingPartPseudoRules(match_request, part_names,

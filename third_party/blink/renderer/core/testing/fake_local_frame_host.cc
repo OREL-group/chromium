@@ -4,7 +4,6 @@
 
 #include "third_party/blink/renderer/core/testing/fake_local_frame_host.h"
 
-#include "services/network/public/cpp/attribution_reporting_runtime_features.h"
 #include "skia/public/mojom/skcolor.mojom-blink.h"
 #include "third_party/blink/public/mojom/choosers/popup_menu.mojom-blink.h"
 #include "third_party/blink/public/mojom/frame/frame_owner_properties.mojom-blink.h"
@@ -288,22 +287,20 @@ void FakeLocalFrameHost::SendLegacyTechEvent(
 void FakeLocalFrameHost::SendPrivateAggregationRequestsForFencedFrameEvent(
     const WTF::String& event_type) {}
 
-void FakeLocalFrameHost::SetAttributionReportingRuntimeFeatures(
-    network::AttributionReportingRuntimeFeatures features) {}
-
 void FakeLocalFrameHost::CreateFencedFrame(
     mojo::PendingAssociatedReceiver<mojom::blink::FencedFrameOwnerHost>,
     mojom::blink::RemoteFrameInterfacesFromRendererPtr remote_frame_interfaces,
     const RemoteFrameToken& frame_token,
     const base::UnguessableToken& devtools_frame_token) {
-  NOTREACHED() << "At the moment, FencedFrame is not used in any "
-                  "unit tests, so this path should not be hit";
+  NOTREACHED_IN_MIGRATION() << "At the moment, FencedFrame is not used in any "
+                               "unit tests, so this path should not be hit";
 }
 
-void FakeLocalFrameHost::ForwardFencedFrameEventToEmbedder(
+void FakeLocalFrameHost::ForwardFencedFrameEventAndUserActivationToEmbedder(
     const WTF::String& event_type) {
-  NOTREACHED() << "ForwardFencedFrameEventToEmbedder is tested above the unit "
-                  "test layer";
+  NOTREACHED_IN_MIGRATION()
+      << "ForwardFencedFrameEventToEmbedder is tested above the unit "
+         "test layer";
 }
 
 void FakeLocalFrameHost::StartDragging(
@@ -317,5 +314,13 @@ void FakeLocalFrameHost::StartDragging(
 void FakeLocalFrameHost::IssueKeepAliveHandle(
     mojo::PendingReceiver<mojom::blink::NavigationStateKeepAliveHandle>
         receiver) {}
+
+void FakeLocalFrameHost::NotifyStorageAccessed(
+    blink::mojom::StorageTypeAccessed storageType,
+    bool blocked) {}
+
+void FakeLocalFrameHost::RecordWindowProxyUsageMetrics(
+    const blink::FrameToken& target_frame_token,
+    blink::mojom::WindowProxyAccessType access_type) {}
 
 }  // namespace blink

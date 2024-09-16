@@ -140,7 +140,7 @@ class FileStreamReader::OperationRunner
       storage::AsyncFileUtil::StatusCallback callback,
       int file_handle,
       base::File::Error result,
-      std::unique_ptr<CloudFileInfo> cloud_file_info) {
+      std::unique_ptr<EntryMetadata> metadata) {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
     abort_callback_.Reset();
 
@@ -309,7 +309,7 @@ int FileStreamReader::Read(net::IOBuffer* buffer,
       break;
 
     case INITIALIZING:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
 
     case INITIALIZED:
@@ -320,7 +320,7 @@ int FileStreamReader::Read(net::IOBuffer* buffer,
       break;
 
     case FAILED:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
   }
 
@@ -348,7 +348,7 @@ int64_t FileStreamReader::GetLength(net::Int64CompletionOnceCallback callback) {
       break;
 
     case INITIALIZING:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
 
     case INITIALIZED:
@@ -356,7 +356,7 @@ int64_t FileStreamReader::GetLength(net::Int64CompletionOnceCallback callback) {
       break;
 
     case FAILED:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
   }
 

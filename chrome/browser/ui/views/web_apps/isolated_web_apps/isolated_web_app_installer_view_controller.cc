@@ -29,6 +29,7 @@
 #include "components/webapps/common/web_app_id.h"
 #include "third_party/abseil-cpp/absl/types/variant.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/image/image_skia.h"
@@ -134,7 +135,7 @@ struct IsolatedWebAppInstallerViewController::InstallabilityCheckedVisitor {
   }
 
   void operator()(const InstallabilityChecker::BundleOutdated& outdated) {
-    // TODO(crbug.com/1479140): Once we have an update flow we should add
+    // TODO(crbug.com/40280769): Once we have an update flow we should add
     // more specific error messages for newer vs same version already installed.
     model_->SetDialog(
         IsolatedWebAppInstallerModel::BundleAlreadyInstalledDialog{
@@ -354,7 +355,7 @@ bool IsolatedWebAppInstallerViewController::OnAccept() {
     }
 
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
   return true;
 }
@@ -443,7 +444,7 @@ void IsolatedWebAppInstallerViewController::OnInstallComplete(
 }
 
 void IsolatedWebAppInstallerViewController::OnShowMetadataLearnMoreClicked() {
-  // TODO(crbug.com/1479140): Implement
+  // TODO(crbug.com/40280769): Implement
 }
 
 void IsolatedWebAppInstallerViewController::OnSettingsLinkClicked() {
@@ -505,7 +506,7 @@ void IsolatedWebAppInstallerViewController::OnChildDialogAccepted() {
       break;
 
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 }
 
@@ -520,7 +521,7 @@ void IsolatedWebAppInstallerViewController::OnStepChanged() {
 
   switch (model_->step()) {
     case IsolatedWebAppInstallerModel::Step::kNone:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
     case IsolatedWebAppInstallerModel::Step::kDisabled:
       IsolatedWebAppInstallerView::SetDialogButtons(
@@ -573,12 +574,12 @@ IsolatedWebAppInstallerViewController::CreateDialogDelegate(
       IsolatedWebAppInstallerView::kInstallerWidgetName);
   delegate->SetOwnedByWidget(true);
   delegate->SetContentsView(std::move(contents_view));
-  delegate->SetModalType(ui::MODAL_TYPE_WINDOW);
+  delegate->SetModalType(ui::mojom::ModalType::kWindow);
   delegate->SetShowCloseButton(false);
   delegate->SetHasWindowSizeControls(false);
   delegate->SetCanResize(false);
   delegate->set_fixed_width(contents_max_size.width());
-  // TODO(crbug.com/1479140): Set the title of the dialog for Alt+Tab
+  // TODO(crbug.com/40280769): Set the title of the dialog for Alt+Tab
   delegate->SetShowTitle(false);
 
   delegate->SetAcceptCallbackWithClose(base::BindRepeating(

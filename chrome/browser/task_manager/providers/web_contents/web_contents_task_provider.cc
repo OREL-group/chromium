@@ -12,6 +12,7 @@
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/not_fatal_until.h"
 #include "base/notreached.h"
 #include "chrome/browser/task_manager/providers/web_contents/back_forward_cache_task.h"
 #include "chrome/browser/task_manager/providers/web_contents/fenced_frame_task.h"
@@ -130,10 +131,10 @@ void WebContentsTaskProvider::WebContentsEntry::CreateAllTasks() {
         // `WebContents::ForEachRenderFrameHost` does not iterate over
         // speculative or pending commit RFHs.
         //
-        // TODO(https://crbug.com/1429070): Move this CHECK into
+        // TODO(crbug.com/40262518): Move this CHECK into
         // `WebContents::ForEachRenderFrameHost`.
         CHECK_NE(state, RenderFrameHost::LifecycleState::kPendingCommit);
-        // TODO(https://crbug.com/1429070):
+        // TODO(crbug.com/40262518):
         // `WebContents::ForEachRenderFrameHost` should explicitly exclude
         // `kPendingDeletion`, just like `kSpeculative` and `kPendingCommit`.
         if (state == RenderFrameHost::LifecycleState::kPendingDeletion) {
@@ -350,8 +351,8 @@ void WebContentsTaskProvider::WebContentsEntry::CreateTaskForFrame(
     case RenderFrameHost::LifecycleState::kActive:
       break;
     default:
-      NOTREACHED() << "Illegal RFH state for TaskManager: "
-                   << static_cast<int>(rfh_state);
+      NOTREACHED_IN_MIGRATION() << "Illegal RFH state for TaskManager: "
+                                << static_cast<int>(rfh_state);
       break;
   }
 
@@ -536,7 +537,7 @@ void WebContentsTaskProvider::OnWebContentsTagRemoved(
   DCHECK(web_contents);
 
   auto itr = entries_map_.find(web_contents);
-  DCHECK(itr != entries_map_.end());
+  CHECK(itr != entries_map_.end(), base::NotFatalUntil::M130);
 
   // Must manually clear the tasks and notify the observer.
   itr->second->ClearAllTasks(true);

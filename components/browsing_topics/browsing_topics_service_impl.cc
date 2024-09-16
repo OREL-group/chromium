@@ -381,6 +381,10 @@ bool BrowsingTopicsServiceImpl::HandleTopicsWebApi(
   DCHECK(topics.empty());
   DCHECK(get_topics || observe);
 
+  if (is_shutting_down_) {
+    return false;
+  }
+
   RecordBrowsingTopicsApiActionTypeMetrics(caller_source, get_topics, observe);
 
   if (!browsing_topics_state_loaded_) {
@@ -505,6 +509,7 @@ bool BrowsingTopicsServiceImpl::HandleTopicsWebApi(
 int BrowsingTopicsServiceImpl::NumVersionsInEpochs(
     const url::Origin& main_frame_origin) const {
   CHECK(browsing_topics_state_loaded_);
+  CHECK(!is_shutting_down_);
   CHECK(privacy_sandbox_settings_->IsTopicsAllowed());
 
   std::string main_frame_domain =
@@ -534,6 +539,13 @@ void BrowsingTopicsServiceImpl::GetBrowsingTopicsStateForWebUi(
     return;
   }
 
+  if (is_shutting_down_) {
+    std::move(callback).Run(
+        mojom::WebUIGetBrowsingTopicsStateResult::NewOverrideStatusMessage(
+            "BrowsingTopicsService is shutting down."));
+    return;
+  }
+
   // If a calculation is already in progress, get the webui topics state after
   // the calculation is done. Do this regardless of whether `calculate_now` is
   // true, i.e. if `calculate_now` is true, this request is effectively merged
@@ -547,9 +559,9 @@ void BrowsingTopicsServiceImpl::GetBrowsingTopicsStateForWebUi(
 
   if (calculate_now) {
     get_state_for_webui_callbacks_.push_back(std::move(callback));
-    schedule_calculate_timer_.AbandonAndStop();
+    schedule_calculate_timer_.Stop();
     CalculateBrowsingTopics(/*is_manually_triggered=*/true,
-                            /*is_timeout_retry=*/false);
+                            /*previous_timeout_count=*/0);
     return;
   }
 
@@ -562,7 +574,7 @@ void BrowsingTopicsServiceImpl::GetBrowsingTopicsStateForWebUi(
 
 std::vector<privacy_sandbox::CanonicalTopic>
 BrowsingTopicsServiceImpl::GetTopTopicsForDisplay() const {
-  if (!browsing_topics_state_loaded_) {
+  if (!browsing_topics_state_loaded_ || is_shutting_down_) {
     return {};
   }
 
@@ -593,13 +605,63 @@ BrowsingTopicsServiceImpl::GetTopTopicsForDisplay() const {
   return result;
 }
 
+void BrowsingTopicsServiceImpl::ValidateCalculationSchedule() {
+  if (!browsing_topics_state_loaded_ || topics_calculator_ ||
+      is_shutting_down_ || recorded_calculation_did_not_occur_metrics_) {
+    return;
+  }
+
+  // Verify the alignment of the calculation schedule with the topics state's
+  // scheduled time, allowing for a one-minute flex window to accommodate the
+  // timer's imprecision. In the event of a discrepancy, log metrics to aid in
+  // troubleshooting.
+  base::TimeDelta elapsed_since_scheduled_time =
+      base::Time::Now() -
+      browsing_topics_state_.next_scheduled_calculation_time();
+
+  if (elapsed_since_scheduled_time > base::Minutes(1)) {
+    base::UmaHistogramExactLinear(
+        "BrowsingTopics.EpochTopicsCalculation.DidNotOccurAtScheduledTime."
+        "DaysSinceSessionStart",
+        (base::Time::Now() - session_start_time_).InDays(),
+        /*exclusive_max=*/30);
+    base::UmaHistogramExactLinear(
+        "BrowsingTopics.EpochTopicsCalculation.DidNotOccurAtScheduledTime."
+        "HoursSinceScheduledTime",
+        elapsed_since_scheduled_time.InHours(),
+        /*exclusive_max=*/30);
+    base::UmaHistogramBoolean(
+        "BrowsingTopics.EpochTopicsCalculation.DidNotOccurAtScheduledTime."
+        "CalculationTimerIsRunning",
+        schedule_calculate_timer_.IsRunning());
+
+    base::TimeDelta remaining_time_in_calculator_timer =
+        schedule_calculate_timer_.desired_run_time() - base::Time::Now();
+
+    base::UmaHistogramBoolean(
+        "BrowsingTopics.EpochTopicsCalculation.DidNotOccurAtScheduledTime."
+        "RemainingTimeInCalculationTimerIsPositive",
+        remaining_time_in_calculator_timer.is_positive());
+
+    if (remaining_time_in_calculator_timer.is_positive()) {
+      base::UmaHistogramExactLinear(
+          "BrowsingTopics.EpochTopicsCalculation.DidNotOccurAtScheduledTime."
+          "RemainingDaysInCalculationTimer",
+          remaining_time_in_calculator_timer.InDays(),
+          /*exclusive_max=*/30);
+    }
+
+    recorded_calculation_did_not_occur_metrics_ = true;
+  }
+}
+
 Annotator* BrowsingTopicsServiceImpl::GetAnnotator() {
   return annotator_.get();
 }
 
 void BrowsingTopicsServiceImpl::ClearTopic(
     const privacy_sandbox::CanonicalTopic& canonical_topic) {
-  if (!browsing_topics_state_loaded_) {
+  if (!browsing_topics_state_loaded_ || is_shutting_down_) {
     return;
   }
 
@@ -608,7 +670,7 @@ void BrowsingTopicsServiceImpl::ClearTopic(
 
 void BrowsingTopicsServiceImpl::ClearTopicsDataForOrigin(
     const url::Origin& origin) {
-  if (!browsing_topics_state_loaded_) {
+  if (!browsing_topics_state_loaded_ || is_shutting_down_) {
     return;
   }
 
@@ -625,7 +687,7 @@ void BrowsingTopicsServiceImpl::ClearTopicsDataForOrigin(
 }
 
 void BrowsingTopicsServiceImpl::ClearAllTopicsData() {
-  if (!browsing_topics_state_loaded_) {
+  if (!browsing_topics_state_loaded_ || is_shutting_down_) {
     return;
   }
 
@@ -641,12 +703,13 @@ BrowsingTopicsServiceImpl::CreateCalculator(
     Annotator* annotator,
     const base::circular_deque<EpochTopics>& epochs,
     bool is_manually_triggered,
-    bool is_timeout_retry,
+    int previous_timeout_count,
     base::Time session_start_time,
     BrowsingTopicsCalculator::CalculateCompletedCallback callback) {
+  CHECK(!is_shutting_down_);
   return std::make_unique<BrowsingTopicsCalculator>(
       privacy_sandbox_settings, history_service, site_data_manager, annotator,
-      epochs, is_manually_triggered, is_timeout_retry, session_start_time,
+      epochs, is_manually_triggered, previous_timeout_count, session_start_time,
       std::move(callback));
 }
 
@@ -656,32 +719,41 @@ const BrowsingTopicsState& BrowsingTopicsServiceImpl::browsing_topics_state() {
 
 void BrowsingTopicsServiceImpl::ScheduleBrowsingTopicsCalculation(
     bool is_manually_triggered,
-    bool is_timeout_retry,
-    base::TimeDelta delay) {
+    int previous_timeout_count,
+    base::TimeDelta delay,
+    bool persist_calculation_time) {
   DCHECK(browsing_topics_state_loaded_);
+
+  if (persist_calculation_time) {
+    browsing_topics_state_.UpdateNextScheduledCalculationTime(delay);
+  }
 
   // `this` owns the timer, which is automatically cancelled on destruction, so
   // base::Unretained(this) is safe.
   schedule_calculate_timer_.Start(
-      FROM_HERE, delay,
+      FROM_HERE, base::Time::Now() + delay,
       base::BindOnce(&BrowsingTopicsServiceImpl::CalculateBrowsingTopics,
                      base::Unretained(this), is_manually_triggered,
-                     is_timeout_retry));
+                     previous_timeout_count));
 }
 
 void BrowsingTopicsServiceImpl::CalculateBrowsingTopics(
     bool is_manually_triggered,
-    bool is_timeout_retry) {
+    int previous_timeout_count) {
   DCHECK(browsing_topics_state_loaded_);
 
   DCHECK(!topics_calculator_);
+
+  if (is_shutting_down_) {
+    return;
+  }
 
   // `this` owns `topics_calculator_` so `topics_calculator_` should not invoke
   // the callback once it's destroyed.
   topics_calculator_ = CreateCalculator(
       privacy_sandbox_settings_, history_service_, site_data_manager_,
       annotator_.get(), browsing_topics_state_.epochs(), is_manually_triggered,
-      is_timeout_retry, session_start_time_,
+      previous_timeout_count, session_start_time_,
       base::BindOnce(
           &BrowsingTopicsServiceImpl::OnCalculateBrowsingTopicsCompleted,
           base::Unretained(this)));
@@ -692,6 +764,7 @@ void BrowsingTopicsServiceImpl::OnCalculateBrowsingTopicsCompleted(
   CHECK(browsing_topics_state_loaded_);
   CHECK(topics_calculator_);
   CHECK(!schedule_calculate_timer_.IsRunning());
+  CHECK(!is_shutting_down_);
 
   const std::optional<CalculatorResultStatus>& status =
       epoch_topics.calculator_result_status();
@@ -699,7 +772,7 @@ void BrowsingTopicsServiceImpl::OnCalculateBrowsingTopicsCompleted(
   CHECK_NE(*status, CalculatorResultStatus::kTerminated);
 
   bool is_manually_triggered = topics_calculator_->is_manually_triggered();
-  bool is_timeout_retry = topics_calculator_->is_timeout_retry();
+  int previous_timeout_count = topics_calculator_->previous_timeout_count();
   topics_calculator_.reset();
 
   // If a calculation fails due to hanging, retry it.
@@ -707,15 +780,23 @@ void BrowsingTopicsServiceImpl::OnCalculateBrowsingTopicsCompleted(
     CHECK_LE(blink::features::kBrowsingTopicsFirstTimeoutRetryDelay.Get(),
              blink::features::kBrowsingTopicsTimePeriodPerEpoch.Get());
 
-    // For the first time a calculation hangs, recalculate shortly. For
-    // subsequent times, recalculate one epoch later.
+    // Retry with exponential backoff for up to 5 times. The delay shouldn't be
+    // greater than an epoch. After 5 retries with exponential backoff, resume
+    // to the epoch cadence.
     base::TimeDelta delay =
-        is_timeout_retry
-            ? blink::features::kBrowsingTopicsTimePeriodPerEpoch.Get()
-            : blink::features::kBrowsingTopicsFirstTimeoutRetryDelay.Get();
+        blink::features::kBrowsingTopicsTimePeriodPerEpoch.Get();
+
+    if (previous_timeout_count < 5) {
+      base::TimeDelta exponential_backoff_delay =
+          blink::features::kBrowsingTopicsFirstTimeoutRetryDelay.Get() *
+          (1LL << previous_timeout_count);
+
+      delay = std::min(delay, exponential_backoff_delay);
+    }
 
     ScheduleBrowsingTopicsCalculation(is_manually_triggered,
-                                      /*is_timeout_retry=*/true, delay);
+                                      previous_timeout_count + 1, delay,
+                                      /*persist_calculation_time=*/true);
     return;
   }
 
@@ -741,12 +822,12 @@ void BrowsingTopicsServiceImpl::OnCalculateBrowsingTopicsCompleted(
                     .Get() *
             blink::features::kBrowsingTopicsTimePeriodPerEpoch.Get());
   }
-  browsing_topics_state_.UpdateNextScheduledCalculationTime();
 
   ScheduleBrowsingTopicsCalculation(
       /*is_manually_triggered=*/false,
-      /*is_timeout_retry=*/false,
-      blink::features::kBrowsingTopicsTimePeriodPerEpoch.Get());
+      /*previous_timeout_count=*/0,
+      blink::features::kBrowsingTopicsTimePeriodPerEpoch.Get(),
+      /*persist_calculation_time=*/true);
 
   for (auto& callback : get_state_for_webui_callbacks_) {
     site_data_manager_->GetContextDomainsFromHashedContextDomains(
@@ -760,6 +841,9 @@ void BrowsingTopicsServiceImpl::OnCalculateBrowsingTopicsCompleted(
 
 void BrowsingTopicsServiceImpl::OnBrowsingTopicsStateLoaded() {
   DCHECK(!browsing_topics_state_loaded_);
+  if (is_shutting_down_) {
+    return;
+  }
   browsing_topics_state_loaded_ = true;
 
   base::Time browsing_topics_data_sccessible_since =
@@ -782,17 +866,32 @@ void BrowsingTopicsServiceImpl::OnBrowsingTopicsStateLoaded() {
 
   site_data_manager_->ExpireDataBefore(browsing_topics_data_sccessible_since);
 
+  browsing_topics_state_.ScheduleEpochsExpiration();
+
   ScheduleBrowsingTopicsCalculation(
       /*is_manually_triggered=*/false,
-      /*is_timeout_retry=*/false, decision.next_calculation_delay);
+      /*previous_timeout_count=*/0, decision.next_calculation_delay,
+      /*persist_calculation_time=*/false);
 }
 
 void BrowsingTopicsServiceImpl::Shutdown() {
+  is_shutting_down_ = true;
+  // Reset `topics_calculator_` if it's set because it holds a raw_ptr to
+  // `privacy_sandbox_settings_` and `history_service_`.
+  if (topics_calculator_) {
+    topics_calculator_.reset();
+  }
+  // Reset `annotator_` because it holds a raw_ptr to the
+  // the per-profile `OptimizationGuideKeyedService`.
+  annotator_.reset();
   privacy_sandbox_settings_observation_.Reset();
   history_service_observation_.Reset();
+  privacy_sandbox_settings_ = nullptr;
+  history_service_ = nullptr;
 }
 
 void BrowsingTopicsServiceImpl::OnTopicsDataAccessibleSinceUpdated() {
+  CHECK(!is_shutting_down_);
   if (!browsing_topics_state_loaded_) {
     return;
   }
@@ -809,15 +908,16 @@ void BrowsingTopicsServiceImpl::OnTopicsDataAccessibleSinceUpdated() {
     DCHECK(!schedule_calculate_timer_.IsRunning());
 
     bool is_manually_triggered = topics_calculator_->is_manually_triggered();
-    bool is_timeout_retry = topics_calculator_->is_timeout_retry();
+    int previous_timeout_count = topics_calculator_->previous_timeout_count();
     topics_calculator_.reset();
-    CalculateBrowsingTopics(is_manually_triggered, is_timeout_retry);
+    CalculateBrowsingTopics(is_manually_triggered, previous_timeout_count);
   }
 }
 
 void BrowsingTopicsServiceImpl::OnHistoryDeletions(
     history::HistoryService* history_service,
     const history::DeletionInfo& deletion_info) {
+  CHECK(!is_shutting_down_);
   if (!browsing_topics_state_loaded_) {
     return;
   }
@@ -855,9 +955,9 @@ void BrowsingTopicsServiceImpl::OnHistoryDeletions(
     DCHECK(!schedule_calculate_timer_.IsRunning());
 
     bool is_manually_triggered = topics_calculator_->is_manually_triggered();
-    bool is_timeout_retry = topics_calculator_->is_timeout_retry();
+    int previous_timeout_count = topics_calculator_->previous_timeout_count();
     topics_calculator_.reset();
-    CalculateBrowsingTopics(is_manually_triggered, is_timeout_retry);
+    CalculateBrowsingTopics(is_manually_triggered, previous_timeout_count);
   }
 }
 
@@ -866,6 +966,13 @@ void BrowsingTopicsServiceImpl::GetBrowsingTopicsStateForWebUiHelper(
     std::map<HashedDomain, std::string> hashed_to_unhashed_context_domains) {
   DCHECK(browsing_topics_state_loaded_);
   DCHECK(!topics_calculator_);
+
+  if (is_shutting_down_) {
+    std::move(callback).Run(
+        mojom::WebUIGetBrowsingTopicsStateResult::NewOverrideStatusMessage(
+            "BrowsingTopicsService is shutting down."));
+    return;
+  }
 
   auto webui_state = mojom::WebUIBrowsingTopicsState::New();
 

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/media/webrtc/webrtc_event_log_manager_common.h"
 
 #include <limits>
@@ -233,7 +238,7 @@ bool BaseLogFileWriter::Init() {
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
   DCHECK_EQ(state(), State::PRE_INIT);
 
-  // TODO(crbug.com/775415): Use a temporary filename which will indicate
+  // TODO(crbug.com/40545136): Use a temporary filename which will indicate
   // incompletion, and rename to something that is eligible for upload only
   // on an orderly and successful Close().
 
@@ -452,7 +457,7 @@ bool GzippedLogFileWriter::Write(const std::string& input) {
     }
   }
 
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 bool GzippedLogFileWriter::Finalize() {
@@ -584,7 +589,7 @@ LogCompressor::Result GzipLogCompressor::Compress(const std::string& input,
       return result;
   }
 
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 bool GzipLogCompressor::CreateFooter(std::string* output) {
@@ -976,7 +981,7 @@ bool IsValidRemoteBoundLogFilePath(const base::FilePath& path) {
 }
 
 base::FilePath GetWebRtcEventLogHistoryFilePath(const base::FilePath& path) {
-  // TODO(crbug.com/775415): Check for validity (after fixing unit tests).
+  // TODO(crbug.com/40545136): Check for validity (after fixing unit tests).
   return path.RemoveExtension().AddExtension(kWebRtcEventLogHistoryExtension);
 }
 

@@ -159,7 +159,7 @@ class SafeBrowsingService : public SafeBrowsingServiceInterface,
       content::BrowserContext* browser_context) override;
 
 #if BUILDFLAG(IS_ANDROID)
-  LoginReputationClientRequest::ReferringAppInfo GetReferringAppInfo(
+  ReferringAppInfo GetReferringAppInfo(
       content::WebContents* web_contents) override;
 #endif
 
@@ -273,6 +273,13 @@ class SafeBrowsingService : public SafeBrowsingServiceInterface,
   friend class TestSafeBrowsingServiceFactory;
   friend class V4SafeBrowsingServiceTest;
   friend class SendNotificationsAcceptedTest;
+
+  FRIEND_TEST_ALL_PREFIXES(
+      SafeBrowsingServiceTest,
+      SaveExtendedReportingPrefValueOnProfileAddedFeatureFlagEnabled);
+  FRIEND_TEST_ALL_PREFIXES(
+      SafeBrowsingServiceTest,
+      SaveExtendedReportingPrefValueOnProfileAddedFeatureFlagDisabled);
 
   void SetDatabaseManagerForTest(SafeBrowsingDatabaseManager* database_manager);
 

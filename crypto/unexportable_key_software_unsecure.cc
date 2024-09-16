@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "base/check.h"
 #include "build/build_config.h"
 #include "crypto/sha2.h"
@@ -67,7 +72,7 @@ class SoftwareECDSA : public UnexportableSigningKey {
 
 #if BUILDFLAG(IS_MAC)
   SecKeyRef GetSecKeyRef() const override {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return nullptr;
   }
 #endif  // BUILDFLAG(IS_MAC)
@@ -118,7 +123,7 @@ class SoftwareProvider : public UnexportableKeyProvider {
     return std::make_unique<SoftwareECDSA>(std::move(key));
   }
 
-  bool DeleteSigningKey(base::span<const uint8_t> wrapped_key) override {
+  bool DeleteSigningKeySlowly(base::span<const uint8_t> wrapped_key) override {
     // Unexportable software keys are stateless.
     return true;
   }

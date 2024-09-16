@@ -77,6 +77,9 @@ class CSSDefaultStyleSheets final
   RuleSet* DefaultMediaControlsStyle() {
     return default_media_controls_style_.Get();
   }
+  RuleSet* DefaultForcedColorsMediaControlsStyle() {
+    return default_forced_colors_media_controls_style_.Get();
+  }
   RuleSet* DefaultFullscreenStyle() { return default_fullscreen_style_.Get(); }
 
   StyleSheetContents* DefaultStyleSheet() { return default_style_sheet_.Get(); }
@@ -102,15 +105,6 @@ class CSSDefaultStyleSheets final
   StyleSheetContents* ForcedColorsStyleSheet() {
     return forced_colors_style_sheet_.Get();
   }
-  StyleSheetContents* FormControlsNotVerticalSheet() {
-    return form_controls_not_vertical_style_sheet_.Get();
-  }
-  StyleSheetContents* FormControlsNotVerticalTextSheet() {
-    return form_controls_not_vertical_style_text_sheet_.Get();
-  }
-  StyleSheetContents* AutoSizesStyleSheet() {
-    return auto_sizes_style_sheet_.Get();
-  }
 
   CORE_EXPORT void PrepareForLeakDetection();
 
@@ -134,9 +128,21 @@ class CSSDefaultStyleSheets final
 
   void Trace(Visitor*) const;
 
+  // Object that resets the default style sheets on destruction, freeing any SVG
+  // resources they might be holding. Unit tests that use MainThreadIsolate may
+  // need this to avoid DCHECKs relating to "default_microtask_queue_". This is
+  // because SVGImage holds a MicrotaskQueue through its IsolatedSVGDocumentHost
+  // which needs to be GC'ed before attempting to destroy the v8 Isolate.
+  class CORE_EXPORT TestingScope {
+   public:
+    TestingScope();
+    ~TestingScope();
+  };
+
  private:
   void InitializeDefaultStyles();
   void VerifyUniversalRuleCount();
+  void Reset();
 
   enum class NamespaceType {
     kHTML,
@@ -158,6 +164,7 @@ class CSSDefaultStyleSheets final
   Member<RuleSet> default_media_controls_style_;
   Member<RuleSet> default_fullscreen_style_;
   Member<RuleSet> default_json_document_style_;
+  Member<RuleSet> default_forced_colors_media_controls_style_;
   // If new RuleSets are added, make sure to add a new check in
   // VerifyUniversalRuleCount() as universal rule buckets are performance
   // sensitive. At least if the added UA styles are matched against all elements
@@ -176,9 +183,6 @@ class CSSDefaultStyleSheets final
   Member<StyleSheetContents> stylable_select_forced_colors_style_sheet_;
   Member<StyleSheetContents> marker_style_sheet_;
   Member<StyleSheetContents> forced_colors_style_sheet_;
-  Member<StyleSheetContents> form_controls_not_vertical_style_sheet_;
-  Member<StyleSheetContents> form_controls_not_vertical_style_text_sheet_;
-  Member<StyleSheetContents> auto_sizes_style_sheet_;
 
   std::unique_ptr<UAStyleSheetLoader> media_controls_style_sheet_loader_;
 };

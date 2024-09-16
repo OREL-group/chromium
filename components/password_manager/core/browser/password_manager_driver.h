@@ -18,7 +18,7 @@
 class GURL;
 
 namespace autofill {
-struct FormData;
+class FormData;
 struct ParsingResult;
 struct PasswordFormGenerationData;
 struct PasswordFormFillData;
@@ -59,7 +59,7 @@ class PasswordManagerDriver {
   // should be shown even without password suggestions. This is set to true if
   // the popup will include another item that the driver doesn't know about
   // (e.g. a promo to unlock passwords from the user's Google Account).
-  // TODO(https://crbug.com/621355): Remove and observe FormFetcher instead.
+  // TODO(crbug.com/41259715): Remove and observe FormFetcher instead.
   virtual void InformNoSavedCredentials(
       bool should_show_popup_without_passwords) {}
 
@@ -86,14 +86,20 @@ class PasswordManagerDriver {
   // in account creation).
   virtual void FocusNextFieldAfterPasswords() {}
 
-  // Tells the renderer to fill the given `value` into the field identified by
-  // the `field_id`.
-  virtual void FillField(autofill::FieldRendererId field_id,
-                         const std::u16string& value) {}
+  // Tells the renderer to fill the given `value` into the triggering field.
+  virtual void FillField(const std::u16string& value) {}
 
-  // Tells the driver to fill the form with the `username` and `password`.
+  // Tells the driver to fill the currently focused form with the `username` and
+  // `password`.
   virtual void FillSuggestion(const std::u16string& username,
                               const std::u16string& password) = 0;
+
+  // Similar to `FillSuggestion` but also passes the FieldRendererIds of the
+  // elements to be filled.
+  virtual void FillSuggestionById(autofill::FieldRendererId username_element_id,
+                                  autofill::FieldRendererId password_element_id,
+                                  const std::u16string& username,
+                                  const std::u16string& password) = 0;
 
   // Tells the renderer to fill the given credential into the focused element.
   // Always calls `completed_callback` with a status indicating success/error.
@@ -121,6 +127,14 @@ class PasswordManagerDriver {
   // `password`.
   virtual void PreviewSuggestion(const std::u16string& username,
                                  const std::u16string& password) = 0;
+
+  // Similar to `PreviewSuggestion` but also passes the FieldRendererIds of the
+  // elements to be previewed.
+  virtual void PreviewSuggestionById(
+      autofill::FieldRendererId username_element_id,
+      autofill::FieldRendererId password_element_id,
+      const std::u16string& username,
+      const std::u16string& password) = 0;
 
   // Tells the driver to preview a password generation suggestion.
   virtual void PreviewGenerationSuggestion(const std::u16string& password) = 0;

@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 
+#include "base/containers/span.h"
 #include "base/functional/callback.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
@@ -17,6 +18,7 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/timer/elapsed_timer.h"
 #include "components/ukm/test_ukm_recorder.h"
+#include "components/variations/scoped_variations_ids_provider.h"
 #include "content/browser/loader/response_head_update_params.h"
 #include "content/browser/preloading/prefetch/prefetch_container.h"
 #include "content/browser/preloading/prefetch/prefetch_features.h"
@@ -25,7 +27,7 @@
 #include "content/browser/preloading/prefetch/prefetch_params.h"
 #include "content/browser/preloading/prefetch/prefetch_probe_result.h"
 #include "content/browser/preloading/prefetch/prefetch_service.h"
-#include "content/browser/preloading/prefetch/prefetch_test_utils.h"
+#include "content/browser/preloading/prefetch/prefetch_test_util_internal.h"
 #include "content/browser/preloading/prefetch/prefetch_type.h"
 #include "content/browser/preloading/prefetch/prefetch_url_loader_helper.h"
 #include "content/browser/preloading/preloading.h"
@@ -75,7 +77,7 @@ const char kDNSCanaryCheckAddress[] = "http://testdnscanarycheck.com";
 const char kTLSCanaryCheckAddress[] = "http://testtlscanarycheck.com";
 
 void UnreachableFallback(ResponseHeadUpdateParams) {
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 // "arg" type is `url::Origin`.
@@ -276,7 +278,6 @@ class PrefetchURLLoaderInterceptorTestBase : public RenderViewHostTestHarness {
   void TearDown() override {
     interceptor_.release();
 
-    scoped_feature_list_.Reset();
     RenderViewHostTestHarness::TearDown();
   }
 
@@ -464,13 +465,14 @@ class PrefetchURLLoaderInterceptorTestBase : public RenderViewHostTestHarness {
         PreloadingData::GetOrCreateForWebContents(web_contents());
     PreloadingURLMatchCallback matcher =
         PreloadingDataImpl::GetPrefetchServiceMatcher(
-            GetPrefetchService(),
+            *GetPrefetchService(),
             PrefetchContainer::Key(referring_document_token, prefetch_url));
 
     auto* attempt = static_cast<PreloadingAttemptImpl*>(
         preloading_data->AddPreloadingAttempt(
             GetPredictorForPreloadingTriggerType(prefetch_type.trigger_type()),
             PreloadingType::kPrefetch, std::move(matcher),
+            /*planned_max_preloading_type=*/std::nullopt,
             web_contents()->GetPrimaryMainFrame()->GetPageUkmSourceId()));
 
     attempt->SetSpeculationEagerness(prefetch_type.GetEagerness());
@@ -508,7 +510,8 @@ class PrefetchURLLoaderInterceptorTestBase : public RenderViewHostTestHarness {
   }
 
  protected:
-  base::test::ScopedFeatureList scoped_feature_list_;
+  base::test::ScopedFeatureList scoped_feature_list_for_reusable_;
+  base::test::ScopedFeatureList scoped_feature_list_for_new_wait_loop_;
 
  private:
   std::unique_ptr<PrefetchURLLoaderInterceptor> interceptor_;
@@ -528,25 +531,47 @@ class PrefetchURLLoaderInterceptorTestBase : public RenderViewHostTestHarness {
   std::unique_ptr<base::ScopedMockElapsedTimersForTest> scoped_test_timer_;
   // Disable sampling of UKM preloading logs.
   content::test::PreloadingConfigOverride preloading_config_override_;
+
+  variations::ScopedVariationsIdsProvider scoped_variations_ids_provider_{
+      variations::VariationsIdsProvider::Mode::kIgnoreSignedInState};
 };
 
 namespace {
 
 class PrefetchURLLoaderInterceptorTest
     : public PrefetchURLLoaderInterceptorTestBase,
-      public ::testing::WithParamInterface<PrefetchReusableForTests> {
+      public ::testing::WithParamInterface<
+          std::tuple<PrefetchReusableForTests,
+                     /*should_enable_new_wait_loop*/ bool>> {
   void SetUp() override {
     PrefetchURLLoaderInterceptorTestBase::SetUp();
-    switch (GetParam()) {
+
+    switch (std::get<0>(GetParam())) {
       case PrefetchReusableForTests::kDisabled:
-        scoped_feature_list_.InitAndDisableFeature(features::kPrefetchReusable);
+        scoped_feature_list_for_reusable_.InitAndDisableFeature(
+            features::kPrefetchReusable);
         break;
       case PrefetchReusableForTests::kEnabled:
-        scoped_feature_list_.InitAndEnableFeature(features::kPrefetchReusable);
+        scoped_feature_list_for_reusable_.InitAndEnableFeature(
+            features::kPrefetchReusable);
         break;
+    }
+
+    if (std::get<1>(GetParam())) {
+      scoped_feature_list_for_new_wait_loop_.InitAndEnableFeature(
+          features::kPrefetchNewWaitLoop);
+    } else {
+      scoped_feature_list_for_new_wait_loop_.InitAndDisableFeature(
+          features::kPrefetchNewWaitLoop);
     }
   }
 };
+
+INSTANTIATE_TEST_SUITE_P(
+    /* no prefix */,
+    PrefetchURLLoaderInterceptorTest,
+    testing::Combine(testing::ValuesIn(PrefetchReusableValuesForTests()),
+                     testing::Bool()));
 
 TEST_P(PrefetchURLLoaderInterceptorTest,
        DISABLE_ASAN(InterceptNavigationCookieCopyCompleted)) {
@@ -1006,8 +1031,28 @@ TEST_P(PrefetchURLLoaderInterceptorTest,
       "PrefetchProxy.AfterClick.Mainframe.CookieWaitTime", 0);
 
   EXPECT_EQ(GetPrefetchService()->num_probes(), 0);
+  // kenoss@ is not sure what this test is checking.
+  //
+  // - `PrefetchProxy.AccurateTriggering` should be true if a navigation started
+  //   that is potentially matching to the prefetchand `PrefetchContainer` is
+  //   alive at the timing.
+  // - It is done in the above `MaybeCreateLoaderAndWait()`, which emulates part
+  //   of navigation, `PrefetchURLLoaderInterceptor::MaybeCreateLoader()`.
+  //
+  // So, the prefetch is recorded as accurate by the navigation to `kTestUrl`.
+  // But,
+  //
+  // - `ExpectCorrectUkmLogs()` emulates another part of navigation,
+  //   `PreloadingDataImpl::DidStart/FinishNavigation()`.
+  // - But there are discordance:
+  //   - `PrefetchURLLoaderInterceptor` uses `NavigationRequest` that is taken
+  //     from `FrameTreeNode`. `ExpectCorrectUkmLogs()` creates
+  //     `MockNavigationHandle`. They are different.
+  //   - In this test, URLs are different.
+  //
+  // TODO(crbug.com/359802755): Investigate more and use correct URLs.
   ExpectCorrectUkmLogs(GURL("http://Not.Accurate.Trigger/"),
-                       /*is_accurate_trigger=*/false,
+                       /*is_accurate_trigger=*/true,
                        PreloadingTriggeringOutcome::kFailure,
                        ToPreloadingFailureReason(
                            PrefetchStatus::kPrefetchNotUsedCookiesChanged));
@@ -1096,9 +1141,13 @@ TEST_P(PrefetchURLLoaderInterceptorTest, DISABLE_ASAN(ProbeFailure)) {
   EXPECT_FALSE(was_intercepted(kTestUrl).value());
 
   EXPECT_EQ(GetPrefetchService()->num_probes(), 1);
+  // Ditto to `ExpectCorrectUkmLogs()` in
+  // `DoNotInterceptNavigationCookiesChanged`.
+  //
+  // TODO(crbug.com/359802755): Investigate more and use correct URLs.
   ExpectCorrectUkmLogs(
       GURL("http://Not.Accurate.Trigger/"),
-      /*is_accurate_trigger=*/false, PreloadingTriggeringOutcome::kFailure,
+      /*is_accurate_trigger=*/true, PreloadingTriggeringOutcome::kFailure,
       ToPreloadingFailureReason(PrefetchStatus::kPrefetchNotUsedProbeFailed));
 }
 
@@ -1111,16 +1160,29 @@ enum class NotServableReason {
 class PrefetchURLLoaderInterceptorBecomeNotServableTest
     : public PrefetchURLLoaderInterceptorTestBase,
       public ::testing::WithParamInterface<
-          std::tuple<PrefetchReusableForTests, NotServableReason>> {
+          std::tuple<PrefetchReusableForTests,
+                     /*should_enable_new_wait_loop*/ bool,
+                     NotServableReason>> {
   void SetUp() override {
     PrefetchURLLoaderInterceptorTestBase::SetUp();
+
     switch (std::get<0>(GetParam())) {
       case PrefetchReusableForTests::kDisabled:
-        scoped_feature_list_.InitAndDisableFeature(features::kPrefetchReusable);
+        scoped_feature_list_for_reusable_.InitAndDisableFeature(
+            features::kPrefetchReusable);
         break;
       case PrefetchReusableForTests::kEnabled:
-        scoped_feature_list_.InitAndEnableFeature(features::kPrefetchReusable);
+        scoped_feature_list_for_reusable_.InitAndEnableFeature(
+            features::kPrefetchReusable);
         break;
+    }
+
+    if (std::get<1>(GetParam())) {
+      scoped_feature_list_for_new_wait_loop_.InitAndEnableFeature(
+          features::kPrefetchNewWaitLoop);
+    } else {
+      scoped_feature_list_for_new_wait_loop_.InitAndDisableFeature(
+          features::kPrefetchNewWaitLoop);
     }
   }
 };
@@ -1150,10 +1212,8 @@ TEST_P(PrefetchURLLoaderInterceptorBecomeNotServableTest, DISABLE_ASAN(Basic)) {
     CHECK_EQ(
         mojo::CreateDataPipe(content.size(), producer_handle, consumer_handle),
         MOJO_RESULT_OK);
-    size_t bytes_written = content.size();
     CHECK_EQ(MOJO_RESULT_OK,
-             producer_handle->WriteData(content.data(), &bytes_written,
-                                        MOJO_WRITE_DATA_FLAG_ALL_OR_NONE));
+             producer_handle->WriteAllData(base::as_byte_span(content)));
     pending_request.client->OnReceiveResponse(
         network::mojom::URLResponseHead::New(), std::move(consumer_handle),
         std::nullopt);
@@ -1191,7 +1251,7 @@ TEST_P(PrefetchURLLoaderInterceptorBecomeNotServableTest, DISABLE_ASAN(Basic)) {
 
   // Simulate the prefetch becoming not servable anymore.
   PrefetchRequestHandler another_request;
-  switch (std::get<1>(GetParam())) {
+  switch (std::get<2>(GetParam())) {
     case NotServableReason::kOnCompleteFailure:
       producer_handle.reset();
       pending_request.client->OnComplete(
@@ -1238,7 +1298,7 @@ TEST_P(PrefetchURLLoaderInterceptorBecomeNotServableTest, DISABLE_ASAN(Basic)) {
 
   EXPECT_TRUE(was_intercepted(kTestUrl).has_value());
 
-  switch (std::get<1>(GetParam())) {
+  switch (std::get<2>(GetParam())) {
     case NotServableReason::kOnCompleteFailure:
       EXPECT_FALSE(was_intercepted(kTestUrl).value());
       ExpectCorrectUkmLogs(kTestUrl, /*is_accurate_trigger=*/true,
@@ -1280,18 +1340,16 @@ TEST_P(PrefetchURLLoaderInterceptorBecomeNotServableTest, DISABLE_ASAN(Basic)) {
 }
 
 INSTANTIATE_TEST_SUITE_P(
-    All,
+    ,
     PrefetchURLLoaderInterceptorBecomeNotServableTest,
     testing::Combine(
         testing::ValuesIn(PrefetchReusableValuesForTests()),
+        testing::Bool(),
         testing::Values(NotServableReason::kOnCompleteFailure,
                         NotServableReason::kAnotherRequest,
                         NotServableReason::kAnotherRequestCompleted)));
 
 TEST_P(PrefetchURLLoaderInterceptorTest, DISABLE_ASAN(HandleRedirects)) {
-  base::test::ScopedFeatureList scoped_feature_list(
-      features::kPrefetchRedirects);
-
   const GURL kTestUrl("https://example.com");
   const GURL kRedirectUrl("https://redirect.com");
 
@@ -1369,8 +1427,6 @@ TEST_P(PrefetchURLLoaderInterceptorTest, DISABLE_ASAN(HandleRedirects)) {
 
 TEST_P(PrefetchURLLoaderInterceptorTest,
        DISABLE_ASAN(HandleRedirectsWithSwitchInNetworkContext)) {
-  base::test::ScopedFeatureList scoped_feature_list(
-      features::kPrefetchRedirects);
   const GURL kTestUrl("https://example.com");
   const GURL kRedirectUrl("https://redirect.com");
 
@@ -1449,9 +1505,6 @@ TEST_P(PrefetchURLLoaderInterceptorTest,
 
 TEST_P(PrefetchURLLoaderInterceptorTest,
        DISABLE_ASAN(HandleRedirectsWithCookieChange)) {
-  base::test::ScopedFeatureList scoped_feature_list(
-      features::kPrefetchRedirects);
-
   const GURL kTestUrl("https://example.com");
   const GURL kRedirectUrl("https://redirect.com");
 
@@ -1525,10 +1578,8 @@ TEST_P(PrefetchURLLoaderInterceptorTest,
     CHECK_EQ(
         mojo::CreateDataPipe(content.size(), producer_handle, consumer_handle),
         MOJO_RESULT_OK);
-    size_t bytes_written = content.size();
     CHECK_EQ(MOJO_RESULT_OK,
-             producer_handle->WriteData(content.data(), &bytes_written,
-                                        MOJO_WRITE_DATA_FLAG_ALL_OR_NONE));
+             producer_handle->WriteAllData(base::as_byte_span(content)));
     pending_request.client->OnReceiveResponse(
         network::mojom::URLResponseHead::New(), std::move(consumer_handle),
         std::nullopt);
@@ -1599,10 +1650,8 @@ TEST_P(PrefetchURLLoaderInterceptorTest,
     CHECK_EQ(
         mojo::CreateDataPipe(content.size(), producer_handle, consumer_handle),
         MOJO_RESULT_OK);
-    size_t bytes_written = content.size();
     CHECK_EQ(MOJO_RESULT_OK,
-             producer_handle->WriteData(content.data(), &bytes_written,
-                                        MOJO_WRITE_DATA_FLAG_ALL_OR_NONE));
+             producer_handle->WriteAllData(base::as_byte_span(content)));
     pending_request.client->OnReceiveResponse(
         network::mojom::URLResponseHead::New(), std::move(consumer_handle),
         std::nullopt);
@@ -1645,11 +1694,6 @@ TEST_P(PrefetchURLLoaderInterceptorTest,
   EXPECT_EQ(weak_prefetch_container->GetPrefetchStatus(),
             PrefetchStatus::kPrefetchNotUsedProbeFailed);
 }
-
-INSTANTIATE_TEST_SUITE_P(
-    /* no prefix */,
-    PrefetchURLLoaderInterceptorTest,
-    testing::ValuesIn(PrefetchReusableValuesForTests()));
 
 }  // namespace
 }  // namespace content

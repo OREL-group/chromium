@@ -12,8 +12,10 @@
 #include <utility>
 #include <vector>
 
+#include "ash/constants/ash_features.h"
 #include "ash/picker/picker_controller.h"
 #include "ash/public/cpp/picker/picker_search_result.h"
+#include "ash/public/cpp/picker/picker_web_paste_target.h"
 #include "base/check.h"
 #include "base/check_deref.h"
 #include "base/containers/span.h"
@@ -21,7 +23,6 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/logging.h"
-#include "base/memory/scoped_refptr.h"
 #include "base/notimplemented.h"
 #include "base/ranges/algorithm.h"
 #include "base/ranges/functional.h"
@@ -32,7 +33,9 @@
 #include "chrome/browser/ash/app_list/search/files/file_search_provider.h"
 #include "chrome/browser/ash/app_list/search/omnibox/omnibox_lacros_provider.h"
 #include "chrome/browser/ash/app_list/search/omnibox/omnibox_provider.h"
+#include "chrome/browser/ash/app_list/search/ranking/ranker_manager.h"
 #include "chrome/browser/ash/app_list/search/search_engine.h"
+#include "chrome/browser/ash/app_list/search/types.h"
 #include "chrome/browser/ash/crosapi/browser_util.h"
 #include "chrome/browser/ash/file_manager/fileapi_util.h"
 #include "chrome/browser/ash/input_method/editor_mediator_factory.h"
@@ -40,15 +43,25 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/ash/picker/picker_file_suggester.h"
 #include "chrome/browser/ui/ash/picker/picker_lacros_omnibox_search_provider.h"
-#include "chrome/browser/ui/webui/ash/emoji/emoji_picker.mojom-forward.h"
-#include "chrome/browser/ui/webui/ash/emoji/emoji_picker.mojom-shared.h"
+#include "chrome/browser/ui/ash/picker/picker_link_suggester.h"
+#include "chrome/browser/ui/ash/picker/picker_thumbnail_loader.h"
 #include "chromeos/ash/components/browser_context_helper/browser_context_helper.h"
+#include "chromeos/ash/components/drivefs/mojom/drivefs.mojom.h"
+#include "chromeos/components/editor_menu/public/cpp/preset_text_query.h"
+#include "chromeos/constants/chromeos_features.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
+#include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/render_view_host.h"
+#include "content/public/browser/render_widget_host.h"
+#include "content/public/browser/render_widget_host_iterator.h"
 #include "content/public/browser/storage_partition.h"
-#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "content/public/browser/web_contents.h"
+#include "google_apis/gaia/gaia_auth_util.h"
+#include "ui/aura/window.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
+#include "ui/gfx/native_widget_types.h"
 #include "url/gurl.h"
 
 namespace ash {
@@ -57,7 +70,8 @@ enum class AppListSearchResultType;
 
 namespace {
 
-constexpr int kMaxGifsToSearch = 4;
+// TODO: b/345303965 - Finalize this string.
+constexpr std::u16string_view kAnnouncementViewName = u"Picker";
 
 bool IsSupportedLocalFileFormat(const base::FilePath& file_path) {
   for (std::string_view extension :
@@ -69,15 +83,13 @@ bool IsSupportedLocalFileFormat(const base::FilePath& file_path) {
   return false;
 }
 
-std::vector<ash::PickerSearchResult> CreateSearchResultsForRecentLocalFiles(
+std::vector<ash::PickerSearchResult> CreateSearchResultsForRecentLocalImages(
     std::vector<PickerFileSuggester::LocalFile> files) {
   std::vector<ash::PickerSearchResult> results;
   results.reserve(files.size());
   for (PickerFileSuggester::LocalFile& file : files) {
-    if (IsSupportedLocalFileFormat(file.path)) {
-      results.push_back(ash::PickerSearchResult::LocalFile(
-          std::move(file.title), std::move(file.path)));
-    }
+    results.push_back(ash::PickerLocalFileResult(std::move(file.title),
+                                                 std::move(file.path)));
   }
   return results;
 }
@@ -87,15 +99,23 @@ std::vector<ash::PickerSearchResult> CreateSearchResultsForRecentDriveFiles(
   std::vector<ash::PickerSearchResult> results;
   results.reserve(files.size());
   for (PickerFileSuggester::DriveFile& file : files) {
-    results.push_back(ash::PickerSearchResult::DriveFile(std::move(file.title),
-                                                         std::move(file.url)));
+    results.push_back(
+        ash::PickerDriveFileResult(std::move(file.id), std::move(file.title),
+                                   std::move(file.url), file.local_path));
   }
   return results;
 }
 
 std::unique_ptr<app_list::SearchProvider> CreateDriveSearchProvider(
     Profile* profile) {
-  return std::make_unique<app_list::DriveSearchProvider>(profile);
+  auto provider = std::make_unique<app_list::DriveSearchProvider>(
+      profile, /*should_filter_shared_files=*/false,
+      /*should_filter_directories=*/true);
+  if (base::FeatureList::IsEnabled(ash::features::kPickerCloud)) {
+    provider->SetQuerySource(
+        drivefs::mojom::QueryParameters::QuerySource::kCloudOnly);
+  }
+  return provider;
 }
 
 std::unique_ptr<app_list::SearchProvider> CreateFileSearchProvider(
@@ -122,27 +142,33 @@ std::vector<ash::PickerSearchResult> ConvertSearchResults(
     switch (result->result_type()) {
       case ash::AppListSearchResultType::kOmnibox:
       case ash::AppListSearchResultType::kOpenTab: {
+        if (result->metrics_type() == ash::OMNIBOX_URL_WHAT_YOU_TYPED) {
+          continue;
+        }
+
         if (std::optional<GURL> result_url = result->url();
             result_url.has_value()) {
-          picker_results.push_back(ash::PickerSearchResult::BrowsingHistory(
-              *result_url, result->title(), result->icon().icon));
+          picker_results.push_back(ash::PickerBrowsingHistoryResult(
+              *result_url, result->title(), result->icon().icon,
+              result->best_match()));
         } else {
-          picker_results.push_back(
-              ash::PickerSearchResult::Text(result->title()));
+          picker_results.push_back(ash::PickerTextResult(
+              result->title(), ash::PickerTextResult::Source::kOmnibox));
         }
         break;
       }
       case ash::AppListSearchResultType::kFileSearch: {
         // TODO: b/322926411 - Move this filtering to the search provider.
         if (IsSupportedLocalFileFormat(result->filePath())) {
-          picker_results.push_back(ash::PickerSearchResult::LocalFile(
-              result->title(), result->filePath()));
+          picker_results.push_back(ash::PickerLocalFileResult(
+              result->title(), result->filePath(), result->best_match()));
         }
         break;
       }
       case ash::AppListSearchResultType::kDriveSearch:
-        picker_results.push_back(ash::PickerSearchResult::DriveFile(
-            result->title(), *result->url()));
+        picker_results.push_back(ash::PickerDriveFileResult(
+            result->DriveId(), result->title(), *result->url(),
+            result->filePath(), result->best_match()));
         break;
       default:
         LOG(DFATAL) << "Got unexpected search result type "
@@ -155,15 +181,62 @@ std::vector<ash::PickerSearchResult> ConvertSearchResults(
 }
 
 ash::input_method::EditorMediator* GetEditorMediator(Profile* profile) {
+  if (!chromeos::features::IsOrcaEnabled()) {
+    return nullptr;
+  }
+
   return ash::input_method::EditorMediatorFactory::GetInstance()->GetForProfile(
       profile);
+}
+
+// TODO: b/326847990 - Remove this once it's moved to mojom traits.
+chromeos::editor_menu::PresetQueryCategory FromMojoPresetQueryCategory(
+    const crosapi::mojom::EditorPanelPresetQueryCategory category) {
+  using EditorPanelPresetQueryCategory =
+      crosapi::mojom::EditorPanelPresetQueryCategory;
+  using PresetQueryCategory = chromeos::editor_menu::PresetQueryCategory;
+
+  switch (category) {
+    case EditorPanelPresetQueryCategory::kUnknown:
+      return PresetQueryCategory::kUnknown;
+    case EditorPanelPresetQueryCategory::kShorten:
+      return PresetQueryCategory::kShorten;
+    case EditorPanelPresetQueryCategory::kElaborate:
+      return PresetQueryCategory::kElaborate;
+    case EditorPanelPresetQueryCategory::kRephrase:
+      return PresetQueryCategory::kRephrase;
+    case EditorPanelPresetQueryCategory::kFormalize:
+      return PresetQueryCategory::kFormalize;
+    case EditorPanelPresetQueryCategory::kEmojify:
+      return PresetQueryCategory::kEmojify;
+    case EditorPanelPresetQueryCategory::kProofread:
+      return PresetQueryCategory::kProofread;
+  }
+}
+
+std::vector<ash::PickerSearchResult> GetEditorResultsFromPanelContext(
+    crosapi::mojom::EditorPanelContextPtr panel_context) {
+  std::vector<ash::PickerSearchResult> results;
+  for (const crosapi::mojom::EditorPanelPresetTextQueryPtr& query :
+       panel_context->preset_text_queries) {
+    results.push_back(ash::PickerEditorResult(
+        ash::PickerEditorResult::Mode::kRewrite, base::UTF8ToUTF16(query->name),
+        FromMojoPresetQueryCategory(query->category), query->text_query_id));
+  }
+  return results;
+}
+
+app_list::CategoriesList CreateRankerCategories() {
+  app_list::CategoriesList res({{.category = app_list::Category::kWeb},
+                                {.category = app_list::Category::kFiles}});
+  return res;
 }
 
 }  // namespace
 
 PickerClientImpl::PickerClientImpl(ash::PickerController* controller,
                                    user_manager::UserManager* user_manager)
-    : controller_(controller) {
+    : announcer_(kAnnouncementViewName), controller_(controller) {
   controller_->SetClient(this);
 
   // As `PickerClientImpl` is initialised in
@@ -180,66 +253,12 @@ PickerClientImpl::~PickerClientImpl() {
   controller_->SetClient(nullptr);
 }
 
-scoped_refptr<network::SharedURLLoaderFactory>
-PickerClientImpl::GetSharedURLLoaderFactory() {
-  CHECK(profile_);
-  return profile_->GetURLLoaderFactory();
-}
-
-void PickerClientImpl::FetchGifSearch(const std::string& query,
-                                      FetchGifsCallback callback) {
-  CHECK(profile_);
-  content::StoragePartition* storage_partition =
-      profile_->GetDefaultStoragePartition();
-  CHECK(storage_partition);
-  // This will cancel the previous in-flight request if there is one.
-  current_gif_fetcher_ = gif_tenor_api_fetcher_.FetchGifSearchCancellable(
-      base::BindOnce(&PickerClientImpl::OnGifSearchResponse,
-                     weak_factory_.GetWeakPtr(), std::move(callback), query),
-      storage_partition->GetURLLoaderFactoryForBrowserProcess(), query,
-      std::nullopt, kMaxGifsToSearch);
-  current_gif_search_query_ = query;
-}
-
-void PickerClientImpl::OnGifSearchResponse(
-    PickerClientImpl::FetchGifsCallback callback,
-    std::string gif_search_query,
-    emoji_picker::mojom::Status status,
-    emoji_picker::mojom::TenorGifResponsePtr response) {
-  if (gif_search_query != current_gif_search_query_) {
-    // Do not call the callback at all if this is an old request.
-    return;
-  }
-  if (status != emoji_picker::mojom::Status::kHttpOk) {
-    // TODO: b/325368650 - Add better handling of errors.
-    std::move(callback).Run({});
-    return;
-  }
-
-  std::vector<ash::PickerSearchResult> picker_results;
-  CHECK(response);
-  picker_results.reserve(response->results.size());
-  for (const emoji_picker::mojom::GifResponsePtr& result : response->results) {
-    CHECK(result);
-    const emoji_picker::mojom::GifUrlsPtr& urls = result->url;
-    CHECK(urls);
-    picker_results.push_back(ash::PickerSearchResult::Gif(
-        urls->preview, urls->preview_image, result->preview_size, urls->full,
-        result->full_size, base::UTF8ToUTF16(result->content_description)));
-  }
-
-  std::move(callback).Run(std::move(picker_results));
-}
-
-void PickerClientImpl::StopGifSearch() {
-  current_gif_fetcher_.reset();
-  current_gif_search_query_.reset();
-}
-
 void PickerClientImpl::StartCrosSearch(
     const std::u16string& query,
     std::optional<ash::PickerCategory> category,
     CrosSearchResultsCallback callback) {
+  ranker_categories_ = CreateRankerCategories();
+  ranker_manager_->Start(query, ranker_categories_);
   if (!category.has_value()) {
     CHECK(search_engine_);
     search_engine_->StartSearch(
@@ -250,17 +269,13 @@ void PickerClientImpl::StartCrosSearch(
   }
 
   switch (*category) {
-    case ash::PickerCategory::kEditor:
-    case ash::PickerCategory::kExpressions:
+    case ash::PickerCategory::kEditorWrite:
+    case ash::PickerCategory::kEditorRewrite:
+    case ash::PickerCategory::kEmojisGifs:
+    case ash::PickerCategory::kEmojis:
     case ash::PickerCategory::kClipboard:
     case ash::PickerCategory::kDatesTimes:
     case ash::PickerCategory::kUnitsMaths:
-    case ash::PickerCategory::kUpperCase:
-    case ash::PickerCategory::kLowerCase:
-    case ash::PickerCategory::kSentenceCase:
-    case ash::PickerCategory::kTitleCase:
-    case ash::PickerCategory::kCapsOn:
-    case ash::PickerCategory::kCapsOff:
       DLOG(FATAL) << "Unexpected category for StartCrosSearch: "
                   << static_cast<int>(*category);
       break;
@@ -288,14 +303,13 @@ void PickerClientImpl::OnCrosSearchResultsUpdated(
     PickerClientImpl::CrosSearchResultsCallback callback,
     ash::AppListSearchResultType result_type,
     std::vector<std::unique_ptr<ChromeSearchResult>> results) {
-  callback.Run(result_type, ConvertSearchResults(std::move(results)));
-}
-
-void PickerClientImpl::OnZeroStateLinksSearchResultsUpdated(
-    PickerClientImpl::SuggestedLinksCallback callback,
-    ash::AppListSearchResultType result_type,
-    std::vector<std::unique_ptr<ChromeSearchResult>> results) {
-  callback.Run(ConvertSearchResults(std::move(results)));
+  app_list::ResultsMap results_map;
+  results_map[result_type] = std::move(results);
+  if (ranker_manager_ != nullptr) {
+    ranker_manager_->UpdateResultRanks(results_map, result_type);
+  }
+  callback.Run(result_type,
+               ConvertSearchResults(std::move(results_map[result_type])));
 }
 
 void PickerClientImpl::StopCrosQuery() {
@@ -303,48 +317,146 @@ void PickerClientImpl::StopCrosQuery() {
   search_engine_->StopQuery();
 }
 
+bool PickerClientImpl::IsEligibleForEditor() {
+  ash::input_method::EditorMediator* editor_mediator =
+      GetEditorMediator(profile_);
+  if (editor_mediator == nullptr) {
+    return false;
+  }
+
+  return editor_mediator->GetEditorMode() !=
+         ash::input_method::EditorMode::kHardBlocked;
+}
+
 PickerClientImpl::ShowEditorCallback PickerClientImpl::CacheEditorContext() {
   ash::input_method::EditorMediator* editor_mediator =
       GetEditorMediator(profile_);
-  if (editor_mediator == nullptr ||
-      editor_mediator->GetEditorMode() ==
-          ash::input_method::EditorMode::kBlocked) {
+  if (editor_mediator == nullptr) {
     return {};
   }
 
   editor_mediator->CacheContext();
 
+  ash::input_method::EditorMode editor_mode = editor_mediator->GetEditorMode();
+  if (editor_mode == ash::input_method::EditorMode::kSoftBlocked ||
+      editor_mode == ash::input_method::EditorMode::kHardBlocked) {
+    return {};
+  }
+
   return base::BindOnce(&PickerClientImpl::ShowEditor,
                         weak_factory_.GetWeakPtr());
 }
 
-void PickerClientImpl::GetRecentLocalFileResults(RecentFilesCallback callback) {
-  file_suggester_->GetRecentLocalFiles(
-      base::BindOnce(CreateSearchResultsForRecentLocalFiles)
+void PickerClientImpl::GetSuggestedEditorResults(
+    SuggestedEditorResultsCallback callback) {
+  ash::input_method::EditorMediator* editor_mediator =
+      GetEditorMediator(profile_);
+  if (editor_mediator == nullptr ||
+      editor_mediator->panel_manager() == nullptr) {
+    std::move(callback).Run({});
+    return;
+  }
+
+  ash::input_method::EditorMode editor_mode = editor_mediator->GetEditorMode();
+  if (editor_mode == ash::input_method::EditorMode::kHardBlocked ||
+      editor_mode == ash::input_method::EditorMode::kSoftBlocked) {
+    std::move(callback).Run({});
+    return;
+  }
+
+  editor_mediator->panel_manager()->GetEditorPanelContext(
+      base::BindOnce(GetEditorResultsFromPanelContext)
           .Then(std::move(callback)));
 }
 
-void PickerClientImpl::GetRecentDriveFileResults(RecentFilesCallback callback) {
-  file_suggester_->GetRecentDriveFiles(
-      base::BindOnce(CreateSearchResultsForRecentDriveFiles)
+void PickerClientImpl::GetRecentLocalFileResults(size_t max_files,
+                                                 base::TimeDelta now_delta,
+                                                 RecentFilesCallback callback) {
+  file_suggester_->GetRecentLocalImages(
+      max_files, now_delta,
+      base::BindOnce(CreateSearchResultsForRecentLocalImages)
           .Then(std::move(callback)));
+}
+
+void PickerClientImpl::GetRecentDriveFileResults(size_t max_files,
+                                                 RecentFilesCallback callback) {
+  file_suggester_->GetRecentDriveFiles(
+      max_files, base::BindOnce(CreateSearchResultsForRecentDriveFiles)
+                     .Then(std::move(callback)));
 }
 
 void PickerClientImpl::GetSuggestedLinkResults(
+    size_t max_results,
     SuggestedLinksCallback callback) {
-  // TODO: b/330938446 - Replace with proper zero-state logic.
-  if (zero_state_links_search_engine_ == nullptr) {
-    zero_state_links_search_engine_ =
-        std::make_unique<app_list::SearchEngine>(profile_);
-    zero_state_links_search_engine_->AddProvider(CreateOmniboxProvider(
-        /*bookmarks=*/true, /*history=*/true, /*open_tabs=*/true));
+  link_suggester_->GetSuggestedLinks(max_results, std::move(callback));
+}
+
+bool PickerClientImpl::IsFeatureAllowedForDogfood() {
+  return gaia::IsGoogleInternalAccountEmail(profile_->GetProfileUserName());
+}
+
+void PickerClientImpl::FetchFileThumbnail(const base::FilePath& path,
+                                          const gfx::Size& size,
+                                          FetchFileThumbnailCallback callback) {
+  CHECK(thumbnail_loader_);
+  thumbnail_loader_->Load(path, size, std::move(callback));
+}
+
+PrefService* PickerClientImpl::GetPrefs() {
+  return profile_ == nullptr ? nullptr : profile_->GetPrefs();
+}
+
+// Forked from `ClipboardHistoryControllerDelegateImpl::Paste`.
+std::optional<ash::PickerWebPasteTarget> PickerClientImpl::GetWebPasteTarget() {
+  std::unique_ptr<content::RenderWidgetHostIterator> widgets =
+      content::RenderWidgetHost::GetRenderWidgetHosts();
+  while (content::RenderWidgetHost* rwh = widgets->GetNextHost()) {
+    content::RenderViewHost* rvh = content::RenderViewHost::From(rwh);
+    if (rvh == nullptr) {
+      continue;
+    }
+
+    content::WebContents* web_contents =
+        content::WebContents::FromRenderViewHost(rvh);
+    if (web_contents == nullptr) {
+      continue;
+    }
+    if (web_contents->GetPrimaryMainFrame()->GetRenderViewHost() != rvh) {
+      continue;
+    }
+
+    content::RenderFrameHost* focused_frame = web_contents->GetFocusedFrame();
+    if (focused_frame == nullptr) {
+      continue;
+    }
+
+    content::WebContents* focused_web_contents =
+        content::WebContents::FromRenderFrameHost(focused_frame);
+    if (focused_web_contents == nullptr) {
+      continue;
+    }
+
+    gfx::NativeView window = focused_web_contents->GetContentNativeView();
+    if (window == nullptr) {
+      continue;
+    }
+    if (!window->HasFocus()) {
+      continue;
+    }
+
+    return std::make_optional<ash::PickerWebPasteTarget>(
+        focused_web_contents->GetLastCommittedURL(),
+        // SAFETY: Callers must call this synchronously as per the
+        // documentation, so this `base::Unretained` is safe.
+        base::BindOnce(&content::WebContents::Paste,
+                       base::Unretained(focused_web_contents)));
   }
 
-  zero_state_links_search_engine_->StartSearch(
-      u"http", app_list::SearchOptions(),
-      base::BindRepeating(
-          &PickerClientImpl::OnZeroStateLinksSearchResultsUpdated,
-          weak_factory_.GetWeakPtr(), std::move(callback)));
+  return std::nullopt;
+}
+
+void PickerClientImpl::Announce(std::u16string_view message) {
+  announcer_.Announce(std::u16string(message));
 }
 
 void PickerClientImpl::ActiveUserChanged(user_manager::User* active_user) {
@@ -377,9 +489,15 @@ void PickerClientImpl::SetProfile(Profile* profile) {
   search_engine_->AddProvider(CreateFileSearchProvider(profile_));
   search_engine_->AddProvider(CreateDriveSearchProvider(profile_));
 
-  zero_state_links_search_engine_.reset();
+  ranker_manager_ = std::make_unique<app_list::RankerManager>(profile_);
 
   file_suggester_ = std::make_unique<PickerFileSuggester>(profile_);
+  link_suggester_ = std::make_unique<PickerLinkSuggester>(profile_);
+  thumbnail_loader_ = std::make_unique<PickerThumbnailLoader>(profile_);
+
+  if (controller_ != nullptr) {
+    controller_->OnClientProfileSet();
+  }
 }
 
 std::unique_ptr<app_list::SearchProvider>
@@ -402,17 +520,13 @@ std::unique_ptr<app_list::SearchProvider>
 PickerClientImpl::CreateSearchProviderForCategory(
     ash::PickerCategory category) {
   switch (category) {
-    case ash::PickerCategory::kEditor:
-    case ash::PickerCategory::kExpressions:
+    case ash::PickerCategory::kEditorWrite:
+    case ash::PickerCategory::kEditorRewrite:
+    case ash::PickerCategory::kEmojisGifs:
+    case ash::PickerCategory::kEmojis:
     case ash::PickerCategory::kClipboard:
     case ash::PickerCategory::kDatesTimes:
     case ash::PickerCategory::kUnitsMaths:
-    case ash::PickerCategory::kUpperCase:
-    case ash::PickerCategory::kLowerCase:
-    case ash::PickerCategory::kSentenceCase:
-    case ash::PickerCategory::kTitleCase:
-    case ash::PickerCategory::kCapsOn:
-    case ash::PickerCategory::kCapsOff:
       DLOG(FATAL) << "Unexpected category for autocomplete: "
                   << static_cast<int>(category);
       return nullptr;
@@ -426,11 +540,13 @@ PickerClientImpl::CreateSearchProviderForCategory(
   }
 }
 
-void PickerClientImpl::ShowEditor() {
+void PickerClientImpl::ShowEditor(std::optional<std::string> preset_query_id,
+                                  std::optional<std::string> freeform_text) {
   ash::input_method::EditorMediator* editor_mediator =
       GetEditorMediator(profile_);
   if (editor_mediator != nullptr) {
-    editor_mediator->HandleTrigger();
+    editor_mediator->HandleTrigger(std::move(preset_query_id),
+                                   std::move(freeform_text));
   }
 }
 

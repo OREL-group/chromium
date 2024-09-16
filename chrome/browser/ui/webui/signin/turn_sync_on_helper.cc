@@ -28,7 +28,6 @@
 #include "chrome/browser/profiles/profile_metrics.h"
 #include "chrome/browser/signin/account_reconcilor_factory.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
-#include "chrome/browser/signin/signin_features.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/signin/signin_util.h"
 #include "chrome/browser/sync/sync_service_factory.h"
@@ -45,7 +44,6 @@
 #include "components/keyed_service/core/keyed_service_shutdown_notifier.h"
 #include "components/policy/core/common/management/management_service.h"
 #include "components/prefs/pref_service.h"
-#include "components/search_engines/search_engine_choice/search_engine_choice_utils.h"
 #include "components/signin/core/browser/account_reconcilor.h"
 #include "components/signin/public/base/signin_metrics.h"
 #include "components/signin/public/base/signin_pref_names.h"
@@ -175,7 +173,7 @@ void TurnSyncOnHelper::Delegate::ShowLoginErrorForBrowser(
     const SigninUIError& error,
     Browser* browser) {
   if (!browser) {
-    // TODO(crbug.com/1374315): Make sure we do something or log an error if
+    // TODO(crbug.com/40242414): Make sure we do something or log an error if
     // opening a browser window was not possible.
     return;
   }
@@ -229,14 +227,21 @@ TurnSyncOnHelper::TurnSyncOnHelper(
     signin_metrics::AccessPoint signin_access_point,
     signin_metrics::PromoAction signin_promo_action,
     const CoreAccountId& account_id,
-    SigninAbortedMode signin_aborted_mode)
-    : TurnSyncOnHelper(profile,
-                       signin_access_point,
-                       signin_promo_action,
-                       account_id,
-                       signin_aborted_mode,
-                       std::make_unique<TurnSyncOnHelperDelegateImpl>(browser),
-                       base::OnceClosure()) {}
+    SigninAbortedMode signin_aborted_mode,
+    bool is_sync_promo)
+    : TurnSyncOnHelper(
+          profile,
+          signin_access_point,
+          signin_promo_action,
+          account_id,
+          signin_aborted_mode,
+          std::make_unique<TurnSyncOnHelperDelegateImpl>(browser,
+                                                         is_sync_promo),
+          base::OnceClosure()) {
+  // If this is a promo, the account should not be removed on abort.
+  CHECK(!is_sync_promo ||
+        signin_aborted_mode == SigninAbortedMode::KEEP_ACCOUNT);
+}
 
 TurnSyncOnHelper::~TurnSyncOnHelper() {
   DCHECK_EQ(this, GetCurrentTurnSyncOnHelper(profile_));
@@ -310,7 +315,7 @@ void TurnSyncOnHelper::OnMergeAccountConfirmation(signin::SigninChoice choice) {
       AbortAndDelete();
       break;
     case signin::SIGNIN_CHOICE_SIZE:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       AbortAndDelete();
       break;
   }
@@ -342,7 +347,7 @@ void TurnSyncOnHelper::OnEnterpriseAccountConfirmation(
       CreateNewSignedInProfile();
       break;
     case signin::SIGNIN_CHOICE_SIZE:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       AbortAndDelete();
       break;
   }
@@ -380,7 +385,7 @@ void TurnSyncOnHelper::OnRegisteredForPolicy(bool is_account_managed) {
     return;
   }
 
-  if (!chrome::enterprise_util::UserAcceptedAccountManagement(profile_)) {
+  if (!enterprise_util::UserAcceptedAccountManagement(profile_)) {
     // Allow user to create a new profile before continuing with sign-in.
     delegate_->ShowEnterpriseAccountConfirmation(
         account_info_,
@@ -389,7 +394,7 @@ void TurnSyncOnHelper::OnRegisteredForPolicy(bool is_account_managed) {
     return;
   }
 
-  DCHECK(chrome::enterprise_util::UserAcceptedAccountManagement(profile_));
+  DCHECK(enterprise_util::UserAcceptedAccountManagement(profile_));
   LoadPolicyWithCachedCredentials();
 }
 
@@ -403,12 +408,8 @@ void TurnSyncOnHelper::LoadPolicyWithCachedCredentials() {
 
 void TurnSyncOnHelper::CreateNewSignedInProfile() {
   // Use the same the default search engine in the new profile.
-  search_engines::ChoiceData search_engine_choice_data;
-  if (search_engines::IsChoiceScreenFlagEnabled(
-          search_engines::ChoicePromo::kAny)) {
-    search_engine_choice_data =
-        SearchEngineChoiceDialogService::GetChoiceDataFromProfile(*profile_);
-  }
+  search_engines::ChoiceData search_engine_choice_data =
+      SearchEngineChoiceDialogService::GetChoiceDataFromProfile(*profile_);
 
   base::OnceCallback<void(Profile*)> profile_created_callback = base::BindOnce(
       &TurnSyncOnHelper::OnNewSignedInProfileCreated, base::Unretained(this),
@@ -475,11 +476,8 @@ void TurnSyncOnHelper::OnNewSignedInProfileCreated(
 
   // The new profile inherits the default search provider and the search
   // engine choice timestamp from the previous profile.
-  if (search_engines::IsChoiceScreenFlagEnabled(
-          search_engines::ChoicePromo::kAny)) {
-    SearchEngineChoiceDialogService::UpdateProfileFromChoiceData(
-        *new_profile, search_engine_choice_data);
-  }
+  SearchEngineChoiceDialogService::UpdateProfileFromChoiceData(
+      *new_profile, search_engine_choice_data);
 
   if (policy_fetch_tracker_) {
     // Load policy for the just-created profile - once policy has finished
@@ -513,9 +511,9 @@ void TurnSyncOnHelper::SigninAndShowSyncConfirmationUI() {
   base::RecordAction(base::UserMetricsAction("Signin_Signin_Succeed"));
 
   bool user_accepted_management =
-      chrome::enterprise_util::UserAcceptedAccountManagement(profile_);
+      enterprise_util::UserAcceptedAccountManagement(profile_);
   if (!user_accepted_management) {
-    chrome::enterprise_util::SetUserAcceptedAccountManagement(
+    enterprise_util::SetUserAcceptedAccountManagement(
         profile_, enterprise_account_confirmed_);
     user_accepted_management = enterprise_account_confirmed_;
   }
@@ -541,9 +539,8 @@ void TurnSyncOnHelper::SigninAndShowSyncConfirmationUI() {
     // for cloud policies because local policies are instantly available. See
     // http://crbug.com/812546
     bool may_have_cloud_policies =
-        signin::AccountManagedStatusFinder::IsEnterpriseUserBasedOnEmail(
-            account_info_.email) == signin::AccountManagedStatusFinder::
-                                        EmailEnterpriseStatus::kUnknown ||
+        signin::AccountManagedStatusFinder::MayBeEnterpriseUserBasedOnEmail(
+            account_info_.email) ||
         policy::ManagementServiceFactory::GetForProfile(profile_)
             ->HasManagementAuthority(
                 policy::EnterpriseManagementAuthority::CLOUD) ||
@@ -574,7 +571,7 @@ void TurnSyncOnHelper::OnSyncStartupStateChanged(
     SyncStartupTracker::ServiceStartupState state) {
   switch (state) {
     case SyncStartupTracker::ServiceStartupState::kPending:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
     case SyncStartupTracker::ServiceStartupState::kTimeout:
       DVLOG(1) << "Waiting for Sync Service to start timed out.";
@@ -622,13 +619,13 @@ void TurnSyncOnHelper::ShowSyncConfirmationUI() {
     return;
   }
 
-  // TODO(crbug.com/1398463): Once we stop completing the Sync opt-in when it's
+  // TODO(crbug.com/40249681): Once we stop completing the Sync opt-in when it's
   // disabled, we also should stop recording opt-in start events.
   signin_metrics::LogSyncOptInStarted(signin_access_point_);
 
   // The sync disabled dialog has an explicit "sign-out" label for the
   // LoginUIService::ABORT_SYNC action, force the mode to remove the account.
-  if (!chrome::enterprise_util::UserAcceptedAccountManagement(profile_) ||
+  if (!enterprise_util::UserAcceptedAccountManagement(profile_) ||
       !base::FeatureList::IsEnabled(kDisallowManagedProfileSignout)) {
     signin_aborted_mode_ = SigninAbortedMode::REMOVE_ACCOUNT;
   }
@@ -636,9 +633,8 @@ void TurnSyncOnHelper::ShowSyncConfirmationUI() {
   const bool is_managed_account =
       account_info_.IsValid()
           ? account_info_.IsManaged()
-          : signin::AccountManagedStatusFinder::IsEnterpriseUserBasedOnEmail(
-                account_info_.email) == signin::AccountManagedStatusFinder::
-                                            EmailEnterpriseStatus::kUnknown;
+          : signin::AccountManagedStatusFinder::MayBeEnterpriseUserBasedOnEmail(
+                account_info_.email);
   delegate_->ShowSyncDisabledConfirmation(
       is_managed_account,
       base::BindOnce(&TurnSyncOnHelper::FinishSyncSetupAndDelete,
@@ -686,7 +682,7 @@ void TurnSyncOnHelper::FinishSyncSetupAndDelete(
       // Default Profile that already exists (when creating a new profile the
       // flow will simply stop).
       if (signin_util::IsForceSigninEnabled() &&
-          !chrome::enterprise_util::UserAcceptedAccountManagement(profile_)) {
+          !enterprise_util::UserAcceptedAccountManagement(profile_)) {
         primary_account_mutator->ClearPrimaryAccount(
             signin_metrics::ProfileSignout::kAbortSignin);
       }

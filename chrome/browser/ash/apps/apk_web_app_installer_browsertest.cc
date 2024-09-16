@@ -35,6 +35,7 @@
 #include "chrome/browser/web_applications/test/web_app_install_test_utils.h"
 #include "chrome/browser/web_applications/test/web_app_test_utils.h"
 #include "chrome/browser/web_applications/web_app.h"
+#include "chrome/browser/web_applications/web_app_command_scheduler.h"
 #include "chrome/browser/web_applications/web_app_constants.h"
 #include "chrome/browser/web_applications/web_app_helpers.h"
 #include "chrome/browser/web_applications/web_app_icon_generator.h"
@@ -66,8 +67,8 @@ const char kAppScope1[] = "https://www.test.app/";
 
 std::unique_ptr<web_app::WebAppInstallInfo> CreateWebAppInstallInfo(
     const GURL& url) {
-  auto web_app_install_info = std::make_unique<web_app::WebAppInstallInfo>();
-  web_app_install_info->start_url = url;
+  auto web_app_install_info =
+      web_app::WebAppInstallInfo::CreateWithStartUrlForTesting(url);
   web_app_install_info->title = u"App Title";
   web_app_install_info->theme_color = SK_ColorBLUE;
   web_app_install_info->scope = url.Resolve("scope");
@@ -464,7 +465,7 @@ IN_PROC_BROWSER_TEST_F(ApkWebAppInstallerDelayedArcStartBrowserTest,
     provider_->scheduler().RemoveUserUninstallableManagements(
         id, webapps::WebappUninstallSource::kShelf,
         base::BindLambdaForTesting([&](webapps::UninstallResultCode code) {
-          EXPECT_EQ(code, webapps::UninstallResultCode::kSuccess);
+          EXPECT_EQ(code, webapps::UninstallResultCode::kAppRemoved);
           run_loop.Quit();
         }));
     run_loop.Run();

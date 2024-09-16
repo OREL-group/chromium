@@ -12,7 +12,11 @@
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/receiver_set.h"
 
-namespace ash::wifi_direct {
+namespace ash {
+
+class WifiP2PGroup;
+
+namespace wifi_direct {
 
 class WifiDirectConnection;
 
@@ -24,7 +28,8 @@ class WifiDirectConnection;
 // 5. TODO: disconnect Wifi direct group.
 // 6. TODO: observe on WifiP2PController to handle Wifi direct group
 // disconnections notified by Shill.
-class WifiDirectManager : public mojom::WifiDirectManager {
+class WifiDirectManager : public mojom::WifiDirectManager,
+                          public WifiP2PController::Observer {
  public:
   WifiDirectManager();
 
@@ -39,22 +44,28 @@ class WifiDirectManager : public mojom::WifiDirectManager {
       mojo::PendingReceiver<mojom::WifiDirectManager> pending_receiver);
 
   // mojom::WifiDirectManager
-  void CreateWifiDirectGroup(const std::string& ssid,
-                             const std::string& passphrase,
+  void CreateWifiDirectGroup(wifi_direct::mojom::WifiCredentialsPtr credentials,
                              CreateWifiDirectGroupCallback callback) override;
   void ConnectToWifiDirectGroup(
-      const std::string& ssid,
-      const std::string& passphrase,
+      wifi_direct::mojom::WifiCredentialsPtr credentials,
       std::optional<uint32_t> frequency,
       ConnectToWifiDirectGroupCallback callback) override;
 
+  void GetWifiP2PCapabilities(GetWifiP2PCapabilitiesCallback callback) override;
+
+  void OnWifiDirectConnectionDisconnected(const int shill_id,
+                                          bool is_owner) override;
+
   size_t GetConnectionsCountForTesting() const;
+  void FlushForTesting();
 
  private:
   void OnCreateOrConnectWifiDirectGroup(
       CreateWifiDirectGroupCallback callback,
       WifiP2PController::OperationResult result,
-      std::optional<WifiP2PController::WifiDirectConnectionMetadata> metadata);
+      std::optional<WifiP2PGroup> group_metadata);
+  void OnDestroyOrDisconnectWifiDirectGroup(
+      WifiP2PController::OperationResult result);
   void OnClientRequestedDisconnection(int shill_id);
 
   mojo::ReceiverSet<mojom::WifiDirectManager> receivers_;
@@ -64,6 +75,8 @@ class WifiDirectManager : public mojom::WifiDirectManager {
   base::WeakPtrFactory<WifiDirectManager> weak_ptr_factory_{this};
 };
 
-}  // namespace ash::wifi_direct
+}  // namespace wifi_direct
+
+}  // namespace ash
 
 #endif  // CHROMEOS_ASH_SERVICES_WIFI_DIRECT_WIFI_DIRECT_MANAGER_H_

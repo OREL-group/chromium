@@ -146,6 +146,10 @@ class WebCodecsIntegrationTest(gpu_integration_test.GpuIntegrationTest):
            'webrtc-peer-connection.html', [{
                'use_worker': True
            }])
+    yield ('WebCodecs_Terminate_Worker', 'terminate-worker.html', [{
+        'source_type':
+        'offscreen',
+    }])
 
     source_type = 'offscreen'
     codec = 'avc1.42001E'
@@ -158,7 +162,20 @@ class WebCodecsIntegrationTest(gpu_integration_test.GpuIntegrationTest):
                'acceleration': acc
            }])
 
-    for source_type in ['offscreen', 'arraybuffer']:
+    codec = 'av01.0.04M.08'
+    acc = 'prefer-software'
+    for layers in range(4):
+      args = (codec, acc, layers)
+      yield ('WebCodecs_ManualSVC_%s_%s_layers_%d' % args, 'manual-svc.html', [{
+          'codec':
+          codec,
+          'acceleration':
+          acc,
+          'layers':
+          layers
+      }])
+
+    for source_type in frame_sources:
       for codec in video_codecs:
         for acc in accelerations:
           args = (source_type, codec, acc)
@@ -189,6 +206,7 @@ class WebCodecsIntegrationTest(gpu_integration_test.GpuIntegrationTest):
         for bitrate_mode in ['constant', 'variable']:
           for latency_mode in ['realtime', 'quality']:
             source_type = 'offscreen'
+            content_hint = 'motion'
             args = (source_type, codec, acc, bitrate_mode, latency_mode)
             yield ('WebCodecs_EncodingModes_%s_%s_%s_%s_%s' % args,
                    'encoding-modes.html', [{
@@ -196,8 +214,25 @@ class WebCodecsIntegrationTest(gpu_integration_test.GpuIntegrationTest):
                        'codec': codec,
                        'acceleration': acc,
                        'bitrate_mode': bitrate_mode,
-                       'latency_mode': latency_mode
+                       'latency_mode': latency_mode,
+                       'content_hint': content_hint
                    }])
+
+    for codec in video_codecs:
+      for content_hint in ['detail', 'text', 'motion']:
+        source_type = 'offscreen'
+        acc = 'prefer-hardware'
+        bitrate_mode = 'constant'
+        latency_mode = 'realtime'
+        yield ('WebCodecs_ContentHint_%s_%s' % (codec, content_hint),
+               'encoding-modes.html', [{
+                   'source_type': source_type,
+                   'codec': codec,
+                   'acceleration': acc,
+                   'bitrate_mode': bitrate_mode,
+                   'latency_mode': latency_mode,
+                   'content_hint': content_hint
+               }])
 
     for codec in video_codecs:
       for acc in accelerations:

@@ -21,12 +21,12 @@
 #include "base/json/json_writer.h"
 #include "base/memory/raw_ref.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/strings/abseil_string_number_conversions.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
 #include "base/types/expected.h"
 #include "base/types/expected_macros.h"
-#include "base/types/optional_util.h"
 #include "base/values.h"
 #include "components/attribution_reporting/parsing_utils.h"
 #include "components/attribution_reporting/privacy_math.h"
@@ -155,15 +155,11 @@ class AttributionInteropParser {
     AttributionInteropOutput output;
 
     {
-      std::optional<base::Value> reports = dict.Extract(kReportsKey);
       auto context = PushContext(kReportsKey);
-      ParseListOfDicts(base::OptionalToPtr(reports),
-                       [&](base::Value::Dict report) {
-                         ParseReport(std::move(report), output.reports);
-                       });
+      ParseListOfDicts(dict.Find(kReportsKey), [&](base::Value::Dict report) {
+        ParseReport(std::move(report), output.reports);
+      });
     }
-
-    CheckUnknown(dict);
 
     if (has_error_) {
       return base::unexpected(error_stream_.str());
@@ -172,11 +168,19 @@ class AttributionInteropParser {
   }
 
   base::expected<void, std::string> ParseConfig(
-      const base::Value::Dict& dict,
+      base::Value::Dict& dict,
       AttributionInteropConfig& interop_config,
       bool required) && {
     interop_config.needs_cross_app_web =
         ParseBool(dict, "needs_cross_app_web").value_or(false);
+    interop_config.needs_aggregatable_debug =
+        ParseBool(dict, "needs_aggregatable_debug").value_or(false);
+    interop_config.needs_source_destination_limit =
+        ParseBool(dict, "needs_source_destination_limit").value_or(false);
+    interop_config.needs_aggregatable_filtering_ids =
+        ParseBool(dict, "needs_aggregatable_filtering_ids").value_or(false);
+    interop_config.needs_attribution_scopes =
+        ParseBool(dict, "needs_attribution_scopes").value_or(false);
 
     AttributionConfig& config = interop_config.attribution_config;
 
@@ -199,14 +203,26 @@ class AttributionInteropParser {
           base::Minutes(destination_rate_limit_window_in_minutes);
     }
 
-    ParseDouble(dict, "max_navigation_info_gain",
-                config.event_level_limit.max_navigation_info_gain, required);
-    ParseDouble(dict, "max_event_info_gain",
-                config.event_level_limit.max_event_info_gain, required);
+    ParseInt(dict, "max_destinations_per_reporting_site_per_day",
+             config.destination_rate_limit.max_per_reporting_site_per_day,
+             required);
 
-    ParseUInt128(dict, "max_trigger_state_cardinality",
-                 config.event_level_limit.max_trigger_state_cardinality,
-                 required);
+    ParseDouble(dict, "max_event_level_channel_capacity_navigation",
+                config.privacy_math_config.max_channel_capacity_navigation,
+                required);
+    ParseDouble(dict, "max_event_level_channel_capacity_event",
+                config.privacy_math_config.max_channel_capacity_event,
+                required);
+    ParseDouble(
+        dict, "max_event_level_channel_capacity_scopes_navigation",
+        config.privacy_math_config.max_channel_capacity_scopes_navigation,
+        required);
+    ParseDouble(dict, "max_event_level_channel_capacity_scopes_event",
+                config.privacy_math_config.max_channel_capacity_scopes_event,
+                required);
+
+    ParseUInt32(dict, "max_trigger_state_cardinality",
+                interop_config.max_trigger_state_cardinality, required);
 
     int rate_limit_time_window_in_days;
     if (ParseInt(dict, "rate_limit_time_window_in_days",
@@ -256,7 +272,43 @@ class AttributionInteropParser {
           base::Minutes(aggregatable_report_delay_span);
     }
 
-    // TODO(linnan): Parse null reports rate if it's supported in interop tests.
+    int max_aggregatable_debug_budget_per_context_site;
+    if (ParseInt(dict, "max_aggregatable_debug_budget_per_context_site",
+                 max_aggregatable_debug_budget_per_context_site, required,
+                 /*allow_zero=*/false)) {
+      config.aggregatable_debug_rate_limit.max_budget_per_context_site =
+          max_aggregatable_debug_budget_per_context_site;
+    }
+
+    int max_aggregatable_debug_reports_per_source;
+    if (ParseInt(dict, "max_aggregatable_debug_reports_per_source",
+                 max_aggregatable_debug_reports_per_source, required,
+                 /*allow_zero=*/false)) {
+      config.aggregatable_debug_rate_limit.max_reports_per_source =
+          max_aggregatable_debug_reports_per_source;
+    }
+
+    {
+      static constexpr char kAggregationCoordinatorOrigins[] =
+          "aggregation_coordinator_origins";
+      auto context = PushContext(kAggregationCoordinatorOrigins);
+      base::Value* values = dict.Find(kAggregationCoordinatorOrigins);
+      if (values) {
+        // Ensure that the list is replaced, not unioned, when being merged.
+        interop_config.aggregation_coordinator_origins.clear();
+      }
+
+      ParseList(
+          values,
+          [&](base::Value v) {
+            if (std::optional<SuitableOrigin> origin = ParseOrigin(&v)) {
+              interop_config.aggregation_coordinator_origins.emplace_back(
+                  *std::move(origin));
+            }
+          },
+          required,
+          /*allow_empty=*/false);
+    }
 
     if (has_error_) {
       return base::unexpected(error_stream_.str());
@@ -281,9 +333,13 @@ class AttributionInteropParser {
   }
 
   void ParseList(base::Value* values,
-                 base::FunctionRef<void(base::Value)> parse_element) {
+                 base::FunctionRef<void(base::Value)> parse_element,
+                 bool required = true,
+                 bool allow_empty = true) {
     if (!values) {
-      *Error() << "must be present";
+      if (required) {
+        *Error() << "must be present";
+      }
       return;
     }
 
@@ -293,8 +349,11 @@ class AttributionInteropParser {
       return;
     }
 
-    size_t index = 0;
-    for (auto& value : *list) {
+    if (list->empty() && !allow_empty) {
+      *Error() << "must be non-empty";
+    }
+
+    for (size_t index = 0; auto& value : *list) {
       auto index_context = PushContext(index);
       parse_element(std::move(value));
       index++;
@@ -323,10 +382,12 @@ class AttributionInteropParser {
 
     std::optional<SuitableOrigin> context_origin;
     AttributionReportingEligibility eligibility;
+    bool fenced = false;
 
     ParseDict(dict, kRegistrationRequestKey, [&](base::Value::Dict reg_req) {
       context_origin = ParseOrigin(reg_req, "context_origin");
       eligibility = ParseEligibility(reg_req);
+      fenced = ParseBool(reg_req, "fenced").value_or(false);
     });
 
     if (has_error_) {
@@ -335,7 +396,7 @@ class AttributionInteropParser {
 
     events.emplace_back(
         time, AttributionSimulationEvent::StartRequest(
-                  request_id, std::move(*context_origin), eligibility));
+                  request_id, *std::move(context_origin), eligibility, fenced));
 
     std::optional<base::Time> default_response_time = time;
 
@@ -381,7 +442,7 @@ class AttributionInteropParser {
                       // The string must outlive the call to
                       // `net::HttpResponseHeaders::Build()`, so put it back in
                       // the dict.
-                      value = base::Value(std::move(*json));
+                      value = base::Value(*std::move(json));
                       builder.AddHeader(header, value.GetString());
                     }
                   }
@@ -413,11 +474,9 @@ class AttributionInteropParser {
                   /*previous_time=*/reports.empty() ? base::Time::Min()
                                                     : reports.back().time,
                   /*strictly_greater=*/false);
-    dict.Remove(kReportTimeKey);
 
-    if (std::optional<base::Value> url = dict.Extract(kReportUrlKey);
-        const std::string* str = url ? url->GetIfString() : nullptr) {
-      report.url = GURL(*str);
+    if (const std::string* url = dict.FindString(kReportUrlKey)) {
+      report.url = GURL(*url);
     }
     if (!report.url.is_valid()) {
       auto context = PushContext(kReportUrlKey);
@@ -425,33 +484,29 @@ class AttributionInteropParser {
     }
 
     if (std::optional<base::Value> payload = dict.Extract(kPayloadKey)) {
-      report.payload = std::move(*payload);
+      report.payload = *std::move(payload);
     } else {
       auto context = PushContext(kPayloadKey);
       *Error() << "required";
     }
-
-    CheckUnknown(dict);
 
     if (!has_error_) {
       reports.push_back(std::move(report));
     }
   }
 
-  void CheckUnknown(const base::Value::Dict& dict) {
-    for (auto [key, value] : dict) {
-      auto context = PushContext(key);
-      *Error() << "unknown field";
-    }
-  }
-
   std::optional<SuitableOrigin> ParseOrigin(const base::Value::Dict& dict,
                                             std::string_view key) {
     auto context = PushContext(key);
+    return ParseOrigin(dict.Find(key));
+  }
 
+  std::optional<SuitableOrigin> ParseOrigin(const base::Value* v) {
     std::optional<SuitableOrigin> origin;
-    if (const std::string* s = dict.FindString(key)) {
-      origin = SuitableOrigin::Deserialize(*s);
+    if (v) {
+      if (const std::string* s = v->GetIfString()) {
+        origin = SuitableOrigin::Deserialize(*s);
+      }
     }
 
     if (!origin.has_value()) {
@@ -722,13 +777,25 @@ class AttributionInteropParser {
                         allow_zero);
   }
 
-  bool ParseUInt128(const base::Value::Dict& dict,
-                    std::string_view key,
-                    absl::uint128& result,
-                    bool required,
-                    bool allow_zero = false) {
-    return ParseInteger(dict, key, result, &base::StringToUint128, required,
-                        allow_zero);
+  bool ParseUInt32(const base::Value::Dict& dict,
+                   std::string_view key,
+                   uint32_t& result,
+                   bool required,
+                   bool allow_zero = false) {
+    int64_t result_64;
+    // This works because `ParseInteger()` only accepts positive values, and
+    // uint32 and [0, INT64_MAX] encompasses the same values.
+    if (ParseInteger(dict, key, result_64, &base::StringToInt64, required,
+                     allow_zero)) {
+      if (base::internal::IsValueInRangeForNumericType<uint32_t>(result_64)) {
+        result = static_cast<uint32_t>(result_64);
+        return true;
+      } else {
+        auto context = PushContext(key);
+        *Error() << "must be representable by an unsigned 32-bit integer";
+      }
+    }
+    return false;
   }
 
   void ParseDouble(const base::Value::Dict& dict,
@@ -799,7 +866,7 @@ ParseAttributionInteropInput(base::Value::Dict input) {
 }
 
 base::expected<AttributionInteropConfig, std::string>
-ParseAttributionInteropConfig(const base::Value::Dict& dict) {
+ParseAttributionInteropConfig(base::Value::Dict dict) {
   AttributionInteropConfig config;
   RETURN_IF_ERROR(
       AttributionInteropParser().ParseConfig(dict, config, /*required=*/true));
@@ -807,7 +874,7 @@ ParseAttributionInteropConfig(const base::Value::Dict& dict) {
 }
 
 base::expected<void, std::string> MergeAttributionInteropConfig(
-    const base::Value::Dict& dict,
+    base::Value::Dict dict,
     AttributionInteropConfig& config) {
   return AttributionInteropParser().ParseConfig(dict, config,
                                                 /*required=*/false);
@@ -880,12 +947,13 @@ base::expected<AttributionInteropRun, std::string> AttributionInteropRun::Parse(
   AttributionInteropRun run;
   run.config = default_config;
 
-  if (const base::Value* api_config = dict.Find("api_config")) {
-    const base::Value::Dict* config_dict = api_config->GetIfDict();
+  if (base::Value* api_config = dict.Find("api_config")) {
+    base::Value::Dict* config_dict = api_config->GetIfDict();
     if (!config_dict) {
       return base::unexpected("api_config must be a dict");
     }
-    RETURN_IF_ERROR(MergeAttributionInteropConfig(*config_dict, run.config));
+    RETURN_IF_ERROR(
+        MergeAttributionInteropConfig(std::move(*config_dict), run.config));
   }
 
   std::optional<base::Value> input = dict.Extract("input");
@@ -907,5 +975,21 @@ AttributionInteropRun::AttributionInteropRun(AttributionInteropRun&&) = default;
 
 AttributionInteropRun& AttributionInteropRun::operator=(
     AttributionInteropRun&&) = default;
+
+AttributionInteropConfig::AttributionInteropConfig() = default;
+
+AttributionInteropConfig::~AttributionInteropConfig() = default;
+
+AttributionInteropConfig::AttributionInteropConfig(
+    const AttributionInteropConfig&) = default;
+
+AttributionInteropConfig& AttributionInteropConfig::operator=(
+    const AttributionInteropConfig&) = default;
+
+AttributionInteropConfig::AttributionInteropConfig(AttributionInteropConfig&&) =
+    default;
+
+AttributionInteropConfig& AttributionInteropConfig::operator=(
+    AttributionInteropConfig&&) = default;
 
 }  // namespace content

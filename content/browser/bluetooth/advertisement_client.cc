@@ -72,10 +72,11 @@ void WebBluetoothServiceImpl::WatchAdvertisementsClient::SendEvent(
         return !service_->IsAllowedToAccessService(device_id_, entry.first);
       });
   base::EraseIf(filtered_event->manufacturer_data,
-                [this](const std::pair<uint16_t, std::vector<uint8_t>>& entry) {
+                [this](const std::pair<blink::mojom::WebBluetoothCompanyPtr,
+                                       std::vector<uint8_t>>& entry) {
                   return !service_->IsAllowedToAccessManufacturerData(
-                             device_id_, entry.first) ||
-                         BluetoothBlocklist::Get().IsExcluded(entry.first,
+                             device_id_, entry.first->id) ||
+                         BluetoothBlocklist::Get().IsExcluded(entry.first->id,
                                                               entry.second);
                 });
   client_remote_->AdvertisingEvent(std::move(filtered_event));
@@ -98,7 +99,7 @@ WebBluetoothServiceImpl::ScanningClient::~ScanningClient() = default;
 
 void WebBluetoothServiceImpl::ScanningClient::SendEvent(
     const blink::mojom::WebBluetoothAdvertisingEvent& event) {
-  // TODO(https://crbug.com/1108958): Filter out advertisement data if not
+  // TODO(crbug.com/40707749): Filter out advertisement data if not
   // included in the filters, optionalServices, or optionalManufacturerData.
   auto filtered_event = event.Clone();
   if (options_->accept_all_advertisements) {
@@ -153,7 +154,7 @@ void WebBluetoothServiceImpl::ScanningClient::SendEvent(
       }
     }
 
-    // TODO(crbug.com/707635): Support manufacturerData and serviceData
+    // TODO(crbug.com/41310835): Support manufacturerData and serviceData
     // filters.
 
     if (prompt_controller_) {

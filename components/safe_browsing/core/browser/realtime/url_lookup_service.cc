@@ -10,9 +10,9 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
 #include "base/strings/strcat.h"
-#include "base/strings/string_piece.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
+#include "components/enterprise/common/proto/connectors.pb.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/buildflags.h"
 #include "components/safe_browsing/core/browser/db/v4_protocol_manager_util.h"
@@ -160,6 +160,23 @@ bool RealTimeUrlLookupService::CanSendRTSampleRequest() const {
   return IsExtendedReportingEnabled(*pref_service_) &&
          (bypass_protego_probability_for_tests_ ||
           base::RandDouble() <= kProbabilityForSendingSampledRequests);
+}
+
+std::string RealTimeUrlLookupService::GetUserEmail() const {
+  return "";
+}
+
+std::string RealTimeUrlLookupService::GetBrowserDMTokenString() const {
+  return "";
+}
+
+std::string RealTimeUrlLookupService::GetProfileDMTokenString() const {
+  return "";
+}
+
+std::unique_ptr<enterprise_connectors::ClientMetadata>
+RealTimeUrlLookupService::GetClientMetadata() const {
+  return nullptr;
 }
 
 void RealTimeUrlLookupService::Shutdown() {

@@ -14,8 +14,12 @@
 #include "chrome/common/chrome_features.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "components/component_updater/mock_component_updater_service.h"
-#include "components/fingerprinting_protection_filter/browser/fingerprinting_protection_filter_constants.h"
+#include "components/fingerprinting_protection_filter/browser/fingerprinting_protection_ruleset_publisher.h"
+#include "components/fingerprinting_protection_filter/common/fingerprinting_protection_filter_constants.h"
+#include "components/fingerprinting_protection_filter/common/fingerprinting_protection_filter_features.h"
 #include "components/prefs/testing_pref_service.h"
+#include "components/subresource_filter/content/browser/safe_browsing_ruleset_publisher.h"
+#include "components/subresource_filter/content/shared/browser/ruleset_publisher.h"
 #include "components/subresource_filter/content/shared/browser/ruleset_service.h"
 #include "components/subresource_filter/core/browser/ruleset_version.h"
 #include "components/subresource_filter/core/browser/subresource_filter_constants.h"
@@ -43,7 +47,9 @@ class TestRulesetService : public subresource_filter::RulesetService {
             local_state,
             task_runner,
             base_dir,
-            blocking_task_runner) {}
+            blocking_task_runner,
+            fingerprinting_protection_filter::
+                FingerprintingProtectionRulesetPublisher::Factory()) {}
 
   TestRulesetService(const TestRulesetService&) = delete;
   TestRulesetService& operator=(const TestRulesetService&) = delete;
@@ -133,8 +139,8 @@ class AntiFingerprintingBlockedDomainListComponentInstallerTest
   }
 
   void CreateTestRuleset(const std::string& ruleset_contents) {
-    base::FilePath ruleset_data_path =
-        install_dir().Append(subresource_filter::kUnindexedRulesetDataFileName);
+    base::FilePath ruleset_data_path = install_dir().Append(
+        fingerprinting_protection_filter::kUnindexedRulesetDataFileName);
     ASSERT_NO_FATAL_FAILURE(
         WriteStringToFile(ruleset_contents, ruleset_data_path));
   }
@@ -169,7 +175,8 @@ TEST_F(AntiFingerprintingBlockedDomainListComponentInstallerTest,
        ComponentRegistration_FeatureEnabled) {
   base::test::ScopedFeatureList scoped_enable;
   scoped_enable.InitAndEnableFeature(
-      features::kEnableFingerprintingProtectionBlocklist);
+      fingerprinting_protection_filter::features::
+          kEnableFingerprintingProtectionFilter);
 
   auto service =
       std::make_unique<component_updater::MockComponentUpdateService>();
@@ -184,7 +191,8 @@ TEST_F(AntiFingerprintingBlockedDomainListComponentInstallerTest,
        ComponentRegistration_FeatureDisabled) {
   base::test::ScopedFeatureList scoped_disable;
   scoped_disable.InitAndDisableFeature(
-      features::kEnableFingerprintingProtectionBlocklist);
+      fingerprinting_protection_filter::features::
+          kEnableFingerprintingProtectionFilter);
 
   auto service =
       std::make_unique<component_updater::MockComponentUpdateService>();

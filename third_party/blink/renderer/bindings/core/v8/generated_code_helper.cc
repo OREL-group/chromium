@@ -7,8 +7,10 @@
 #include "third_party/blink/renderer/bindings/core/v8/capture_source_location.h"
 #include "third_party/blink/renderer/bindings/core/v8/native_value_traits_impl.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_dom_exception.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_element.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_set_return_value_for_core.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_throw_dom_exception.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/range.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
@@ -95,9 +97,15 @@ void ExceptionToRejectPromiseScope::ConvertExceptionToRejectPromise() {
   // promises must also be created in the current realm while regular promises
   // are created in the relevant realm of the context object.
   ScriptState* script_state = ScriptState::ForCurrentRealm(info_);
-  V8SetReturnValue(
-      info_,
-      ScriptPromiseUntyped::Reject(script_state, exception_state_).V8Value());
+  // If the exception state is rethrowing via a v8::TryCatch, we have either
+  // already applied context information, or intentionally skipped it, so don't
+  // add it here.
+  if (!exception_state_.DidRethrowViaV8TryCatch()) {
+    ApplyContextToException(script_state, exception_state_.GetException(),
+                            exception_state_.GetContext());
+  }
+  bindings::V8SetReturnValue(
+      info_, ScriptPromiseUntyped::Reject(script_state, exception_state_));
 }
 
 namespace bindings {
@@ -120,8 +128,6 @@ void SetupIDLInterfaceTemplate(
   prototype_template->Set(
       v8::Symbol::GetToStringTag(isolate), class_string,
       static_cast<v8::PropertyAttribute>(v8::ReadOnly | v8::DontEnum));
-
-  instance_template->SetInternalFieldCount(kV8DefaultWrapperInternalFieldCount);
 }
 
 void SetupIDLNamespaceTemplate(
@@ -152,8 +158,6 @@ void SetupIDLObservableArrayBackingListTemplate(
     v8::Local<v8::FunctionTemplate> interface_template) {
   interface_template->SetClassName(
       V8AtomicString(isolate, wrapper_type_info->interface_name));
-
-  instance_template->SetInternalFieldCount(kV8DefaultWrapperInternalFieldCount);
 }
 
 void SetupIDLIteratorTemplate(
@@ -196,8 +200,6 @@ void SetupIDLIteratorTemplate(
   prototype_template->Set(
       v8::Symbol::GetToStringTag(isolate), v8_class_string,
       static_cast<v8::PropertyAttribute>(v8::ReadOnly | v8::DontEnum));
-
-  instance_template->SetInternalFieldCount(kV8DefaultWrapperInternalFieldCount);
 }
 
 std::optional<size_t> FindIndexInEnumStringTable(
@@ -208,13 +210,14 @@ std::optional<size_t> FindIndexInEnumStringTable(
     ExceptionState& exception_state) {
   const String& str_value = NativeValueTraits<IDLString>::NativeValue(
       isolate, value, exception_state);
-  if (UNLIKELY(exception_state.HadException()))
+  if (exception_state.HadException()) [[unlikely]] {
     return std::nullopt;
+  }
 
   std::optional<size_t> index =
       FindIndexInEnumStringTable(str_value, enum_value_table);
 
-  if (UNLIKELY(!index.has_value())) {
+  if (!index.has_value()) [[unlikely]] {
     exception_state.ThrowTypeError("The provided value '" + str_value +
                                    "' is not a valid enum value of type " +
                                    enum_type_name + ".");
@@ -236,7 +239,7 @@ void ReportInvalidEnumSetToAttribute(v8::Isolate* isolate,
                                      const String& value,
                                      const String& enum_type_name,
                                      ExceptionState& exception_state) {
-  ScriptState* script_state = ScriptState::From(isolate->GetCurrentContext());
+  ScriptState* script_state = ScriptState::ForCurrentRealm(isolate);
   ExecutionContext* execution_context = ExecutionContext::From(script_state);
 
   exception_state.ThrowTypeError("The provided value '" + value +
@@ -261,13 +264,12 @@ bool IsEsIterableObject(v8::Isolate* isolate,
 
   // step 9.1. Let method be ? GetMethod(V, @@iterator).
   // https://tc39.es/ecma262/#sec-getmethod
-  v8::TryCatch try_catch(isolate);
+  TryRethrowScope rethrow_scope(isolate, exception_state);
   v8::Local<v8::Value> iterator_key = v8::Symbol::GetIterator(isolate);
   v8::Local<v8::Value> iterator_value;
   if (!value.As<v8::Object>()
            ->Get(isolate->GetCurrentContext(), iterator_key)
            .ToLocal(&iterator_value)) {
-    exception_state.RethrowV8Exception(try_catch.Exception());
     return false;
   }
 
@@ -322,13 +324,12 @@ v8::MaybeLocal<v8::Value> CreateLegacyFactoryFunctionFunction(
             .As<v8::FunctionTemplate>();
     function_template->Inherit(interface_template);
     function_template->SetClassName(V8AtomicString(isolate, func_name));
-    function_template->InstanceTemplate()->SetInternalFieldCount(
-        kV8DefaultWrapperInternalFieldCount);
+    function_template->SetExceptionContext(v8::ExceptionContext::kConstructor);
     per_isolate_data->AddV8Template(world, callback_key, function_template);
   }
 
   v8::Local<v8::Context> context = script_state->GetContext();
-  V8PerContextData* per_context_data = V8PerContextData::From(context);
+  V8PerContextData* per_context_data = script_state->PerContextData();
   v8::Local<v8::Function> function;
   if (!function_template->GetFunction(context).ToLocal(&function)) {
     return v8::MaybeLocal<v8::Value>();
@@ -388,6 +389,23 @@ v8::Local<v8::Array> EnumerateIndexedProperties(v8::Isolate* isolate,
   return v8::Array::New(isolate, elements.data(), elements.size());
 }
 
+void AddDictionaryContextToException(v8::Isolate* isolate,
+                                     const char* dictionary_name,
+                                     v8::Local<v8::Name> v8_member_name,
+                                     ExceptionState& exception_state) {
+  DCHECK(exception_state.HadException());
+  if (exception_state.GetException().IsEmpty()) {
+    return;
+  }
+
+  CHECK(v8_member_name->IsString());
+  String member_name = ToCoreString(isolate, v8_member_name.As<v8::String>());
+  ExceptionContext exception_context(v8::ExceptionContext::kAttributeGet,
+                                     dictionary_name, member_name);
+  ApplyContextToException(ScriptState::ForCurrentRealm(isolate),
+                          exception_state.GetException(), exception_context);
+}
+
 template <typename IDLType,
           typename ArgType,
           void (Element::*MemFunc)(const QualifiedName&, ArgType)>
@@ -397,9 +415,9 @@ void PerformAttributeSetCEReactionsReflect(
     const char* interface_name,
     const char* attribute_name) {
   v8::Isolate* isolate = info.GetIsolate();
-  ExceptionState exception_state(isolate, ExceptionContextType::kAttributeSet,
+  ExceptionState exception_state(isolate, v8::ExceptionContext::kAttributeSet,
                                  interface_name, attribute_name);
-  if (UNLIKELY(info.Length() < 1)) {
+  if (info.Length() < 1) [[unlikely]] {
     exception_state.ThrowTypeError(
         ExceptionMessages::NotEnoughArguments(1, info.Length()));
     return;
@@ -410,8 +428,9 @@ void PerformAttributeSetCEReactionsReflect(
   Element* blink_receiver = V8Element::ToWrappableUnsafe(isolate, info.This());
   auto&& arg_value = NativeValueTraits<IDLType>::NativeValue(isolate, info[0],
                                                              exception_state);
-  if (UNLIKELY(exception_state.HadException()))
+  if (exception_state.HadException()) [[unlikely]] {
     return;
+  }
 
   (blink_receiver->*MemFunc)(content_attribute, arg_value);
 }
@@ -455,6 +474,15 @@ void PerformAttributeSetCEReactionsReflectTypeStringOrNull(
   PerformAttributeSetCEReactionsReflect<
       IDLNullable<IDLString>, const AtomicString&, &Element::setAttribute>(
       info, content_attribute, interface_name, attribute_name);
+}
+
+CORE_EXPORT void CountWebDXFeature(v8::Isolate* isolate, WebDXFeature feature) {
+  v8::Local<v8::Context> current_context = isolate->GetCurrentContext();
+  ScriptState* current_script_state =
+      ScriptState::From(isolate, current_context);
+  ExecutionContext* current_execution_context =
+      ToExecutionContext(current_script_state);
+  UseCounter::CountWebDXFeature(current_execution_context, feature);
 }
 
 }  // namespace bindings

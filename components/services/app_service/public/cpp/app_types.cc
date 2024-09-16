@@ -28,7 +28,9 @@ APP_ENUM_TO_STRING(PackageType,
                    kBorealis,
                    kChromeApp,
                    kGeForceNow,
-                   kWeb)
+                   kSystem,
+                   kWeb,
+                   kWebsite)
 APP_ENUM_TO_STRING(Readiness,
                    kUnknown,
                    kReady,
@@ -38,7 +40,8 @@ APP_ENUM_TO_STRING(Readiness,
                    kTerminated,
                    kUninstalledByUser,
                    kRemoved,
-                   kUninstalledByNonUser)
+                   kUninstalledByNonUser,
+                   kDisabledByLocalSettings)
 APP_ENUM_TO_STRING(InstallReason,
                    kUnknown,
                    kSystem,
@@ -106,8 +109,12 @@ std::optional<AppType> ConvertPackageTypeToAppType(PackageType package_type) {
       return AppType::kChromeApp;
     case PackageType::kGeForceNow:
       return std::nullopt;
+    case PackageType::kSystem:
+      return std::nullopt;
     case PackageType::kWeb:
       return AppType::kWeb;
+    case PackageType::kWebsite:
+      return std::nullopt;
   }
 }
 

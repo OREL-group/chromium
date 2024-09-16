@@ -51,6 +51,8 @@ extern const char kModelOverride[];
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
 extern const char kOnDeviceModelExecutionOverride[];
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
+extern const char kOnDeviceModelAdaptationsOverride[];
+COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
 extern const char kOnDeviceValidationRequestOverride[];
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
 extern const char kOnDeviceValidationWriteToFile[];
@@ -64,6 +66,14 @@ COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
 extern const char kModelQualityServiceURL[];
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
 extern const char kModelQualityServiceAPIKey[];
+COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
+extern const char kEnableModelQualityDogfoodLogging[];
+COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
+extern const char kGetFreeDiskSpaceWithUserVisiblePriorityTask[];
+COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
+extern const char kOptimizationGuideLanguageOverride[];
+COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
+extern const char kGoogleApiKeyConfigurationCheckOverride[];
 
 // The API key for the ModelQualityLoggingService.
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
@@ -139,6 +149,10 @@ std::optional<std::string> GetModelOverride();
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
 std::optional<std::string> GetOnDeviceModelExecutionOverride();
 
+// Returns the on-device model adaptations override command line switch.
+COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
+std::optional<std::string> GetOnDeviceModelAdaptationsOverride();
+
 // Returns the file path to the text file to use for the on-device request
 // override.
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
@@ -151,6 +165,16 @@ std::optional<base::FilePath> GetOnDeviceValidationWriteToFile();
 // Returns true if debug logs are enabled for the optimization guide.
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
 bool IsDebugLogsEnabled();
+
+// Returns whether to get free disk space with base::TaskPriority::USER_VISIBLE
+// task. This is about the freediskspace check in the context of the on-device
+// model eligibility check.
+COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
+bool ShouldGetFreeDiskSpaceWithUserVisiblePriorityTask();
+
+// Returns true if Google API key configuration check should be skipped.
+COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
+bool ShouldSkipGoogleApiKeyConfigurationCheck();
 
 }  // namespace switches
 }  // namespace optimization_guide

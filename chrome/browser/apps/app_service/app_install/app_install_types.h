@@ -22,12 +22,14 @@ namespace apps {
 enum class AppInstallSurface {
   kAppPreloadServiceOem,
   kAppPreloadServiceDefault,
+  kOobeAppRecommendations,
 
   // kAppInstallUri* values are not trustworthy, no decision making should
   // depend on these values.
   kAppInstallUriUnknown,
   kAppInstallUriShowoff,
   kAppInstallUriMall,
+  kAppInstallUriMallV2,
   kAppInstallUriGetit,
   kAppInstallUriLauncher,
   kAppInstallUriPeripherals,
@@ -83,9 +85,27 @@ struct WebAppInstallData {
   GURL proxied_manifest_url;
 
   GURL document_url;
+
+  // Ony used by PackageType::kWebsite shortcuts, to control whether the
+  // shortcut opens in a browser tab or window. PackageType::kWeb apps will
+  // ignore this value and always open in a window.
+  bool open_as_window = false;
 };
 
 std::ostream& operator<<(std::ostream& out, const WebAppInstallData& data);
+
+// GeForce Now specific data for use during GeForce Now app installation.
+// Currently empty but available to be extended with data if needed.
+struct GeForceNowAppInstallData {};
+
+std::ostream& operator<<(std::ostream& out,
+                         const GeForceNowAppInstallData& data);
+
+// Steam specific data for use during Steam app installation.
+// Currently empty but available to be extended with data if needed.
+struct SteamAppInstallData {};
+
+std::ostream& operator<<(std::ostream& out, const SteamAppInstallData& data);
 
 // Generic app metadata for use in dialogs during app installation plus any app
 // type specific information necessary for performing the app installation.
@@ -97,6 +117,10 @@ struct AppInstallData {
   AppInstallData& operator=(AppInstallData&&);
   ~AppInstallData();
 
+  // Returns true if the data contains all the fields needed for installation,
+  // dependent on the PackageId and `app_type_data`.
+  bool IsValidForInstallation() const;
+
   PackageId package_id;
 
   std::string name;
@@ -107,7 +131,13 @@ struct AppInstallData {
 
   std::vector<AppInstallScreenshot> screenshots;
 
-  absl::variant<AndroidAppInstallData, WebAppInstallData> app_type_data;
+  GURL install_url;
+
+  absl::variant<AndroidAppInstallData,
+                WebAppInstallData,
+                GeForceNowAppInstallData,
+                SteamAppInstallData>
+      app_type_data;
 };
 
 std::ostream& operator<<(std::ostream& out, const AppInstallData& data);

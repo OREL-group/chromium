@@ -208,7 +208,6 @@
   },
   "$build/reclient": {
     "instance": "rbe-chromium-trusted",
-    "jobs": 250,
     "metrics_project": "chromium-reclient-metrics",
     "scandeps_server": true
   },
@@ -230,6 +229,9 @@
     ]
   },
   "builder_group": "chromium.dawn",
+  "gardener_rotations": [
+    "dawn"
+  ],
   "recipe": "chromium",
   "sheriff_rotations": [
     "dawn"

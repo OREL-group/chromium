@@ -12,6 +12,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -24,7 +25,6 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/safety_checks.h"
 #include "base/observer_list.h"
-#include "base/strings/string_piece.h"
 #include "base/types/pass_key.h"
 #include "build/build_config.h"
 #include "third_party/skia/include/core/SkPath.h"
@@ -607,12 +607,9 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // windows.
   virtual gfx::Size GetMaximumSize() const;
 
-  // Return the preferred height for a specific width. Override if the
-  // preferred height depends upon the width (such as a multi-line label). If
-  // a LayoutManger has been installed this returns the value of
-  // LayoutManager::GetPreferredHeightForWidth(), otherwise this returns
-  // GetPreferredSize().height().
-  virtual int GetHeightForWidth(int w) const;
+  // Return the preferred height for a specific width. It is a helper function
+  // of GetPreferredSize(SizeBounds(w, SizeBound())).height().
+  int GetHeightForWidth(int w) const;
 
   // Returns a bound on the available space for a child view, for example, in
   // case the child view wants to play an animation that would cause it to
@@ -817,6 +814,17 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // next layout will propagate to this view, even if the bounds of parent views
   // do not change.
   void InvalidateLayout();
+
+  // Sets whether or not the layout manager need to respect the available space.
+  //
+  // TODO(crbug.com/40232718): Remove this. When the vertical flexlayout with
+  // cross axis is stretched, it will be (width, GetHeightForWidth(width)) when
+  // calculating preferredsize, thus setting the width to an incorrect value.
+  // This will cause unexpected results in some client code. This problem also
+  // exists in BoxLayout. When we switch GetHeightForWidth in them to
+  // GetPreferredSize, this problem should be solved.
+  void SetLayoutManagerUseConstrainedSpace(
+      bool layout_manager_use_constrained_space);
 
   // TODO(kylixrd): Update comment once UseDefaultFillLayout is true by default.
   // UseDefaultFillLayout will be set to true by default once the codebase is
@@ -1250,7 +1258,7 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   void OnScrollEvent(ui::ScrollEvent* event) override;
   void OnTouchEvent(ui::TouchEvent* event) final;
   void OnGestureEvent(ui::GestureEvent* event) override;
-  base::StringPiece GetLogContext() const override;
+  std::string_view GetLogContext() const override;
 
   // Accelerators --------------------------------------------------------------
 
@@ -1345,15 +1353,15 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // (Shift-Tab).
   virtual void AboutToRequestFocusFromTabTraversal(bool reverse) {}
 
-  // Invoked when a key is pressed before the key event is processed (and
-  // potentially eaten) by the focus manager for tab traversal, accelerators and
-  // other focus related actions.
+  // Invoked when a key is pressed or released before the key event is processed
+  // (and potentially eaten) by the focus manager for tab traversal,
+  // accelerators and other focus related actions.
   // The default implementation returns false, ensuring that tab traversal and
   // accelerators processing is performed.
   // Subclasses should return true if they want to process the key event and not
   // have it processed as an accelerator (if any) or as a tab traversal (if the
-  // key event is for the TAB key).  In that case, OnKeyPressed will
-  // subsequently be invoked for that event.
+  // key event is for the TAB key).  In that case, OnKeyPressed/OnKeyReleased
+  // will subsequently be invoked for that event.
   virtual bool SkipDefaultKeyEventProcessing(const ui::KeyEvent& event);
 
   // Subclasses that contain traversable children that are not directly
@@ -1393,9 +1401,7 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   ContextMenuController* context_menu_controller() {
     return context_menu_controller_;
   }
-  void set_context_menu_controller(ContextMenuController* menu_controller) {
-    context_menu_controller_ = menu_controller;
-  }
+  void set_context_menu_controller(ContextMenuController* menu_controller);
 
   // Provides default implementation for context menu handling. The default
   // implementation calls the ShowContextMenu of the current
@@ -1491,7 +1497,7 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // Get the object managing the accessibility interface for this View.
   ViewAccessibility& GetViewAccessibility() const;
 
-  // Modifies |node_data| to reflect the current accessible state of this view.
+  // Modifies `node_data` to reflect the current accessible state of this view.
   // It accomplishes this by keeping the data up-to-date in response to the use
   // of the accessible-property setters.
   // NOTE: View authors should use the available property setters rather than
@@ -1501,8 +1507,41 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // parent class. This ensures that if an owning view customizes an accessible
   // property, such as the name, role, or description, that customization is
   // included in your view's `AXNodeData`.
-  virtual void GetAccessibleNodeData(ui::AXNodeData* node_data);
+  virtual void GetAccessibleNodeData(ui::AXNodeData* node_data) {}
 
+  // This method allows lazy loading of some accessibility attributes. It is
+  // used only for accessibility attributes that can be expensive to compute
+  // and/or heavy to store, such as long string attributes. Views that override
+  // this method must not call the ViewAccessibility setters directly in the
+  // function implementation, but instead should set the attributes directly on
+  // the `data` object.
+  //
+  // Accessibility initialization happens once in the lifetime of a view: either
+  // when accessibility usage is suddenly enabled or when the view is first
+  // added to the views hierarchy after accessibility is enabled. This method
+  // must only be called on attributes that haven't been set in the
+  // ViewAccessibility cache before, otherwise it defeats the purpose of the
+  // lazy loading.
+  //
+  // Here's an example of how to use this method:
+  //
+  // class MyView : public View {
+  //  public:
+  //  void MyView::OnAccessibilityInitializing(ui::AXNodeData* data) {
+  //    std::string very_long_name = ComputeVeryLongName();
+  //    data->SetName(very_long_name);
+  //  }
+  //  void MyView::OnNameChanged() {
+  //    // Only set the expensive name when the view is initialized.
+  //    if (GetViewAccessibility().is_initialized()) {
+  //      GetViewAccessibility().SetName(ComputeVeryLongName());
+  //    }
+  //  }
+  // };
+  virtual void OnAccessibilityInitializing(ui::AXNodeData* data) {}
+
+  // DEPRECATED: Use `ViewAccessibility::SetName` instead.
+  //
   // Sets/gets the accessible name.
   // The value of the accessible name is a localized, end-user-consumable string
   // which may be derived from visible information (e.g. the text on a button)
@@ -1511,8 +1550,13 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // reader when that object gains focus and is critical to understanding the
   // purpose of that object non-visually.
   void SetAccessibleName(const std::u16string& name);
-  const std::u16string& GetAccessibleName() const;
 
+  // This function is deprecated. Use `ViewAccessibility::GetCachedName`
+  // instead.
+  std::u16string GetAccessibleName() const;
+
+  // DEPRECATED: Use `ViewAccessibility::SetName` instead.
+  //
   // Sets the accessible name to the specified string and source type.
   // To indicate that this view should never have an accessible name, e.g. to
   // prevent screen readers from speaking redundant information, set the type to
@@ -1522,6 +1566,8 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // especially for views which are focusable or otherwise interactive.
   void SetAccessibleName(std::u16string name, ax::mojom::NameFrom name_from);
 
+  // DEPRECATED: Use `ViewAccessibility::SetName` instead.
+  //
   // Sets the accessible name of this view to that of `naming_view`. Often
   // `naming_view` is a `views::Label`, but any view with an accessible name
   // will work.
@@ -1547,16 +1593,24 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   void SetAccessibleRole(const ax::mojom::Role role,
                          const std::u16string& role_description);
 
+  // DEPRECATED: Use ViewAccessibility::SetDescription instead.
+  //
   // Sets/gets the accessible description string.
   void SetAccessibleDescription(const std::u16string& description);
-  const std::u16string& GetAccessibleDescription() const;
 
+  // DEPRECATED: Use ViewAccessibility::GetCachedDescription instead.
+  std::u16string GetAccessibleDescription() const;
+
+  // DEPRECATED: Use ViewAccessibility::SetDescription instead.
+  //
   // Sets the accessible description to the specified string and source type.
   // To remove the description and prevent alternatives (such as tooltip text)
   // from being used, set the type to `kAttributeExplicitlyEmpty`
   void SetAccessibleDescription(const std::u16string& description,
                                 ax::mojom::DescriptionFrom description_from);
 
+  // DEPRECATED: Use ViewAccessibility::SetDescription instead.
+  //
   // Sets the accessible description of this view to the accessible name of
   // `describing_view`. Often `describing_view` is a `views::Label`, but any
   // view with an accessible name will work.
@@ -1572,6 +1626,8 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // Returns an instance of the native accessibility interface for this view.
   virtual gfx::NativeViewAccessible GetNativeViewAccessible();
 
+  // DEPRECATED: Use `ViewAccessibility::NotifyEvent` instead.
+  //
   // Notifies assistive technology that an accessibility event has
   // occurred on this view, such as when the view is focused or when its
   // value changes. Pass true for |send_native_event| except for rare
@@ -1602,6 +1658,16 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   void AddObserver(ViewObserver* observer);
   void RemoveObserver(ViewObserver* observer);
   bool HasObserver(const ViewObserver* observer) const;
+
+  // Called when the accessible name of the View changed.
+  virtual void OnAccessibleNameChanged(const std::u16string& new_name) {}
+
+  // Called by `SetAccessibleName` to allow subclasses to adjust the new name.
+  // Potential use cases include setting the accessible name to the tooltip
+  // text when the new name is empty and prepending/appending additional text
+  // to the new name.
+  virtual void AdjustAccessibleName(std::u16string& new_name,
+                                    ax::mojom::NameFrom& name_from) {}
 
   // View Controller Interfaces -----------------------------------------------
   // These functions provide a common interface for view controllers to interact
@@ -1648,39 +1714,7 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
     gfx::Point start_pt;
   };
 
-  // Accessibility -------------------------------------------------------------
-
-  // Convenience function to set common accessibility properties during view
-  // construction/initialization. It should only be used to define property
-  // values as part of the creation of this view; not to provide property-
-  // change updates. This function will only modify properties for which a value
-  // has been explicitly set.
-  void SetAccessibilityProperties(
-      std::optional<ax::mojom::Role> role = std::nullopt,
-      std::optional<std::u16string> name = std::nullopt,
-      std::optional<std::u16string> description = std::nullopt,
-      std::optional<std::u16string> role_description = std::nullopt,
-      std::optional<ax::mojom::NameFrom> name_from = std::nullopt,
-      std::optional<ax::mojom::DescriptionFrom> description_from =
-          std::nullopt);
-
-  // Called when the accessible name of the View changed.
-  virtual void OnAccessibleNameChanged(const std::u16string& new_name) {}
-
-  // Called by `SetAccessibleName` to allow subclasses to adjust the new name.
-  // Potential use cases include setting the accessible name to the tooltip
-  // text when the new name is empty and prepending/appending additional text
-  // to the new name.
-  virtual void AdjustAccessibleName(std::u16string& new_name,
-                                    ax::mojom::NameFrom& name_from) {}
-
   // Size and disposition ------------------------------------------------------
-
-  // Calculates the natural size for the View, to be taken into consideration
-  // when the parent is performing layout.
-  // `preferred_size_` will take precedence over CalculatePreferredSize() if
-  // it exists.
-  virtual gfx::Size CalculatePreferredSize() const;
 
   // Calculates the preferred size for the View given `available_size`.
   // `preferred_size_` will take precedence over CalculatePreferredSize() if
@@ -1931,7 +1965,6 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   FRIEND_TEST_ALL_PREFIXES(ViewTest, PaintWithMovedViewUsesCache);
   FRIEND_TEST_ALL_PREFIXES(ViewTest, PaintWithMovedViewUsesCacheInRTL);
   FRIEND_TEST_ALL_PREFIXES(ViewTest, PaintWithUnknownInvalidation);
-  FRIEND_TEST_ALL_PREFIXES(ViewTest, PauseAccessibilityEvents);
 
   // Painting  -----------------------------------------------------------------
 
@@ -2238,11 +2271,18 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
 
   //////////////////////////////////////////////////////////////////////////////
 
+  // Observers -----------------------------------------------------------------
+
+  base::ObserverList<ViewObserver>::Unchecked observers_;
+
   // Creation and lifetime -----------------------------------------------------
 
   // False if this View is owned by its parent - i.e. it will be deleted by its
   // parent during its parents destruction. False is the default.
   bool owned_by_client_ = false;
+
+  // http://crbug.com/1162949 : Instrumentation that indicates if this is alive.
+  LifeCycleState life_cycle_state_ = LifeCycleState::kAlive;
 
   // Attributes ----------------------------------------------------------------
 
@@ -2315,6 +2355,20 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // Whether the view needs to be laid out.
   bool needs_layout_ = true;
 
+  // Whether Layout() access is currently legal. This is used to prevent calls
+  // to LayoutSuperclass() outside the implementation of Layout().
+  bool layout_allowed_ = false;
+
+  // Whether this view is in the middle of InvalidateLayout().
+  bool invalidating_ = false;
+
+  // Whether the layout manager requires constrained space.
+  //
+  // TODO(crbug.com/40232718): All layout management needs to respect the
+  // available space. But there are some problems with `FlexLayout`. After we
+  // fix the problem with FlexLayout. Remove this.
+  bool layout_manager_use_constrained_space_ = true;
+
   // Used to generate an UMA metric for the maximum reentrant call depth seen
   // during layout. Normally the metric value will be one (Layout() was not
   // reentered). But, we know Layout() is reentered at least sometimes and
@@ -2326,10 +2380,6 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // max_layout_call_depth_, above).
   int current_layout_call_depth_ = 0;
 
-  // Whether Layout() access is currently legal. This is used to prevent calls
-  // to LayoutSuperclass() outside the implementation of Layout().
-  bool layout_allowed_ = false;
-
   // How many times this view has done layout since the last time it was
   // painted. This is used to compute metrics around unnecessary layout calls.
   int layouts_since_last_paint_ = 0;
@@ -2338,9 +2388,6 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // This should never be necessary, but we don't yet know how often
   // it is happening.
   int invalidates_during_layout_ = 0;
-
-  // Whether this view is in the middle of InvalidateLayout().
-  bool invalidating_ = false;
 
   // The View's LayoutManager defines the sizing heuristics applied to child
   // Views. The default is absolute positioning according to bounds_.
@@ -2465,35 +2512,15 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
 
   // Accessibility -------------------------------------------------------------
 
-  // Manages the accessibility interface for this View.
+  // Manages the accessibility interface for this View. Some ViewAccessibility
+  // implementations are `ViewObserver`s, so this must be ordered after
+  // `observers_`.
   mutable std::unique_ptr<ViewAccessibility> view_accessibility_;
-
-  // Updated by the accessibility property setters and returned by
-  // `GetAccessibleNodeData`.
-  std::unique_ptr<ui::AXNodeData> ax_node_data_;
-
-  // Used by `SetAccessibilityProperties` and to prevent accessibility
-  // property-change events from being fired during initialization of this view.
-  bool pause_accessibility_events_ = false;
 
   // Keeps track of whether accessibility checks for this View have run yet.
   // They run once inside ::OnPaint() to keep overhead low. The idea is that if
   // a View is ready to paint it should also be set up to be accessible.
   bool has_run_accessibility_paint_checks_ = false;
-
-  // Accessible properties whose values are set by views using the accessible
-  // property setters, and used to populate the `AXNodeData` associated with
-  // this view and provided by `View::GetAccessibleNodeData`.
-  std::u16string accessible_name_;
-  std::u16string accessible_description_;
-  ax::mojom::Role accessible_role_ = ax::mojom::Role::kUnknown;
-
-  // Observers -----------------------------------------------------------------
-
-  base::ObserverList<ViewObserver>::Unchecked observers_;
-
-  // http://crbug.com/1162949 : Instrumentation that indicates if this is alive.
-  LifeCycleState life_cycle_state_ = LifeCycleState::kAlive;
 
   // View Controller Interfaces
   base::RepeatingClosureList notify_view_controller_callback_list_;

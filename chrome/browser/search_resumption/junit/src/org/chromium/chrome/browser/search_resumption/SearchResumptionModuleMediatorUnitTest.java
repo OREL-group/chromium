@@ -147,7 +147,7 @@ public class SearchResumptionModuleMediatorUnitTest {
         List<AutocompleteMatch> list = Arrays.asList(mNonSearchSuggest1, mNonSearchSuggest1);
         doReturn(list).when(mAutocompleteResult).getSuggestionsList();
 
-        mMediator.onSuggestionsReceived(mAutocompleteResult, "", true);
+        mMediator.onSuggestionsReceived(mAutocompleteResult, true);
         verify(mParent, times(0)).inflate();
         Assert.assertEquals(
                 0,
@@ -168,7 +168,7 @@ public class SearchResumptionModuleMediatorUnitTest {
                 Arrays.asList(mNonSearchSuggest1, mSearchSuggest1, mSearchSuggest2);
         doReturn(list).when(mAutocompleteResult).getSuggestionsList();
 
-        mMediator.onSuggestionsReceived(mAutocompleteResult, "", true);
+        mMediator.onSuggestionsReceived(mAutocompleteResult, true);
         verify(mParent, times(1)).inflate();
         Assert.assertEquals(View.VISIBLE, mSuggestionTilesContainerView.getVisibility());
         Assert.assertEquals(
@@ -301,7 +301,12 @@ public class SearchResumptionModuleMediatorUnitTest {
         if (!useNewServiceEnabled && cachedSuggestions == null) {
             verify(mAutocompleteController).addOnSuggestionsReceivedListener(mListener.capture());
             verify(mAutocompleteController, times(1))
-                    .startZeroSuggest(any(), eq(mUrlToTrack), anyInt(), any());
+                    .startZeroSuggest(
+                            any(),
+                            eq(mUrlToTrack),
+                            anyInt(),
+                            any(),
+                            /* isOnFocusContext= */ eq(false));
         }
 
         mFeatureListValues.addFeatureFlagOverride(

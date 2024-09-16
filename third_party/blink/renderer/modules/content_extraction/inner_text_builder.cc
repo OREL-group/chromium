@@ -12,27 +12,6 @@
 
 namespace blink {
 
-namespace {
-
-// Returns true if the content of `iframe_element` should be added.
-bool ShouldIncludeIFrame(const HTMLIFrameElement& iframe_element) {
-  if (iframe_element.IsAdRelated()) {
-    return false;
-  }
-  LocalFrame* iframe_frame =
-      DynamicTo<LocalFrame>(iframe_element.ContentFrame());
-  if (!iframe_frame || iframe_frame->IsCrossOriginToParentOrOuterDocument()) {
-    return false;
-  }
-  auto* iframe_document = iframe_element.contentDocument();
-  if (!iframe_document->body()) {
-    return false;
-  }
-  return true;
-}
-
-}  // namespace
-
 // static
 mojom::blink::InnerTextFramePtr InnerTextBuilder::Build(
     LocalFrame& frame,
@@ -60,7 +39,7 @@ void InnerTextBuilder::Build(HTMLElement& body,
   unsigned inner_text_offset = 0;
   for (auto& child_iframe : child_iframes_) {
     const HTMLIFrameElement* iframe_element = child_iframe->iframe;
-    if (!ShouldIncludeIFrame(*iframe_element)) {
+    if (!ShouldContentExtractionIncludeIFrame(*iframe_element)) {
       continue;
     }
     AddNextNonFrameSegments(inner_text, child_iframe->offset, inner_text_offset,
@@ -68,7 +47,8 @@ void InnerTextBuilder::Build(HTMLElement& body,
 
     LocalFrame* iframe_frame =
         DynamicTo<LocalFrame>(iframe_element->ContentFrame());
-    // ShouldIncludeIFrame() only returns true if all of these are true.
+    // ShouldContentExtractionIncludeIFrame only returns true if all of these
+    // are true.
     CHECK(iframe_frame);
     auto* iframe_document = iframe_element->contentDocument();
     CHECK(iframe_document);
@@ -144,7 +124,8 @@ mojom::blink::InnerTextFramePtr InnerTextPassagesBuilder::Build(
   // the head may contain useful information like title.
   DocumentChunker document_chunker(
       params.max_words_per_aggregate_passage.value_or(200),
-      params.greedily_aggregate_sibling_nodes.value_or(true));
+      params.greedily_aggregate_sibling_nodes.value_or(true),
+      params.max_passages, params.min_words_per_passage.value_or(0));
   auto segments = document_chunker.Chunk(*document);
   inner_text_frame->segments.ReserveInitialCapacity(segments.size());
   for (const String& s : segments) {

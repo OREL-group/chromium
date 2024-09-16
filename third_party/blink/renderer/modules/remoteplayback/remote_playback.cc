@@ -9,6 +9,7 @@
 
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/strcat.h"
+#include "media/base/remoting_constants.h"
 #include "third_party/blink/public/platform/modules/remoteplayback/remote_playback_source.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
@@ -53,7 +54,7 @@ const AtomicString& RemotePlaybackStateToString(
     case mojom::blink::PresentationConnectionState::TERMINATED:
       return disconnected_value;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return disconnected_value;
   }
 }
@@ -151,7 +152,7 @@ ScriptPromise<IDLLong> RemotePlayback::watchAvailability(
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
         "disableRemotePlayback attribute is present.");
-    return ScriptPromise<IDLLong>();
+    return EmptyPromise();
   }
 
   int id = WatchAvailabilityInternal(
@@ -160,7 +161,7 @@ ScriptPromise<IDLLong> RemotePlayback::watchAvailability(
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNotSupportedError,
         "Availability monitoring is not supported on this device.");
-    return ScriptPromise<IDLLong>();
+    return EmptyPromise();
   }
 
   // TODO(avayvod): Currently the availability is tracked for each media element
@@ -185,14 +186,14 @@ ScriptPromise<IDLUndefined> RemotePlayback::cancelWatchAvailability(
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
         "disableRemotePlayback attribute is present.");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   if (!CancelWatchAvailabilityInternal(id)) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNotFoundError,
         "A callback with the given id is not found.");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   return ToResolvedUndefinedPromise(script_state);
@@ -206,7 +207,7 @@ ScriptPromise<IDLUndefined> RemotePlayback::cancelWatchAvailability(
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
         "disableRemotePlayback attribute is present.");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   availability_callbacks_.clear();
@@ -222,21 +223,21 @@ ScriptPromise<IDLUndefined> RemotePlayback::prompt(
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
         "disableRemotePlayback attribute is present.");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   if (prompt_promise_resolver_) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kOperationError,
         "A prompt is already being shown for this media element.");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   if (!media_element_->DomWindow()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidAccessError,
         "RemotePlayback::prompt() does not work in a detached window.");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   if (!LocalFrame::HasTransientUserActivation(
@@ -244,27 +245,27 @@ ScriptPromise<IDLUndefined> RemotePlayback::prompt(
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidAccessError,
         "RemotePlayback::prompt() requires user gesture.");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   if (!RuntimeEnabledFeatures::RemotePlaybackBackendEnabled()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNotSupportedError,
         "The RemotePlayback API is disabled on this platform.");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   if (availability_ == mojom::ScreenAvailability::UNAVAILABLE) {
     exception_state.ThrowDOMException(DOMExceptionCode::kNotFoundError,
                                       "No remote playback devices found.");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   if (availability_ == mojom::ScreenAvailability::SOURCE_NOT_SUPPORTED) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNotSupportedError,
         "The currentSrc is not compatible with remote playback");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   auto* resolver = MakeGarbageCollected<ScriptPromiseResolver<IDLUndefined>>(
@@ -462,7 +463,8 @@ void RemotePlayback::UpdateAvailabilityUrlsAndStartListening() {
   // If the video is too short, it's unlikely to be cast. Disable availability
   // monitoring so that the cast buttons are hidden from the video player.
   if (!media_element_ || std::isnan(media_element_->duration()) ||
-      media_element_->duration() <= kMinRemotingMediaDurationInSec) {
+      media_element_->duration() <=
+          media::remoting::kMinRemotingMediaDurationInSec) {
     StopListeningForAvailability();
     availability_urls_.clear();
     return;

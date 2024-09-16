@@ -12,9 +12,7 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
-#include "base/time/time.h"
 #include "components/webapps/browser/webapps_client.h"
-#include "content/public/browser/service_worker_context.h"
 
 namespace webapps {
 
@@ -90,6 +88,8 @@ std::ostream& operator<<(std::ostream& os, WebappInstallSource source) {
       return os << "app install uri";
     case WebappInstallSource::WEBAPK_RESTORE:
       return os << "webapk restore";
+    case WebappInstallSource::OOBE_APP_RECOMMENDATIONS:
+      return os << "oobe app recommendations";
     case WebappInstallSource::COUNT:
       return os << "count";
   }
@@ -143,6 +143,8 @@ std::ostream& operator<<(std::ostream& os, WebappUninstallSource source) {
       return os << "Healthcare User Install Cleanup";
     case webapps::WebappUninstallSource::kIwaEnterprisePolicy:
       return os << "Isolated Web Apps Enterprise Policy";
+    case webapps::WebappUninstallSource::kDevtools:
+      return os << "Devtools";
   }
 }
 
@@ -172,6 +174,7 @@ bool IsUserUninstall(WebappUninstallSource source) {
     case webapps::WebappUninstallSource::kAppList:
     case webapps::WebappUninstallSource::kShelf:
     case webapps::WebappUninstallSource::kExternalLockScreen:
+    case webapps::WebappUninstallSource::kDevtools:
       return true;
   }
 }
@@ -213,6 +216,7 @@ bool InstallableMetrics::IsReportableInstallSource(WebappInstallSource source) {
     case WebappInstallSource::PRELOADED_DEFAULT:
     case WebappInstallSource::ALMANAC_INSTALL_APP_URI:
     case WebappInstallSource::WEBAPK_RESTORE:
+    case WebappInstallSource::OOBE_APP_RECOMMENDATIONS:
       return true;
     case WebappInstallSource::IWA_GRAPHICAL_INSTALLER:
     case WebappInstallSource::IWA_DEV_UI:
@@ -224,7 +228,7 @@ bool InstallableMetrics::IsReportableInstallSource(WebappInstallSource source) {
     case WebappInstallSource::SYNC:
       return false;
     case WebappInstallSource::COUNT:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return false;
   }
 }
@@ -237,50 +241,18 @@ WebappInstallSource InstallableMetrics::GetInstallSource(
 }
 
 // static
-void InstallableMetrics::RecordCheckServiceWorkerTime(base::TimeDelta time) {
-  UMA_HISTOGRAM_MEDIUM_TIMES("Webapp.CheckServiceWorker.Time", time);
-}
-
-// static
-void InstallableMetrics::RecordCheckServiceWorkerStatus(
-    ServiceWorkerOfflineCapability status) {
-  UMA_HISTOGRAM_ENUMERATION("Webapp.CheckServiceWorker.Status", status);
-}
-
-// static
-ServiceWorkerOfflineCapability
-InstallableMetrics::ConvertFromServiceWorkerCapability(
-    content::ServiceWorkerCapability capability) {
-  switch (capability) {
-    case content::ServiceWorkerCapability::SERVICE_WORKER_WITH_FETCH_HANDLER:
-      return ServiceWorkerOfflineCapability::kServiceWorkerWithOfflineSupport;
-    case content::ServiceWorkerCapability::SERVICE_WORKER_NO_FETCH_HANDLER:
-      return ServiceWorkerOfflineCapability::kServiceWorkerNoFetchHandler;
-    case content::ServiceWorkerCapability::NO_SERVICE_WORKER:
-      return ServiceWorkerOfflineCapability::kNoServiceWorker;
-  }
-  NOTREACHED();
-}
-
-// static
-ServiceWorkerOfflineCapability InstallableMetrics::ConvertFromOfflineCapability(
-    content::OfflineCapability capability) {
-  switch (capability) {
-    case content::OfflineCapability::kSupported:
-      return ServiceWorkerOfflineCapability::kServiceWorkerWithOfflineSupport;
-    case content::OfflineCapability::kUnsupported:
-      return ServiceWorkerOfflineCapability::kServiceWorkerNoOfflineSupport;
-  }
-  NOTREACHED();
-}
-
-// static
 void InstallableMetrics::TrackUninstallEvent(WebappUninstallSource source) {
   base::UmaHistogramEnumeration("Webapp.Install.UninstallEvent", source);
 }
 
 // static
-void InstallableMetrics::TrackInstallResult(bool result) {
+void InstallableMetrics::TrackInstallResult(bool result,
+                                            WebappInstallSource source) {
   base::UmaHistogramBoolean("WebApp.Install.Result", result);
+  if (IsReportableInstallSource(source)) {
+    base::UmaHistogramEnumeration(result ? "WebApp.Install.Source.Success"
+                                         : "WebApp.Install.Source.Failure",
+                                  source, WebappInstallSource::COUNT);
+  }
 }
 }  // namespace webapps

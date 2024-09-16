@@ -140,7 +140,7 @@ void AutomationEventRouter::DispatchGetTextLocationDataResult(
     remote->DispatchGetTextLocationResult(data, rect);
   }
 #else
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 }
 
@@ -252,9 +252,9 @@ void AutomationEventRouter::Register(const ExtensionId& extension_id,
 
 void AutomationEventRouter::DispatchAccessibilityEvents(
     const ui::AXTreeID& tree_id,
-    std::vector<ui::AXTreeUpdate> updates,
+    const std::vector<ui::AXTreeUpdate>& updates,
     const gfx::Point& mouse_location,
-    std::vector<ui::AXEvent> events) {
+    const std::vector<ui::AXEvent>& events) {
   if (remote_router_) {
     remote_router_->DispatchAccessibilityEvents(
         tree_id, std::move(updates), mouse_location, std::move(events));

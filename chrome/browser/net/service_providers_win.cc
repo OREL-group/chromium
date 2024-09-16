@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/net/service_providers_win.h"
 
 #include <winsock2.h>
@@ -29,7 +34,7 @@ void GetWinsockNamespaceProviders(
   DWORD size = 0;
   if (WSAEnumNameSpaceProviders(&size, nullptr) != SOCKET_ERROR ||
       GetLastError() != WSAEFAULT) {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return;
   }
 
@@ -40,7 +45,7 @@ void GetWinsockNamespaceProviders(
   int num_namespace_providers = WSAEnumNameSpaceProviders(&size,
                                                           namespace_providers);
   if (num_namespace_providers == SOCKET_ERROR) {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return;
   }
 
@@ -64,7 +69,7 @@ void GetWinsockLayeredServiceProviders(
   int error;
   if (SOCKET_ERROR != WSCEnumProtocols(nullptr, nullptr, &size, &error) ||
       error != WSAENOBUFS) {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return;
   }
 
@@ -75,7 +80,7 @@ void GetWinsockLayeredServiceProviders(
   int num_service_providers =
       WSCEnumProtocols(nullptr, service_providers, &size, &error);
   if (num_service_providers == SOCKET_ERROR) {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return;
   }
 

@@ -60,22 +60,20 @@ class TestAutofillDriverTemplate : public T {
     }
     return std::nullopt;
   }
-  bool IsInActiveFrame() const override { return is_in_active_frame_; }
+  bool IsActive() const override { return is_active_; }
   bool IsInAnyMainFrame() const override { return is_in_any_main_frame_; }
-  bool IsPrerendering() const override { return false; }
   bool HasSharedAutofillPermission() const override { return shared_autofill_; }
   bool CanShowAutofillUi() const override { return true; }
   void ApplyFieldAction(mojom::FieldActionType action_type,
                         mojom::ActionPersistence action_persistence,
                         const FieldGlobalId& field,
                         const std::u16string& value) override {}
-  void SendAutofillTypePredictionsToRenderer(
+  void SendTypePredictionsToRenderer(
       const std::vector<raw_ptr<FormStructure, VectorExperimental>>& forms)
       override {}
   void RendererShouldAcceptDataListSuggestion(
       const FieldGlobalId& field,
       const std::u16string& value) override {}
-  void RendererShouldClearFilledSection() override {}
   void RendererShouldClearPreviewedForm() override {}
   void RendererShouldTriggerSuggestions(
       const FieldGlobalId& field_id,
@@ -83,16 +81,25 @@ class TestAutofillDriverTemplate : public T {
   void RendererShouldSetSuggestionAvailability(
       const FieldGlobalId& field,
       mojom::AutofillSuggestionAvailability suggestion_availability) override {}
-  void PopupHidden() override {}
-  net::IsolationInfo IsolationInfo() override { return isolation_info_; }
-  void TriggerFormExtractionInDriverFrame() override {}
+  std::optional<net::IsolationInfo> GetIsolationInfo() override {
+    // In AutofillDriverIOS, we always return std::nullopt here. That behavior
+    // should be reflected in iOS tests.
+#if BUILDFLAG(IS_IOS)
+    return std::nullopt;
+#else
+    return isolation_info_;
+#endif
+  }
+  void TriggerFormExtractionInDriverFrame(
+      AutofillDriver::AutofillDriverRouterAndFormForestPassKey pass_key)
+      override {}
   void TriggerFormExtractionInAllFrames(
       base::OnceCallback<void(bool)> form_extraction_finished_callback)
       override {}
   void ExtractForm(
       FormGlobalId form,
       AutofillDriver::BrowserFormHandler response_handler) override {}
-  void GetFourDigitCombinationsFromDOM(
+  void GetFourDigitCombinationsFromDom(
       base::OnceCallback<void(const std::vector<std::string>&)>
           potential_matches) override {}
 
@@ -102,7 +109,7 @@ class TestAutofillDriverTemplate : public T {
   base::flat_set<FieldGlobalId> ApplyFormAction(
       mojom::FormActionType action_type,
       mojom::ActionPersistence action_persistence,
-      const FormData& form_data,
+      base::span<const FormFieldData> form_data,
       const url::Origin& triggered_origin,
       const base::flat_map<FieldGlobalId, FieldType>& field_type_map) override {
     if (action_type == mojom::FormActionType::kUndo) {
@@ -132,9 +139,7 @@ class TestAutofillDriverTemplate : public T {
 
   void SetParent(TestAutofillDriverTemplate* parent) { parent_ = parent; }
 
-  void SetIsInActiveFrame(bool is_in_active_frame) {
-    is_in_active_frame_ = is_in_active_frame;
-  }
+  void SetIsActive(bool is_active) { is_active_ = is_active; }
 
   void SetIsInAnyMainFrame(bool is_in_any_main_frame) {
     is_in_any_main_frame_ = is_in_any_main_frame;
@@ -168,7 +173,7 @@ class TestAutofillDriverTemplate : public T {
   LocalFrameToken frame_token_;
   std::map<RemoteFrameToken, LocalFrameToken> remote_frame_tokens_;
   raw_ptr<TestAutofillDriverTemplate> parent_ = nullptr;
-  bool is_in_active_frame_ = true;
+  bool is_active_ = true;
   bool is_in_any_main_frame_ = true;
   bool shared_autofill_ = false;
   net::IsolationInfo isolation_info_;

@@ -20,7 +20,9 @@
 #include "chrome/browser/ui/views/editor_menu/editor_menu_promo_card_view.h"
 #include "chrome/browser/ui/views/editor_menu/editor_menu_view.h"
 #include "chrome/browser/ui/views/editor_menu/utils/editor_types.h"
-#include "chrome/browser/ui/views/editor_menu/utils/preset_text_query.h"
+#include "chromeos/components/editor_menu/public/cpp/preset_text_query.h"
+#include "chromeos/components/magic_boost/public/cpp/magic_boost_state.h"
+#include "chromeos/constants/chromeos_features.h"
 #include "content/public/browser/browser_context.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/views/view_utils.h"
@@ -49,9 +51,9 @@ void EditorMenuControllerImpl::OnTextAvailable(
     return;
   }
 
-  card_session_->manager().GetEditorPanelContext(
-      base::BindOnce(&EditorMenuControllerImpl::OnGetEditorPanelContextResult,
-                     weak_factory_.GetWeakPtr(), anchor_bounds));
+  card_session_->manager().GetEditorPanelContext(base::BindOnce(
+      &EditorMenuControllerImpl::OnGetAnchorBoundsAndEditorContext,
+      weak_factory_.GetWeakPtr(), anchor_bounds));
 }
 
 void EditorMenuControllerImpl::OnAnchorBoundsChanged(
@@ -77,10 +79,15 @@ void EditorMenuControllerImpl::OnDismiss(bool is_other_command_executed) {
 }
 
 void EditorMenuControllerImpl::OnSettingsButtonPressed() {
-  GURL setting_url = GURL(base::StrCat({"chrome://os-settings/",
-                    chromeos::settings::mojom::kInputSubpagePath, "?settingId=",
-                    base::NumberToString(static_cast<int>(
-                        chromeos::settings::mojom::Setting::kShowOrca))}));
+  GURL setting_url = GURL(base::StrCat(
+      {"chrome://os-settings/",
+       chromeos::MagicBoostState::Get() &&
+               chromeos::MagicBoostState::Get()->IsMagicBoostAvailable()
+           ? chromeos::settings::mojom::kSystemPreferencesSectionPath
+           : chromeos::settings::mojom::kInputSubpagePath,
+       "?settingId=",
+       base::NumberToString(
+           static_cast<int>(chromeos::settings::mojom::Setting::kShowOrca))}));
 #if BUILDFLAG(IS_CHROMEOS_LACROS)
   chromeos::LacrosService* service = chromeos::LacrosService::Get();
   DCHECK(service->IsAvailable<crosapi::mojom::UrlHandler>());
@@ -160,6 +167,13 @@ void EditorMenuControllerImpl::DismissCard() {
   }
 }
 
+void EditorMenuControllerImpl::TryCreatingEditorSession() {
+  if (!card_session_) {
+    return;
+  }
+  card_session_->manager().RequestCacheContext();
+}
+
 void EditorMenuControllerImpl::LogEditorMode(const EditorMode& editor_mode) {
   if (!card_session_) {
     return;
@@ -167,33 +181,34 @@ void EditorMenuControllerImpl::LogEditorMode(const EditorMode& editor_mode) {
   card_session_->manager().LogEditorMode(editor_mode);
 }
 
-void EditorMenuControllerImpl::GetEditorMode(
-    base::OnceCallback<void(const EditorMode)> callback) {
+void EditorMenuControllerImpl::GetEditorContext(
+    base::OnceCallback<void(const EditorContext&)> callback) {
   if (!card_session_) {
     return;
   }
   card_session_->manager().GetEditorPanelContext(
-      base::BindOnce(&EditorMenuControllerImpl::OnGetEditorModeResult,
+      base::BindOnce(&EditorMenuControllerImpl::OnGetEditorContext,
                      weak_factory_.GetWeakPtr(), std::move(callback)));
 }
 
-void EditorMenuControllerImpl::OnGetEditorPanelContextResultForTesting(
+void EditorMenuControllerImpl::OnGetAnchorBoundsAndEditorContextForTesting(
     const gfx::Rect& anchor_bounds,
-    EditorContext context) {
-  OnGetEditorPanelContextResult(anchor_bounds, std::move(context));
+    const EditorContext& context) {
+  OnGetAnchorBoundsAndEditorContext(anchor_bounds, std::move(context));
 }
 
-void EditorMenuControllerImpl::OnGetEditorModeResult(
-    base::OnceCallback<void(const EditorMode)> callback,
-    EditorContext context) {
-  std::move(callback).Run(context.mode);
+void EditorMenuControllerImpl::OnGetEditorContext(
+    base::OnceCallback<void(const EditorContext&)> callback,
+    const EditorContext& context) {
+  std::move(callback).Run(context);
 }
 
-void EditorMenuControllerImpl::OnGetEditorPanelContextResult(
+void EditorMenuControllerImpl::OnGetAnchorBoundsAndEditorContext(
     const gfx::Rect& anchor_bounds,
-    EditorContext context) {
+    const EditorContext& context) {
   switch (context.mode) {
-    case EditorMode::kBlocked:
+    case EditorMode::kHardBlocked:
+    case EditorMode::kSoftBlocked:
       break;
     case EditorMode::kWrite:
       editor_menu_widget_ = EditorMenuView::CreateWidget(
@@ -212,7 +227,8 @@ void EditorMenuControllerImpl::OnGetEditorPanelContextResult(
       editor_menu_widget_->ShowInactive();
       break;
   }
-  if (card_session_ != nullptr && context.mode != EditorMode::kBlocked) {
+  if (card_session_ != nullptr && context.mode != EditorMode::kSoftBlocked &&
+      context.mode != EditorMode::kHardBlocked) {
     card_session_->manager().LogEditorMode(context.mode);
   }
 }
@@ -249,7 +265,7 @@ EditorMenuControllerImpl::EditorCardSession::~EditorCardSession() {
 
 void EditorMenuControllerImpl::EditorCardSession::OnEditorModeChanged(
     const EditorMode& mode) {
-  if (mode == EditorMode::kBlocked) {
+  if (mode == EditorMode::kHardBlocked || mode == EditorMode::kSoftBlocked) {
     controller_->DismissCard();
   }
 }

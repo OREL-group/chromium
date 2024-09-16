@@ -39,8 +39,7 @@
 #include "chrome/browser/ash/app_mode/kiosk_app_launch_error.h"
 #include "chrome/browser/ash/app_mode/kiosk_app_types.h"
 #include "chrome/browser/ash/arc/arc_util.h"
-#include "chrome/browser/ash/boot_times_recorder.h"
-#include "chrome/browser/ash/crosapi/browser_data_migrator.h"
+#include "chrome/browser/ash/boot_times_recorder/boot_times_recorder.h"
 #include "chrome/browser/ash/customization/customization_document.h"
 #include "chrome/browser/ash/login/auth/chrome_login_performer.h"
 #include "chrome/browser/ash/login/demo_mode/demo_session.h"
@@ -55,11 +54,6 @@
 #include "chrome/browser/ash/login/signin/oauth2_token_initializer.h"
 #include "chrome/browser/ash/login/signin_specifics.h"
 #include "chrome/browser/ash/login/startup_utils.h"
-#include "chrome/browser/ash/login/ui/login_display_host.h"
-#include "chrome/browser/ash/login/ui/login_display_host_mojo.h"
-#include "chrome/browser/ash/login/ui/signin_ui.h"
-#include "chrome/browser/ash/login/ui/user_adding_screen.h"
-#include "chrome/browser/ash/login/ui/webui_login_view.h"
 #include "chrome/browser/ash/login/users/chrome_user_manager_util.h"
 #include "chrome/browser/ash/login/wizard_controller.h"
 #include "chrome/browser/ash/policy/core/browser_policy_connector_ash.h"
@@ -77,12 +71,15 @@
 #include "chrome/browser/policy/profile_policy_connector.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/chrome_device_id_helper.h"
-#include "chrome/browser/ui/ash/system_tray_client_impl.h"
+#include "chrome/browser/ui/ash/login/login_display_host.h"
+#include "chrome/browser/ui/ash/login/login_display_host_mojo.h"
+#include "chrome/browser/ui/ash/login/signin_ui.h"
+#include "chrome/browser/ui/ash/login/user_adding_screen.h"
+#include "chrome/browser/ui/ash/login/webui_login_view.h"
+#include "chrome/browser/ui/ash/system/system_tray_client_impl.h"
 #include "chrome/browser/ui/aura/accessibility/automation_manager_aura.h"
 #include "chrome/browser/ui/managed_ui.h"
 #include "chrome/browser/ui/webui/ash/login/encryption_migration_screen_handler.h"
-#include "chrome/browser/ui/webui/ash/login/kiosk_autolaunch_screen_handler.h"
-#include "chrome/browser/ui/webui/ash/login/kiosk_enable_screen_handler.h"
 #include "chrome/browser/ui/webui/ash/login/l10n_util.h"
 #include "chrome/browser/ui/webui/ash/login/tpm_error_screen_handler.h"
 #include "chrome/browser/ui/webui/ash/login/update_required_screen_handler.h"
@@ -92,7 +89,6 @@
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/ash/components/cryptohome/cryptohome_parameters.h"
-#include "chromeos/ash/components/cryptohome/cryptohome_util.h"
 #include "chromeos/ash/components/dbus/session_manager/session_manager_client.h"
 #include "chromeos/ash/components/dbus/userdataauth/userdataauth_client.h"
 #include "chromeos/ash/components/install_attributes/install_attributes.h"
@@ -102,6 +98,7 @@
 #include "chromeos/ash/components/osauth/public/auth_hub.h"
 #include "chromeos/ash/components/settings/cros_settings.h"
 #include "chromeos/ash/components/settings/cros_settings_names.h"
+#include "chromeos/ash/components/standalone_browser/migrator_util.h"
 #include "chromeos/dbus/power/power_manager_client.h"
 #include "chromeos/strings/grit/chromeos_strings.h"
 #include "components/account_id/account_id.h"
@@ -123,8 +120,6 @@
 #include "components/version_info/version_info.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/notification_service.h"
-#include "content/public/browser/notification_types.h"
 #include "content/public/browser/storage_partition.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "google_apis/gaia/google_service_auth_error.h"
@@ -293,7 +288,7 @@ int CountRegularUsers(const user_manager::UserList& users) {
   for (user_manager::User* user : users) {
     // Skip kiosk apps for login screen user list. Kiosk apps as pods (aka new
     // kiosk UI) is currently disabled and it gets the apps directly from
-    // KioskChromeAppManager, ArcKioskAppManager and WebKioskAppManager.
+    // KioskChromeAppManager, WebKioskAppManager.
     if (user->IsKioskType()) {
       continue;
     }
@@ -606,12 +601,6 @@ void ExistingUserController::OnGaiaScreenReady() {
   StartAutoLoginTimer();
 }
 
-void ExistingUserController::OnStartKioskEnableScreen() {
-  KioskChromeAppManager::Get()->GetConsumerKioskAutoLaunchStatus(base::BindOnce(
-      &ExistingUserController::OnConsumerKioskAutoLaunchCheckCompleted,
-      weak_factory_.GetWeakPtr()));
-}
-
 void ExistingUserController::SetDisplayEmail(const std::string& email) {
   display_email_ = email;
 }
@@ -640,18 +629,6 @@ bool ExistingUserController::IsUserSigninCompleted() const {
 void ExistingUserController::LocalStateChanged(
     user_manager::UserManager* user_manager) {
   DeviceSettingsChanged();
-}
-
-void ExistingUserController::OnConsumerKioskAutoLaunchCheckCompleted(
-    KioskChromeAppManager::ConsumerKioskAutoLaunchStatus status) {
-  if (status ==
-      KioskChromeAppManager::ConsumerKioskAutoLaunchStatus::kConfigurable) {
-    ShowKioskEnableScreen();
-  }
-}
-
-void ExistingUserController::ShowKioskEnableScreen() {
-  GetLoginDisplayHost()->StartWizard(KioskEnableScreenView::kScreenId);
 }
 
 void ExistingUserController::ShowEncryptionMigrationScreen(
@@ -796,15 +773,6 @@ void ExistingUserController::OnAuthSuccess(const UserContext& user_context) {
     user->AddProfileCreatedObserver(
         base::BindOnce(&SetLoginExtensionApiCanLockManagedGuestSessionPref,
                        user_context.GetAccountId(), true));
-  }
-
-  if (BrowserDataMigratorImpl::MaybeForceResumeMoveMigration(
-          g_browser_process->local_state(), user_context.GetAccountId(),
-          user_context.GetUserIDHash(),
-          crosapi::browser_util::PolicyInitState::kAfterInit)) {
-    // TODO(crbug.com/1261730): Add an UMA.
-    LOG(WARNING) << "Restarting Chrome to resume move migration.";
-    return;
   }
 
   UserSessionManager::StartSessionType start_session_type =
@@ -1295,22 +1263,6 @@ void ExistingUserController::CancelPasswordChangedFlow() {
   PerformLoginFinishedActions(true /* start auto login timer */);
 }
 
-void ExistingUserController::MigrateUserData(const std::string& old_password) {
-  // LoginPerformer instance has state of the user so it should exist.
-  if (login_performer_.get()) {
-    VLOG(1) << "Migrate the existing cryptohome to new password.";
-    login_performer_->RecoverEncryptedData(old_password);
-  }
-}
-
-void ExistingUserController::ResyncUserData() {
-  // LoginPerformer instance has state of the user so it should exist.
-  if (login_performer_.get()) {
-    VLOG(1) << "Create a new cryptohome and resync user data.";
-    login_performer_->ResyncEncryptedData();
-  }
-}
-
 void ExistingUserController::StartAutoLoginTimer() {
   auto session_state = session_manager::SessionManager::Get()->session_state();
   if (is_login_in_progress_ ||
@@ -1568,11 +1520,6 @@ void ExistingUserController::DoLogin(const UserContext& user_context,
     LoginAsKioskApp(
         KioskAppId::ForChromeApp(user_context.GetAccountId().GetUserEmail(),
                                  user_context.GetAccountId()));
-    return;
-  }
-
-  if (user_context.GetUserType() == user_manager::UserType::kArcKioskApp) {
-    LoginAsKioskApp(KioskAppId::ForArcApp(user_context.GetAccountId()));
     return;
   }
 

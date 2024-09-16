@@ -150,8 +150,6 @@ std::optional<HtmlFieldType> ParseNonStandarizedAutocompleteAttribute(
           {"promotion-code", HtmlFieldType::kMerchantPromoCode},
           {"region", HtmlFieldType::kAddressLevel1},
           {"tel-ext", HtmlFieldType::kTelExtension},
-          {"upi", HtmlFieldType::kUpiVpa},
-          {"upi-vpa", HtmlFieldType::kUpiVpa},
       });
 
   auto it = non_standardized_attributes.find(value);
@@ -307,12 +305,11 @@ bool IsAutocompleteTypeWrongButWellIntended(
   auto contains_field_type_token = [&](std::string_view s) {
     return std::string_view(field_type_token).find(s) != std::string::npos;
   };
-  bool token_is_wrong_but_has_well_intended_usage_keyword =
-      base::ranges::any_of(kWellIntendedAutocompleteValuesKeywords,
-                           contains_field_type_token);
+  bool token_is_wrong_but_has_well_intended_usage_keyword = std::ranges::any_of(
+      kWellIntendedAutocompleteValuesKeywords, contains_field_type_token);
   bool developer_likely_tried_to_disable_autofill =
-      base::ranges::any_of(kNegativeMatchWellIntendedAutocompleteValuesKeywords,
-                           contains_field_type_token);
+      std::ranges::any_of(kNegativeMatchWellIntendedAutocompleteValuesKeywords,
+                          contains_field_type_token);
   return token_is_wrong_but_has_well_intended_usage_keyword &&
          !developer_likely_tried_to_disable_autofill;
 }

@@ -35,7 +35,6 @@
 #include "chrome/browser/download/download_ui_model.h"
 #include "chrome/browser/download/offline_item_utils.h"
 #include "chrome/browser/enterprise/connectors/common.h"
-#include "chrome/browser/enterprise/connectors/connectors_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/download_protection/download_protection_util.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
@@ -45,6 +44,7 @@
 #include "components/download/public/common/download_danger_type.h"
 #include "components/download/public/common/download_interrupt_reasons.h"
 #include "components/download/public/common/download_item.h"
+#include "components/download/public/common/download_item_rename_handler.h"
 #include "components/safe_browsing/buildflags.h"
 #include "components/safe_browsing/content/browser/web_ui/safe_browsing_ui.h"
 #include "components/safe_browsing/content/common/file_type_policies.h"
@@ -64,7 +64,6 @@
 #include "ui/color/color_id.h"
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "ash/constants/ash_features.h"
 #include "chrome/browser/ui/ash/system_web_apps/system_web_app_ui_utils.h"
 #endif
 
@@ -78,6 +77,7 @@
 #include "chrome/browser/safe_browsing/advanced_protection_status_manager_factory.h"
 #include "chrome/browser/safe_browsing/download_protection/deep_scanning_request.h"
 #include "chrome/browser/safe_browsing/download_protection/download_feedback_service.h"
+#include "chrome/browser/enterprise/connectors/connectors_manager.h"
 #endif
 
 using DangerUiPattern = DownloadUIModel::DangerUiPattern;
@@ -211,30 +211,6 @@ void MaybeSendDownloadReport(const GURL& url,
   }
 }
 
-// Submits download to download feedback service if the user has approved and
-// the download is suitable for submission.
-// If user hasn't seen SBER opt-in text before, show SBER opt-in dialog first.
-bool MaybeSubmitDownloadToFeedbackService(DownloadCommands::Command command,
-                                          Profile* profile,
-                                          download::DownloadItem* download) {
-  if (!download->IsDangerous() || download->IsInsecure()) {
-    return false;
-  }
-  if (!safe_browsing::DownloadFeedbackService::IsEnabledForDownload(
-          *download)) {
-    return false;
-  }
-
-  auto* const sb_service = g_browser_process->safe_browsing_service();
-  if (!sb_service)
-    return false;
-  auto* const dp_service = sb_service->download_protection_service();
-  if (!dp_service)
-    return false;
-  // TODO(shaktisahu): Enable feedback service for offline item.
-  return dp_service->MaybeBeginFeedbackForDownload(profile, download, command);
-}
-
 #endif
 
 }  // namespace
@@ -283,7 +259,14 @@ Profile* DownloadItemModel::profile() const {
 
 std::u16string DownloadItemModel::GetTabProgressStatusText() const {
   int64_t total = GetTotalBytes();
-  int64_t size = download_->GetReceivedBytes();
+  int64_t size;
+  auto* renamer = download_->GetRenameHandler();
+  if (renamer && renamer->ShowRenameProgress()) {
+    size = static_cast<int>(
+        (download_->GetReceivedBytes() + download_->GetUploadedBytes()) * 0.5);
+  } else {
+    size = download_->GetReceivedBytes();
+  }
   std::u16string received_size = ui::FormatBytes(size);
   std::u16string amount = received_size;
 
@@ -325,6 +308,11 @@ std::u16string DownloadItemModel::GetTabProgressStatusText() const {
 }
 
 int64_t DownloadItemModel::GetCompletedBytes() const {
+  auto* renamer = download_->GetRenameHandler();
+  if (renamer && renamer->ShowRenameProgress()) {
+    return static_cast<int>(
+        (download_->GetReceivedBytes() + download_->GetUploadedBytes()) * 0.5);
+  }
   return download_->GetReceivedBytes();
 }
 
@@ -337,6 +325,13 @@ int64_t DownloadItemModel::GetTotalBytes() const {
 //     ChromeDownloadManagerDelegate, we should calculate the percentage here
 //     instead of calling into the DownloadItem.
 int DownloadItemModel::PercentComplete() const {
+  auto* renamer = download_->GetRenameHandler();
+  if (renamer && renamer->ShowRenameProgress()) {
+    return static_cast<int>(
+        ((download_->GetReceivedBytes() + download_->GetUploadedBytes()) * 0.5 *
+         100.0) /
+        GetTotalBytes());
+  }
   return download_->PercentComplete();
 }
 
@@ -370,7 +365,7 @@ bool DownloadItemModel::IsMalicious() const {
     case download::DOWNLOAD_DANGER_TYPE_MAX:
     case download::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE:
       // We shouldn't get any of these due to the MightBeMalicious() test above.
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       [[fallthrough]];
     case download::DOWNLOAD_DANGER_TYPE_UNCOMMON_CONTENT:
     case download::DOWNLOAD_DANGER_TYPE_ASYNC_SCANNING:
@@ -386,7 +381,7 @@ bool DownloadItemModel::IsMalicious() const {
     case download::DOWNLOAD_DANGER_TYPE_BLOCKED_SCAN_FAILED:
       return false;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return false;
 }
 
@@ -404,7 +399,8 @@ bool DownloadItemModel::ShouldRemoveFromShelfWhenComplete() const {
 
       // If the download is a trusted extension, temporary, or will be opened
       // automatically, then it should be removed from the shelf on completion.
-      // TODO(crbug.com/1077929): The logic for deciding opening behavior should
+      // TODO(crbug.com/40129365): The logic for deciding opening behavior
+      // should
       //                          be in a central location.
       return (download_crx_util::IsTrustedExtensionDownload(profile(),
                                                             *download_) ||
@@ -423,10 +419,10 @@ bool DownloadItemModel::ShouldRemoveFromShelfWhenComplete() const {
       return false;
 
     case DownloadItem::MAX_DOWNLOAD_STATE:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return false;
 }
 
@@ -703,10 +699,6 @@ void DownloadItemModel::OpenUsingPlatformHandler() {
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 std::optional<DownloadCommands::Command>
 DownloadItemModel::MaybeGetMediaAppAction() const {
-  if (!base::FeatureList::IsEnabled(ash::features::kFileNotificationRevamp)) {
-    return std::nullopt;
-  }
-
   std::string mime_type = GetMimeType();
 
   if (mime_type == "application/pdf") {
@@ -785,7 +777,7 @@ bool DownloadItemModel::IsCommandEnabled(
     case DownloadCommands::CANCEL_DEEP_SCAN:
       return DownloadUIModel::IsCommandEnabled(download_commands, command);
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return false;
 }
 
@@ -869,15 +861,19 @@ void DownloadItemModel::ExecuteCommand(DownloadCommands* download_commands,
 #if BUILDFLAG(FULL_SAFE_BROWSING)
       CompleteSafeBrowsingScan();
 #endif
-      LogDeepScanEvent(download_,
-                       safe_browsing::DeepScanEvent::kPromptBypassed);
+      if (download_->GetDangerType() ==
+              download::DOWNLOAD_DANGER_TYPE_ASYNC_LOCAL_PASSWORD_SCANNING ||
+          download_->GetDangerType() ==
+              download::
+                  DOWNLOAD_DANGER_TYPE_PROMPT_FOR_LOCAL_PASSWORD_SCANNING) {
+        safe_browsing::LogLocalDecryptionEvent(
+            safe_browsing::DeepScanEvent::kPromptBypassed);
+      } else {
+        LogDeepScanEvent(download_,
+                         safe_browsing::DeepScanEvent::kPromptBypassed);
+      }
       [[fallthrough]];
     case DownloadCommands::KEEP:
-#if BUILDFLAG(FULL_SAFE_BROWSING)
-      if (command == DownloadCommands::KEEP) {
-        MaybeSubmitDownloadToFeedbackService(command, profile(), download_);
-      }
-#endif
       if (IsInsecure()) {
         download_->ValidateInsecureDownload();
         break;
@@ -899,10 +895,6 @@ void DownloadItemModel::ExecuteCommand(DownloadCommands* download_commands,
       if (GetDangerType() == download::DOWNLOAD_DANGER_TYPE_ASYNC_SCANNING) {
         LogDeepScanEvent(download_, safe_browsing::DeepScanEvent::kScanDeleted);
       }
-      if (MaybeSubmitDownloadToFeedbackService(command, profile(), download_)) {
-        // Skip Remove because it is handled by download feedback service.
-        break;
-      }
 #endif
       DownloadUIModel::ExecuteCommand(download_commands, command);
       break;
@@ -919,7 +911,7 @@ void DownloadItemModel::ExecuteCommand(DownloadCommands* download_commands,
             download_, download_commands->GetBrowser());
 #else
       // Should only be getting invoked if we are using safe browsing.
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
 #endif
       break;
     }
@@ -1001,7 +993,7 @@ DangerUiPattern DownloadItemModel::GetDangerUiPattern() const {
   if (state == DownloadItem::CANCELLED || state == DownloadItem::INTERRUPTED) {
     return DangerUiPattern::kOther;
   } else if (state == DownloadItem::MAX_DOWNLOAD_STATE) {
-    NOTREACHED_NORETURN();
+    NOTREACHED();
   }
 
   switch (GetInsecureDownloadStatus()) {
@@ -1055,7 +1047,7 @@ DangerUiPattern DownloadItemModel::GetDangerUiPattern() const {
     case download::DOWNLOAD_DANGER_TYPE_ALLOWLISTED_BY_POLICY:
       break;
     case download::DOWNLOAD_DANGER_TYPE_MAX:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
   }
 
@@ -1244,6 +1236,6 @@ void DownloadItemModel::DetermineAndSetShouldPreferOpeningInBrowser(
   SetShouldPreferOpeningInBrowser(false);
 }
 
-bool DownloadItemModel::IsEncryptedArchive() const {
-  return DownloadItemWarningData::IsEncryptedArchive(download_);
+bool DownloadItemModel::IsTopLevelEncryptedArchive() const {
+  return DownloadItemWarningData::IsTopLevelEncryptedArchive(download_);
 }

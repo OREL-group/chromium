@@ -278,7 +278,7 @@ void InputInjectorWayland::Core::ProcessKeyEvent(
     case State::STOPPED:
       break;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 }
 void InputInjectorWayland::Core::ProcessMouseEvent(
@@ -296,7 +296,7 @@ void InputInjectorWayland::Core::ProcessMouseEvent(
     case State::STOPPED:
       break;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 }
 
@@ -383,7 +383,7 @@ void InputInjectorWayland::Core::InjectMouseEventHelper(
     webrtc::DesktopVector new_mouse_position(event.x(), event.y());
 #if BUILDFLAG(IS_CHROMEOS_ASH)
     // Interim hack to handle display rotation on Chrome OS.
-    // TODO(crbug.com/439287): Remove this when Chrome OS has completely
+    // TODO(crbug.com/40396937): Remove this when Chrome OS has completely
     // migrated to Ozone.
     gfx::PointF screen_location = point_transformer_.ToScreenCoordinates(
         gfx::PointF(event.x(), event.y()));

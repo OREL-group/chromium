@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/filters/mac/audio_toolbox_audio_decoder.h"
 
 #include <optional>
@@ -86,7 +91,7 @@ OSStatus ProvideInputCallback(AudioConverterRef decoder,
 AudioConverterRef
 AudioToolboxAudioDecoder::ScopedAudioConverterRefTraits::Retain(
     AudioConverterRef converter) {
-  NOTREACHED() << "Only compatible with ASSUME policy";
+  NOTREACHED_IN_MIGRATION() << "Only compatible with ASSUME policy";
   return converter;
 }
 
@@ -266,7 +271,7 @@ bool AudioToolboxAudioDecoder::CreateDecoder(const AudioDecoderConfig& config) {
       break;
 #endif
     default:
-      NOTREACHED() << "Unsupported codec: " << config.codec();
+      NOTREACHED_IN_MIGRATION() << "Unsupported codec: " << config.codec();
       return false;
   }
 

@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #import "base/feature_list.h"
+#import "components/signin/internal/identity_manager/account_capabilities_constants.h"
 #import "components/supervised_user/core/common/features.h"
 #import "components/supervised_user/core/common/supervised_user_constants.h"
 #import "ios/chrome/browser/policy/model/policy_earl_grey_matchers.h"
@@ -17,7 +18,9 @@
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
+#import "ios/chrome/test/earl_grey/test_switches.h"
 #import "ios/testing/earl_grey/app_launch_configuration.h"
+#import "ios/testing/earl_grey/app_launch_manager.h"
 #import "ios/testing/earl_grey/earl_grey_test.h"
 
 using chrome_test_util::ContainsPartialText;
@@ -45,9 +48,10 @@ NSString* const kTestLearnMoreLabel = @"Learn more";
 // Signs in with a supervised account.
 - (void)signInWithSupervisedAccount {
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
-  [SigninEarlGrey addFakeIdentity:fakeIdentity];
-  [SigninEarlGrey setIsSubjectToParentalControls:YES forIdentity:fakeIdentity];
-
+  [SigninEarlGrey addFakeIdentity:fakeIdentity
+                 withCapabilities:@{
+                   @(kIsSubjectToParentalControlsCapabilityName) : @YES,
+                 }];
   [SigninEarlGrey signinWithFakeIdentity:fakeIdentity];
   [SigninEarlGrey verifySignedInWithFakeIdentity:fakeIdentity];
 }
@@ -135,6 +139,49 @@ NSString* const kTestLearnMoreLabel = @"Learn more";
 // Tests that the incognito tab grid is available after signout.
 - (void)testTabGridIncognitoEnabledOnSignout {
   [self signInWithSupervisedAccount];
+  [SigninEarlGrey signOut];
+
+  // Open the incognito tab grid.
+  [ChromeEarlGrey showTabSwitcher];
+  [[EarlGrey selectElementWithMatcher:TabGridIncognitoTabsPanelButton()]
+      performAction:grey_tap()];
+
+  // New Incognito Tab button `(+)` should be re-enabled.
+  [[EarlGrey selectElementWithMatcher:TabGridNewIncognitoTabButton()]
+      assertWithMatcher:grey_not(grey_accessibilityTrait(
+                            UIAccessibilityTraitNotEnabled))];
+
+  // The disabled incognito tab should not display any messages from the
+  // disabled incognito tab grid.
+  [[EarlGrey selectElementWithMatcher:ContainsPartialText(
+                                          kTestSupervisedIncognitoMessage)]
+      assertWithMatcher:grey_nil()];
+}
+
+// Tests that the incognito tab grid is available after signout with restart.
+// Regression test for b/360787816.
+- (void)testTabGridIncognitoEnabledOnSignoutWithRestart {
+  FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
+  [SigninEarlGrey addFakeIdentity:fakeIdentity
+                 withCapabilities:@{
+                   @(kIsSubjectToParentalControlsCapabilityName) : @YES,
+                 }];
+  [SigninEarlGrey signinWithFakeIdentity:fakeIdentity];
+  [SigninEarlGrey verifySignedInWithFakeIdentity:fakeIdentity];
+
+  // Create the config to relaunch Chrome. Because fake identities are not
+  // added on startup, manually configure fake identity cache to include the
+  // supervised account.
+  AppLaunchConfiguration config;
+  config.relaunch_policy = ForceRelaunchByCleanShutdown;
+  config.additional_args.push_back(
+      base::StrCat({"--", test_switches::kSignInAtStartup}));
+  config.additional_args.push_back(base::StrCat({
+    "-", test_switches::kAddFakeIdentitiesAtStartup, "=",
+        [FakeSystemIdentity encodeIdentitiesToBase64:@[ fakeIdentity ]]
+  }));
+  [[AppLaunchManager sharedManager] ensureAppLaunchedWithConfiguration:config];
+
   [SigninEarlGrey signOut];
 
   // Open the incognito tab grid.

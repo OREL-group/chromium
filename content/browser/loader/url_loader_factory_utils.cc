@@ -17,6 +17,8 @@ Interceptor& GetMutableInterceptor() {
   return *s_callback;
 }
 
+bool s_has_interceptor = false;
+
 }  // namespace
 
 const Interceptor& GetTestingInterceptor() {
@@ -31,6 +33,18 @@ void SetInterceptorForTesting(const Interceptor& interceptor) {
       << "It is not expected that this is called with non-null callback when "
       << "another overriding callback is already set.";
   GetMutableInterceptor() = interceptor;
+}
+
+bool HasInterceptorOnIOThreadForTesting() {
+  CHECK(!BrowserThread::IsThreadInitialized(BrowserThread::IO) ||
+        BrowserThread::CurrentlyOn(BrowserThread::IO));
+  return s_has_interceptor;
+}
+
+void SetHasInterceptorOnIOThreadForTesting(bool has_interceptor) {
+  CHECK(!BrowserThread::IsThreadInitialized(BrowserThread::IO) ||
+        BrowserThread::CurrentlyOn(BrowserThread::IO));
+  s_has_interceptor = has_interceptor;
 }
 
 TerminalParams::TerminalParams(
@@ -183,12 +197,12 @@ std::tuple<bool, bool> GetIsNavigationAndDownload(
 
     // The following cases are not reached just because `devtools_params` is
     // always `std::nullopt` for the current `Create*` callers.
-    // TODO(crbug.com/1506871): Return proper values once non-nullopt
+    // TODO(crbug.com/40947547): Return proper values once non-nullopt
     // `devtools_params` is given.
     case ContentBrowserClient::URLLoaderFactoryType::kPrefetch:
     case ContentBrowserClient::URLLoaderFactoryType::kDevTools:
     case ContentBrowserClient::URLLoaderFactoryType::kEarlyHints:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 

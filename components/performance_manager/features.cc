@@ -15,21 +15,18 @@
 
 namespace performance_manager::features {
 
-BASE_FEATURE(kRunOnMainThread,
-             "RunPerformanceManagerOnMainThread",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
 BASE_FEATURE(kRunOnMainThreadSync,
              "RunPerformanceManagerOnMainThreadSync",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+#if BUILDFLAG(IS_CHROMEOS)
+             base::FEATURE_DISABLED_BY_DEFAULT
+#else
+             base::FEATURE_ENABLED_BY_DEFAULT
+#endif
+);
 
 #if !BUILDFLAG(IS_ANDROID)
 BASE_FEATURE(kBackgroundTabLoadingFromPerformanceManager,
              "BackgroundTabLoadingFromPerformanceManager",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
-BASE_FEATURE(kBatterySaverModeRenderTuning,
-             "BatterySaverModeRenderTuning",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 BASE_FEATURE(kPerformanceControlsPerformanceSurvey,
@@ -61,57 +58,57 @@ BASE_FEATURE(kPrefetchVirtualMemoryPolicy,
              base::FEATURE_DISABLED_BY_DEFAULT);
 #endif
 
-// The variable was renamed to "MemorySaver" but the experiment name remains as
-// "HighEfficiency" because it is already running (crbug.com/1493843).
-BASE_FEATURE(kMemorySaverMultistateMode,
-             "HighEfficiencyMultistateMode",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-const base::FeatureParam<bool> kMemorySaverShowRecommendedBadge{
-    &kMemorySaverMultistateMode, "show_recommended_badge", false};
-
-BASE_FEATURE(kPerformanceControlsSidePanel,
-             "PerformanceControlsSidePanel",
+BASE_FEATURE(kPerformanceIntervention,
+             "PerformanceIntervention",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-BASE_FEATURE(kPerformanceCPUIntervention,
-             "PerformanceCPUIntervention",
+BASE_FEATURE(kPerformanceInterventionUI,
+             "PerformanceInterventionUI",
              base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kPerformanceInterventionDemoMode,
+             "PerformanceInterventionDemoMode",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+bool ShouldUsePerformanceInterventionBackend() {
+  return base::FeatureList::IsEnabled(kPerformanceIntervention) ||
+         base::FeatureList::IsEnabled(kPerformanceInterventionUI);
+}
+
+const base::FeatureParam<int> kInterventionDialogStringVersion{
+    &kPerformanceInterventionUI, "intervention_dialog_version", 1};
+
+const base::FeatureParam<bool> kInterventionShowMixedProfileSuggestions{
+    &kPerformanceInterventionUI, "intervention_show_mixed_profile", false};
+
+const base::FeatureParam<base::TimeDelta> kInterventionButtonTimeout{
+    &kPerformanceInterventionUI, "intervention_button_timeout",
+    base::Seconds(10)};
 
 const base::FeatureParam<base::TimeDelta> kCPUTimeOverThreshold{
-    &kPerformanceCPUIntervention, "cpu_time_over_threshold", base::Seconds(60)};
+    &kPerformanceIntervention, "cpu_time_over_threshold", base::Seconds(60)};
 const base::FeatureParam<base::TimeDelta> kCPUSampleFrequency{
-    &kPerformanceCPUIntervention, "cpu_sample_frequency", base::Seconds(15)};
+    &kPerformanceIntervention, "cpu_sample_frequency", base::Seconds(15)};
 
 const base::FeatureParam<int> kCPUDegradedHealthPercentageThreshold{
-    &kPerformanceCPUIntervention, "cpu_degraded_percent_threshold", 50};
+    &kPerformanceIntervention, "cpu_degraded_percent_threshold", 50};
 const base::FeatureParam<int> kCPUUnhealthyPercentageThreshold{
-    &kPerformanceCPUIntervention, "cpu_unhealthy_percent_threshold", 75};
+    &kPerformanceIntervention, "cpu_unhealthy_percent_threshold", 75};
 
 const base::FeatureParam<int> kCPUMaxActionableTabs{
-    &kPerformanceCPUIntervention, "cpu_max_actionable_tabs", 4};
+    &kPerformanceIntervention, "cpu_max_actionable_tabs", 4};
 
 const base::FeatureParam<int> kMinimumActionableTabCPUPercentage{
-    &kPerformanceCPUIntervention, "minimum_actionable_tab_cpu", 10};
-
-BASE_FEATURE(kPerformanceMemoryIntervention,
-             "PerformanceMemoryIntervention",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+    &kPerformanceIntervention, "minimum_actionable_tab_cpu", 10};
 
 const base::FeatureParam<base::TimeDelta> kMemoryTimeOverThreshold{
-    &kPerformanceMemoryIntervention, "memory_time_over_threshold",
-    base::Seconds(60)};
+    &kPerformanceIntervention, "memory_time_over_threshold", base::Seconds(60)};
 
 const base::FeatureParam<int> kMemoryFreePercentThreshold{
-    &kPerformanceMemoryIntervention, "memory_free_percent_threshold", 10};
+    &kPerformanceIntervention, "memory_free_percent_threshold", 10};
 const base::FeatureParam<int> kMemoryFreeBytesThreshold{
-    &kPerformanceMemoryIntervention, "memory_free_bytes_threshold",
+    &kPerformanceIntervention, "memory_free_bytes_threshold",
     1024 * 1024 * 1024};
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-BASE_FEATURE(kAshUrgentDiscardingFromPerformanceManager,
-             "AshUrgentDiscardingFromPerformanceManager",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 #if BUILDFLAG(IS_CHROMEOS)
 BASE_FEATURE(kUnthrottledTabProcessReporting,
@@ -125,18 +122,15 @@ BASE_FEATURE(kPMProcessPriorityPolicy,
              "PMProcessPriorityPolicy",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
+const base::FeatureParam<bool> kInheritParentPriority{
+    &kPMProcessPriorityPolicy, "inherit_parent_priority", true};
+
 const base::FeatureParam<bool> kDownvoteAdFrames{&kPMProcessPriorityPolicy,
                                                  "downvote_ad_frames", false};
 
-BASE_FEATURE(kModalMemorySaver,
-             "ModalMemorySaver",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
-const base::FeatureParam<int> kModalMemorySaverMode{
-    &kModalMemorySaver,
-    "modal_memory_saver_mode",
-    2,
-};
+BASE_FEATURE(kPMLoadingPageVoter,
+             "PMLoadingPageVoter",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 BASE_FEATURE(kBFCachePerformanceManagerPolicy,
              "BFCachePerformanceManagerPolicy",
@@ -146,27 +140,31 @@ BASE_FEATURE(kUrgentPageDiscarding,
              "UrgentPageDiscarding",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-BASE_FEATURE(kCPUInterventionEvaluationLogging,
-             "CPUInterventionEvaluationLogging",
+BASE_FEATURE(kCPUMeasurementInFreezingPolicy,
+             "CPUMeasurementInFreezingPolicy",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-const base::FeatureParam<base::TimeDelta> kDelayBeforeLogging{
-    &kCPUInterventionEvaluationLogging, "delay_before_logging",
-    base::Seconds(60)};
-
-const base::FeatureParam<int> kThresholdChromeCPUPercent{
-    &kCPUInterventionEvaluationLogging, "threshold_chrome_cpu_percent", 25};
-
-BASE_FEATURE(kResourceAttributionValidation,
-             "ResourceAttributionValidation",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+// Note: This param is associated with `kCPUMeasurementInFreezingPolicy` instead
+// of `kFreezingOnBatterySaver`, to allow retrieving the value without
+// activating the `kFreezingOnBatterySaver` feature.
+const base::FeatureParam<double> kFreezingOnBatterySaverHighCPUProportion{
+    &kCPUMeasurementInFreezingPolicy,
+    "freezing_on_battery_saver_high_cpu_proportion", 0.25};
 
 BASE_FEATURE(kFreezingOnBatterySaver,
              "FreezingOnBatterySaver",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
+BASE_FEATURE(kFreezingOnBatterySaverForTesting,
+             "FreezingOnBatterySaverForTesting",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 BASE_FEATURE(kResourceAttributionIncludeOrigins,
              "ResourceAttributionIncludeOrigins",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kSeamlessRenderFrameSwap,
+             "SeamlessRenderFrameSwap",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 }  // namespace performance_manager::features

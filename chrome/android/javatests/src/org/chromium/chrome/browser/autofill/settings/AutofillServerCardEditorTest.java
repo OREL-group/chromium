@@ -44,7 +44,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.ArgumentMatchers;
@@ -53,19 +52,15 @@ import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.Callback;
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.ApplicationTestUtils;
-import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisabledTest;
-import org.chromium.base.test.util.Features;
-import org.chromium.base.test.util.Features.DisableFeatures;
-import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.base.test.util.JniMocker;
 import org.chromium.chrome.browser.autofill.AutofillEditorBase;
 import org.chromium.chrome.browser.autofill.AutofillTestHelper;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.CreditCard;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.settings.SettingsActivity;
@@ -75,18 +70,15 @@ import org.chromium.chrome.test.R;
 import org.chromium.components.autofill.VirtualCardEnrollmentLinkType;
 import org.chromium.components.autofill.VirtualCardEnrollmentState;
 import org.chromium.components.autofill.payments.LegalMessageLine;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.url.GURL;
 
 import java.util.concurrent.TimeoutException;
 
 /** Instrumentation tests for AutofillServerCardEditor. */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@Batch(Batch.PER_CLASS)
 public class AutofillServerCardEditorTest {
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
     @Rule public JniMocker mMocker = new JniMocker();
-    @Rule public TestRule mFeaturesProcessorRule = new Features.JUnitProcessor();
     @Rule public final AutofillTestRule rule = new AutofillTestRule();
 
     @Rule
@@ -100,7 +92,6 @@ public class AutofillServerCardEditorTest {
                     /* guid= */ "1",
                     /* origin= */ "",
                     /* isLocal= */ false,
-                    /* isCached= */ true,
                     /* isVirtual= */ false,
                     /* name= */ "John Doe",
                     /* number= */ "4444333322221111",
@@ -126,7 +117,6 @@ public class AutofillServerCardEditorTest {
                     /* guid= */ "2",
                     /* origin= */ "",
                     /* isLocal= */ false,
-                    /* isCached= */ true,
                     /* isVirtual= */ false,
                     /* name= */ "John Doe",
                     /* number= */ "4444333322221111",
@@ -153,7 +143,6 @@ public class AutofillServerCardEditorTest {
                     /* guid= */ "3",
                     /* origin= */ "",
                     /* isLocal= */ false,
-                    /* isCached= */ true,
                     /* isVirtual= */ false,
                     /* name= */ "John Doe",
                     /* number= */ "4444333322221111",
@@ -259,7 +248,7 @@ public class AutofillServerCardEditorTest {
 
     @Test
     @MediumTest
-    @DisabledTest(message = "b/329593484")
+    @DisabledTest(message = "https://crbug.com/342333311")
     public void
             virtualCardUnenrolledAndEligible_virtualCardAddButtonClicked_enrollAccepted_enrollmentSuccessful()
                     throws Exception {
@@ -314,7 +303,7 @@ public class AutofillServerCardEditorTest {
                 VirtualCardEnrollmentFields.create("Visa", "1234", 0, new GURL(""));
         fakeVirtualCardEnrollmentFields.mGoogleLegalMessages.add(new LegalMessageLine("google"));
         fakeVirtualCardEnrollmentFields.mIssuerLegalMessages.add(new LegalMessageLine("issuer"));
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () ->
                         virtualCardEnrollmentFieldsCallback.onResult(
                                 fakeVirtualCardEnrollmentFields));
@@ -363,7 +352,7 @@ public class AutofillServerCardEditorTest {
         // Return enrollment update status "successful" via the callback.
         Callback<Boolean> virtualCardEnrollmentUpdateResponseCallback =
                 booleanCallbackArgumentCaptor.getValue();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> virtualCardEnrollmentUpdateResponseCallback.onResult(true));
 
         // Verify that the Virtual Card enrollment button now allows unenrollment.
@@ -381,7 +370,6 @@ public class AutofillServerCardEditorTest {
 
     @Test
     @MediumTest
-    @DisabledTest(message = "b/329593484")
     public void
             virtualCardUnenrolledAndEligible_virtualCardAddButtonClicked_enrollAccepted_enrollmentFailure()
                     throws Exception {
@@ -430,7 +418,7 @@ public class AutofillServerCardEditorTest {
                 VirtualCardEnrollmentFields.create("Visa", "1234", 0, new GURL(""));
         fakeVirtualCardEnrollmentFields.mGoogleLegalMessages.add(new LegalMessageLine("google"));
         fakeVirtualCardEnrollmentFields.mIssuerLegalMessages.add(new LegalMessageLine("issuer"));
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () ->
                         virtualCardEnrollmentFieldsCallback.onResult(
                                 fakeVirtualCardEnrollmentFields));
@@ -452,7 +440,7 @@ public class AutofillServerCardEditorTest {
         // Return enrollment update status "failure" via the callback.
         Callback<Boolean> virtualCardEnrollmentUpdateResponseCallback =
                 booleanCallbackArgumentCaptor.getValue();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> virtualCardEnrollmentUpdateResponseCallback.onResult(false));
 
         // Verify that the Virtual Card enrollment button again allows enrollment.
@@ -470,7 +458,6 @@ public class AutofillServerCardEditorTest {
 
     @Test
     @MediumTest
-    @DisabledTest(message = "b/329593484")
     public void virtualCardUnenrolledAndEligible_virtualCardAddButtonClicked_enrollRejected()
             throws Exception {
         mAutofillTestHelper.addServerCreditCard(SAMPLE_VIRTUAL_CARD_UNENROLLED_AND_ELIGIBLE_CARD);
@@ -518,7 +505,7 @@ public class AutofillServerCardEditorTest {
                 VirtualCardEnrollmentFields.create("Visa", "1234", 0, new GURL(""));
         fakeVirtualCardEnrollmentFields.mGoogleLegalMessages.add(new LegalMessageLine("google"));
         fakeVirtualCardEnrollmentFields.mIssuerLegalMessages.add(new LegalMessageLine("issuer"));
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () ->
                         virtualCardEnrollmentFieldsCallback.onResult(
                                 fakeVirtualCardEnrollmentFields));
@@ -594,7 +581,7 @@ public class AutofillServerCardEditorTest {
                 VirtualCardEnrollmentFields.create("Visa", "1234", 0, new GURL(""));
         fakeVirtualCardEnrollmentFields.mGoogleLegalMessages.add(new LegalMessageLine("google"));
         fakeVirtualCardEnrollmentFields.mIssuerLegalMessages.add(new LegalMessageLine("issuer"));
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () ->
                         virtualCardEnrollmentFieldsCallback.onResult(
                                 fakeVirtualCardEnrollmentFields));
@@ -622,7 +609,7 @@ public class AutofillServerCardEditorTest {
         // Return enrollment update status "successful" via the callback.
         Callback<Boolean> virtualCardEnrollmentUpdateResponseCallback =
                 booleanCallbackArgumentCaptor.getValue();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> virtualCardEnrollmentUpdateResponseCallback.onResult(true));
 
         // Ensure that the callback is run after receiving the server response and that the native
@@ -777,7 +764,7 @@ public class AutofillServerCardEditorTest {
         // Return enrollment update status "successful" via the callback.
         Callback<Boolean> virtualCardEnrollmentUpdateResponseCallback =
                 booleanCallbackArgumentCaptor.getValue();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> virtualCardEnrollmentUpdateResponseCallback.onResult(true));
 
         // Verify that the Virtual Card enrollment button now allows enrollment.
@@ -843,7 +830,7 @@ public class AutofillServerCardEditorTest {
         // Return enrollment update status "failure" via the callback.
         Callback<Boolean> virtualCardEnrollmentUpdateResponseCallback =
                 booleanCallbackArgumentCaptor.getValue();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> virtualCardEnrollmentUpdateResponseCallback.onResult(false));
 
         // Verify that the Virtual Card enrollment button still allows unenrollment.
@@ -914,7 +901,7 @@ public class AutofillServerCardEditorTest {
         // Return enrollment update status "successful" via the callback.
         Callback<Boolean> virtualCardEnrollmentUpdateResponseCallback =
                 booleanCallbackArgumentCaptor.getValue();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> virtualCardEnrollmentUpdateResponseCallback.onResult(true));
 
         // Ensure that the callback is run after receiving the server response and that the native
@@ -942,8 +929,7 @@ public class AutofillServerCardEditorTest {
 
     @Test
     @MediumTest
-    @EnableFeatures({ChromeFeatureList.AUTOFILL_UPDATE_CHROME_SETTINGS_LINK_TO_GPAY_WEB})
-    public void testCustomUrlForServerCardEditPage_newGPayWebLinkEnabled() throws Exception {
+    public void testCustomUrlForServerCardEditPage() throws Exception {
         mAutofillTestHelper.addServerCreditCard(SAMPLE_VIRTUAL_CARD_ENROLLED_CARD);
 
         SettingsActivity activity =
@@ -975,9 +961,7 @@ public class AutofillServerCardEditorTest {
     @Test
     @MediumTest
     @CommandLineFlags.Add({ChromeSwitches.USE_SANDBOX_WALLET_ENVIRONMENT})
-    @EnableFeatures({ChromeFeatureList.AUTOFILL_UPDATE_CHROME_SETTINGS_LINK_TO_GPAY_WEB})
-    public void testCustomUrlForServerCardEditPage_newGPayWebLinkEnabled_sandboxEnabled()
-            throws Exception {
+    public void testCustomUrlForServerCardEditPage_sandboxEnabled() throws Exception {
         mAutofillTestHelper.addServerCreditCard(SAMPLE_VIRTUAL_CARD_ENROLLED_CARD);
 
         SettingsActivity activity =
@@ -1000,66 +984,6 @@ public class AutofillServerCardEditorTest {
         // expected URL.
         verify(mServerCardEditLinkOpenerCallback)
                 .onResult(eq(kExpectedUrl + SAMPLE_VIRTUAL_CARD_ENROLLED_CARD.getInstrumentId()));
-
-        // Ensure that the native delegate is cleaned up when the test has finished.
-        finishAndWaitForActivity(activity);
-    }
-
-    @Test
-    @MediumTest
-    @DisableFeatures({ChromeFeatureList.AUTOFILL_UPDATE_CHROME_SETTINGS_LINK_TO_GPAY_WEB})
-    public void testCustomUrlForServerCardEditPage_newGPayWebLinkDisabled() throws Exception {
-        mAutofillTestHelper.addServerCreditCard(SAMPLE_VIRTUAL_CARD_ENROLLED_CARD);
-
-        SettingsActivity activity =
-                mSettingsActivityTestRule.startSettingsActivity(
-                        fragmentArgs(SAMPLE_VIRTUAL_CARD_ENROLLED_CARD.getGUID()));
-        mSettingsActivityTestRule
-                .getFragment()
-                .setServerCardEditLinkOpenerCallbackForTesting(mServerCardEditLinkOpenerCallback);
-
-        // Verify that the edit card button is shown and enabled.
-        onView(withId(R.id.edit_server_card)).check(matches(isDisplayed()));
-        onView(withId(R.id.edit_server_card)).check(matches(isEnabled()));
-
-        // Click the server card edit button.
-        onView(withId(R.id.edit_server_card)).perform(click());
-
-        // Verify that the callback to open the custom tab for editing card was called with the
-        // expected URL.
-        verify(mServerCardEditLinkOpenerCallback)
-                .onResult(eq("https://payments.google.com/#paymentMethods"));
-
-        // Ensure that the native delegate is cleaned up when the test has finished.
-        finishAndWaitForActivity(activity);
-    }
-
-    @Test
-    @MediumTest
-    @CommandLineFlags.Add({ChromeSwitches.USE_SANDBOX_WALLET_ENVIRONMENT})
-    @DisableFeatures({ChromeFeatureList.AUTOFILL_UPDATE_CHROME_SETTINGS_LINK_TO_GPAY_WEB})
-    public void testCustomUrlForServerCardEditPage_newGPayWebLinkDisabled_sandboxEnabled()
-            throws Exception {
-        mAutofillTestHelper.addServerCreditCard(SAMPLE_VIRTUAL_CARD_ENROLLED_CARD);
-
-        SettingsActivity activity =
-                mSettingsActivityTestRule.startSettingsActivity(
-                        fragmentArgs(SAMPLE_VIRTUAL_CARD_ENROLLED_CARD.getGUID()));
-        mSettingsActivityTestRule
-                .getFragment()
-                .setServerCardEditLinkOpenerCallbackForTesting(mServerCardEditLinkOpenerCallback);
-
-        // Verify that the edit card button is shown and enabled.
-        onView(withId(R.id.edit_server_card)).check(matches(isDisplayed()));
-        onView(withId(R.id.edit_server_card)).check(matches(isEnabled()));
-
-        // Click the server card edit button.
-        onView(withId(R.id.edit_server_card)).perform(click());
-
-        // Verify that the callback to open the custom tab for editing card was called with the
-        // expected URL.
-        verify(mServerCardEditLinkOpenerCallback)
-                .onResult(eq("https://payments.sandbox.google.com/#paymentMethods"));
 
         // Ensure that the native delegate is cleaned up when the test has finished.
         finishAndWaitForActivity(activity);

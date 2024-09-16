@@ -44,59 +44,54 @@ FakeFwupdClient* g_fake_instance = nullptr;
 const char kCabFileExtension[] = ".cab";
 const int kSha256Length = 64;
 
-// "1" is the bitflag for an internal device. Defined here:
-// https://github.com/fwupd/fwupd/blob/main/libfwupd/fwupd-enums.h
-const uint64_t kInternalDeviceFlag = 1;
-// "100000000"(9th bit) is the bit release flag for a trusted report.
-// Defined here: https://github.com/fwupd/fwupd/blob/main/libfwupd/fwupd-enums.h
-const uint64_t kTrustedReportsReleaseFlag = 1llu << 8;
-// "10000"(5th bit) is the fwupd feature flag to allow interactive requests.
-// Defined here: https://github.com/fwupd/fwupd/blob/main/libfwupd/fwupd-enums.h
-const uint64_t kRequestsFeatureFlag = 1llu << 4;
+// Dict key for the IsInternal device flag.
+const char kIsInternalKey[] = "IsInternal";
+// Dict key for the HasTrustedReport release flag.
+const char kHasTrustedReportKey[] = "HasTrustedReport";
 
-// String to FwupdResult conversion
+// String to FwupdDbusResult conversion
 // Consistent with
 // https://github.com/fwupd/fwupd/blob/988f27fd96c5334089ec5daf9c4b2a34f5c6943a/libfwupd/fwupd-error.c#L26
-FwupdResult GetFwupdResult(const std::string& error_name) {
+FwupdDbusResult GetFwupdDbusResult(const std::string& error_name) {
   if (error_name == std::string(kFwupdErrorName_Internal)) {
-    return FwupdResult::kInternalError;
+    return FwupdDbusResult::kInternalError;
   } else if (error_name == std::string(kFwupdErrorName_VersionNewer)) {
-    return FwupdResult::kVersionNewerError;
+    return FwupdDbusResult::kVersionNewerError;
   } else if (error_name == std::string(kFwupdErrorName_VersionSame)) {
-    return FwupdResult::kVersionSameError;
+    return FwupdDbusResult::kVersionSameError;
   } else if (error_name == std::string(kFwupdErrorName_AlreadyPending)) {
-    return FwupdResult::kAlreadyPendingError;
+    return FwupdDbusResult::kAlreadyPendingError;
   } else if (error_name == std::string(kFwupdErrorName_AuthFailed)) {
-    return FwupdResult::kAuthFailedError;
+    return FwupdDbusResult::kAuthFailedError;
   } else if (error_name == std::string(kFwupdErrorName_Read)) {
-    return FwupdResult::kReadError;
+    return FwupdDbusResult::kReadError;
   } else if (error_name == std::string(kFwupdErrorName_Write)) {
-    return FwupdResult::kWriteError;
+    return FwupdDbusResult::kWriteError;
   } else if (error_name == std::string(kFwupdErrorName_InvalidFile)) {
-    return FwupdResult::kInvalidFileError;
+    return FwupdDbusResult::kInvalidFileError;
   } else if (error_name == std::string(kFwupdErrorName_NotFound)) {
-    return FwupdResult::kNotFoundError;
+    return FwupdDbusResult::kNotFoundError;
   } else if (error_name == std::string(kFwupdErrorName_NothingToDo)) {
-    return FwupdResult::kNothingToDoError;
+    return FwupdDbusResult::kNothingToDoError;
   } else if (error_name == std::string(kFwupdErrorName_NotSupported)) {
-    return FwupdResult::kNotSupportedError;
+    return FwupdDbusResult::kNotSupportedError;
   } else if (error_name == std::string(kFwupdErrorName_SignatureInvalid)) {
-    return FwupdResult::kSignatureInvalidError;
+    return FwupdDbusResult::kSignatureInvalidError;
   } else if (error_name == std::string(kFwupdErrorName_AcPowerRequired)) {
-    return FwupdResult::kAcPowerRequiredError;
+    return FwupdDbusResult::kAcPowerRequiredError;
   } else if (error_name == std::string(kFwupdErrorName_PermissionDenied)) {
-    return FwupdResult::kPermissionDeniedError;
+    return FwupdDbusResult::kPermissionDeniedError;
   } else if (error_name == std::string(kFwupdErrorName_BrokenSystem)) {
-    return FwupdResult::kBrokenSystemError;
+    return FwupdDbusResult::kBrokenSystemError;
   } else if (error_name == std::string(kFwupdErrorName_BatteryLevelTooLow)) {
-    return FwupdResult::kBatteryLevelTooLowError;
+    return FwupdDbusResult::kBatteryLevelTooLowError;
   } else if (error_name == std::string(kFwupdErrorName_NeedsUserAction)) {
-    return FwupdResult::kNeedsUserActionError;
+    return FwupdDbusResult::kNeedsUserActionError;
   } else if (error_name == std::string(kFwupdErrorName_AuthExpired)) {
-    return FwupdResult::kAuthExpiredError;
+    return FwupdDbusResult::kAuthExpiredError;
   }
   FIRMWARE_LOG(ERROR) << "No matching error found for: " << error_name;
-  return FwupdResult::kUnknownError;
+  return FwupdDbusResult::kUnknownError;
 }
 
 base::FilePath GetFilePathFromUri(const GURL uri) {
@@ -246,10 +241,11 @@ class FwupdClientImpl : public FwupdClient {
                        weak_ptr_factory_.GetWeakPtr()));
   }
 
-  void InstallUpdate(const std::string& device_id,
-                     base::ScopedFD file_descriptor,
-                     FirmwareInstallOptions options,
-                     base::OnceCallback<void(FwupdResult)> callback) override {
+  void InstallUpdate(
+      const std::string& device_id,
+      base::ScopedFD file_descriptor,
+      FirmwareInstallOptions options,
+      base::OnceCallback<void(FwupdDbusResult)> callback) override {
     FIRMWARE_LOG(USER) << "fwupd: InstallUpdate called for id: " << device_id;
     dbus::MethodCall method_call(kFwupdServiceInterface,
                                  kFwupdInstallMethodName);
@@ -275,6 +271,27 @@ class FwupdClientImpl : public FwupdClient {
     proxy_->CallMethodWithErrorResponse(
         &method_call, dbus::ObjectProxy::TIMEOUT_INFINITE,
         base::BindOnce(&FwupdClientImpl::InstallUpdateCallback,
+                       weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
+  }
+
+  void UpdateMetadata(
+      const std::string& remote_id,
+      base::ScopedFD data_file_descriptor,
+      base::ScopedFD sig_file_descriptor,
+      base::OnceCallback<void(FwupdDbusResult)> callback) override {
+    FIRMWARE_LOG(USER) << "fwupd: UpdateMetadata called for remote id: "
+                       << remote_id;
+    dbus::MethodCall method_call(kFwupdServiceInterface,
+                                 kFwupdUpdateMetadataMethodName);
+    dbus::MessageWriter writer(&method_call);
+
+    writer.AppendString(remote_id);
+    writer.AppendFileDescriptor(data_file_descriptor.get());
+    writer.AppendFileDescriptor(sig_file_descriptor.get());
+
+    proxy_->CallMethodWithErrorResponse(
+        &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+        base::BindOnce(&FwupdClientImpl::UpdateMetadataCallback,
                        weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
   }
 
@@ -306,25 +323,28 @@ class FwupdClientImpl : public FwupdClient {
       }
 
       // Values in the response can have different types. The fields we are
-      // interested in, are all either strings (s), uint64 (t), or uint32 (u).
+      // interested in, are all either strings, uint64, or uint32.
       // Some fields in the response have other types, but we don't use them, so
       // we just skip them.
 
-      if (variant_reader.GetDataSignature() == "u") {
+      const dbus::Message::DataType data_type = variant_reader.GetDataType();
+      if (data_type == dbus::Message::UINT32) {
         variant_reader.PopUint32(&value_uint);
         // Value doesn't support unsigned numbers, so this has to be converted
         // to int.
         result.Set(key, (int)value_uint);
-      } else if (variant_reader.GetDataSignature() == "s") {
+      } else if (data_type == dbus::Message::STRING) {
         variant_reader.PopString(&value_string);
         result.Set(key, value_string);
-      } else if (variant_reader.GetDataSignature() == "t") {
+      } else if (data_type == dbus::Message::UINT64) {
+        // Value doesn't support lossless storage of uint64_t, so
+        // convert flags to boolean keys.
         if (key == "Flags") {
           uint64_t value_uint64 = 0;
           variant_reader.PopUint64(&value_uint64);
           const bool is_internal =
               (value_uint64 & kInternalDeviceFlag) == kInternalDeviceFlag;
-          result.Set(key, is_internal);
+          result.Set(kIsInternalKey, is_internal);
         }
         if (key == "TrustFlags") {
           uint64_t value_uint64 = 0;
@@ -332,7 +352,7 @@ class FwupdClientImpl : public FwupdClient {
           const bool has_trusted_report =
               (value_uint64 & kTrustedReportsReleaseFlag) ==
               kTrustedReportsReleaseFlag;
-          result.Set(key, has_trusted_report);
+          result.Set(kHasTrustedReportKey, has_trusted_report);
         }
       }
     }
@@ -363,6 +383,12 @@ class FwupdClientImpl : public FwupdClient {
       can_parse = false;
     }
 
+    const bool needs_trusted_report =
+        base::FeatureList::IsEnabled(
+            features::kUpstreamTrustedReportsFirmware) &&
+        !features::IsFlexFirmwareUpdateEnabled();
+    FIRMWARE_LOG(DEBUG) << "Trusted reports required: " << needs_trusted_report;
+
     FwupdUpdateList updates;
     while (can_parse && array_reader.HasMoreData()) {
       // Parse update description.
@@ -379,12 +405,12 @@ class FwupdClientImpl : public FwupdClient {
       const std::string* uri = dict.FindString("Uri");
       const std::string* checksum = dict.FindString("Checksum");
       const std::string* remote_id = dict.FindString("RemoteId");
-      std::optional<bool> trusted_report = dict.FindBool("TrustFlags");
-      bool has_trusted_report =
-          !base::FeatureList::IsEnabled(
-              features::kUpstreamTrustedReportsFirmware) ||
-          (trusted_report.has_value() && trusted_report.value());
+      std::optional<bool> trusted_report = dict.FindBool(kHasTrustedReportKey);
+      const bool has_trusted_report =
+          trusted_report.has_value() && trusted_report.value();
       FIRMWARE_LOG(DEBUG) << "Trusted Reports: " << has_trusted_report;
+      const bool missing_trusted_report =
+          needs_trusted_report && !has_trusted_report;
 
       // Skip release if its coming from LVFS and feature flag not enabled
       if (remote_id && *remote_id == "lvfs" &&
@@ -421,7 +447,7 @@ class FwupdClientImpl : public FwupdClient {
       int priority_value = priority.value_or(UpdatePriority::kLow);
 
       const bool success = version && !filepath.empty() &&
-                           !sha_checksum.empty() && has_trusted_report;
+                           !sha_checksum.empty() && !missing_trusted_report;
       // TODO(michaelcheco): Confirm that this is the expected behavior.
       if (success) {
         FIRMWARE_LOG(USER) << "fwupd: Found update version for device: "
@@ -476,9 +502,11 @@ class FwupdClientImpl : public FwupdClient {
         return;
       }
 
-      std::optional<bool> flags = dict.FindBool("Flags");
+      std::optional<bool> is_internal = dict.FindBool(kIsInternalKey);
       const std::string* name = dict.FindString("Name");
-      if (flags.has_value() && flags.value()) {
+      // Ignore internal devices unless firmware updates for Flex are enabled.
+      if (is_internal.has_value() && is_internal.value() &&
+          !features::IsFlexFirmwareUpdateEnabled()) {
         if (name) {
           FIRMWARE_LOG(DEBUG) << "Ignoring internal device: " << *name;
         } else {
@@ -507,14 +535,14 @@ class FwupdClientImpl : public FwupdClient {
     }
   }
 
-  void InstallUpdateCallback(base::OnceCallback<void(FwupdResult)> callback,
+  void InstallUpdateCallback(base::OnceCallback<void(FwupdDbusResult)> callback,
                              dbus::Response* response,
                              dbus::ErrorResponse* error_response) {
-    FwupdResult result = FwupdResult::kSuccess;
+    FwupdDbusResult result = FwupdDbusResult::kSuccess;
     if (error_response) {
       FIRMWARE_LOG(ERROR) << "Firmware install failed with error message: "
                           << error_response->ToString();
-      result = GetFwupdResult(error_response->GetErrorName());
+      result = GetFwupdDbusResult(error_response->GetErrorName());
     }
 
     FIRMWARE_LOG(USER) << "fwupd: InstallUpdate returned with: "
@@ -609,6 +637,22 @@ class FwupdClientImpl : public FwupdClient {
       FIRMWARE_LOG(ERROR) << "No D-Bus response received from fwupd.";
       return;
     }
+  }
+
+  void UpdateMetadataCallback(
+      base::OnceCallback<void(FwupdDbusResult)> callback,
+      dbus::Response* response,
+      dbus::ErrorResponse* error_response) {
+    FwupdDbusResult result = FwupdDbusResult::kSuccess;
+    if (error_response) {
+      FIRMWARE_LOG(ERROR) << "UpdateMetadata failed with error message: "
+                          << error_response->ToString();
+      result = GetFwupdDbusResult(error_response->GetErrorName());
+    }
+
+    FIRMWARE_LOG(USER) << "UpdateMetadata returned with: "
+                       << static_cast<int>(result);
+    std::move(callback).Run(result);
   }
 
   raw_ptr<dbus::ObjectProxy> proxy_ = nullptr;

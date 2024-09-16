@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "base/command_line.h"
+#include "base/format_macros.h"
 #include "base/functional/bind.h"
 #include "base/i18n/rtl.h"
 #include "base/memory/raw_ptr.h"
@@ -115,13 +116,14 @@ std::u16string GetClipboardText(ui::ClipboardBuffer clipboard_buffer) {
 }
 
 // Makes an RTL string by mapping 0..6 to [א,ב,ג,ד,ה,ו,ז].
-std::u16string ToRTL(const char* ascii) {
+std::u16string ToRTL(const std::string& ascii) {
   std::u16string rtl;
-  for (const char* c = ascii; *c; ++c) {
-    if (*c >= '0' && *c <= '6')
-      rtl += static_cast<char16_t>(u'א' + (*c - '0'));
-    else
-      rtl += static_cast<char16_t>(*c);
+  for (char c : ascii) {
+    if (c >= '0' && c <= '6') {
+      rtl += static_cast<char16_t>(u'א' + (c - '0'));
+    } else {
+      rtl += static_cast<char16_t>(c);
+    }
   }
   return rtl;
 }
@@ -181,14 +183,14 @@ class LabelSelectionTest : public LabelTest {
 
   void PerformMousePress(const gfx::Point& point) {
     ui::MouseEvent pressed_event = ui::MouseEvent(
-        ui::ET_MOUSE_PRESSED, point, point, ui::EventTimeForNow(),
+        ui::EventType::kMousePressed, point, point, ui::EventTimeForNow(),
         ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON);
     label()->OnMousePressed(pressed_event);
   }
 
   void PerformMouseRelease(const gfx::Point& point) {
     ui::MouseEvent released_event = ui::MouseEvent(
-        ui::ET_MOUSE_RELEASED, point, point, ui::EventTimeForNow(),
+        ui::EventType::kMouseReleased, point, point, ui::EventTimeForNow(),
         ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON);
     label()->OnMouseReleased(released_event);
   }
@@ -199,7 +201,7 @@ class LabelSelectionTest : public LabelTest {
   }
 
   void PerformMouseDragTo(const gfx::Point& point) {
-    ui::MouseEvent drag(ui::ET_MOUSE_DRAGGED, point, point,
+    ui::MouseEvent drag(ui::EventType::kMouseDragged, point, point,
                         ui::EventTimeForNow(), ui::EF_LEFT_MOUSE_BUTTON, 0);
     label()->OnMouseDragged(drag);
   }
@@ -217,7 +219,7 @@ class LabelSelectionTest : public LabelTest {
 
     // For single-line text, use the glyph bounds since it gives a better
     // representation of the midpoint between glyphs when considering selection.
-    // TODO(crbug.com/248597): Add multiline support to GetCursorBounds(...).
+    // TODO(crbug.com/40321377): Add multiline support to GetCursorBounds(...).
     if (!render_text->multiline()) {
       return render_text
           ->GetCursorBounds(gfx::SelectionModel(index, gfx::CURSOR_FORWARD),
@@ -592,12 +594,6 @@ TEST_F(LabelTest, MultiLineGetHeightForWidth) {
   const int height_for_half_width = label()->GetHeightForWidth(width / 2);
   EXPECT_GT(height_for_half_width, line_height);
   EXPECT_GT(label()->GetHeightForWidth(width / 4), height_for_half_width);
-
-  // Given zero width, the label should take GetMaxLines(); if this is not set,
-  // default to one.
-  EXPECT_EQ(line_height, label()->GetHeightForWidth(0));
-  label()->SetMaxLines(10);
-  EXPECT_EQ(line_height * 10, label()->GetHeightForWidth(0));
 }
 
 TEST_F(LabelTest, TooltipProperty) {
@@ -681,7 +677,7 @@ TEST_F(LabelTest, Accessibility) {
   label()->SetText(u"Displayed text.");
 
   ui::AXNodeData node_data;
-  label()->GetAccessibleNodeData(&node_data);
+  label()->GetViewAccessibility().GetAccessibleNodeData(&node_data);
   EXPECT_EQ(ax::mojom::Role::kStaticText, node_data.role);
   EXPECT_EQ(label()->GetText(),
             node_data.GetString16Attribute(ax::mojom::StringAttribute::kName));
@@ -690,9 +686,10 @@ TEST_F(LabelTest, Accessibility) {
 
   // Setting a custom accessible name overrides the displayed text in
   // screen reader announcements.
-  label()->SetAccessibleName(accessible_name);
+  label()->GetViewAccessibility().SetName(accessible_name);
 
-  label()->GetAccessibleNodeData(&node_data);
+  node_data = ui::AXNodeData();
+  label()->GetViewAccessibility().GetAccessibleNodeData(&node_data);
   EXPECT_EQ(accessible_name,
             node_data.GetString16Attribute(ax::mojom::StringAttribute::kName));
   EXPECT_NE(label()->GetText(),
@@ -701,7 +698,8 @@ TEST_F(LabelTest, Accessibility) {
   // Changing the displayed text will not impact the non-empty accessible name.
   label()->SetText(u"Different displayed Text.");
 
-  label()->GetAccessibleNodeData(&node_data);
+  node_data = ui::AXNodeData();
+  label()->GetViewAccessibility().GetAccessibleNodeData(&node_data);
   EXPECT_EQ(accessible_name,
             node_data.GetString16Attribute(ax::mojom::StringAttribute::kName));
   EXPECT_NE(label()->GetText(),
@@ -709,16 +707,18 @@ TEST_F(LabelTest, Accessibility) {
 
   // Clearing the accessible name will cause the screen reader to default to
   // verbalizing the displayed text.
-  label()->SetAccessibleName(u"");
+  label()->GetViewAccessibility().SetName(u"");
 
-  label()->GetAccessibleNodeData(&node_data);
+  node_data = ui::AXNodeData();
+  label()->GetViewAccessibility().GetAccessibleNodeData(&node_data);
   EXPECT_EQ(label()->GetText(),
             node_data.GetString16Attribute(ax::mojom::StringAttribute::kName));
 
   // If the displayed text is the source of the accessible name, and that text
   // is cleared, the accessible name should also be cleared.
   label()->SetText(u"");
-  label()->GetAccessibleNodeData(&node_data);
+  node_data = ui::AXNodeData();
+  label()->GetViewAccessibility().GetAccessibleNodeData(&node_data);
   EXPECT_EQ(label()->GetText(),
             node_data.GetString16Attribute(ax::mojom::StringAttribute::kName));
 }
@@ -729,15 +729,15 @@ TEST_F(LabelTest, SetTextNotifiesAccessibilityEvent) {
   // Changing the text affects the accessible name, so it should notify.
   EXPECT_EQ(0, counter.GetCount(ax::mojom::Event::kTextChanged));
   label()->SetText(u"Example");
-  EXPECT_EQ(u"Example", label()->GetAccessibleName());
+  EXPECT_EQ(u"Example", label()->GetViewAccessibility().GetCachedName());
   EXPECT_EQ(1, counter.GetCount(ax::mojom::Event::kTextChanged));
 
   // Changing the text when it doesn't affect the accessible name should not
   // notify.
-  label()->SetAccessibleName(u"Name");
+  label()->GetViewAccessibility().SetName(u"Name");
   EXPECT_EQ(2, counter.GetCount(ax::mojom::Event::kTextChanged));
   label()->SetText(u"Example2");
-  EXPECT_EQ(u"Name", label()->GetAccessibleName());
+  EXPECT_EQ(u"Name", label()->GetViewAccessibility().GetCachedName());
   EXPECT_EQ(2, counter.GetCount(ax::mojom::Event::kTextChanged));
 }
 
@@ -760,32 +760,37 @@ TEST_F(LabelTest, TextChangeWithoutLayout) {
 
 TEST_F(LabelTest, AccessibleNameAndRole) {
   label()->SetText(u"Text");
-  EXPECT_EQ(label()->GetAccessibleName(), u"Text");
-  EXPECT_EQ(label()->GetAccessibleRole(), ax::mojom::Role::kStaticText);
+
+  EXPECT_EQ(label()->GetViewAccessibility().GetCachedName(), u"Text");
+  EXPECT_EQ(label()->GetViewAccessibility().GetCachedRole(),
+            ax::mojom::Role::kStaticText);
 
   ui::AXNodeData data;
-  label()->GetAccessibleNodeData(&data);
+  label()->GetViewAccessibility().GetAccessibleNodeData(&data);
   EXPECT_EQ(data.GetString16Attribute(ax::mojom::StringAttribute::kName),
             u"Text");
   EXPECT_EQ(data.role, ax::mojom::Role::kStaticText);
 
   label()->SetTextContext(style::CONTEXT_DIALOG_TITLE);
-  EXPECT_EQ(label()->GetAccessibleName(), u"Text");
-  EXPECT_EQ(label()->GetAccessibleRole(), ax::mojom::Role::kTitleBar);
+
+  EXPECT_EQ(label()->GetViewAccessibility().GetCachedName(), u"Text");
+  EXPECT_EQ(label()->GetViewAccessibility().GetCachedRole(),
+            ax::mojom::Role::kTitleBar);
 
   data = ui::AXNodeData();
-  label()->GetAccessibleNodeData(&data);
+  label()->GetViewAccessibility().GetAccessibleNodeData(&data);
   EXPECT_EQ(data.GetString16Attribute(ax::mojom::StringAttribute::kName),
             u"Text");
   EXPECT_EQ(data.role, ax::mojom::Role::kTitleBar);
 
   label()->SetText(u"New Text");
-  label()->SetAccessibleRole(ax::mojom::Role::kLink);
-  EXPECT_EQ(label()->GetAccessibleName(), u"New Text");
-  EXPECT_EQ(label()->GetAccessibleRole(), ax::mojom::Role::kLink);
+  label()->GetViewAccessibility().SetRole(ax::mojom::Role::kLink);
+  EXPECT_EQ(label()->GetViewAccessibility().GetCachedName(), u"New Text");
+  EXPECT_EQ(label()->GetViewAccessibility().GetCachedRole(),
+            ax::mojom::Role::kLink);
 
   data = ui::AXNodeData();
-  label()->GetAccessibleNodeData(&data);
+  label()->GetViewAccessibility().GetAccessibleNodeData(&data);
   EXPECT_EQ(data.GetString16Attribute(ax::mojom::StringAttribute::kName),
             u"New Text");
   EXPECT_EQ(data.role, ax::mojom::Role::kLink);
@@ -859,27 +864,22 @@ TEST_F(LabelTest, MultiLineSizing) {
   // SizeToFit with limited width.
   label()->SizeToFit(required_width - 1);
   int constrained_width = label()->GetLocalBounds().width();
-#if BUILDFLAG(IS_WIN)
-  // Canvas::SizeStringInt (in ui/gfx/canvas_linux.cc)
-  // has to be fixed to return the size that fits to given width/height.
   EXPECT_LT(constrained_width, required_width);
-#endif
   EXPECT_GT(constrained_width, kMinTextDimension);
 
   // Change the width back to the desire width.
   label()->SizeToFit(required_width);
   EXPECT_EQ(required_width, label()->GetLocalBounds().width());
 
+  // SizeToFit with unlimited width.
+  label()->SizeToFit(0);
+
   // General tests for GetHeightForWidth.
   int required_height = label()->GetHeightForWidth(required_width);
   EXPECT_GT(required_height, kMinTextDimension);
   int height_for_constrained_width =
       label()->GetHeightForWidth(constrained_width);
-#if BUILDFLAG(IS_WIN)
-  // Canvas::SizeStringInt (in ui/gfx/canvas_linux.cc)
-  // has to be fixed to return the size that fits to given width/height.
   EXPECT_GT(height_for_constrained_width, required_height);
-#endif
   // Using the constrained width or the required_width - 1 should give the
   // same result for the height because the constrainted width is the tight
   // width when given "required_width - 1" as the max width.
@@ -904,11 +904,7 @@ TEST_F(LabelTest, MultiLineSizing) {
   // calculation.  If it is, then the height will grow when width
   // is shrunk.
   int height1 = label()->GetHeightForWidth(required_width_with_border - 1);
-#if BUILDFLAG(IS_WIN)
-  // Canvas::SizeStringInt (in ui/gfx/canvas_linux.cc)
-  // has to be fixed to return the size that fits to given width/height.
   EXPECT_GT(height1, required_height_with_border);
-#endif
   EXPECT_EQ(height1, height_for_constrained_width + border.height());
 
   gfx::Size required_size_with_border = label()->GetPreferredSize({});
@@ -1227,7 +1223,7 @@ TEST_F(LabelTest, GetSubstringBounds) {
             substring_bounds_with_inset[0].height());
 }
 
-// TODO(crbug.com/1139395): Enable on ChromeOS along with the DCHECK in Label.
+// TODO(crbug.com/40725997): Enable on ChromeOS along with the DCHECK in Label.
 #if BUILDFLAG(IS_CHROMEOS)
 #define MAYBE_ChecksSubpixelRenderingOntoOpaqueSurface \
   DISABLED_ChecksSubpixelRenderingOntoOpaqueSurface
@@ -1288,10 +1284,11 @@ TEST_F(LabelTest, WordOffsets) {
 }
 
 TEST_F(LabelTest, AccessibleGraphemeOffsets) {
-  struct {
+  struct Case {
     std::u16string text;
     std::vector<int32_t> expected_offsets;
-  } cases[] = {
+  };
+  const auto cases = std::to_array<Case>({
       {std::u16string(), {}},
       // LTR.
       {u"This is a string",
@@ -1314,7 +1311,7 @@ TEST_F(LabelTest, AccessibleGraphemeOffsets) {
       // LTR ab, 𝄞 'MUSICAL SYMBOL G CLEF' U+1D11E (surrogate pair), LTR cd.
       // Windows requires wide strings for \Unnnnnnnn universal character names.
       {u"ab\U0001D11Ecd", {4, 10, 17, 23, 29, 37}},
-  };
+  });
 
   base::test::ScopedFeatureList scoped_feature_list;
   scoped_feature_list.InitAndEnableFeature(::features::kUiaProvider);
@@ -1510,14 +1507,14 @@ TEST_F(LabelSelectionTest, MouseDragMultilineLTR) {
   PerformMouseDragTo(gfx::Point(100, GetCursorPoint(6).y()));
   EXPECT_EQ(u"cd\nefgh", GetSelectedText());
 
-  const gfx::Point points[] = {
+  const auto points = std::to_array<gfx::Point>({
       {GetCursorPoint(1).x(), -5},   // NW.
       {GetCursorPoint(2).x(), -5},   // NORTH.
       {GetCursorPoint(3).x(), -5},   // NE.
       {GetCursorPoint(8).x(), 100},  // SE.
       {GetCursorPoint(7).x(), 100},  // SOUTH.
       {GetCursorPoint(6).x(), 100},  // SW.
-  };
+  });
   constexpr const char16_t* kExtendLeft = u"ab";
   constexpr const char16_t* kExtendRight = u"cd\nefgh";
 
@@ -1542,14 +1539,14 @@ TEST_F(LabelSelectionTest, MouseDragSingleLineLTR) {
   label()->SizeToPreferredSize();
   ASSERT_TRUE(label()->SetSelectable(true));
   PerformMousePress(GetCursorPoint(2));
-  const gfx::Point points[] = {
+  const auto points = std::to_array<gfx::Point>({
       {GetCursorPoint(1).x(), -5},   // NW.
       {GetCursorPoint(2).x(), -5},   // NORTH.
       {GetCursorPoint(3).x(), -5},   // NE.
       {GetCursorPoint(3).x(), 100},  // SE.
       {GetCursorPoint(2).x(), 100},  // SOUTH.
       {GetCursorPoint(1).x(), 100},  // SW.
-  };
+  });
   constexpr const char16_t* kExtendLeft = u"ab";
   constexpr const char16_t* kExtendRight = u"cdef";
 
@@ -1591,14 +1588,14 @@ TEST_F(LabelSelectionTest, MouseDragMultilineRTL) {
   PerformMouseDragTo(gfx::Point(100, GetCursorPoint(6).y()));
   EXPECT_EQ(ToRTL("12\n"), GetSelectedText());
 
-  const gfx::Point points[] = {
+  const auto points = std::to_array<gfx::Point>({
       {GetCursorPoint(2).x(), -5},   // NW: Now towards the end of the string.
       {GetCursorPoint(1).x(), -5},   // NORTH,
       {GetCursorPoint(0).x(), -5},   // NE: Towards the start.
       {GetCursorPoint(4).x(), 100},  // SE.
       {GetCursorPoint(5).x(), 100},  // SOUTH.
       {GetCursorPoint(6).x(), 100},  // SW.
-  };
+  });
 
   // Visual right, so to the beginning of the string for RTL.
   const std::u16string extend_right = ToRTL("0");
@@ -1625,7 +1622,7 @@ TEST_F(LabelSelectionTest, MouseDragSingleLineRTL) {
   ASSERT_TRUE(label()->SetSelectable(true));
 
   PerformMousePress(GetCursorPoint(1));
-  const gfx::Point points[] = {
+  const std::vector<gfx::Point> points{
       {GetCursorPoint(2).x(), -5},   // NW.
       {GetCursorPoint(1).x(), -5},   // NORTH.
       {GetCursorPoint(0).x(), -5},   // NE.
@@ -1679,7 +1676,7 @@ TEST_F(LabelSelectionTest, MouseDragWord) {
 #else
 #define MAYBE_SelectionClipboard SelectionClipboard
 #endif
-// TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
+// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
 // of lacros-chrome is complete.
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
 // Verify selection clipboard behavior on text selection.

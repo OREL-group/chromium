@@ -15,12 +15,10 @@ import("//ppapi/buildflags/buildflags.gni")
 import("//tools/grit/grit_rule.gni")
 import("//tools/ipc_fuzzer/ipc_fuzzer.gni")
 
+assert(!is_fuchsia, "Fuchsia shouldn't use anything in //chrome")
+
 if (is_android) {
   import("//build/config/android/rules.gni")
-} else if (is_fuchsia) {
-  import("//build/config/fuchsia/packaged_content_embedder_excluded_dirs.gni")
-  import("//third_party/fuchsia-gn-sdk/src/component.gni")
-  import("//third_party/fuchsia-gn-sdk/src/package.gni")
 }
 
 # This target is for dependency tracking for the command ID header.
@@ -144,6 +142,7 @@ static_library("test_support") {
   sources = [
     "chrome_main_delegate.cc",
     "chrome_main_delegate.h",
+    "startup_timestamps.h",
   ]
 
   deps = [
@@ -159,6 +158,8 @@ static_library("test_support") {
     "//chrome/renderer",
     "//chrome/utility",
     "//components/about_ui",
+    "//components/crash/core/app",
+    "//components/crash/core/app:test_support",
     "//components/devtools/devtools_pipe",
     "//components/memory_system",
     "//components/nacl/common:buildflags",
@@ -173,14 +174,6 @@ static_library("test_support") {
     "//v8:v8_headers",
   ]
   public_deps = []
-
-  if (!is_fuchsia) {
-    # TODO(crbug.com/1226159): Complete crash reporting integration on Fuchsia.
-    deps += [
-      "//components/crash/core/app",
-      "//components/crash/core/app:test_support",
-    ]
-  }
 
   if (is_android) {
     deps += [
@@ -209,8 +202,12 @@ static_library("test_support") {
 
   if (is_chromeos_ash) {
     deps += [
+      "//ash/components/arc:arc_base_utils",
       "//ash/constants",
-      "//chrome/browser/ash",
+      "//chrome/browser/ash/boot_times_recorder",
+      "//chrome/browser/ash/dbus",
+      "//chrome/browser/ash/locale",
+      "//chrome/browser/ash/schedqos",
       "//chromeos",
       "//chromeos/ash/components/memory:memory",
     ]

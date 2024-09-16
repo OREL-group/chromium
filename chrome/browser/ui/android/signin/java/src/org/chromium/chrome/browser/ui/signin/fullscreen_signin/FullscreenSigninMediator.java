@@ -19,18 +19,19 @@ import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.chrome.browser.firstrun.MobileFreProgress;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.privacy.settings.PrivacyPreferencesManager;
+import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.signin.services.IdentityServicesProvider;
 import org.chromium.chrome.browser.signin.services.ProfileDataCache;
 import org.chromium.chrome.browser.signin.services.SigninManager;
 import org.chromium.chrome.browser.signin.services.SigninManager.SignInCallback;
 import org.chromium.chrome.browser.signin.services.SigninManager.SignOutCallback;
+import org.chromium.chrome.browser.signin.services.SigninMetricsUtils;
 import org.chromium.chrome.browser.signin.services.SigninPreferencesManager;
+import org.chromium.chrome.browser.sync.SyncServiceFactory;
 import org.chromium.chrome.browser.ui.signin.R;
-import org.chromium.chrome.browser.ui.signin.SigninUtils;
 import org.chromium.chrome.browser.ui.signin.account_picker.AccountPickerCoordinator;
 import org.chromium.chrome.browser.ui.signin.account_picker.AccountPickerDialogCoordinator;
 import org.chromium.chrome.browser.ui.signin.fullscreen_signin.FullscreenSigninCoordinator.Delegate;
-import org.chromium.chrome.browser.ui.signin.fullscreen_signin.FullscreenSigninProperties.FrePolicy;
 import org.chromium.components.externalauth.ExternalAuthUtils;
 import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.components.signin.AccountManagerFacadeProvider;
@@ -40,6 +41,8 @@ import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.components.signin.identitymanager.ConsentLevel;
 import org.chromium.components.signin.metrics.SigninAccessPoint;
 import org.chromium.components.signin.metrics.SignoutReason;
+import org.chromium.components.sync.SyncService;
+import org.chromium.components.sync.UserSelectableType;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.text.NoUnderlineClickableSpan;
@@ -50,6 +53,7 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.IntStream;
 
 @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
 public class FullscreenSigninMediator
@@ -83,6 +87,7 @@ public class FullscreenSigninMediator
     private final AccountManagerFacade mAccountManagerFacade;
     private final Delegate mDelegate;
     private final PrivacyPreferencesManager mPrivacyPreferencesManager;
+    private final @SigninAccessPoint int mAccessPoint;
     private final PropertyModel mModel;
     private final ProfileDataCache mProfileDataCache;
     private boolean mDestroyed;
@@ -93,9 +98,9 @@ public class FullscreenSigninMediator
     private boolean mInitialLoadCompleted;
 
     private AccountPickerDialogCoordinator mDialogCoordinator;
-    // TODO(crbug.com/1462558): Replace with CoreAccountInfo.
+    // TODO(crbug.com/40921927): Replace with CoreAccountInfo.
     private @Nullable String mSelectedAccountEmail;
-    // TODO(crbug.com/1462558): Replace with CoreAccountInfo.
+    // TODO(crbug.com/40921927): Replace with CoreAccountInfo.
     private @Nullable String mDefaultAccountEmail;
     private boolean mAllowMetricsAndCrashUploading;
 
@@ -103,11 +108,13 @@ public class FullscreenSigninMediator
             Context context,
             ModalDialogManager modalDialogManager,
             Delegate delegate,
-            PrivacyPreferencesManager privacyPreferencesManager) {
+            PrivacyPreferencesManager privacyPreferencesManager,
+            @SigninAccessPoint int accessPoint) {
         mContext = context;
         mModalDialogManager = modalDialogManager;
         mDelegate = delegate;
         mPrivacyPreferencesManager = privacyPreferencesManager;
+        mAccessPoint = accessPoint;
         mProfileDataCache = ProfileDataCache.createWithDefaultImageSizeAndNoBadge(mContext);
         mModel =
                 FullscreenSigninProperties.createModel(
@@ -117,7 +124,7 @@ public class FullscreenSigninMediator
                         ExternalAuthUtils.getInstance().canUseGooglePlayServices()
                                 && !disableSignInForAutomotiveDevice(),
                         R.string.fre_welcome,
-                        getFooterString(false));
+                        R.string.signin_fre_subtitle_legacy);
 
         mDelegate
                 .getNativeInitializationPromise()
@@ -137,6 +144,7 @@ public class FullscreenSigninMediator
         updateAccounts(
                 AccountUtils.getCoreAccountInfosIfFulfilledOrEmpty(
                         mAccountManagerFacade.getCoreAccountInfos()));
+        SigninMetricsUtils.logSigninStarted(accessPoint);
     }
 
     PropertyModel getModel() {
@@ -217,11 +225,11 @@ public class FullscreenSigninMediator
         boolean isSigninDisabledByPolicy = false;
         boolean isMetricsReportingDisabledByPolicy = false;
         Log.i(TAG, "#onInitialLoadCompleted() hasPolicies:" + hasPolicies);
+        Profile profile = mDelegate.getProfileSupplier().get().getOriginalProfile();
         if (hasPolicies) {
             isSigninDisabledByPolicy =
                     IdentityServicesProvider.get()
-                            .getSigninManager(
-                                    mDelegate.getProfileSupplier().get().getOriginalProfile())
+                            .getSigninManager(profile)
                             .isSigninDisabledByPolicy();
             Log.i(
                     TAG,
@@ -229,10 +237,9 @@ public class FullscreenSigninMediator
                             + isSigninDisabledByPolicy);
             isMetricsReportingDisabledByPolicy =
                     !mPrivacyPreferencesManager.isUsageAndCrashReportingPermittedByPolicy();
-
-            final FrePolicy frePolicy = new FrePolicy();
-            frePolicy.metricsReportingDisabledByPolicy = isMetricsReportingDisabledByPolicy;
-            mModel.set(FullscreenSigninProperties.FRE_POLICY, frePolicy);
+            mModel.set(
+                    FullscreenSigninProperties.SHOW_ENTERPRISE_MANAGEMENT_NOTICE,
+                    mDelegate.shouldDisplayManagementNoticeOnManagedDevices());
         }
 
         boolean isSigninSupported =
@@ -240,13 +247,23 @@ public class FullscreenSigninMediator
                         && !isSigninDisabledByPolicy
                         && !disableSignInForAutomotiveDevice();
         mModel.set(FullscreenSigninProperties.IS_SIGNIN_SUPPORTED, isSigninSupported);
+        mModel.set(FullscreenSigninProperties.SHOW_INITIAL_LOAD_PROGRESS_SPINNER, false);
+
         if (ChromeFeatureList.isEnabled(
                 ChromeFeatureList.REPLACE_SYNC_PROMOS_WITH_SIGN_IN_PROMOS)) {
+            if (isSigninSupported) {
+                mModel.set(FullscreenSigninProperties.TITLE_STRING_ID, R.string.signin_fre_title);
+            }
+            SyncService syncService = SyncServiceFactory.getForProfile(profile);
+            boolean isSyncDataManaged =
+                    IntStream.range(UserSelectableType.FIRST_TYPE, UserSelectableType.LAST_TYPE + 1)
+                            .anyMatch(syncService::isTypeManagedByPolicy);
             mModel.set(
-                    FullscreenSigninProperties.TITLE_STRING_ID,
-                    isSigninSupported ? R.string.signin_fre_title : R.string.fre_welcome);
+                    FullscreenSigninProperties.SUBTITLE_STRING_ID,
+                    isSyncDataManaged
+                            ? R.string.signin_fre_subtitle_without_sync
+                            : R.string.signin_fre_subtitle);
         }
-        mModel.set(FullscreenSigninProperties.SHOW_INITIAL_LOAD_PROGRESS_SPINNER, false);
 
         mAllowMetricsAndCrashUploading = !isMetricsReportingDisabledByPolicy;
         mModel.set(
@@ -326,7 +343,8 @@ public class FullscreenSigninMediator
     void proceedWithSignIn() {
         // This is needed to get metrics/crash reports from the sign-in flow itself.
         mDelegate.acceptTermsOfService(mAllowMetricsAndCrashUploading);
-        if (mModel.get(FullscreenSigninProperties.IS_SELECTED_ACCOUNT_SUPERVISED)) {
+        if (!ChromeFeatureList.isEnabled(ChromeFeatureList.REPLACE_SYNC_PROMOS_WITH_SIGN_IN_PROMOS)
+                && mModel.get(FullscreenSigninProperties.IS_SELECTED_ACCOUNT_SUPERVISED)) {
             // Don't perform the sign-in here, as it will be handled by SigninChecker.
             mDelegate.advanceToNextPage();
             return;
@@ -335,8 +353,8 @@ public class FullscreenSigninMediator
                 TextUtils.equals(mDefaultAccountEmail, mSelectedAccountEmail)
                         ? MobileFreProgress.WELCOME_SIGNIN_WITH_DEFAULT_ACCOUNT
                         : MobileFreProgress.WELCOME_SIGNIN_WITH_NON_DEFAULT_ACCOUNT);
-        // If the user signs into an account on the FRE, goes to the sync consent page and presses
-        // back to come back to the FRE, then there will already be an account signed in.
+        // If the user signs into an account on the FRE, goes to the next page and presses
+        // back to come back to the welcome screen, then there will already be an account signed in.
         @Nullable
         CoreAccountInfo signedInAccount =
                 IdentityServicesProvider.get()
@@ -380,10 +398,14 @@ public class FullscreenSigninMediator
                         mSelectedAccountEmail);
         if (selectedAccount != null) {
             mModel.set(FullscreenSigninProperties.SHOW_SIGNIN_PROGRESS_SPINNER_WITH_TEXT, true);
-            SigninUtils.checkAccountManagementAndSignIn(
+            final @SigninAccessPoint int accessPoint =
+                    mModel.get(FullscreenSigninProperties.IS_SELECTED_ACCOUNT_SUPERVISED)
+                            ? SigninAccessPoint.FORCED_SIGNIN
+                            : mAccessPoint;
+            FreManagementNoticeDialogHelper.checkAccountManagementAndSignIn(
                     selectedAccount,
                     signinManager,
-                    SigninAccessPoint.START_PAGE,
+                    accessPoint,
                     signInCallback,
                     mContext,
                     mModalDialogManager);
@@ -484,11 +506,13 @@ public class FullscreenSigninMediator
     }
 
     /**
-     * Builds footer string dynamically.
-     * First line has a TOS link. Second line appears only if MetricsReporting is not
-     * disabled by policy.
+     * Builds footer string dynamically. Returns null if no footer text should be displayed. First
+     * line has a TOS link. Second line appears only if MetricsReporting is not disabled by policy.
      */
-    private SpannableString getFooterString(boolean isMetricsReportingDisabled) {
+    private @Nullable SpannableString getFooterString(boolean isMetricsReportingDisabled) {
+        if (!mDelegate.shouldDisplayFooterText()) {
+            return null;
+        }
         String footerString = mContext.getString(R.string.signin_fre_footer_tos);
 
         ArrayList<SpanApplier.SpanInfo> spans = new ArrayList<>();

@@ -4,8 +4,9 @@
 
 #include "third_party/blink/public/common/shared_storage/shared_storage_utils.h"
 
+#include <string_view>
+
 #include "base/metrics/histogram_functions.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "third_party/blink/public/common/features.h"
 
@@ -54,9 +55,25 @@ bool ShouldDefinePrivateAggregationInSharedStorage() {
          blink::features::kPrivateAggregationApiEnabledInSharedStorage.Get();
 }
 
-bool IsValidPrivateAggregationContextId(base::StringPiece context_id) {
+bool IsValidPrivateAggregationContextId(std::string_view context_id) {
   return context_id.size() <= blink::kPrivateAggregationApiContextIdMaxLength &&
          base::IsStringUTF8AllowingNoncharacters(context_id);
+}
+
+bool IsValidPrivateAggregationFilteringIdMaxBytes(
+    size_t filtering_id_max_bytes) {
+  if (filtering_id_max_bytes ==
+      kPrivateAggregationApiDefaultFilteringIdMaxBytes) {
+    return true;
+  }
+
+  if (!base::FeatureList::IsEnabled(
+          features::kPrivateAggregationApiFilteringIds)) {
+    return false;
+  }
+
+  return filtering_id_max_bytes > 0 &&
+         filtering_id_max_bytes <= kPrivateAggregationApiMaxFilteringIdMaxBytes;
 }
 
 }  // namespace blink

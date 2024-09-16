@@ -59,6 +59,7 @@ TestPasswordsPrivateDelegate::TestPasswordsPrivateDelegate()
   api::passwords_private::PasswordUiEntry passkey = CreateEntry(kNumMocks);
   passkey.is_passkey = true;
   passkey.display_name = "displayName";
+  passkey.creation_time = 1000;
   current_entries_.push_back(std::move(passkey));
 }
 TestPasswordsPrivateDelegate::~TestPasswordsPrivateDelegate() = default;
@@ -418,8 +419,10 @@ bool TestPasswordsPrivateDelegate::IsCredentialPresentInInsecureCredentialsList(
 }
 
 void TestPasswordsPrivateDelegate::SwitchBiometricAuthBeforeFillingState(
-    content::WebContents* web_contents) {
+    content::WebContents* web_contents,
+    AuthenticationCallback callback) {
   authenticator_interacted_ = true;
+  std::move(callback).Run(true);
 }
 
 void TestPasswordsPrivateDelegate::ShowAddShortcutDialog(
@@ -434,11 +437,33 @@ void TestPasswordsPrivateDelegate::ShowExportedFileInShell(
 }
 
 void TestPasswordsPrivateDelegate::ChangePasswordManagerPin(
-    content::WebContents* web_contents) {
+    content::WebContents* web_contents,
+    base::OnceCallback<void(bool)> success_callback) {
   change_password_manager_pin_called_ = true;
+  std::move(success_callback).Run(false);
 }
 
-bool TestPasswordsPrivateDelegate::IsPasswordManagerPinAvailable(
+void TestPasswordsPrivateDelegate::DeleteAllPasswordManagerData(
+    content::WebContents* web_contents,
+    base::OnceCallback<void(bool)> success_callback) {
+  delete_all_password_manager_data_called_ = true;
+  std::move(success_callback).Run(true);
+}
+
+void TestPasswordsPrivateDelegate::IsPasswordManagerPinAvailable(
+    content::WebContents* web_contents,
+    base::OnceCallback<void(bool)> pin_available_callback) {
+  std::move(pin_available_callback).Run(false);
+}
+
+void TestPasswordsPrivateDelegate::DisconnectCloudAuthenticator(
+    content::WebContents* web_contents,
+    base::OnceCallback<void(bool)> success_callback) {
+  disconnect_cloud_authenticator_called_ = true;
+  std::move(success_callback).Run(false);
+}
+
+bool TestPasswordsPrivateDelegate::IsConnectedToCloudAuthenticator(
     content::WebContents* web_contents) {
   return false;
 }

@@ -23,8 +23,14 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/bindings/modules/v8/v8_binding_for_modules.h"
 
+#include "base/memory/scoped_refptr.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom-shared.h"
 #include "third_party/blink/public/platform/web_blob_info.h"
@@ -46,7 +52,6 @@
 #include "third_party/blink/renderer/modules/indexeddb/idb_value.h"
 #include "third_party/blink/renderer/platform/bindings/v8_per_isolate_data.h"
 #include "third_party/blink/renderer/platform/testing/task_environment.h"
-#include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_view.h"
 
 namespace blink {
@@ -69,8 +74,7 @@ std::unique_ptr<IDBKey> ScriptToKey(V8TestingScope& scope, const char* source) {
   v8::Local<v8::Script> script =
       v8::Script::Compile(context, V8String(isolate, source)).ToLocalChecked();
   v8::Local<v8::Value> value = script->Run(context).ToLocalChecked();
-  return ScriptValue::To<std::unique_ptr<IDBKey>>(
-      isolate, ScriptValue(isolate, value), exception_state);
+  return CreateIDBKeyFromValue(isolate, value, exception_state);
 }
 
 std::unique_ptr<IDBKey> CheckKeyFromValueAndKeyPathInternal(
@@ -81,8 +85,8 @@ std::unique_ptr<IDBKey> CheckKeyFromValueAndKeyPathInternal(
   EXPECT_TRUE(idb_key_path.IsValid());
 
   NonThrowableExceptionState exception_state;
-  return ScriptValue::To<std::unique_ptr<IDBKey>>(
-      isolate, value, exception_state, idb_key_path);
+  return CreateIDBKeyFromValueAndKeyPath(isolate, value.V8Value(), idb_key_path,
+                                         exception_state);
 }
 
 void CheckKeyPathNullValue(v8::Isolate* isolate,
@@ -186,10 +190,9 @@ void SerializeV8Value(v8::Local<v8::Value> value,
   scoped_refptr<SerializedScriptValue> serialized_value =
       SerializedScriptValue::Serialize(isolate, value, options,
                                        non_throwable_exception_state);
-  base::span<const uint8_t> ssv_wire_data = serialized_value->GetWireData();
+
   DCHECK(wire_bytes->empty());
-  wire_bytes->Append(ssv_wire_data.data(),
-                     static_cast<wtf_size_t>(ssv_wire_data.size()));
+  wire_bytes->AppendSpan(serialized_value->GetWireData());
 
   // Sanity check that the serialization header has not changed, as the tests
   // that use this method rely on the header format.
@@ -213,12 +216,11 @@ void SerializeV8Value(v8::Local<v8::Value> value,
 }
 
 std::unique_ptr<IDBValue> CreateIDBValue(v8::Isolate* isolate,
-                                         Vector<char>& wire_bytes,
+                                         Vector<char>&& wire_bytes,
                                          double primary_key,
                                          const String& key_path) {
-  WebData web_data(SharedBuffer::AdoptVector(wire_bytes));
-  scoped_refptr<SharedBuffer> data(web_data);
-  auto value = std::make_unique<IDBValue>(data, Vector<WebBlobInfo>());
+  auto value =
+      std::make_unique<IDBValue>(std::move(wire_bytes), Vector<WebBlobInfo>());
   value->SetInjectedPrimaryKey(IDBKey::CreateNumber(primary_key),
                                IDBKeyPath(key_path));
 
@@ -270,8 +272,8 @@ TEST(IDBKeyFromValueAndKeyPathTest, FileLastModifiedDateUseCounterTest) {
   ASSERT_TRUE(idb_key_path.IsValid());
 
   NonThrowableExceptionState exception_state;
-  ASSERT_TRUE(ScriptValue::To<std::unique_ptr<IDBKey>>(
-      scope.GetIsolate(), wrapper, exception_state, idb_key_path));
+  ASSERT_TRUE(CreateIDBKeyFromValueAndKeyPath(scope.GetIsolate(), wrapper,
+                                              idb_key_path, exception_state));
   ASSERT_TRUE(scope.GetDocument().IsUseCounted(
       WebFeature::kIndexedDBFileLastModifiedDate));
 }
@@ -331,14 +333,14 @@ TEST(IDBKeyFromValue, Binary) {
   {
     auto key = ScriptToKey(scope, "new ArrayBuffer(3)");
     EXPECT_EQ(key->GetType(), mojom::IDBKeyType::Binary);
-    EXPECT_EQ(key->Binary()->size(), 3UL);
+    EXPECT_EQ(key->Binary()->data.size(), 3UL);
   }
 
   // Key which is a TypedArray view on an ArrayBuffer.
   {
     auto key = ScriptToKey(scope, "new Uint8Array([0,1,2])");
     EXPECT_EQ(key->GetType(), mojom::IDBKeyType::Binary);
-    EXPECT_EQ(key->Binary()->size(), 3UL);
+    EXPECT_EQ(key->Binary()->data.size(), 3UL);
   }
 }
 
@@ -486,12 +488,10 @@ TEST(IDBKeyFromValue, Exceptions) {
   };
 
   for (const char* source : cases) {
-    ScriptValue script_value(scope.GetIsolate(),
-                             EvaluateScriptAsObject(scope, source));
-
     DummyExceptionStateForTesting exception_state;
-    auto key = ScriptValue::To<std::unique_ptr<IDBKey>>(
-        scope.GetIsolate(), script_value, exception_state);
+    auto key = CreateIDBKeyFromValue(scope.GetIsolate(),
+                                     EvaluateScriptAsObject(scope, source),
+                                     exception_state);
     EXPECT_FALSE(key->IsValid());
     EXPECT_TRUE(exception_state.HadException());
   }
@@ -500,35 +500,33 @@ TEST(IDBKeyFromValue, Exceptions) {
 TEST(IDBKeyFromValueAndKeyPathTest, Exceptions) {
   test::TaskEnvironment task_environment;
   V8TestingScope scope;
-  ScriptValue script_value(
-      scope.GetIsolate(),
-      EvaluateScriptAsObject(scope,
-                             "({id:1, get throws() { throw Error(); }})"));
+  v8::Local<v8::Value> value = EvaluateScriptAsObject(
+      scope, "({id:1, get throws() { throw Error(); }})");
   {
     // Key path references a property that throws.
     DummyExceptionStateForTesting exception_state;
-    EXPECT_FALSE(ScriptValue::To<std::unique_ptr<IDBKey>>(
-        scope.GetIsolate(), script_value, exception_state,
-        IDBKeyPath("throws")));
+    EXPECT_FALSE(CreateIDBKeyFromValueAndKeyPath(
+        scope.GetIsolate(), value, IDBKeyPath("throws"), exception_state));
     EXPECT_TRUE(exception_state.HadException());
   }
 
   {
     // Compound key path references a property that throws.
     DummyExceptionStateForTesting exception_state;
-    EXPECT_FALSE(ScriptValue::To<std::unique_ptr<IDBKey>>(
-        scope.GetIsolate(), script_value, exception_state,
-        IDBKeyPath(Vector<String>{"id", "throws"})));
+    EXPECT_FALSE(CreateIDBKeyFromValueAndKeyPath(
+        scope.GetIsolate(), value, IDBKeyPath(Vector<String>{"id", "throws"}),
+        exception_state));
     EXPECT_TRUE(exception_state.HadException());
   }
 
   {
     // Compound key path references a property that throws, index case.
     DummyExceptionStateForTesting exception_state;
-    EXPECT_FALSE(ScriptValue::To<std::unique_ptr<IDBKey>>(
-        scope.GetIsolate(), script_value, exception_state,
+    EXPECT_FALSE(CreateIDBKeyFromValueAndKeyPaths(
+        scope.GetIsolate(), value,
         /*store_key_path=*/IDBKeyPath("id"),
-        /*index_key_path=*/IDBKeyPath(Vector<String>{"id", "throws"})));
+        /*index_key_path=*/IDBKeyPath(Vector<String>{"id", "throws"}),
+        exception_state));
     EXPECT_TRUE(exception_state.HadException());
   }
 }
@@ -541,47 +539,51 @@ TEST(IDBKeyFromValueAndKeyPathsTest, IndexKeys) {
   NonThrowableExceptionState exception_state;
 
   // object = { foo: { bar: "zee" }, bad: null }
-  ScriptValue script_value =
+  v8::Local<v8::Value> value =
       V8ObjectBuilder(script_state)
           .Add("foo", V8ObjectBuilder(script_state).AddString("bar", "zee"))
           .AddNull("bad")
-          .GetScriptValue();
+          .V8Value();
 
   // Index key path member matches store key path.
-  std::unique_ptr<IDBKey> key = ScriptValue::To<std::unique_ptr<IDBKey>>(
-      isolate, script_value, exception_state,
+  std::unique_ptr<IDBKey> key = CreateIDBKeyFromValueAndKeyPaths(
+      isolate, value,
       /*store_key_path=*/IDBKeyPath("id"),
-      /*index_key_path=*/IDBKeyPath(Vector<String>{"id", "foo.bar"}));
+      /*index_key_path=*/IDBKeyPath(Vector<String>{"id", "foo.bar"}),
+      exception_state);
   IDBKey::KeyArray expected;
   expected.emplace_back(IDBKey::CreateNone());
   expected.emplace_back(IDBKey::CreateString("zee"));
   CheckArrayKey(key.get(), expected);
 
   // Index key path member matches, but there are unmatched members too.
-  EXPECT_FALSE(ScriptValue::To<std::unique_ptr<IDBKey>>(
-      isolate, script_value, exception_state,
+  EXPECT_FALSE(CreateIDBKeyFromValueAndKeyPaths(
+      isolate, value,
       /*store_key_path=*/IDBKeyPath("id"),
-      /*index_key_path=*/IDBKeyPath(Vector<String>{"id", "foo.bar", "nope"})));
+      /*index_key_path=*/IDBKeyPath(Vector<String>{"id", "foo.bar", "nope"}),
+      exception_state));
 
   // Index key path member matches, but there are invalid subkeys too.
   EXPECT_FALSE(
-      ScriptValue::To<std::unique_ptr<IDBKey>>(
-          isolate, script_value, exception_state,
+      CreateIDBKeyFromValueAndKeyPaths(
+          isolate, value,
           /*store_key_path=*/IDBKeyPath("id"),
-          /*index_key_path=*/IDBKeyPath(Vector<String>{"id", "foo.bar", "bad"}))
+          /*index_key_path=*/IDBKeyPath(Vector<String>{"id", "foo.bar", "bad"}),
+          exception_state)
           ->IsValid());
 
   // Index key path member does not match store key path.
-  EXPECT_FALSE(ScriptValue::To<std::unique_ptr<IDBKey>>(
-      isolate, script_value, exception_state,
+  EXPECT_FALSE(CreateIDBKeyFromValueAndKeyPaths(
+      isolate, value,
       /*store_key_path=*/IDBKeyPath("id"),
-      /*index_key_path=*/IDBKeyPath(Vector<String>{"id2", "foo.bar"})));
+      /*index_key_path=*/IDBKeyPath(Vector<String>{"id2", "foo.bar"}),
+      exception_state));
 
   // Index key path is not array, matches store key path.
-  EXPECT_FALSE(ScriptValue::To<std::unique_ptr<IDBKey>>(
-      isolate, script_value, exception_state,
+  EXPECT_FALSE(CreateIDBKeyFromValueAndKeyPaths(
+      isolate, value,
       /*store_key_path=*/IDBKeyPath("id"),
-      /*index_key_path=*/IDBKeyPath("id")));
+      /*index_key_path=*/IDBKeyPath("id"), exception_state));
 }
 
 TEST(InjectIDBKeyTest, ImplicitValues) {
@@ -667,7 +669,7 @@ TEST(DeserializeIDBValueTest, CurrentVersions) {
   v8::Local<v8::Object> empty_object = v8::Object::New(isolate);
   SerializeV8Value(empty_object, isolate, &object_bytes);
   std::unique_ptr<IDBValue> idb_value =
-      CreateIDBValue(isolate, object_bytes, 42.0, "foo");
+      CreateIDBValue(isolate, std::move(object_bytes), 42.0, "foo");
 
   v8::Local<v8::Value> v8_value =
       DeserializeIDBValue(scope.GetScriptState(), idb_value.get());
@@ -700,7 +702,7 @@ TEST(DeserializeIDBValueTest, FutureV8Version) {
   //
   // http://crbug.com/703704 has a reproduction for this test's circumstances.
   std::unique_ptr<IDBValue> idb_value =
-      CreateIDBValue(isolate, object_bytes, 42.0, "foo");
+      CreateIDBValue(isolate, std::move(object_bytes), 42.0, "foo");
 
   v8::Local<v8::Value> v8_value =
       DeserializeIDBValue(scope.GetScriptState(), idb_value.get());
@@ -719,7 +721,7 @@ TEST(DeserializeIDBValueTest, InjectionIntoNonObject) {
   v8::Local<v8::Number> number = v8::Number::New(isolate, 42.0);
   SerializeV8Value(number, isolate, &object_bytes);
   std::unique_ptr<IDBValue> idb_value =
-      CreateIDBValue(isolate, object_bytes, 42.0, "foo");
+      CreateIDBValue(isolate, std::move(object_bytes), 42.0, "foo");
 
   v8::Local<v8::Value> v8_value =
       DeserializeIDBValue(scope.GetScriptState(), idb_value.get());
@@ -740,7 +742,7 @@ TEST(DeserializeIDBValueTest, NestedInjectionIntoNonObject) {
   v8::Local<v8::Number> number = v8::Number::New(isolate, 42.0);
   SerializeV8Value(number, isolate, &object_bytes);
   std::unique_ptr<IDBValue> idb_value =
-      CreateIDBValue(isolate, object_bytes, 42.0, "foo.bar");
+      CreateIDBValue(isolate, std::move(object_bytes), 42.0, "foo.bar");
 
   v8::Local<v8::Value> v8_value =
       DeserializeIDBValue(scope.GetScriptState(), idb_value.get());

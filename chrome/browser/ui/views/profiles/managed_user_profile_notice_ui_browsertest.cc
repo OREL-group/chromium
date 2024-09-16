@@ -56,8 +56,6 @@ const ManagedUserNoticeTestParam kWindowTestParams[] = {
                           .use_right_to_left_language = true}},
     {.pixel_test_param = {.test_suffix = "SmallWindow",
                           .use_small_window = true}},
-    {.pixel_test_param = {.test_suffix = "CR2023",
-                          .use_chrome_refresh_2023_style = true}},
 };
 
 const ManagedUserNoticeTestParam kDialogTestParams[] = {
@@ -71,8 +69,6 @@ const ManagedUserNoticeTestParam kDialogTestParams[] = {
     {.pixel_test_param = {.test_suffix = "Rtl",
                           .use_right_to_left_language = true},
      .show_link_data_checkbox = true},
-    {.pixel_test_param = {.test_suffix = "CR2023",
-                          .use_chrome_refresh_2023_style = true}},
 };
 
 // Creates a step to represent the managed-user-profile-notice
@@ -101,7 +97,7 @@ class ManagedUserNoticeStepControllerForTest
             weak_ptr_factory_.GetWeakPtr(), std::move(step_shown_callback)));
   }
 
-  void OnNavigateBackRequested() override { NOTREACHED_NORETURN(); }
+  void OnNavigateBackRequested() override { NOTREACHED(); }
 
   void OnManagedUserNoticeLoaded(
       StepSwitchFinishedCallback step_shown_callback) {
@@ -115,7 +111,9 @@ class ManagedUserNoticeStepControllerForTest
         ManagedUserProfileNoticeUI::ScreenType::kEntepriseAccountSyncEnabled,
         *account_info_, /*profile_creation_required_by_policy=*/false,
         /*show_link_data_option=*/false,
-        /*proceed_callback*/ base::DoNothing());
+        /*process_user_choice_callback=*/
+        signin::SigninChoiceCallback(base::DoNothing()),
+        /*done_callback=*/base::DoNothing());
 
     if (step_shown_callback) {
       std::move(step_shown_callback).Run(/*success=*/true);
@@ -214,6 +212,8 @@ class ManagedUserNoticeUIDialogPixelTest
  public:
   ManagedUserNoticeUIDialogPixelTest()
       : ProfilesPixelTestBaseT<DialogBrowserTest>(GetParam().pixel_test_param) {
+    feature_list_.InitAndDisableFeature(
+        features::kEnterpriseUpdatedProfileCreationScreen);
   }
 
   ~ManagedUserNoticeUIDialogPixelTest() override = default;
@@ -241,11 +241,17 @@ class ManagedUserNoticeUIDialogPixelTest
     controller->ShowModalManagedUserNoticeDialog(
         account_info, /*is_oidc_account=*/false,
         GetParam().profile_creation_required_by_policy,
-        GetParam().show_link_data_checkbox, base::DoNothing());
+        GetParam().show_link_data_checkbox,
+        /*process_user_choice_callback=*/
+        signin::SigninChoiceCallback(base::DoNothing()),
+        /*done_callback=*/base::DoNothing());
 
     widget_waiter.WaitIfNeededAndGet();
     observer.Wait();
   }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
 };
 
 IN_PROC_BROWSER_TEST_P(ManagedUserNoticeUIDialogPixelTest,

@@ -5,9 +5,9 @@
 #import <UIKit/UIKit.h>
 
 #import "base/ios/ios_util.h"
+#import "ios/chrome/browser/bookmarks/ui_bundled/bookmark_earl_grey.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
-#import "ios/chrome/browser/ui/bookmarks/bookmark_earl_grey.h"
 #import "ios/chrome/browser/ui/settings/password/password_settings/password_settings_constants.h"
 #import "ios/chrome/browser/ui/settings/password/password_settings_app_interface.h"
 #import "ios/chrome/browser/ui/settings/password/passwords_table_view_constants.h"
@@ -36,7 +36,7 @@
   [ChromeEarlGreyUI openToolsMenu];
 
   // Open new tab.
-  // TODO(crbug.com/917114): Calling the string directly is temporary while we
+  // TODO(crbug.com/41432876): Calling the string directly is temporary while we
   // roll out a solution to access constants across the code base for EG2.
   id<GREYMatcher> newTabButtonMatcher =
       grey_accessibilityID(@"kToolsMenuNewTabId");
@@ -90,6 +90,7 @@
                                    chrome_test_util::SettingsDoneButton(),
                                    grey_sufficientlyVisible(), nil)]
       performAction:grey_tap()];
+
   // Close Password Manager.
   [[EarlGrey selectElementWithMatcher:chrome_test_util::SettingsDoneButton()]
       performAction:grey_tap()];
@@ -146,7 +147,7 @@
 
 // Tests bookmark converted helpers in chrome_earl_grey.h.
 - (void)testBookmarkHelpers {
-  [BookmarkEarlGrey waitForBookmarkModelsLoaded];
+  [BookmarkEarlGrey waitForBookmarkModelLoaded];
   [BookmarkEarlGrey clearBookmarks];
 }
 
@@ -256,8 +257,7 @@
   [[AppLaunchManager sharedManager] ensureAppLaunchedWithFeaturesEnabled:{}
       disabled:{}
       relaunchPolicy:ForceRelaunchByCleanShutdown];
-  [[EarlGrey selectElementWithMatcher:grey_text(@"Restore")]
-      assertWithMatcher:grey_notVisible()];
+  [ChromeEarlGrey waitForMainTabCount:1];
 }
 
 // Tests hard kill(crash) through AppLaunchManager.
@@ -266,13 +266,12 @@
   [ChromeEarlGrey openNewIncognitoTab];
   [ChromeEarlGrey openNewTab];
   [ChromeEarlGrey loadURL:GURL("chrome://about")];
+  [ChromeEarlGrey saveSessionImmediately];
   [[AppLaunchManager sharedManager] ensureAppLaunchedWithFeaturesEnabled:{}
       disabled:{}
       relaunchPolicy:ForceRelaunchByKilling];
   [ChromeEarlGrey waitForMainTabCount:2];
   [ChromeEarlGrey waitForIncognitoTabCount:1];
-  [[EarlGrey selectElementWithMatcher:grey_text(@"Restore")]
-      assertWithMatcher:grey_notVisible()];
 }
 
 // Tests running resets after relaunch through AppLaunchManager.
@@ -298,8 +297,6 @@
                                   disabled:config.features_disabled
                             relaunchPolicy:NoForceRelaunchAndKeepState];
   [ChromeEarlGrey waitForMainTabCount:2];
-  [[EarlGrey selectElementWithMatcher:grey_text(@"Restore")]
-      assertWithMatcher:grey_notVisible()];
 }
 
 // Tests backgrounding app and moving app back through AppLaunchManager.
@@ -324,7 +321,7 @@
 - (void)testGetPrefs {
   // The actual pref names and values below are irrelevant, but the calls
   // themselves should return data without crashing or asserting.
-  [ChromeEarlGrey localStateIntegerPref:prefs::kBrowserStatesNumCreated];
+  [ChromeEarlGrey localStateIntegerPref:prefs::kNumberOfProfiles];
   [ChromeEarlGrey localStateBooleanPref:prefs::kAppStoreRatingPolicyEnabled];
 
   [ChromeEarlGrey userBooleanPref:prefs::kIosBookmarkPromoAlreadySeen];

@@ -374,9 +374,9 @@ void GpuRasterBufferProvider::RasterBufferImpl::RasterizeSource(
 
     // This SharedImage will serve as the destination of the raster defined by
     // `raster_source` before being sent off to the display compositor.
-    uint32_t flags = gpu::SHARED_IMAGE_USAGE_DISPLAY_READ |
-                     gpu::SHARED_IMAGE_USAGE_RASTER_WRITE |
-                     gpu::SHARED_IMAGE_USAGE_OOP_RASTERIZATION;
+    gpu::SharedImageUsageSet flags = gpu::SHARED_IMAGE_USAGE_DISPLAY_READ |
+                                     gpu::SHARED_IMAGE_USAGE_RASTER_WRITE |
+                                     gpu::SHARED_IMAGE_USAGE_OOP_RASTERIZATION;
     if (backing_->overlay_candidate) {
       flags |= gpu::SHARED_IMAGE_USAGE_SCANOUT;
       if (features::IsDelegatedCompositingEnabled())
@@ -434,6 +434,7 @@ void GpuRasterBufferProvider::RasterBufferImpl::RasterizeSource(
       playback_settings.image_provider, content_size, raster_full_rect,
       playback_rect, transform.translation(), recording_to_raster_scale,
       raster_source->requires_clear(),
+      playback_settings.raster_inducing_scroll_offsets,
       const_cast<RasterSource*>(raster_source)->max_op_size_hint());
   ri->EndRasterCHROMIUM();
 
@@ -443,7 +444,7 @@ void GpuRasterBufferProvider::RasterBufferImpl::RasterizeSource(
 
 bool GpuRasterBufferProvider::ShouldUnpremultiplyAndDitherResource(
     viz::SharedImageFormat format) const {
-  // TODO(crbug.com/1151490): Re-enable for OOPR.
+  // TODO(crbug.com/40042400): Re-enable for OOPR.
   return false;
 }
 

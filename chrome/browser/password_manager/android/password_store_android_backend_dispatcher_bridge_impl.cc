@@ -5,13 +5,12 @@
 #include "chrome/browser/password_manager/android/password_store_android_backend_dispatcher_bridge_impl.h"
 
 #include <jni.h>
+
 #include <cstdint>
 
-#include "base/android/build_info.h"
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
-#include "chrome/browser/password_manager/android/jni_headers/PasswordStoreAndroidBackendDispatcherBridgeImpl_jni.h"
 #include "chrome/browser/password_manager/android/password_manager_android_util.h"
 #include "chrome/browser/password_manager/android/protos/list_passwords_result.pb.h"
 #include "chrome/browser/password_manager/android/protos/password_with_local_data.pb.h"
@@ -20,14 +19,14 @@
 #include "components/password_manager/core/browser/password_form.h"
 #include "components/password_manager/core/browser/sync/password_proto_utils.h"
 
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "chrome/browser/password_manager/android/jni_headers/PasswordStoreAndroidBackendDispatcherBridgeImpl_jni.h"
+
 namespace password_manager {
 
 namespace {
 
 using JobId = PasswordStoreAndroidBackendDispatcherBridge::JobId;
-
-constexpr int kGMSCoreMinVersionForGetAffiliatedAPI = 232012000;
-constexpr int kGMSCoreMinVersionForGetAllLoginsWithBrandingAPI = 233812000;
 
 base::android::ScopedJavaLocalRef<jstring> GetJavaStringFromAccount(
     std::string account) {
@@ -44,44 +43,15 @@ base::android::ScopedJavaLocalRef<jstring> GetJavaStringFromAccount(
 
 std::unique_ptr<PasswordStoreAndroidBackendDispatcherBridge>
 PasswordStoreAndroidBackendDispatcherBridge::Create() {
-  // The bridge is not supposed to be created when UPM is completely unusable.
-  // But it should be created for non-syncing users if sync is enabled later.
-  CHECK(password_manager_android_util::AreMinUpmRequirementsMet());
   return std::make_unique<PasswordStoreAndroidBackendDispatcherBridgeImpl>();
-}
-
-bool PasswordStoreAndroidBackendDispatcherBridge::
-    CanUseGetAffiliatedPasswordsAPI() {
-  base::android::BuildInfo* info = base::android::BuildInfo::GetInstance();
-  int current_gms_core_version;
-  if (!base::StringToInt(info->gms_version_code(), &current_gms_core_version)) {
-    return false;
-  }
-  if (kGMSCoreMinVersionForGetAffiliatedAPI > current_gms_core_version) {
-    return false;
-  }
-
-  return true;
-}
-
-bool PasswordStoreAndroidBackendDispatcherBridge::
-    CanUseGetAllLoginsWithBrandingInfoAPI() {
-  base::android::BuildInfo* info = base::android::BuildInfo::GetInstance();
-  int current_gms_core_version;
-  if (!base::StringToInt(info->gms_version_code(), &current_gms_core_version)) {
-    return false;
-  }
-  if (kGMSCoreMinVersionForGetAllLoginsWithBrandingAPI >
-      current_gms_core_version) {
-    return false;
-  }
-
-  return true;
 }
 
 PasswordStoreAndroidBackendDispatcherBridgeImpl::
     PasswordStoreAndroidBackendDispatcherBridgeImpl() {
   DETACH_FROM_THREAD(thread_checker_);
+  // The bridge is not supposed to be created when UPM is completely unusable.
+  // But it should be created for non-syncing users if sync is enabled later.
+  CHECK(password_manager_android_util::AreMinUpmRequirementsMet());
 }
 
 PasswordStoreAndroidBackendDispatcherBridgeImpl::

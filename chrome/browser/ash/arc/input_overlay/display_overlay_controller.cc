@@ -58,6 +58,7 @@ namespace arc::input_overlay {
 namespace {
 
 using ash::game_dashboard_utils::GetNextWidgetToFocus;
+using ash::game_dashboard_utils::UpdateAccessibilityTree;
 
 // UI specs.
 constexpr int kMenuEntrySideMargin = 24;
@@ -73,8 +74,8 @@ std::unique_ptr<views::Widget> CreateTransientWidget(
     const std::string& widget_name,
     bool accept_events) {
   views::Widget::InitParams params(
+      views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET,
       views::Widget::InitParams::TYPE_WINDOW_FRAMELESS);
-  params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.parent = parent_window;
   params.name = widget_name;
   params.opacity = views::Widget::InitParams::WindowOpacity::kTranslucent;
@@ -116,7 +117,7 @@ class DisplayOverlayController::FocusCycler {
     // Only tab pressed is checked because the focus change is triggered by the
     // tab pressed event. No need to change widget focus again on tab key
     // released event.
-    if (event.type() == ui::ET_KEY_RELEASED ||
+    if (event.type() == ui::EventType::kKeyReleased ||
         !views::FocusManager::IsTabTraversalKeyEvent(event)) {
       return;
     }
@@ -151,6 +152,7 @@ class DisplayOverlayController::FocusCycler {
     if (auto it = std::find(widget_list_.begin(), widget_list_.end(), widget);
         it == widget_list_.end()) {
       widget_list_.emplace_back(widget);
+      UpdateAccessibilityTree(widget_list_);
     }
   }
 
@@ -158,6 +160,7 @@ class DisplayOverlayController::FocusCycler {
     if (auto it = std::find(widget_list_.begin(), widget_list_.end(), widget);
         it != widget_list_.end()) {
       widget_list_.erase(it);
+      UpdateAccessibilityTree(widget_list_);
     }
   }
 
@@ -540,7 +543,7 @@ void DisplayOverlayController::SetDisplayModeAlpha(DisplayMode mode) {
       SetEventTarget(overlay_widget, /*on_overlay=*/true);
       break;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
   }
 
@@ -937,58 +940,6 @@ void DisplayOverlayController::HideActionHighlightWidgetForAction(
   }
 }
 
-void DisplayOverlayController::UpdateButtonOptionsMenuWidgetBounds() {
-  // There is no `button_options_widget_` in view mode.
-  if (!button_options_widget_) {
-    return;
-  }
-
-  if (auto* menu = GetButtonOptionsMenu()) {
-    menu->UpdateWidget();
-  }
-}
-
-void DisplayOverlayController::UpdateInputMappingWidgetBounds() {
-  // There is no `input_mapping_widget_` if there is no active action or gio is
-  // disabled.
-  if (!input_mapping_widget_) {
-    return;
-  }
-
-  UpdateWidgetBoundsInRootWindow(input_mapping_widget_.get(),
-                                 touch_injector_->content_bounds());
-  StackInputMappingAtBottomForViewMode();
-}
-
-void DisplayOverlayController::UpdateEditingListWidgetBounds() {
-  // There is no `editing_list_widget_` in view mode.
-  if (!editing_list_widget_) {
-    return;
-  }
-
-  if (auto* editing_list = GetEditingList()) {
-    editing_list->UpdateWidget();
-  }
-}
-
-void DisplayOverlayController::UpdateTargetWidgetBounds() {
-  if (!target_widget_) {
-    return;
-  }
-
-  if (auto* target_view = GetTargetView()) {
-    target_view->UpdateWidgetBounds();
-  }
-}
-
-ActionViewListItem* DisplayOverlayController::GetEditingListItemForAction(
-    Action* action) {
-  if (auto* editing_list = GetEditingList()) {
-    return editing_list->GetListItemForAction(action);
-  }
-  return nullptr;
-}
-
 void DisplayOverlayController::UpdateWidgetBoundsInRootWindow(
     views::Widget* widget,
     const gfx::Rect& bounds_in_root_window) {
@@ -999,9 +950,17 @@ void DisplayOverlayController::UpdateWidgetBoundsInRootWindow(
   widget->SetBounds(bounds_in_screen);
 }
 
+ActionViewListItem* DisplayOverlayController::GetEditingListItemForAction(
+    Action* action) {
+  if (auto* editing_list = GetEditingList()) {
+    return editing_list->GetListItemForAction(action);
+  }
+  return nullptr;
+}
+
 void DisplayOverlayController::OnMouseEvent(ui::MouseEvent* event) {
   if ((display_mode_ == DisplayMode::kView && IsNudgeEmpty()) ||
-      event->type() != ui::ET_MOUSE_PRESSED) {
+      event->type() != ui::EventType::kMousePressed) {
     return;
   }
 
@@ -1010,7 +969,7 @@ void DisplayOverlayController::OnMouseEvent(ui::MouseEvent* event) {
 
 void DisplayOverlayController::OnTouchEvent(ui::TouchEvent* event) {
   if ((display_mode_ == DisplayMode::kView && IsNudgeEmpty()) ||
-      event->type() != ui::ET_TOUCH_PRESSED) {
+      event->type() != ui::EventType::kTouchPressed) {
     return;
   }
   ProcessPressedEvent(*event);
@@ -1083,12 +1042,14 @@ void DisplayOverlayController::OnWindowPropertyChanged(aura::Window* window,
       const auto mapping_source = GetMappingSource();
       if (IsFlagChanged(flags, old_flags, ash::ArcGameControlsFlag::kEnabled)) {
         RecordToggleWithMappingSource(
+            GetPackageName(),
             /*is_feature=*/true,
             /*is_on=*/IsFlagSet(flags, ash::ArcGameControlsFlag::kEnabled),
             mapping_source);
       }
       if (IsFlagChanged(flags, old_flags, ash::ArcGameControlsFlag::kHint)) {
         RecordToggleWithMappingSource(
+            GetPackageName(),
             /*is_feature=*/false,
             /*is_on=*/IsFlagSet(flags, ash::ArcGameControlsFlag::kHint),
             mapping_source);
@@ -1466,6 +1427,50 @@ DeleteEditShortcut* DisplayOverlayController::GetDeleteEditShortcut() const {
                        ->AsBubbleDialogDelegate()
                        ->GetContentsView())
              : nullptr;
+}
+
+void DisplayOverlayController::UpdateButtonOptionsMenuWidgetBounds() {
+  // There is no `button_options_widget_` in view mode.
+  if (!button_options_widget_) {
+    return;
+  }
+
+  if (auto* menu = GetButtonOptionsMenu()) {
+    menu->UpdateWidget();
+  }
+}
+
+void DisplayOverlayController::UpdateInputMappingWidgetBounds() {
+  // There is no `input_mapping_widget_` if there is no active action or gio is
+  // disabled.
+  if (!input_mapping_widget_) {
+    return;
+  }
+
+  UpdateWidgetBoundsInRootWindow(input_mapping_widget_.get(),
+                                 touch_injector_->content_bounds());
+  StackInputMappingAtBottomForViewMode();
+}
+
+void DisplayOverlayController::UpdateEditingListWidgetBounds() {
+  // There is no `editing_list_widget_` in view mode.
+  if (!editing_list_widget_) {
+    return;
+  }
+
+  if (auto* editing_list = GetEditingList()) {
+    editing_list->UpdateWidget();
+  }
+}
+
+void DisplayOverlayController::UpdateTargetWidgetBounds() {
+  if (!target_widget_) {
+    return;
+  }
+
+  if (auto* target_view = GetTargetView()) {
+    target_view->UpdateWidgetBounds();
+  }
 }
 
 void DisplayOverlayController::UpdateEventRewriteCapability() {

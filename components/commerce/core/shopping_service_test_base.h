@@ -15,6 +15,7 @@
 #include "base/test/task_environment.h"
 #include "base/values.h"
 #include "components/commerce/core/commerce_info_cache.h"
+#include "components/commerce/core/product_specifications/mock_product_specifications_service.h"
 #include "components/commerce/core/shopping_service.h"
 #include "components/commerce/core/web_extractor.h"
 #include "components/commerce/core/web_wrapper.h"
@@ -23,6 +24,7 @@
 #include "components/optimization_guide/core/optimization_metadata.h"
 #include "components/optimization_guide/proto/hints.pb.h"
 #include "services/data_decoder/public/cpp/test_support/in_process_data_decoder.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using optimization_guide::OnDemandOptimizationGuideDecisionRepeatingCallback;
@@ -65,8 +67,18 @@ class MockOptGuideDecider
   MockOptGuideDecider operator=(const MockOptGuideDecider&) = delete;
   ~MockOptGuideDecider() override;
 
-  void RegisterOptimizationTypes(
-      const std::vector<OptimizationType>& optimization_types) override;
+  MOCK_METHOD(void,
+              RegisterOptimizationTypes,
+              (const std::vector<OptimizationType>& optimization_types),
+              (override));
+  MOCK_METHOD(void,
+              CanApplyOptimizationOnDemand,
+              (const std::vector<GURL>& urls,
+               const base::flat_set<OptimizationType>& optimization_types,
+               RequestContext request_context,
+               OnDemandOptimizationGuideDecisionRepeatingCallback callback,
+               std::optional<RequestContextMetadata> request_context_metadata),
+              (override));
 
   void CanApplyOptimization(
       const GURL& url,
@@ -77,14 +89,6 @@ class MockOptGuideDecider
       const GURL& url,
       OptimizationType optimization_type,
       OptimizationMetadata* optimization_metadata) override;
-
-  void CanApplyOptimizationOnDemand(
-      const std::vector<GURL>& urls,
-      const base::flat_set<OptimizationType>& optimization_types,
-      RequestContext request_context,
-      OnDemandOptimizationGuideDecisionRepeatingCallback callback,
-      std::optional<RequestContextMetadata> request_context_metadata =
-          std::nullopt) override;
 
   void AddOnDemandShoppingResponse(const GURL& url,
                                    const OptimizationGuideDecision decision,
@@ -165,41 +169,36 @@ class MockWebWrapper : public WebWrapper {
 
   ~MockWebWrapper() override;
 
-  const GURL& GetLastCommittedURL() override;
-  const std::u16string& GetTitle() override;
+  MOCK_METHOD(const GURL&, GetLastCommittedURL, (), (override));
+  MOCK_METHOD(const std::u16string&, GetTitle, (), (override));
+  MOCK_METHOD(bool, IsFirstLoadForNavigationFinished, (), (override));
+  MOCK_METHOD(bool, IsOffTheRecord, (), (override));
+  MOCK_METHOD(void,
+              RunJavascript,
+              (const std::u16string& script,
+               base::OnceCallback<void(const base::Value)> callback),
+              (override));
+  MOCK_METHOD(ukm::SourceId, GetPageUkmSourceId, (), (override));
 
-  bool IsFirstLoadForNavigationFinished() override;
   void SetIsFirstLoadForNavigationFinished(bool finished);
 
-  bool IsOffTheRecord() override;
-
-  void RunJavascript(
-      const std::u16string& script,
-      base::OnceCallback<void(const base::Value)> callback) override;
-
-  ukm::SourceId GetPageUkmSourceId() override;
-
-  base::Value* GetMockExtractionResult();
-
  private:
-  const GURL last_committed_url_;
-  const bool is_off_the_record_;
-  bool is_first_load_finished_{true};
   const raw_ptr<base::Value> mock_js_result_;
-  const std::u16string title_;
 };
 
-class TestWebExtractor : public WebExtractor {
+class MockWebExtractor : public WebExtractor {
  public:
-  TestWebExtractor();
-  TestWebExtractor(const TestWebExtractor&) = delete;
-  TestWebExtractor operator=(const TestWebExtractor&) = delete;
+  MockWebExtractor();
+  MockWebExtractor(const MockWebExtractor&) = delete;
+  MockWebExtractor operator=(const MockWebExtractor&) = delete;
 
-  ~TestWebExtractor() override;
+  ~MockWebExtractor() override;
 
-  void ExtractMetaInfo(
-      WebWrapper* web_wrapper,
-      base::OnceCallback<void(const base::Value)> callback) override;
+  MOCK_METHOD(void,
+              ExtractMetaInfo,
+              (WebWrapper * web_wrapper,
+               base::OnceCallback<void(const base::Value)> callback),
+              (override));
 };
 
 class ShoppingServiceTestBase : public testing::Test {
@@ -239,6 +238,12 @@ class ShoppingServiceTestBase : public testing::Test {
   // Gets a handle to the cache.
   CommerceInfoCache& GetCache();
 
+  MockOptGuideDecider* GetMockOptGuideDecider();
+
+  // Gets a handle to the ProductSpecificationsService observer that tracks the
+  // URLs that are part of a user's ProductSpecificationsSets.
+  ProductSpecificationsSet::Observer* GetProductSpecServiceUrlRefObserver();
+
  protected:
   base::test::TaskEnvironment task_environment_{
       base::test::TaskEnvironment::TimeSource::MOCK_TIME};
@@ -246,9 +251,7 @@ class ShoppingServiceTestBase : public testing::Test {
   // Used primarily for decoding JSON for the mock javascript execution.
   data_decoder::test::InProcessDataDecoder in_process_data_decoder_;
 
-  std::unique_ptr<bookmarks::BookmarkModel> local_or_syncable_bookmark_model_;
-
-  std::unique_ptr<bookmarks::BookmarkModel> account_bookmark_model_;
+  std::unique_ptr<bookmarks::BookmarkModel> bookmark_model_;
 
   std::unique_ptr<MockOptGuideDecider> opt_guide_;
 
@@ -261,6 +264,8 @@ class ShoppingServiceTestBase : public testing::Test {
   std::unique_ptr<syncer::TestSyncService> sync_service_;
 
   std::unique_ptr<network::TestURLLoaderFactory> test_url_loader_factory_;
+
+  std::unique_ptr<MockProductSpecificationsService> product_spec_service_;
 
   std::unique_ptr<ShoppingService> shopping_service_;
 };

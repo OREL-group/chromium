@@ -2,7 +2,9 @@
 *BackgroundRecorderTest.*
 *CachedResultProviderTest.*
 *CachedResultWriterTest.*
+*CardSelectionSignalsTest.*
 *ClientResultPrefsTest.*
+*ComposePromotionTest.*
 *ConfigParserTest.*
 *ContextualPageActionsModelTest.*
 *CrossDeviceUserModelTest.*
@@ -15,6 +17,8 @@
 *DeviceTierSegmentTest.*
 *DummyModelProviderFactoryImplTest.*
 *DummySegmentationPlatformServiceTest.*
+*EphemeralHomeModuleBackendTest.*
+*EphemeralHomeModuleBackendWithTestCard.*
 *FailedUkmDatabaseTest.*
 *FeatureAggregatorImplTest.*
 *FeatureListQueryProcessorNoDbCacheTest.*
@@ -24,11 +28,13 @@
 *FrequentFeatureUserModelTest.*
 *HistogramSignalHandlerTest.*
 *HistoryDelegateImplTest.*
+*HomeModulesCardRegistryTest.*
 *InputContextAndroidTest.*
 *IntentionalUserModelTest.*
 *IosModuleRankerTest.*
 *LowUserEngagementModelTest.*
 *MetadataUtilsTest.*
+*MetricsClusteringTest.*
 *ModelExecutionSchedulerTest.*
 *ModelExecutorTest.*
 *ModelManagerTest.*
@@ -40,6 +46,7 @@
 *PostProcessorTest.*
 *PowerUserModelTest.*
 *PrefsMigratorTest.*
+*PriceTrackingNotificationPromoTest.*
 *RequestDispatcherTest.*
 *RequestHandlerTest.*
 *ResultMigrationUtilsTest.*
@@ -76,6 +83,7 @@
 *TabletProductivityUserModelTest.*
 *TrainingDataCacheTest.*
 *TrainingDataCollectorImplTest.*
+*URLVisitResumptionRankerTest.*
 *UkmConfigTest.*
 *UkmDataManagerImplTest.*
 *UkmDatabaseBackendTest.*

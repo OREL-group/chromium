@@ -72,8 +72,12 @@ void TapMenuItem(int labelId) {
 
   [ChromeEarlGrey writeFirstRunSentinel];
   [ChromeEarlGrey clearDefaultBrowserPromoData];
+  [ChromeEarlGrey
+      resetDataForLocalStatePref:prefs::kIosDefaultBrowserPromoLastAction];
   [ChromeEarlGrey resetDataForLocalStatePref:
                       prefs::kIosCredentialProviderPromoLastActionTaken];
+  [ChromeEarlGrey
+      resetDataForLocalStatePref:prefs::kAppLevelPushNotificationPermissions];
   [NewTabPageAppInterface resetSetUpListPrefs];
 }
 
@@ -92,7 +96,7 @@ void TapMenuItem(int labelId) {
   LongPressView(set_up_list::kDefaultBrowserItemID);
 
   // Tap the menu item to enable notifications.
-  TapText(@"Turn on Notifications");
+  TapText(@"Turn on notifications");
 
   // Tap the confirmation snackbar.
   WaitForThenTapText(@"notifications turned on");
@@ -106,7 +110,7 @@ void TapMenuItem(int labelId) {
   LongPressView(set_up_list::kDefaultBrowserItemID);
 
   // Tap the menu item to enable notifications.
-  TapText(@"Turn on Notifications");
+  TapText(@"Turn on notifications");
 
   // Tap cancel action.
   TapMenuItem(IDS_IOS_NOTIFICATIONS_ALERT_CANCEL);
@@ -120,7 +124,7 @@ void TapMenuItem(int labelId) {
   LongPressView(set_up_list::kDefaultBrowserItemID);
 
   // Tap the menu item to enable notifications.
-  TapText(@"Turn on Notifications");
+  TapText(@"Turn on notifications");
 
   // Tap Go To Settings action.
   TapMenuItem(IDS_IOS_NOTIFICATIONS_ALERT_GO_TO_SETTINGS);

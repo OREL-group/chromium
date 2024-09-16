@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/aura/window.h"
 
 #include <stddef.h>
@@ -17,6 +22,7 @@
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
+#include "base/not_fatal_until.h"
 #include "base/observer_list.h"
 #include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
@@ -624,8 +630,8 @@ void Window::ConvertPointToTarget(const Window* source,
       out << "[";
       out << window->GetName();
       while (window->parent()) {
-        out << "]-[" << window->GetName();
         window = window->parent();
+        out << "]-[" << window->GetName();
       }
       out << "]";
       return out.str();
@@ -788,7 +794,7 @@ Window* Window::GetEventHandlerForPoint(const gfx::Point& local_point) {
           return match;
         break;
       case EventTargetingPolicy::kNone:
-        NOTREACHED();  // This case is handled early on.
+        NOTREACHED_IN_MIGRATION();  // This case is handled early on.
     }
   }
 
@@ -1122,7 +1128,7 @@ void Window::RemoveChildImpl(Window* child, Window* new_parent) {
     layer()->Remove(child->layer());
   child->parent_ = nullptr;
   auto i = base::ranges::find(children_, child);
-  DCHECK(i != children_.end());
+  CHECK(i != children_.end(), base::NotFatalUntil::M130);
   children_.erase(i);
   child->OnParentChanged();
   if (layout_manager_)

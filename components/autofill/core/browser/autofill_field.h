@@ -16,7 +16,9 @@
 #include "base/types/optional_ref.h"
 #include "components/autofill/core/browser/autofill_type.h"
 #include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/profile_value_source.h"
 #include "components/autofill/core/browser/field_types.h"
+#include "components/autofill/core/browser/filling_product.h"
 #include "components/autofill/core/browser/form_parsing/regex_patterns.h"
 #include "components/autofill/core/browser/heuristic_source.h"
 #include "components/autofill/core/browser/metrics/log_event.h"
@@ -49,7 +51,8 @@ class AutofillField : public FormFieldData {
                                           HeuristicPredictionFieldLogEvent,
                                           AutocompleteAttributeFieldLogEvent,
                                           ServerPredictionFieldLogEvent,
-                                          RationalizationFieldLogEvent>;
+                                          RationalizationFieldLogEvent,
+                                          AblationFieldLogEvent>;
 
   AutofillField();
   explicit AutofillField(const FormFieldData& field);
@@ -104,6 +107,17 @@ class AutofillField : public FormFieldData {
   }
   void set_possible_types(const FieldTypeSet& possible_types) {
     possible_types_ = possible_types;
+  }
+
+  // Adds a profile `identifier` for `type` as a possible profile value source.
+  // If `type` is not an address type the call will be a noop.
+  PossibleProfileValueSources* possible_profile_value_sources() {
+    return &possible_profile_value_sources_;
+  }
+
+  void set_possible_profile_value_sources(
+      PossibleProfileValueSources possible_profile_value_sources) {
+    possible_profile_value_sources_ = std::move(possible_profile_value_sources);
   }
 
   void SetHtmlType(HtmlFieldType type, HtmlFieldMode mode);
@@ -211,6 +225,23 @@ class AutofillField : public FormFieldData {
     return initial_value_changed_;
   }
 
+  void set_value_identified_as_potentially_sensitive(
+      bool potentially_sensitive) {
+    value_identified_as_potentially_sensitive_ = potentially_sensitive;
+  }
+
+  bool value_identified_as_potentially_sensitive() const {
+    return value_identified_as_potentially_sensitive_;
+  }
+
+  void set_field_is_eligible_for_prediction_improvements(
+      std::optional<bool> eligibily) {
+    field_is_eligible_for_prediction_improvements_ = eligibily;
+  }
+  std::optional<bool> field_is_eligible_for_prediction_improvements() const {
+    return field_is_eligible_for_prediction_improvements_;
+  }
+
   void set_credit_card_number_offset(size_t position) {
     credit_card_number_offset_ = position;
   }
@@ -310,12 +341,20 @@ class AutofillField : public FormFieldData {
   }
   std::optional<FieldType> autofilled_type() const { return autofilled_type_; }
 
+  void set_filling_product(FillingProduct filling_product) {
+    filling_product_ = filling_product;
+  }
+  FillingProduct filling_product() const { return filling_product_; }
+
   bool WasAutofilledWithFallback() const;
 
   void set_did_trigger_suggestions(bool did_trigger_suggestions) {
     did_trigger_suggestions_ = did_trigger_suggestions;
   }
   bool did_trigger_suggestions() const { return did_trigger_suggestions_; }
+
+  void set_was_focused(bool was_focused) { was_focused_ = was_focused; }
+  bool was_focused() const { return was_focused_; }
 
  private:
   explicit AutofillField(FieldSignature field_signature);
@@ -373,8 +412,18 @@ class AutofillField : public FormFieldData {
   // Currently this is used to distinguish between billing and shipping fields.
   HtmlFieldMode html_mode_ = HtmlFieldMode::kNone;
 
-  // The set of possible types for this field.
+  // The set of possible types for this field. It is normally only populated on
+  // submission time together with the `possible_profile_value_sources_`.
   FieldTypeSet possible_types_;
+
+  // An Autofill profile is a source for a filled value when the field's value
+  // is contained in the profile stored as a specific type. It does not mean
+  // that the value was actually filled from this Autofill profile. It is
+  // normally only populated on submission time along with the
+  // `possible_types_`. It contains the address related information that is
+  // contained in `possible_types_` with the additional information in which
+  // profile the matching type was detected.
+  PossibleProfileValueSources possible_profile_value_sources_;
 
   // A low-entropy hash of the field's initial value before user-interactions or
   // automatic fillings. This field is used to detect static placeholders.
@@ -386,6 +435,17 @@ class AutofillField : public FormFieldData {
   // pre-filled value.
   // Currently not implemented for <select> fields.
   std::optional<bool> initial_value_changed_;
+
+  // Indicates if the value contained in the field was identified to potentially
+  // contain sensitive data that should be handled with extra caution.
+  // Note that the 'false' state does not guarantee that the data is not
+  // sensitive, it just means that is wasn't identified as such yet.
+  bool value_identified_as_potentially_sensitive_ = false;
+
+  // Indicates if the field was determined to be eligable for prediction
+  // improvements. The `nullopt` state implies that the eligibility has not been
+  // determined yet.
+  std::optional<bool> field_is_eligible_for_prediction_improvements_;
 
   // Used to hold the position of the first digit to be copied as a substring
   // from credit card number.
@@ -445,12 +505,12 @@ class AutofillField : public FormFieldData {
   std::vector<FieldLogEventType> field_log_events_;
 
   // The autofill profile's GUID that was used for field filling. It corresponds
-  // to the autofill profile's GUID for the current value if `is_autofilled` is
-  // set or for the previously autofilled value if the field was changed after
-  // filling. nullopt means the field wasn't autofilled.
+  // to the autofill profile's GUID for the last address filling value of the
+  // field. nullopt means the field was never autofilled with address data.
   // Note: `is_autofilled` is true for autocompleted fields. So `is_autofilled`
   // is not a sufficient condition for `autofill_source_profile_guid_` to have a
   // value. This is not tracked for fields filled with field by field filling.
+  // TODO(crbug.com/364937539): Use AutofillField::ProfileValueSource instead.
   std::optional<std::string> autofill_source_profile_guid_;
 
   // Denotes the type that was used to fill the field in its last autofill
@@ -458,10 +518,22 @@ class AutofillField : public FormFieldData {
   // Autofill might fallback to filling a classified field with a different type
   // than the classified one, based on country-specific rules.
   // This is not tracked for fields filled with field by field filling.
+  // TODO(crbug.com/364937539): Use AutofillField::ProfileValueSource instead.
   std::optional<FieldType> autofilled_type_;
+
+  // Denotes the product last responsible for filling the field. If the field is
+  // autofilled, then it will correspond to the current filler, otherwise it
+  // would correspond to the last filler of the field before the field became
+  // not autofilled (due to user or JS edits). Note that this is not necessarily
+  // tied to the field type, as some filling mechanisms are independent of the
+  // field type (e.g. Autocomplete).
+  FillingProduct filling_product_ = FillingProduct::kNone;
 
   // Denotes whether a user triggered suggestions from this field.
   bool did_trigger_suggestions_ = false;
+
+  // True iff the field was ever focused.
+  bool was_focused_ = false;
 };
 
 }  // namespace autofill

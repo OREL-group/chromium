@@ -35,6 +35,8 @@
 
 // #define CONFIG_LOG 1 -- Logging is controlled by Chromium
 
+#define CONFIG_MACOS_KPERF 0
+
 #define ENDIANNESS_BIG 0
 
 #define HAVE_ASM 1
@@ -42,6 +44,8 @@
 #define HAVE_C11_GENERIC 1
 
 #define HAVE_IO_H 1
+
+#define HAVE_SYS_TYPES_H 1
 
 #define PREFIX 1
 

@@ -11,6 +11,7 @@
 #include "base/json/json_reader.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
+#include "chromeos/ash/components/growth/campaigns_logger.h"
 #include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -96,6 +97,7 @@ class OpenUrlActionPerformerTest : public testing::Test {
       action_failed_run_loop_.QuitClosure();
 
   std::unique_ptr<OpenUrlActionPerformer> action_;
+  growth::CampaignsLogger logger_;
 };
 
 TEST_F(OpenUrlActionPerformerTest, TestValidOpenUrlParams) {
@@ -104,7 +106,7 @@ TEST_F(OpenUrlActionPerformerTest, TestValidOpenUrlParams) {
   auto value = base::JSONReader::Read(validOpenUrlParam);
   ASSERT_TRUE(value.has_value());
   action().Run(
-      /*campaign_id=*/1, &value->GetDict(),
+      /*campaign_id=*/1, /*group_id=*/std::nullopt, &value->GetDict(),
       base::BindOnce(
           &OpenUrlActionPerformerTest::RunOpenUrlActionPerformerCallback,
           base::Unretained(this)));
@@ -118,7 +120,7 @@ TEST_F(OpenUrlActionPerformerTest, TestInvalidOpenUrlParams) {
   auto value = base::JSONReader::Read(invalidOpenUrlParam);
   ASSERT_TRUE(value.has_value());
   action().Run(
-      /*campaign_id=*/1, &value->GetDict(),
+      /*campaign_id=*/1, /*group_id=*/std::nullopt, &value->GetDict(),
       base::BindOnce(
           &OpenUrlActionPerformerTest::RunOpenUrlActionPerformerCallback,
           base::Unretained(this)));

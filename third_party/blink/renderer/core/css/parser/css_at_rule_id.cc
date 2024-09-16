@@ -69,10 +69,7 @@ CSSAtRuleID CssAtRuleID(StringView name) {
     return CSSAtRuleID::kCSSAtRulePage;
   }
   if (EqualIgnoringASCIICase(name, "position-try")) {
-    if (RuntimeEnabledFeatures::CSSAnchorPositioningEnabled()) {
-      return CSSAtRuleID::kCSSAtRulePositionTry;
-    }
-    return CSSAtRuleID::kCSSAtRuleInvalid;
+    return CSSAtRuleID::kCSSAtRulePositionTry;
   }
   if (EqualIgnoringASCIICase(name, "property")) {
     return CSSAtRuleID::kCSSAtRuleProperty;
@@ -84,10 +81,7 @@ CSSAtRuleID CssAtRuleID(StringView name) {
     return CSSAtRuleID::kCSSAtRuleCounterStyle;
   }
   if (EqualIgnoringASCIICase(name, "scope")) {
-    if (RuntimeEnabledFeatures::CSSScopeEnabled()) {
-      return CSSAtRuleID::kCSSAtRuleScope;
-    }
-    return CSSAtRuleID::kCSSAtRuleInvalid;
+    return CSSAtRuleID::kCSSAtRuleScope;
   }
   if (EqualIgnoringASCIICase(name, "supports")) {
     return CSSAtRuleID::kCSSAtRuleSupports;
@@ -150,6 +144,12 @@ CSSAtRuleID CssAtRuleID(StringView name) {
   }
   if (EqualIgnoringASCIICase(name, "function")) {
     return CSSAtRuleID::kCSSAtRuleFunction;
+  }
+  if (EqualIgnoringASCIICase(name, "mixin")) {
+    return CSSAtRuleID::kCSSAtRuleMixin;
+  }
+  if (EqualIgnoringASCIICase(name, "apply")) {
+    return CSSAtRuleID::kCSSAtRuleApplyMixin;
   }
 
   return CSSAtRuleID::kCSSAtRuleInvalid;
@@ -241,8 +241,12 @@ StringView CssAtRuleIDToString(CSSAtRuleID id) {
       return "@right-bottom";
     case CSSAtRuleID::kCSSAtRuleFunction:
       return "@function";
+    case CSSAtRuleID::kCSSAtRuleMixin:
+      return "@mixin";
+    case CSSAtRuleID::kCSSAtRuleApplyMixin:
+      return "@apply";
     case CSSAtRuleID::kCSSAtRuleInvalid:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return "";
   };
 }
@@ -320,8 +324,11 @@ std::optional<WebFeature> AtRuleFeature(CSSAtRuleID rule_id) {
       return WebFeature::kCSSAtRuleWebkitKeyframes;
     case CSSAtRuleID::kCSSAtRuleFunction:
       return WebFeature::kCSSFunctions;
+    case CSSAtRuleID::kCSSAtRuleMixin:
+    case CSSAtRuleID::kCSSAtRuleApplyMixin:
+      return WebFeature::kCSSMixins;
     case CSSAtRuleID::kCSSAtRuleInvalid:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return std::nullopt;
   }
 }

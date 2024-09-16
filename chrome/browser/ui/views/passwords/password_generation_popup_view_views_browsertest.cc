@@ -15,6 +15,7 @@
 #include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "components/autofill/core/browser/ui/popup_open_enums.h"
 #include "components/password_manager/core/browser/features/password_features.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -38,11 +39,12 @@ class MockPasswordGenerationPopupController
   ~MockPasswordGenerationPopupController() override = default;
 
   // AutofillPopupViewDelegate:
-  MOCK_METHOD(void, Hide, (autofill::PopupHidingReason), (override));
+  MOCK_METHOD(void, Hide, (autofill::SuggestionHidingReason), (override));
   MOCK_METHOD(void, ViewDestroyed, (), (override));
   MOCK_METHOD(gfx::NativeView, container_view, (), (const override));
   MOCK_METHOD(content::WebContents*, GetWebContents, (), (const override));
   MOCK_METHOD(const gfx::RectF&, element_bounds, (), (const override));
+  MOCK_METHOD(autofill::PopupAnchorType, anchor_type, (), (const override));
   MOCK_METHOD(base::i18n::TextDirection,
               GetElementTextDirection,
               (),
@@ -52,13 +54,10 @@ class MockPasswordGenerationPopupController
   MOCK_METHOD(void, PasswordAccepted, (), (override));
   MOCK_METHOD(void, SetSelected, (), (override));
   MOCK_METHOD(void, SelectionCleared, (), (override));
-  MOCK_METHOD(void, EditPasswordClicked, (), (override));
-  MOCK_METHOD(void, EditPasswordHovered, (bool), (override));
   MOCK_METHOD(std::u16string, GetPrimaryAccountEmail, (), (override));
   MOCK_METHOD(bool, ShouldShowNudgePassword, (), (const override));
   MOCK_METHOD(GenerationUIState, state, (), (const override));
   MOCK_METHOD(bool, password_selected, (), (const override));
-  MOCK_METHOD(bool, edit_password_selected, (), (const override));
   MOCK_METHOD(bool, accept_button_selected, (), (const override));
   MOCK_METHOD(bool, cancel_button_selected, (), (const override));
   MOCK_METHOD(const std::u16string&, password, (), (const override));
@@ -81,9 +80,9 @@ class PasswordGenerationPopupViewBrowsertest
                                       MockPasswordGenerationPopupController> {
  public:
   PasswordGenerationPopupViewBrowsertest() {
-    // TODO(crbug.com/326949412): Remove once the experiment concludes.
+    // TODO(crbug.com/41492898): Clean up when launched.
     feature_list_.InitAndDisableFeature(
-        password_manager::features::kPasswordGenerationExperiment);
+        password_manager::features::kPasswordGenerationSoftNudge);
   }
   ~PasswordGenerationPopupViewBrowsertest() override = default;
 
@@ -171,36 +170,24 @@ IN_PROC_BROWSER_TEST_P(PasswordGenerationPopupViewBrowsertest,
   ShowAndVerifyUi();
 }
 
+// The test parameters define whether:
+// * dark mode is enabled
+// * browser language RTL is enabled
 INSTANTIATE_TEST_SUITE_P(All,
                          PasswordGenerationPopupViewBrowsertest,
                          Combine(Bool(), Bool()),
                          PasswordGenerationPopupViewBrowsertest::GetTestSuffix);
 
-using ExperimentParameterType = std::tuple<bool, bool, std::string>;
-
-// TODO(crbug.com/326949412): Remove once the experiments conclude.
-class PasswordGenerationPopupViewWithExperimentsBrowsertest
+// TODO(crbug.com/41492898): Remove once
+class PasswordGenerationPopupViewWithSoftNudgeBrowsertest
     : public autofill::PopupPixelTest<PasswordGenerationPopupViewViews,
-                                      MockPasswordGenerationPopupController,
-                                      ExperimentParameterType> {
+                                      MockPasswordGenerationPopupController> {
  public:
-  PasswordGenerationPopupViewWithExperimentsBrowsertest() {
-    feature_list_.InitWithFeaturesAndParameters(
-        /*enabled_features=*/{{password_manager::features::
-                                   kPasswordGenerationExperiment,
-                               {{"password_generation_variation",
-                                 std::get<2>(GetParam())}}}},
-        /*disabled_features=*/{});
+  PasswordGenerationPopupViewWithSoftNudgeBrowsertest() {
+    feature_list_.InitAndEnableFeature(
+        password_manager::features::kPasswordGenerationSoftNudge);
   }
-  ~PasswordGenerationPopupViewWithExperimentsBrowsertest() override = default;
-
-  static std::string GetExperimentTestSuffix(
-      const testing::TestParamInfo<ExperimentParameterType>& param_info) {
-    return base::StrCat(
-        {std::get<0>(param_info.param) ? "Dark" : "Light",
-         std::get<1>(param_info.param) ? "BrowserRTL" : "BrowserLTR",
-         std::get<2>(param_info.param)});
-  }
+  ~PasswordGenerationPopupViewWithSoftNudgeBrowsertest() override = default;
 
   void SetUpOnMainThread() override {
     PopupPixelTest::SetUpOnMainThread();
@@ -213,28 +200,14 @@ class PasswordGenerationPopupViewWithExperimentsBrowsertest
     ON_CALL(controller(), password).WillByDefault(ReturnRef(password_));
   }
 
-  void PrepareOfferGenerationState(const std::string& experiment) {
+  void PrepareOfferGenerationState() {
     ON_CALL(controller(), state)
         .WillByDefault(Return(PasswordGenerationPopupController::
                                   GenerationUIState::kOfferGeneration));
-
-    int message_id = IDS_PASSWORD_GENERATION_SUGGESTION_GPM;
-    if (experiment == "trusted_advice") {
-      message_id = IDS_PASSWORD_GENERATION_SUGGESTION_TRUSTED_ADVICE;
-    } else if (experiment == "safety_first") {
-      message_id = IDS_PASSWORD_GENERATION_SUGGESTION_SAFETY_FIRST;
-    } else if (experiment == "try_something_new") {
-      message_id = IDS_PASSWORD_GENERATION_SUGGESTION_TRY_SOMETHING_NEW;
-    } else if (experiment == "convenience") {
-      message_id = IDS_PASSWORD_GENERATION_SUGGESTION_CONVENIENCE;
-    }
     ON_CALL(controller(), SuggestedText)
-        .WillByDefault(Return(l10n_util::GetStringUTF16(message_id)));
-
-    if (experiment == "nudge_password") {
-      ON_CALL(controller(), ShouldShowNudgePassword)
-          .WillByDefault(Return(true));
-    }
+        .WillByDefault(Return(
+            l10n_util::GetStringUTF16(IDS_PASSWORD_GENERATION_SUGGESTION_GPM)));
+    ON_CALL(controller(), ShouldShowNudgePassword).WillByDefault(Return(true));
   }
 
   void ShowUi(const std::string& name) override {
@@ -257,23 +230,16 @@ class PasswordGenerationPopupViewWithExperimentsBrowsertest
   base::test::ScopedFeatureList feature_list_;
 };
 
-IN_PROC_BROWSER_TEST_P(PasswordGenerationPopupViewWithExperimentsBrowsertest,
+IN_PROC_BROWSER_TEST_P(PasswordGenerationPopupViewWithSoftNudgeBrowsertest,
                        OfferPasswordGeneration) {
-  PrepareOfferGenerationState(std::get<2>(GetParam()));
+  PrepareOfferGenerationState();
   ShowAndVerifyUi();
 }
 
+// The test parameters define whether:
+// * dark mode is enabled
+// * browser language RTL is enabled
 INSTANTIATE_TEST_SUITE_P(All,
-                         PasswordGenerationPopupViewWithExperimentsBrowsertest,
-                         Combine(Bool(),
-                                 Bool(),
-                                 Values("trusted_advice",
-                                        "safety_first",
-                                        "try_something_new",
-                                        "convenience",
-                                        "cross_device",
-                                        "edit_password",
-                                        "chunk_password",
-                                        "nudge_password")),
-                         PasswordGenerationPopupViewWithExperimentsBrowsertest::
-                             GetExperimentTestSuffix);
+                         PasswordGenerationPopupViewWithSoftNudgeBrowsertest,
+                         Combine(Bool(), Bool()),
+                         PasswordGenerationPopupViewBrowsertest::GetTestSuffix);

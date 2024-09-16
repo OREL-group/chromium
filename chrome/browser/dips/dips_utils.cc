@@ -22,15 +22,6 @@ base::FilePath GetDIPSFilePath(content::BrowserContext* context) {
   return context->GetPath().Append(kDIPSFilename);
 }
 
-ProfileSelections GetHumanProfileSelections() {
-  return ProfileSelections::Builder()
-      .WithRegular(ProfileSelection::kOwnInstance)
-      .WithGuest(ProfileSelection::kOffTheRecordOnly)
-      .WithSystem(ProfileSelection::kNone)
-      .WithAshInternals(ProfileSelection::kNone)
-      .Build();
-}
-
 bool UpdateTimestampRange(TimestampRange& range, base::Time time) {
   if (!range.has_value()) {
     range = {time, time};
@@ -208,4 +199,13 @@ OptionalBool IsAdTaggedCookieForHeuristics(
   }
   return ToOptionalBool(details.cookie_setting_overrides.Has(
       net::CookieSettingOverride::kSkipTPCDHeuristicsGrant));
+}
+
+bool HasCHIPS(const net::CookieAccessResultList& cookie_access_result_list) {
+  for (const auto& cookie_with_access_result : cookie_access_result_list) {
+    if (cookie_with_access_result.cookie.IsPartitioned()) {
+      return true;
+    }
+  }
+  return false;
 }

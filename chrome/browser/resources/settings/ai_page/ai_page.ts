@@ -2,13 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'chrome://resources/cr_elements/cr_collapse/cr_collapse.js';
 import '../controls/settings_toggle_button.js';
-import 'chrome://resources/polymer/v3_0/iron-collapse/iron-collapse.js';
+import '../settings_page/settings_animated_pages.js';
+import '../settings_page/settings_subpage.js';
+import './ai_tab_organization_subpage.js';
 
 import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {loadTimeData} from '../i18n_setup.js';
+import {routes} from '../route.js';
+import {Router} from '../router.js';
 
 import {getTemplate} from './ai_page.html.js';
 
@@ -29,6 +34,12 @@ export enum SettingsAiPageFeaturePrefName {
   WALLPAPER_SEARCH = 'optimization_guide.wallpaper_search_setting_state',
 }
 
+export interface SettingsAiPageElement {
+  $: {
+    historySearchRow: HTMLElement,
+  };
+}
+
 const SettingsAiPageElementBase = PrefsMixin(PolymerElement);
 
 export class SettingsAiPageElement extends SettingsAiPageElementBase {
@@ -47,9 +58,19 @@ export class SettingsAiPageElement extends SettingsAiPageElementBase {
         notify: true,
       },
 
+      enableAiSettingsPageRefresh_: {
+        type: Boolean,
+        value: () => loadTimeData.getBoolean('enableAiSettingsPageRefresh'),
+      },
+
       showComposeControl_: {
         type: Boolean,
         value: () => loadTimeData.getBoolean('showComposeControl'),
+      },
+
+      showHistorySearchControl_: {
+        type: Boolean,
+        value: () => loadTimeData.getBoolean('showHistorySearchControl'),
       },
 
       showTabOrganizationControl_: {
@@ -72,10 +93,25 @@ export class SettingsAiPageElement extends SettingsAiPageElementBase {
         value: () =>
             [FeatureOptInState.DISABLED, FeatureOptInState.NOT_INITIALIZED],
       },
+
+      focusConfig_: {
+        type: Object,
+        value() {
+          const map = new Map();
+
+          if (routes.AI_TAB_ORGANIZATION) {
+            map.set(routes.AI_TAB_ORGANIZATION.path, '#tabOrganizationRowV2');
+          }
+
+          return map;
+        },
+      },
     };
   }
 
+  private enableAiSettingsPageRefresh_: boolean;
   private showComposeControl_: boolean;
+  private showHistorySearchControl_: boolean;
   private showTabOrganizationControl_: boolean;
   private showWallpaperSearchControl_: boolean;
   private numericUncheckedValues_: FeatureOptInState[];
@@ -85,6 +121,11 @@ export class SettingsAiPageElement extends SettingsAiPageElementBase {
         FeatureOptInState.ENABLED;
   }
 
+  private shouldShowMainToggle_(): boolean {
+    return this.showComposeControl_ || this.showTabOrganizationControl_ ||
+        this.showWallpaperSearchControl_;
+  }
+
   private getTabOrganizationHrCssClass_(): string {
     return this.showComposeControl_ ? 'hr' : '';
   }
@@ -92,6 +133,16 @@ export class SettingsAiPageElement extends SettingsAiPageElementBase {
   private getWallpaperSearchHrCssClass_(): string {
     return this.showComposeControl_ || this.showTabOrganizationControl_ ? 'hr' :
                                                                           '';
+  }
+
+  private onHistorySearchRowClick_() {
+    const router = Router.getInstance();
+    router.navigateTo(router.getRoutes().HISTORY_SEARCH);
+  }
+
+  private onTabOrganizationRowClick_() {
+    const router = Router.getInstance();
+    router.navigateTo(router.getRoutes().AI_TAB_ORGANIZATION);
   }
 }
 

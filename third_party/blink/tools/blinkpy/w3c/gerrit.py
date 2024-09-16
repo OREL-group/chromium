@@ -8,7 +8,7 @@ import json
 import logging
 from datetime import datetime
 from requests.exceptions import HTTPError
-from typing import Iterator, List, Mapping, Tuple
+from typing import Iterator, List, Mapping, Optional, Tuple
 from urllib.parse import urlencode, urlsplit, urlunsplit, quote
 
 from blinkpy.common.host import Host
@@ -35,6 +35,7 @@ class OutputOption(enum.Flag):
     DETAILED_ACCOUNTS = enum.auto()
     MESSAGES = enum.auto()
     ALL_REVISIONS = enum.auto()
+    SKIP_DIFFSTAT = enum.auto()
 
     def __iter__(self) -> Iterator['OutputOption']:
         # TODO(crbug.com/40631540): Remove this handcrafted `__iter__` after
@@ -56,17 +57,21 @@ class GerritAPI:
                       | OutputOption.COMMIT_FOOTERS
                       | OutputOption.DETAILED_ACCOUNTS)
 
-    def __init__(self, host, user, token):
+    def __init__(self,
+                 host,
+                 user: Optional[str] = None,
+                 token: Optional[str] = None):
         self.host = host
         self.project_config = host.project_config
+        # Authentication is only needed for mutating CLs (e.g., commenting).
         self.user = user
         self.token = token
 
     @classmethod
     def from_credentials(cls, host: Host,
                          credentials: Mapping[str, str]) -> 'GerritAPI':
-        return cls(host, credentials['GERRIT_USER'],
-                   credentials['GERRIT_TOKEN'])
+        return cls(host, credentials.get('GERRIT_USER'),
+                   credentials.get('GERRIT_TOKEN'))
 
     def get(self,
             path: str,
@@ -77,7 +82,7 @@ class GerritAPI:
         url = urlunsplit(
             (URL_BASE.scheme, URL_BASE.netloc, path, query_str, ''))
         raw_data = self.host.web.get_binary(
-            url, return_none_on_404=return_none_on_404)
+            url, return_none_on_404=return_none_on_404, trace='b346392205')
         if raw:
             return raw_data
 
@@ -120,9 +125,13 @@ class GerritAPI:
         output_options: OutputOption = DEFAULT_OUTPUT,
     ) -> 'GerritCL':
         """Queries a commit information from Gerrit."""
-        path = (
-            f'/changes/{self.escaped_repo}~{self.project_config.gerrit_branch}'
-            f'~{change_id}')
+        # Gerrit can uniquely identify CLs by number (i.e., crrev.com/c/<n>) or
+        # by `Change-Id` commit footer (i.e., a hex string prepended by "I"):
+        # https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#change-id
+        change_id_parts = [self.escaped_repo, change_id]
+        if not change_id.isdigit():
+            change_id_parts.insert(1, self.project_config.gerrit_branch)
+        path = '/changes/' + '~'.join(change_id_parts)
         query_params = [('o', option.name) for option in output_options]
         try:
             cl_data = self.get(path, query_params, return_none_on_404=True)
@@ -130,7 +139,7 @@ class GerritAPI:
             raise GerritError('Timed out querying CL using Change-Id')
 
         if not cl_data:
-            raise GerritError('Cannot find Change-Id')
+            raise GerritNotFoundError('Cannot find Change-Id')
         cl = GerritCL(data=cl_data, api=self)
         return cl
 
@@ -160,15 +169,15 @@ class GerritAPI:
             raise GerritError('Timed out querying exportable open CLs.')
         return [GerritCL(data, self) for data in raw_cls]
 
-    def query_exportable_open_cls(
+    def query_exportable_cls(
         self,
-        limit: int = 500,
+        limit: int = 200,
         output_options: OutputOption = DEFAULT_OUTPUT,
     ) -> List['GerritCL']:
         query = ' '.join([
             f'project:"{self.project_config.gerrit_project}"',
             f'branch:{self.project_config.gerrit_branch}',
-            'is:open',
+            'is:submittable',
             '-is:wip',
         ])
         open_cls = self.query_cls(query, limit, output_options)
@@ -242,8 +251,8 @@ class GerritCL(object):
     def updated(self):
         # Timestamps are given in UTC and have the format "'yyyy-mm-dd hh:mm:ss.fffffffff'"
         # where "'ffffffffff'" represents nanoseconds.
-        return datetime.strptime(self._data['updated'][:-10],
-                                 '%Y-%m-%d %H:%M:%S')
+        return datetime.strptime(self._data["updated"][:-3] + " +0000",
+                                 "%Y-%m-%d %H:%M:%S.%f %z")
 
     @property
     def messages(self):
@@ -326,4 +335,9 @@ class GerritCL(object):
 
 class GerritError(Exception):
     """Raised when Gerrit returns a non-OK response or times out."""
+    pass
+
+
+class GerritNotFoundError(GerritError):
+    """Raised when Gerrit returns a resource not found response."""
     pass

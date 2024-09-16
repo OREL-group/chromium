@@ -17,14 +17,24 @@ namespace os_crypt {
 // These values are persisted to logs. Entries should not be renumbered and
 // numeric values should never be reused.
 enum class SupportLevel {
+  // kSupported is the only level where both decrypt and encrypt operations are
+  // fully supported.
   kSupported = 0,
+  // Not running system level means no cryptographic operations are available,
+  // and all calls will fail.
   kNotSystemLevel = 1,
+  // The following enum values indicate that app-bound encryption can be
+  // attempted, and decrypt operations may succeed, but encrypt operations
+  // should not be carried out as the system has indicated that the storage may
+  // not be fully reliable or disabled by policy.
   kNotLocalDisk = 2,
   kApiFailed = 3,
   kNotUsingDefaultUserDataDir = 4,
   kUserDataDirNotLocalDisk = 5,
   kDisabledByPolicy = 6,
-  kMaxValue = kDisabledByPolicy,
+  kDisabledByRoamingWindowsProfile = 7,
+  kDisabledByRoamingChromeProfile = 8,
+  kMaxValue = kDisabledByRoamingChromeProfile,
 };
 
 // Returns whether or not app-bound encryption is supported on the current

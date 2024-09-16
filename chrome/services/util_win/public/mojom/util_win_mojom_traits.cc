@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/services/util_win/public/mojom/util_win_mojom_traits.h"
 
 #include <utility>
@@ -36,7 +41,7 @@ chrome::mojom::SelectFileDialogType EnumTraits<
     case ui::SelectFileDialog::Type::SELECT_OPEN_MULTI_FILE:
       return chrome::mojom::SelectFileDialogType::kOpenMultiFile;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return chrome::mojom::SelectFileDialogType::kNone;
 }
 
@@ -68,7 +73,7 @@ bool EnumTraits<chrome::mojom::SelectFileDialogType,
       *output = ui::SelectFileDialog::Type::SELECT_OPEN_MULTI_FILE;
       return true;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return false;
 }
 
@@ -84,7 +89,7 @@ EnumTraits<chrome::mojom::CertificateType, CertificateInfo::Type>::ToMojom(
     case CertificateInfo::Type::CERTIFICATE_IN_CATALOG:
       return chrome::mojom::CertificateType::kCertificateInCatalog;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return chrome::mojom::CertificateType::kNoCertificate;
 }
 
@@ -100,7 +105,7 @@ EnumTraits<chrome::mojom::ShortcutOperation, ::base::win::ShortcutOperation>::
     case base::win::ShortcutOperation::kUpdateExisting:
       return chrome::mojom::ShortcutOperation::kUpdateExisting;
   }
-  DUMP_WILL_BE_NOTREACHED_NORETURN();
+  DUMP_WILL_BE_NOTREACHED();
   return chrome::mojom::ShortcutOperation::kCreateAlways;
 }
 
@@ -121,7 +126,7 @@ bool EnumTraits<chrome::mojom::ShortcutOperation,
       return true;
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return false;
 }
 
@@ -148,7 +153,7 @@ bool EnumTraits<chrome::mojom::CertificateType, CertificateInfo::Type>::
       return true;
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return false;
 }
 

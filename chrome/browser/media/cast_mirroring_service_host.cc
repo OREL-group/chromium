@@ -79,9 +79,11 @@ constexpr gfx::Size kMaxResolution(1920, 1080);
 // Command line arguments that should be passed to the mirroring service.
 static const char* kPassthroughSwitches[]{
     switches::kCastStreamingForceEnableHardwareH264,
-    switches::kCastStreamingForceDisableHardwareH264,
     switches::kCastStreamingForceEnableHardwareVp8,
-    switches::kCastStreamingForceDisableHardwareVp8};
+    switches::kCastStreamingForceEnableHardwareVp9,
+    switches::kCastStreamingForceDisableHardwareH264,
+    switches::kCastStreamingForceDisableHardwareVp8,
+    switches::kCastStreamingForceDisableHardwareVp9};
 
 mojo::SelfOwnedReceiverRef<media::mojom::VideoCaptureHost>
 CreateVideoCaptureHostOnIO(
@@ -237,7 +239,8 @@ void CastMirroringServiceHost::Start(
   ShowCaptureIndicator();
 }
 
-std::optional<int> CastMirroringServiceHost::GetTabSourceId() const {
+std::optional<content::FrameTreeNodeId>
+CastMirroringServiceHost::GetTabSourceId() const {
   if (web_contents()) {
     return web_contents()->GetPrimaryMainFrame()->GetFrameTreeNodeId();
   }
@@ -300,8 +303,7 @@ gfx::Size CastMirroringServiceHost::GetClampedResolution(
 
 void CastMirroringServiceHost::BindGpu(
     mojo::PendingReceiver<viz::mojom::Gpu> receiver) {
-  gpu_client_ =
-      content::CreateGpuClient(std::move(receiver), base::DoNothing());
+  gpu_client_ = content::CreateGpuClient(std::move(receiver));
 }
 
 void CastMirroringServiceHost::GetVideoCaptureHost(

@@ -23,16 +23,20 @@ import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
 import androidx.annotation.VisibleForTesting;
 import androidx.appcompat.app.AlertDialog;
+import androidx.appcompat.content.res.AppCompatResources;
 import androidx.preference.Preference;
 import androidx.preference.PreferenceCategory;
 import androidx.preference.PreferenceScreen;
 
 import org.chromium.base.Callback;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.base.supplier.ObservableSupplier;
+import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.components.browser_ui.settings.ChromeImageViewPreference;
 import org.chromium.components.browser_ui.settings.ChromeSwitchPreference;
 import org.chromium.components.browser_ui.settings.CustomDividerFragment;
 import org.chromium.components.browser_ui.settings.ManagedPreferencesUtils;
+import org.chromium.components.browser_ui.settings.SettingsPage;
 import org.chromium.components.browser_ui.settings.SettingsUtils;
 import org.chromium.components.browser_ui.settings.TextMessagePreference;
 import org.chromium.components.browsing_data.DeleteBrowsingDataAction;
@@ -50,7 +54,8 @@ import java.util.Map;
 
 /** Shows the permissions and other settings for a particular website. */
 public class SingleWebsiteSettings extends BaseSiteSettingsFragment
-        implements Preference.OnPreferenceChangeListener,
+        implements SettingsPage,
+                Preference.OnPreferenceChangeListener,
                 Preference.OnPreferenceClickListener,
                 CustomDividerFragment {
     /** Interface for a class that wants to receive updates from SingleWebsiteSettings. */
@@ -146,6 +151,8 @@ public class SingleWebsiteSettings extends BaseSiteSettingsFragment
                 return "camera_permission_list";
             case ContentSettingsType.GEOLOCATION:
                 return "location_access_list";
+            case ContentSettingsType.HAND_TRACKING:
+                return "hand_tracking_permission_list";
             case ContentSettingsType.MEDIASTREAM_MIC:
                 return "microphone_permission_list";
             case ContentSettingsType.MIDI_SYSEX:
@@ -211,6 +218,8 @@ public class SingleWebsiteSettings extends BaseSiteSettingsFragment
 
     // Maximum value used for the order of the permissions
     private int mMaxPermissionOrder;
+
+    private final ObservableSupplierImpl<String> mPageTitle = new ObservableSupplierImpl<>();
 
     private class SingleWebsitePermissionsPopulator
             implements WebsitePermissionsFetcher.WebsitePermissionsCallback {
@@ -290,9 +299,14 @@ public class SingleWebsiteSettings extends BaseSiteSettingsFragment
 
     @Override
     public void onActivityCreated(Bundle savedInstanceState) {
-        getActivity().setTitle(getContext().getString(R.string.prefs_site_settings));
+        mPageTitle.set(getContext().getString(R.string.prefs_site_settings));
         init();
         super.onActivityCreated(savedInstanceState);
+    }
+
+    @Override
+    public ObservableSupplier<String> getPageTitle() {
+        return mPageTitle;
     }
 
     @Override
@@ -432,6 +446,7 @@ public class SingleWebsiteSettings extends BaseSiteSettingsFragment
                     }
                 }
             }
+
             if (merged.getLocalStorageInfo() == null
                     && other.getLocalStorageInfo() != null
                     && origin.equals(other.getLocalStorageInfo().getOrigin())) {
@@ -447,10 +462,10 @@ public class SingleWebsiteSettings extends BaseSiteSettingsFragment
                     merged.addSharedDictionaryInfo(sharedDictionaryInfo);
                 }
             }
-            if (merged.getFPSCookieInfo() == null
-                    && other.getFPSCookieInfo() != null
+            if (merged.getRWSCookieInfo() == null
+                    && other.getRWSCookieInfo() != null
                     && domainAndRegistry.equals(other.getAddress().getDomainAndRegistry())) {
-                merged.setFPSCookieInfo(other.getFPSCookieInfo());
+                merged.setRWSCookieInfo(other.getRWSCookieInfo());
             }
             for (ChosenObjectInfo objectInfo : other.getChosenObjectInfo()) {
                 if (origin.equals(objectInfo.getOrigin())) {
@@ -468,6 +483,8 @@ public class SingleWebsiteSettings extends BaseSiteSettingsFragment
                     }
                 }
             }
+
+            merged.setDomainImportant(merged.isDomainImportant() || other.isDomainImportant());
 
             // TODO(crbug.com/40539464): Deal with this TODO colony.
             // TODO(mvanouwerkerk): Make the various info types share a common interface that
@@ -897,7 +914,9 @@ public class SingleWebsiteSettings extends BaseSiteSettingsFragment
                             return true;
                         });
                 if (info.getContentSettingType() == mHighlightedPermission) {
-                    preference.setBackgroundColor(mHighlightColor);
+                    preference.setBackgroundColor(
+                            AppCompatResources.getColorStateList(getContext(), mHighlightColor)
+                                    .getDefaultColor());
                 }
 
                 preference.setOrder(++mMaxPermissionOrder);
@@ -940,28 +959,29 @@ public class SingleWebsiteSettings extends BaseSiteSettingsFragment
         TextMessagePreference relatedSitesText = new TextMessagePreference(getContext(), null);
         boolean shouldRelatedSitesPrefBeVisible =
                 getSiteSettingsDelegate().isPrivacySandboxFirstPartySetsUIFeatureEnabled()
-                        && getSiteSettingsDelegate().isFirstPartySetsDataAccessEnabled()
-                        && mSite.getFPSCookieInfo() != null;
+                        && getSiteSettingsDelegate().isRelatedWebsiteSetsDataAccessEnabled()
+                        && mSite.getRWSCookieInfo() != null;
         relatedSitesHeader.setVisible(shouldRelatedSitesPrefBeVisible);
         relatedSitesText.setVisible(shouldRelatedSitesPrefBeVisible);
 
         if (shouldRelatedSitesPrefBeVisible) {
-            var fpsInfo = mSite.getFPSCookieInfo();
+            var rwsInfo = mSite.getRWSCookieInfo();
             relatedSitesText.setTitle(
                     getContext()
                             .getResources()
                             .getQuantityString(
-                                    R.plurals.allsites_fps_summary,
-                                    fpsInfo.getMembersCount(),
-                                    Integer.toString(fpsInfo.getMembersCount()),
-                                    fpsInfo.getOwner()));
+                                    R.plurals.allsites_rws_summary,
+                                    rwsInfo.getMembersCount(),
+                                    Integer.toString(rwsInfo.getMembersCount()),
+                                    rwsInfo.getOwner()));
             relatedSitesText.setManagedPreferenceDelegate(
                     new ForwardingManagedPreferenceDelegate(
                             getSiteSettingsDelegate().getManagedPreferenceDelegate()) {
                         @Override
                         public boolean isPreferenceControlledByPolicy(Preference preference) {
                             return getSiteSettingsDelegate()
-                                    .isPartOfManagedFirstPartySet(mSite.getAddress().getOrigin());
+                                    .isPartOfManagedRelatedWebsiteSet(
+                                            mSite.getAddress().getOrigin());
                         }
                     });
             relatedSitesHeader.addPreference(relatedSitesText);
@@ -969,7 +989,7 @@ public class SingleWebsiteSettings extends BaseSiteSettingsFragment
             if (getSiteSettingsDelegate().shouldShowPrivacySandboxRwsUi()) {
                 relatedSitesHeader.removeAll();
                 relatedSitesHeader.addPreference(relatedSitesText);
-                for (Website site : mSite.getFPSCookieInfo().getMembers()) {
+                for (Website site : mSite.getRWSCookieInfo().getMembers()) {
                     WebsiteRowPreference preference =
                             new RwsRowPreference(
                                     relatedSitesHeader.getContext(),
@@ -1021,6 +1041,9 @@ public class SingleWebsiteSettings extends BaseSiteSettingsFragment
         } else if (showWarningFor(SiteSettingsCategory.Type.NFC)) {
             return SiteSettingsCategory.createFromType(
                     browserContextHandle, SiteSettingsCategory.Type.NFC);
+        } else if (showWarningFor(SiteSettingsCategory.Type.HAND_TRACKING)) {
+            return SiteSettingsCategory.createFromType(
+                    browserContextHandle, SiteSettingsCategory.Type.HAND_TRACKING);
         } else if (showWarningFor(SiteSettingsCategory.Type.AUGMENTED_REALITY)) {
             return SiteSettingsCategory.createFromType(
                     browserContextHandle, SiteSettingsCategory.Type.AUGMENTED_REALITY);
@@ -1081,7 +1104,9 @@ public class SingleWebsiteSettings extends BaseSiteSettingsFragment
         @ContentSettingsType.EnumType
         int contentType = getContentSettingsTypeFromPreferenceKey(preference.getKey());
         if (contentType == mHighlightedPermission) {
-            switchPreference.setBackgroundColor(mHighlightColor);
+            switchPreference.setBackgroundColor(
+                    AppCompatResources.getColorStateList(getContext(), mHighlightColor)
+                            .getDefaultColor());
         }
     }
 

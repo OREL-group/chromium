@@ -17,10 +17,12 @@
 #include "components/omnibox/browser/mock_autocomplete_provider_client.h"
 #include "components/omnibox/browser/test_scheme_classifier.h"
 #include "components/omnibox/common/omnibox_features.h"
+#include "components/search_engines/search_engines_test_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/metrics_proto/omnibox_event.pb.h"
 
 namespace {
+#if BUILDFLAG(IS_ANDROID)
 std::unique_ptr<TemplateURLData> GenerateSimpleTemplateURLData(
     const std::string& keyword) {
   auto data = std::make_unique<TemplateURLData>();
@@ -29,6 +31,7 @@ std::unique_ptr<TemplateURLData> GenerateSimpleTemplateURLData(
   data->SetURL(std::string("https://") + keyword + "/q={searchTerms}");
   return data;
 }
+#endif
 
 using testing::_;
 
@@ -58,8 +61,8 @@ class ZeroSuggestVerbatimMatchProviderTest
   bool IsVerbatimMatchEligible() const;
   base::test::TaskEnvironment task_environment_{
       base::test::TaskEnvironment::MainThreadType::UI};
-  scoped_refptr<ZeroSuggestVerbatimMatchProvider> provider_;
   FakeAutocompleteProviderClient mock_client_;
+  scoped_refptr<ZeroSuggestVerbatimMatchProvider> provider_;
 };
 
 bool ZeroSuggestVerbatimMatchProviderTest::IsVerbatimMatchEligible() const {
@@ -211,12 +214,12 @@ TEST_P(ZeroSuggestVerbatimMatchProviderTest,
   // test. As a result, the test would validate what the mocks fill in.
 }
 
+#if !BUILDFLAG(IS_ANDROID)
 TEST_P(ZeroSuggestVerbatimMatchProviderTest,
        DoesNotAttemptToPopulateFillIntoEditWithFeatureDisabled) {
   base::test::ScopedFeatureList features;
-  features.InitAndDisableFeature(omnibox::kSearchReadyOmniboxAllowQueryEdit);
   // Clear the TemplateURLService. Observe crash, if we attempt to use it.
-  mock_client_.set_template_url_service(std::unique_ptr<TemplateURLService>());
+  mock_client_.set_template_url_service(nullptr);
 
   std::string url("https://www.wider.com/");
   AutocompleteInput input(std::u16string(),  // Note: empty input.
@@ -231,15 +234,12 @@ TEST_P(ZeroSuggestVerbatimMatchProviderTest,
     ASSERT_EQ(u"title", provider_->matches()[0].description);
   }
 }
+#endif
 
+#if BUILDFLAG(IS_ANDROID)
 TEST_P(ZeroSuggestVerbatimMatchProviderTest,
        NoFillIntoEditResolutionWithNoSearchEngines) {
   base::test::ScopedFeatureList features;
-  features.InitAndEnableFeature(omnibox::kSearchReadyOmniboxAllowQueryEdit);
-  // No TemplateURLServices to parse or resolve the URL.
-  mock_client_.set_template_url_service(
-      std::make_unique<TemplateURLService>(nullptr, 0));
-
   std::string url("https://www.search.com/q=abc");
   AutocompleteInput input(std::u16string(),  // Note: empty input.
                           GetParam(), TestSchemeClassifier());
@@ -258,13 +258,10 @@ TEST_P(ZeroSuggestVerbatimMatchProviderTest,
 TEST_P(ZeroSuggestVerbatimMatchProviderTest,
        UpdateFillIntoEditWhenUrlMatchesSearchResultsPage) {
   base::test::ScopedFeatureList features;
-  features.InitAndEnableFeature(omnibox::kSearchReadyOmniboxAllowQueryEdit);
 
   // Default TemplateURL to parse the URL.
   std::unique_ptr<TemplateURLData> engine =
       GenerateSimpleTemplateURLData("www.search.com");
-  mock_client_.set_template_url_service(
-      std::make_unique<TemplateURLService>(nullptr, 0));
   mock_client_.GetTemplateURLService()->ApplyDefaultSearchChangeForTesting(
       engine.get(), DefaultSearchManager::FROM_USER);
 
@@ -285,7 +282,6 @@ TEST_P(ZeroSuggestVerbatimMatchProviderTest,
 TEST_P(ZeroSuggestVerbatimMatchProviderTest,
        DontUpdateFillIntoEditWhenUrlMatchesNonDefaultSearchEngine) {
   base::test::ScopedFeatureList features;
-  features.InitAndEnableFeature(omnibox::kSearchReadyOmniboxAllowQueryEdit);
 
   // Default TemplateURL to parse the URL.
   std::unique_ptr<TemplateURLData> engine =
@@ -293,8 +289,10 @@ TEST_P(ZeroSuggestVerbatimMatchProviderTest,
   // Other search engines.
   TemplateURLService::Initializer other_engines[] = {
       {"non-default", "https://www.non-default.com/q=abc", "non-default"}};
-  mock_client_.set_template_url_service(std::make_unique<TemplateURLService>(
-      other_engines, std::size(other_engines)));
+  search_engines::SearchEnginesTestEnvironment test_environment(
+      {.template_url_service_initializer = other_engines});
+  mock_client_.set_template_url_service(
+      test_environment.template_url_service());
   mock_client_.GetTemplateURLService()->ApplyDefaultSearchChangeForTesting(
       engine.get(), DefaultSearchManager::FROM_USER);
 
@@ -311,7 +309,13 @@ TEST_P(ZeroSuggestVerbatimMatchProviderTest,
               provider_->matches()[0].fill_into_edit);
     ASSERT_EQ(u"title", provider_->matches()[0].description);
   }
+
+  // `mock_client_` points to the `TemplateURLService` found in
+  // `test_environment`, which is going out of scope here.
+  // Destroy it to avoid dangling pointers.
+  mock_client_.set_template_url_service(nullptr);
 }
+#endif
 
 TEST_P(ZeroSuggestVerbatimMatchProviderTest,
        MissingPageTitle_NoHistoryService) {

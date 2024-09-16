@@ -28,6 +28,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.params.ParameterAnnotations.UseMethodParameter;
 import org.chromium.base.test.params.ParameterAnnotations.UseRunnerDelegate;
 import org.chromium.base.test.params.ParameterProvider;
@@ -48,9 +49,8 @@ import org.chromium.chrome.test.ChromeJUnit4RunnerDelegate;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.R;
 import org.chromium.chrome.test.util.browser.LocationSettingsTestUtil;
-import org.chromium.components.browser_ui.modaldialog.ModalDialogTestUtils;
+import org.chromium.components.browser_ui.modaldialog.ModalDialogView;
 import org.chromium.content_public.browser.test.util.JavaScriptUtils;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.device.geolocation.LocationProviderOverrider;
 import org.chromium.device.geolocation.MockLocationProvider;
 import org.chromium.net.test.EmbeddedTestServer;
@@ -94,19 +94,18 @@ public class IncognitoPermissionLeakageTest {
         LocationSettingsTestUtil.setSystemLocationSettingEnabled(true);
         LocationProviderOverrider.setLocationProviderImpl(new MockLocationProvider());
 
-        ModalDialogTestUtils.overrideEnableButtonTapProtection(false);
+        ModalDialogView.disableButtonTapProtectionForTesting();
     }
 
     @After
     public void tearDown() {
-        ModalDialogTestUtils.overrideEnableButtonTapProtection(true);
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> IncognitoDataTestUtils.closeTabs(mChromeActivityTestRule));
     }
 
     private void requestLocationPermission(Tab tab) throws TimeoutException, ExecutionException {
         // If tab is frozen then getWebContents may return null
-        TestThreadUtils.runOnUiThreadBlocking(() -> tab.loadIfNeeded(TabLoadIfNeededCaller.OTHER));
+        ThreadUtils.runOnUiThreadBlocking(() -> tab.loadIfNeeded(TabLoadIfNeededCaller.OTHER));
         CriteriaHelper.pollUiThread(
                 () -> Criteria.checkThat(tab.getWebContents(), Matchers.notNullValue()));
         JavaScriptUtils.executeJavaScriptAndWaitForResult(
@@ -205,7 +204,6 @@ public class IncognitoPermissionLeakageTest {
     @Test
     @LargeTest
     @UseMethodParameter(TestParams.IncognitoToIncognito.class)
-    @DisabledTest(message = "crbug.com/1489541")
     public void testBlockPermissionDoNotLeakFromIncognitoToIncognito(
             String incognitoActivityType1, String incognitoActivityType2) throws Exception {
         ActivityType incognitoActivity1 = ActivityType.valueOf(incognitoActivityType1);

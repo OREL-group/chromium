@@ -29,22 +29,32 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/platform/fonts/shaping/harfbuzz_shaper.h"
 
 #include <hb.h>
 #include <unicode/uchar.h>
 #include <unicode/uscript.h>
+
 #include <algorithm>
 #include <hb-cplusplus.hh>
 #include <memory>
 #include <utility>
 
+#include "base/check_op.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/notreached.h"
 #include "build/build_config.h"
 #include "third_party/blink/renderer/platform/fonts/font.h"
 #include "third_party/blink/renderer/platform/fonts/font_description.h"
 #include "third_party/blink/renderer/platform/fonts/font_fallback_iterator.h"
+#include "third_party/blink/renderer/platform/fonts/font_fallback_priority.h"
+#include "third_party/blink/renderer/platform/fonts/font_variant_emoji.h"
 #include "third_party/blink/renderer/platform/fonts/opentype/open_type_caps_support.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/case_mapping_harfbuzz_buffer_filler.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/font_features.h"
@@ -53,6 +63,7 @@
 #include "third_party/blink/renderer/platform/fonts/shaping/shape_result_inline_headers.h"
 #include "third_party/blink/renderer/platform/fonts/small_caps_iterator.h"
 #include "third_party/blink/renderer/platform/fonts/utf16_text_iterator.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/text/text_break_iterator.h"
 #include "third_party/blink/renderer/platform/wtf/deque.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
@@ -118,7 +129,7 @@ void CheckShapeResultRange(const ShapeResult* result,
   log.Append(", result=");
   result->ToString(&log);
 
-  NOTREACHED() << log.ToString();
+  NOTREACHED_IN_MIGRATION() << log.ToString();
 }
 #endif
 
@@ -185,9 +196,30 @@ EmojiCorrectness ComputeBrokenEmojiPercentage(ShapeResult* shape_result,
   return {track_emoji.num_clusters, track_emoji.num_broken_clusters};
 }
 
+FontFallbackPriority ApplyFontVariantEmojiOnFallbackPriority(
+    FontFallbackPriority curr_font_fallback_priority,
+    FontVariantEmoji font_variant_emoji) {
+  // font-variant-emoji property should not override emoji variation selectors,
+  // see https://www.w3.org/TR/css-fonts-4/#font-variant-emoji-prop.
+  if (RuntimeEnabledFeatures::FontVariantEmojiEnabled() &&
+      !HasVSFallbackPriority(curr_font_fallback_priority)) {
+    if (font_variant_emoji == kEmojiVariantEmoji) {
+      return FontFallbackPriority::kEmojiEmoji;
+    }
+    if (font_variant_emoji == kTextVariantEmoji) {
+      return FontFallbackPriority::kText;
+    }
+  }
+  return curr_font_fallback_priority;
+}
+
 }  // namespace
 
-enum ReshapeQueueItemAction { kReshapeQueueNextFont, kReshapeQueueRange };
+enum ReshapeQueueItemAction {
+  kReshapeQueueNextFont,
+  kReshapeQueueRange,
+  kReshapeQueueReset
+};
 
 struct ReshapeQueueItem {
   DISALLOW_NEW();
@@ -257,7 +289,7 @@ namespace {
 // A port of hb_icu_script_to_script because harfbuzz on CrOS is built
 // without hb-icu. See http://crbug.com/356929
 static inline hb_script_t ICUScriptToHBScript(UScriptCode script) {
-  if (UNLIKELY(script == USCRIPT_INVALID_CODE)) {
+  if (script == USCRIPT_INVALID_CODE) [[unlikely]] {
     return HB_SCRIPT_INVALID;
   }
 
@@ -387,13 +419,63 @@ BufferSlice ComputeSlice(RangeContext* range_data,
   return result;
 }
 
+bool IsLastFontToShape(HarfBuzzShaper::FallbackFontStage fallback_stage) {
+  return fallback_stage == HarfBuzzShaper::kLast ||
+         fallback_stage == HarfBuzzShaper::kLastIgnoreVS;
+}
+
+bool StageNeedsQueueReset(HarfBuzzShaper::FallbackFontStage fallback_stage) {
+  return fallback_stage == HarfBuzzShaper::kLastWithVS;
+}
+
+HarfBuzzShaper::FallbackFontStage ChangeStageToLast(
+    HarfBuzzShaper::FallbackFontStage fallback_stage) {
+  switch (fallback_stage) {
+    case HarfBuzzShaper::kIntermediate:
+      return HarfBuzzShaper::kLast;
+    case HarfBuzzShaper::kIntermediateWithVS:
+      DCHECK(RuntimeEnabledFeatures::FontVariationSequencesEnabled());
+      return HarfBuzzShaper::kLastWithVS;
+    case HarfBuzzShaper::kIntermediateIgnoreVS:
+      DCHECK(RuntimeEnabledFeatures::FontVariationSequencesEnabled());
+      return HarfBuzzShaper::kLastIgnoreVS;
+    default:
+      return fallback_stage;
+  }
+}
+
+HarfBuzzShaper::FallbackFontStage ChangeStageToVS(
+    HarfBuzzShaper::FallbackFontStage fallback_stage) {
+  DCHECK(RuntimeEnabledFeatures::FontVariationSequencesEnabled());
+  switch (fallback_stage) {
+    case HarfBuzzShaper::kIntermediate:
+      return HarfBuzzShaper::kIntermediateWithVS;
+    case HarfBuzzShaper::kLast:
+      return HarfBuzzShaper::kLastWithVS;
+    case HarfBuzzShaper::kIntermediateWithVS:
+    case HarfBuzzShaper::kLastWithVS:
+      return fallback_stage;
+    default:
+      // We should not call this function on the second fallback pass.
+      NOTREACHED_IN_MIGRATION();
+  }
+  return fallback_stage;
+}
+
 void QueueCharacters(RangeContext* range_data,
                      const SimpleFontData* current_font,
                      bool& font_cycle_queued,
-                     const BufferSlice& slice) {
+                     const BufferSlice& slice,
+                     HarfBuzzShaper::FallbackFontStage font_stage) {
   if (!font_cycle_queued) {
-    range_data->reshape_queue.push_back(
-        ReshapeQueueItem(kReshapeQueueNextFont, 0, 0));
+    if (StageNeedsQueueReset(font_stage)) {
+      DCHECK(RuntimeEnabledFeatures::FontVariationSequencesEnabled());
+      range_data->reshape_queue.push_back(
+          ReshapeQueueItem(kReshapeQueueReset, 0, 0));
+    } else {
+      range_data->reshape_queue.push_back(
+          ReshapeQueueItem(kReshapeQueueNextFont, 0, 0));
+    }
     font_cycle_queued = true;
   }
 
@@ -427,6 +509,18 @@ CanvasRotationInVertical CanvasRotationForRun(
 }
 
 }  // namespace
+
+inline void HarfBuzzShaper::CheckTextLen(unsigned start,
+                                         unsigned length) const {
+  CHECK_LE(start, text_.length());
+  CHECK_LE(length, text_.length() - start);
+}
+
+inline void HarfBuzzShaper::CheckTextEnd(unsigned start, unsigned end) const {
+  CHECK_LE(start, end);
+  CHECK_LE(start, text_.length());
+  CHECK_LE(end, text_.length());
+}
 
 void HarfBuzzShaper::CommitGlyphs(RangeContext* range_data,
                                   const SimpleFontData* current_font,
@@ -472,7 +566,7 @@ void HarfBuzzShaper::CommitGlyphs(RangeContext* range_data,
       run_start_index = next_slice.start_character_index;
     }
   }
-  if (fallback_stage == kLast) {
+  if (IsLastFontToShape(fallback_stage)) {
     range_data->font->ReportNotDefGlyph();
   }
 }
@@ -484,7 +578,7 @@ void HarfBuzzShaper::ExtractShapeResults(
     const SimpleFontData* current_font,
     UScriptCode current_run_script,
     CanvasRotationInVertical canvas_rotation,
-    FallbackFontStage fallback_stage,
+    FallbackFontStage& fallback_stage,
     ShapeResult* shape_result) const {
   enum ClusterResult { kShaped, kNotDef, kUnknown };
   ClusterResult current_cluster_result = kUnknown;
@@ -517,13 +611,16 @@ void HarfBuzzShaper::ExtractShapeResults(
       // Glyph 0 must be assigned to a .notdef glyph.
       // https://docs.microsoft.com/en-us/typography/opentype/spec/recom#glyph-0-the-notdef-glyph
       glyph_result = kNotDef;
-    } else if (glyph_id == space_glyph && fallback_stage == kIntermediate &&
+    } else if (glyph_id == space_glyph && !IsLastFontToShape(fallback_stage) &&
                text_[current_cluster] == kIdeographicSpaceCharacter) {
       // HarfBuzz synthesizes U+3000 IDEOGRAPHIC SPACE using the space glyph.
       // This is not desired for run-splitting, applying features, and for
       // computing `line-height`. crbug.com/1193282
       // We revisit when HarfBuzz decides how to solve this more generally.
       // https://github.com/harfbuzz/harfbuzz/issues/2889
+      glyph_result = kNotDef;
+    } else if (glyph_id == kUnmatchedVSGlyphId) {
+      fallback_stage = ChangeStageToVS(fallback_stage);
       glyph_result = kNotDef;
     } else {
       glyph_result = kShaped;
@@ -543,8 +640,9 @@ void HarfBuzzShaper::ExtractShapeResults(
         // it means the previous ones were unshaped, so we queue them, unless
         // we're using the last resort font.
         if (current_cluster_result == kShaped &&
-            fallback_stage == kIntermediate) {
-          QueueCharacters(range_data, current_font, font_cycle_queued, slice);
+            !IsLastFontToShape(fallback_stage)) {
+          QueueCharacters(range_data, current_font, font_cycle_queued, slice,
+                          fallback_stage);
         } else {
           // If the most recent cluster is unshaped and there is a state
           // change, it means the previous one(s) were shaped, so we commit
@@ -573,7 +671,8 @@ void HarfBuzzShaper::ExtractShapeResults(
 
   // End of the run.
   if (current_cluster_result != previous_cluster_result &&
-      previous_cluster_result != kUnknown && fallback_stage == kIntermediate) {
+      previous_cluster_result != kUnknown &&
+      !IsLastFontToShape(fallback_stage)) {
     // The last cluster in the run still had shaping status different from
     // the cluster(s) before it, we need to submit one shaped and one
     // unshaped segment.
@@ -581,7 +680,8 @@ void HarfBuzzShaper::ExtractShapeResults(
       BufferSlice slice = ComputeSlice(
           range_data, current_queue_item, glyph_info, num_glyphs,
           last_change_glyph_index, previous_cluster_start_glyph_index);
-      QueueCharacters(range_data, current_font, font_cycle_queued, slice);
+      QueueCharacters(range_data, current_font, font_cycle_queued, slice,
+                      fallback_stage);
       slice =
           ComputeSlice(range_data, current_queue_item, glyph_info, num_glyphs,
                        previous_cluster_start_glyph_index, num_glyphs);
@@ -596,7 +696,8 @@ void HarfBuzzShaper::ExtractShapeResults(
       slice =
           ComputeSlice(range_data, current_queue_item, glyph_info, num_glyphs,
                        previous_cluster_start_glyph_index, num_glyphs);
-      QueueCharacters(range_data, current_font, font_cycle_queued, slice);
+      QueueCharacters(range_data, current_font, font_cycle_queued, slice,
+                      fallback_stage);
     }
   } else {
     // There hasn't been a state change for the last cluster, so we can just
@@ -604,8 +705,10 @@ void HarfBuzzShaper::ExtractShapeResults(
     BufferSlice slice =
         ComputeSlice(range_data, current_queue_item, glyph_info, num_glyphs,
                      last_change_glyph_index, num_glyphs);
-    if (current_cluster_result == kNotDef && fallback_stage == kIntermediate) {
-      QueueCharacters(range_data, current_font, font_cycle_queued, slice);
+    if (current_cluster_result == kNotDef &&
+        !IsLastFontToShape(fallback_stage)) {
+      QueueCharacters(range_data, current_font, font_cycle_queued, slice,
+                      fallback_stage);
     } else {
       CommitGlyphs(range_data, current_font, current_run_script,
                    canvas_rotation, fallback_stage, slice, shape_result);
@@ -616,7 +719,7 @@ void HarfBuzzShaper::ExtractShapeResults(
 bool HarfBuzzShaper::CollectFallbackHintChars(
     const Deque<ReshapeQueueItem>& reshape_queue,
     bool needs_hint_list,
-    Vector<UChar32>& hint) const {
+    HintCharList& hint) const {
   if (reshape_queue.empty()) {
     return false;
   }
@@ -630,18 +733,18 @@ bool HarfBuzzShaper::CollectFallbackHintChars(
       break;
     }
 
-    CHECK_LE((it->start_index_ + it->num_characters_), text_.length());
+    CheckTextLen(it->start_index_, it->num_characters_);
     if (text_.Is8Bit()) {
       for (unsigned i = 0; i < it->num_characters_; i++) {
-        hint.push_back(text_[it->start_index_ + i]);
+        const UChar hint_char = text_[it->start_index_ + i];
+        hint.push_back(hint_char);
         num_chars_added++;
         // Determine if we can take a shortcut and not fill the hint list
         // further: We can do that if we do not need a hint list, and we have
         // managed to find a character with a definite script since
         // FontFallbackIterator needs a character with a determined script to
         // perform meaningful system fallback.
-        if (!needs_hint_list &&
-            Character::HasDefiniteScript(text_[it->start_index_ + i])) {
+        if (!needs_hint_list && Character::HasDefiniteScript(hint_char)) {
           return true;
         }
       }
@@ -783,7 +886,8 @@ void HarfBuzzShaper::ShapeSegment(
   OpenTypeCapsSupport caps_support;
 
   FontFallbackIterator fallback_iterator(
-      font->CreateFontFallbackIterator(segment.font_fallback_priority));
+      font->CreateFontFallbackIterator(ApplyFontVariantEmojiOnFallbackPriority(
+          segment.font_fallback_priority, font_description.VariantEmoji())));
 
   range_data->reshape_queue.push_back(
       ReshapeQueueItem(kReshapeQueueNextFont, 0, 0));
@@ -791,7 +895,7 @@ void HarfBuzzShaper::ShapeSegment(
       kReshapeQueueRange, segment.start, segment.end - segment.start));
 
   bool font_cycle_queued = false;
-  Vector<UChar32> fallback_chars_hint;
+  HintCharList fallback_chars_hint;
   // Reserve sufficient capacity to avoid multiple reallocations, only when a
   // full hint list is needed.
   if (fallback_iterator.NeedsHintList()) {
@@ -800,10 +904,33 @@ void HarfBuzzShaper::ShapeSegment(
   }
   FontDataForRangeSet* current_font_data_for_range_set = nullptr;
   FallbackFontStage fallback_stage = kIntermediate;
+  // Variation selector mode should be always set to default at the
+  // beginning of the segment shaping run.
+  DCHECK(HarfBuzzFace::GetVariationSelectorMode() ==
+         kUseSpecifiedVariationSelector);
+  if (RuntimeEnabledFeatures::FontVariantEmojiEnabled() &&
+      font_description.VariantEmoji() != kNormalVariantEmoji) {
+    HarfBuzzFace::SetVariationSelectorMode(
+        GetVariationSelectorModeFromFontVariantEmoji(
+            font_description.VariantEmoji()));
+  }
   while (!range_data->reshape_queue.empty()) {
     ReshapeQueueItem current_queue_item = range_data->reshape_queue.TakeFirst();
 
-    if (current_queue_item.action_ == kReshapeQueueNextFont) {
+    if (current_queue_item.action_ != kReshapeQueueRange) {
+      if (current_queue_item.action_ == kReshapeQueueReset) {
+        // We reached last font in the list, some of the variation sequences
+        // are not shaped yet and there is a fonts in the list that has glyphs
+        // for the base codepoint of unshaped variation sequences, so we need to
+        // restart the fallback queue and set the variation selector mode to
+        // `kIgnoreVariationSelector`.
+        DCHECK(RuntimeEnabledFeatures::FontVariationSequencesEnabled());
+        DCHECK_EQ(fallback_stage, kLastWithVS);
+        fallback_iterator.Reset();
+        fallback_stage = kIntermediateIgnoreVS;
+        HarfBuzzFace::SetVariationSelectorMode(kIgnoreVariationSelector);
+      }
+
       if (!CollectFallbackHintChars(range_data->reshape_queue,
                                     fallback_iterator.NeedsHintList(),
                                     fallback_chars_hint)) {
@@ -824,7 +951,7 @@ void HarfBuzzShaper::ShapeSegment(
     }
 
     if (!fallback_iterator.HasNext()) {
-      fallback_stage = kLast;
+      fallback_stage = ChangeStageToLast(fallback_stage);
     }
 
     const SimpleFontData* font_data =
@@ -856,12 +983,13 @@ void HarfBuzzShaper::ShapeSegment(
 
     // Clamp the start and end offsets of the queue item to the offsets
     // representing the shaping window.
-    unsigned shape_start =
+    const unsigned shape_start =
         std::max(range_data->start, current_queue_item.start_index_);
-    unsigned shape_end =
+    const unsigned shape_end =
         std::min(range_data->end, current_queue_item.start_index_ +
                                       current_queue_item.num_characters_);
     DCHECK_GT(shape_end, shape_start);
+    CheckTextEnd(shape_start, shape_end);
 
     CaseMapIntend case_map_intend = CaseMapIntend::kKeepSameCase;
     if (needs_caps_handling) {
@@ -905,14 +1033,25 @@ void HarfBuzzShaper::ShapeSegment(
                         adjusted_font, segment.script, canvas_rotation,
                         fallback_stage, result);
 
-    if (UNLIKELY(!han_kerning.UnsafeToBreakBefore().empty())) {
+    if (!han_kerning.UnsafeToBreakBefore().empty()) [[unlikely]] {
       result->AddUnsafeToBreak(han_kerning.UnsafeToBreakBefore());
     }
 
     hb_buffer_reset(range_data->buffer);
   }
 
-  if (segment.font_fallback_priority == FontFallbackPriority::kEmojiEmoji) {
+  // Ignore variation selectors flag should be only changed when the
+  // FontVariationSequences runtime flag is enabled.
+  DCHECK(
+      RuntimeEnabledFeatures::FontVariationSequencesEnabled() ||
+      !ShouldIgnoreVariationSelector(HarfBuzzFace::GetVariationSelectorMode()));
+
+  if (RuntimeEnabledFeatures::FontVariationSequencesEnabled()) {
+    // Set variation selector mode to the default state.
+    HarfBuzzFace::SetVariationSelectorMode(kUseSpecifiedVariationSelector);
+  }
+
+  if (IsEmojiPresentationEmoji(segment.font_fallback_priority)) {
     EmojiCorrectness emoji_correctness =
         ComputeBrokenEmojiPercentage(result, segment.start, segment.end);
     if (emoji_metrics_reporter_for_testing_) {

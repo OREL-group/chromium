@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/browser_commands.h"
 
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -36,7 +37,7 @@
 #include "chrome/browser/dom_distiller/tab_utils.h"
 #include "chrome/browser/download/download_prefs.h"
 #include "chrome/browser/favicon/favicon_utils.h"
-#include "chrome/browser/feed/web_feed_ui_util.h"
+#include "chrome/browser/feedback/show_feedback_page.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/media/router/media_router_feature.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
@@ -72,12 +73,14 @@
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/ui/chrome_pages.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
 #include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
 #include "chrome/browser/ui/find_bar/find_bar.h"
 #include "chrome/browser/ui/find_bar/find_bar_controller.h"
 #include "chrome/browser/ui/intent_picker_tab_helper.h"
+#include "chrome/browser/ui/lens/lens_overlay_controller.h"
+#include "chrome/browser/ui/lens/lens_overlay_invocation_source.h"
 #include "chrome/browser/ui/location_bar/location_bar.h"
 #include "chrome/browser/ui/passwords/manage_passwords_ui_controller.h"
 #include "chrome/browser/ui/qrcode_generator/qrcode_generator_bubble_controller.h"
@@ -94,6 +97,7 @@
 #include "chrome/browser/ui/tabs/organization/tab_organization_session.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_keyed_service.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_service_factory.h"
+#include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
 #include "chrome/browser/ui/tabs/tab_enums.h"
 #include "chrome/browser/ui/tabs/tab_group.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
@@ -102,6 +106,7 @@
 #include "chrome/browser/ui/web_applications/app_browser_controller.h"
 #include "chrome/browser/ui/web_applications/web_app_launch_utils.h"
 #include "chrome/browser/ui/web_applications/web_app_tabbed_utils.h"
+#include "chrome/browser/ui/webui/commerce/product_specifications_disclosure_dialog.h"
 #include "chrome/browser/upgrade_detector/upgrade_detector.h"
 #include "chrome/browser/web_applications/web_app_constants.h"
 #include "chrome/browser/web_applications/web_app_helpers.h"
@@ -117,6 +122,7 @@
 #include "components/bookmarks/common/bookmark_pref_names.h"
 #include "components/browsing_data/content/browsing_data_helper.h"
 #include "components/commerce/core/commerce_utils.h"
+#include "components/commerce/core/pref_names.h"
 #include "components/content_settings/browser/page_specific_content_settings.h"
 #include "components/content_settings/core/browser/cookie_settings.h"
 #include "components/content_settings/core/common/content_settings.h"
@@ -129,6 +135,7 @@
 #include "components/find_in_page/find_types.h"
 #include "components/google/core/common/google_util.h"
 #include "components/lens/buildflags.h"
+#include "components/lens/lens_features.h"
 #include "components/media_router/browser/media_router_dialog_controller.h"  // nogncheck
 #include "components/media_router/browser/media_router_metrics.h"
 #include "components/omnibox/browser/omnibox_prefs.h"
@@ -137,6 +144,7 @@
 #include "components/reading_list/core/reading_list_entry.h"
 #include "components/reading_list/core/reading_list_model.h"
 #include "components/reading_list/core/reading_list_pref_names.h"
+#include "components/saved_tab_groups/tab_group_sync_service.h"
 #include "components/services/app_service/public/cpp/app_launch_util.h"
 #include "components/sessions/core/live_tab_context.h"
 #include "components/sessions/core/tab_restore_service.h"
@@ -175,6 +183,7 @@
 #include "ui/base/models/list_selection_model.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/events/keycodes/keyboard_codes.h"
+#include "ui/webui/resources/cr_components/commerce/shopping_service.mojom.h"
 #include "url/gurl.h"
 #include "url/url_constants.h"
 
@@ -207,14 +216,13 @@
 #include "components/rlz/rlz_tracker.h"  // nogncheck
 #endif
 
-#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
-#include "chrome/browser/accessibility/ax_screen_ai_annotator.h"
-#include "chrome/browser/accessibility/ax_screen_ai_annotator_factory.h"
-#endif
-
 #if BUILDFLAG(IS_CHROMEOS_LACROS)
 #include "chromeos/crosapi/mojom/task_manager.mojom.h"
 #include "chromeos/lacros/lacros_service.h"
+#endif
+
+#if BUILDFLAG(IS_CHROMEOS)
+#include "chrome/browser/chromeos/printing/print_preview/print_view_manager_common.h"
 #endif
 
 #if !BUILDFLAG(IS_CHROMEOS)
@@ -225,6 +233,12 @@
 #include "chrome/browser/lens/region_search/lens_region_search_controller.h"
 #include "chrome/browser/lens/region_search/lens_region_search_helper.h"
 #include "components/lens/lens_features.h"
+#endif
+
+#if !BUILDFLAG(IS_ANDROID)
+#include "chrome/browser/ui/toasts/api/toast_id.h"
+#include "chrome/browser/ui/toasts/toast_controller.h"
+#include "chrome/browser/ui/toasts/toast_features.h"
 #endif
 
 namespace {
@@ -429,14 +443,30 @@ void RecordReloadWithCookieBlocking(const Browser* browser,
 void ReloadInternal(Browser* browser,
                     WindowOpenDisposition disposition,
                     bool bypass_cache) {
-  const WebContents* active_contents =
+  const WebContents* const active_contents =
       browser->tab_strip_model()->GetActiveWebContents();
-  const auto& selected_indices =
-      browser->tab_strip_model()->selection_model().selected_indices();
-  for (int index : selected_indices) {
-    WebContents* selected_tab =
-        browser->tab_strip_model()->GetWebContentsAt(index);
-    WebContents* new_tab =
+
+  // Reloading a tab may change the selection (see crbug.com/339061099), so take
+  // a defensive copy into a more stable form before we begin. We take
+  // WebContents* so we can follow the tabs as they shift within the same
+  // tabstrip (e.g. if `disposition` is NEW_BACKGROUND_TAB).
+  std::vector<WebContents*> selected_tabs;
+  for (const int selected_index :
+       browser->tab_strip_model()->selection_model().selected_indices()) {
+    selected_tabs.push_back(
+        browser->tab_strip_model()->GetWebContentsAt(selected_index));
+  }
+
+  for (WebContents* const selected_tab : selected_tabs) {
+    // Skip this tab if it is no longer part of this tabstrip. N.B. we do this
+    // instead of using WeakPtr<WebContents> because we do not want to reload
+    // tabs that move to another browser.
+    if (browser->tab_strip_model()->GetIndexOfWebContents(selected_tab) ==
+        TabStripModel::kNoTab) {
+      continue;
+    }
+
+    WebContents* const new_tab =
         GetTabAndRevertIfNecessaryHelper(browser, disposition, selected_tab);
 
     // If the selected_tab is the activated page, give the focus to it, as this
@@ -449,7 +479,7 @@ void ReloadInternal(Browser* browser,
     // User reloads is a possible breakage indicator from blocking 3P cookies.
     RecordReloadWithCookieBlocking(browser, selected_tab);
 
-    DevToolsWindow* devtools =
+    DevToolsWindow* const devtools =
         DevToolsWindow::GetInstanceForInspectedWebContents(new_tab);
     constexpr content::ReloadType kBypassingType =
         content::ReloadType::BYPASSING_CACHE;
@@ -592,6 +622,12 @@ Browser* OpenEmptyWindow(Profile* profile,
       Browser::CreationStatus::kOk) {
     return nullptr;
   }
+
+  // Don't create a new window when the profile is shutting down.
+  if (profile->ShutdownStarted()) {
+    return nullptr;
+  }
+
   Browser::CreateParams params =
       Browser::CreateParams(Browser::TYPE_NORMAL, profile, true);
   params.should_trigger_session_restore = should_trigger_session_restore;
@@ -819,7 +855,7 @@ void Home(Browser* browser, WindowOpenDisposition disposition) {
 
 base::WeakPtr<content::NavigationHandle> OpenCurrentURL(Browser* browser) {
   base::RecordAction(UserMetricsAction("LoadURL"));
-  // TODO(https://crbug.com/1294004): Eliminate extra checks once source of
+  // TODO(crbug.com/40820294): Eliminate extra checks once source of
   //  bad pointer dereference is identified. See also TODO comment below.
   CHECK(browser);
   BrowserWindow* window = browser->window();
@@ -858,7 +894,7 @@ base::WeakPtr<content::NavigationHandle> OpenCurrentURL(Browser* browser) {
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   DCHECK(extensions::ExtensionSystem::Get(browser->profile())
              ->extension_service());
-  // TODO(https://crbug.com/1294004): Eliminate extra checks once source of
+  // TODO(crbug.com/40820294): Eliminate extra checks once source of
   //  bad pointer dereference is identified. See also TODO comment above.
   extensions::ExtensionRegistry* extension_registry =
       extensions::ExtensionRegistry::Get(browser->profile());
@@ -1059,6 +1095,20 @@ void MoveActiveTabToNewWindow(Browser* browser) {
   MoveTabsToNewWindow(browser,
                       std::vector<int>(selection.begin(), selection.end()));
 }
+
+void ToggleCompactMode(Browser* browser) {
+  const bool current_pref =
+      browser->profile()->GetPrefs()->GetBoolean(prefs::kCompactModeEnabled);
+  browser->profile()->GetPrefs()->SetBoolean(prefs::kCompactModeEnabled,
+                                             !current_pref);
+}
+
+bool ShouldUseCompactMode(Profile* profile) {
+  CHECK(profile);
+  return base::FeatureList::IsEnabled(features::kCompactMode) &&
+         profile->GetPrefs()->GetBoolean(prefs::kCompactModeEnabled);
+}
+
 bool CanMoveTabsToNewWindow(Browser* browser,
                             const std::vector<int>& tab_indices) {
   if (browser->is_type_app()) {
@@ -1091,35 +1141,25 @@ void MoveTabsToNewWindow(Browser* browser,
         Browser::Create(Browser::CreateParams(browser->profile(), true));
   }
 
+  tab_groups::TabGroupSyncService* tab_group_service =
+      tab_groups::SavedTabGroupUtils::GetServiceForProfile(browser->profile());
+  std::unique_ptr<tab_groups::ScopedLocalObservationPauser> observation_pauser;
+
+  tab_groups::TabGroupVisualData visual_data;
+
   if (group.has_value()) {
-    tab_groups::SavedTabGroupKeyedService* const service =
-        tab_groups::SavedTabGroupServiceFactory::GetForProfile(
-            browser->profile());
-    if (service && service->model()->Contains(group.value())) {
-      // If the group we are looking to move is saved:
-      // 1) Stop listening to changes on it
-      // 2) Close the group in the browser
-      // 3) Open the group in a new browser and link it to the saved guid.
-      const base::Uuid& saved_guid =
-          service->model()->Get(group.value())->saved_guid();
-
-      service->DisconnectLocalTabGroup(group.value());
-      browser->tab_strip_model()->CloseAllTabsInGroup(group.value());
-      service->OpenSavedTabGroupInBrowser(new_browser, saved_guid);
-      return;
-    }
-
     const tab_groups::TabGroupVisualData* old_visual_data =
         browser->tab_strip_model()
             ->group_model()
             ->GetTabGroup(group.value())
             ->visual_data();
-    tab_groups::TabGroupVisualData new_visual_data(old_visual_data->title(),
-                                                   old_visual_data->color(),
-                                                   false /* is_collapsed */);
 
-    new_browser->tab_strip_model()->group_model()->AddTabGroup(group.value(),
-                                                               new_visual_data);
+    visual_data = tab_groups::TabGroupVisualData(old_visual_data->title(),
+                                                 old_visual_data->color(),
+                                                 false /* is_collapsed */);
+    if (tab_group_service && tab_group_service->GetGroup(group.value())) {
+      observation_pauser = tab_group_service->CreateScopedLocalObserverPauser();
+    }
   }
 
   int indices_size = tab_indices.size();
@@ -1130,8 +1170,6 @@ void MoveTabsToNewWindow(Browser* browser,
     bool pinned = browser->tab_strip_model()->IsTabPinned(adjusted_index);
     std::unique_ptr<tabs::TabModel> tab_model =
         browser->tab_strip_model()->DetachTabAtForInsertion(adjusted_index);
-    std::unique_ptr<content::WebContents> contents_move =
-        tabs::TabModel::DestroyAndTakeWebContents(std::move(tab_model));
 
     int add_types = pinned ? AddTabTypes::ADD_PINNED : 0;
     // The last tab made active takes precedence, so activate the last active
@@ -1141,10 +1179,23 @@ void MoveTabsToNewWindow(Browser* browser,
       add_types = add_types | AddTabTypes::ADD_ACTIVE;
     }
 
-    new_browser->tab_strip_model()->AddWebContents(std::move(contents_move), -1,
-                                                   ui::PAGE_TRANSITION_TYPED,
-                                                   add_types, group);
+    new_browser->tab_strip_model()->AddTab(std::move(tab_model), -1,
+                                           ui::PAGE_TRANSITION_TYPED, add_types,
+                                           std::nullopt);
   }
+
+  // Add all the tabs in the new browser to the group if it belonged in a group.
+  if (group.has_value()) {
+    std::vector<int> indices(new_browser->tab_strip_model()->GetTabCount());
+    std::iota(indices.begin(), indices.end(), 0);
+    new_browser->tab_strip_model()->AddToNewGroup(indices, group.value(),
+                                                  visual_data);
+
+    if (observation_pauser) {
+      observation_pauser.reset();
+    }
+  }
+
   new_browser->window()->Show();
 }
 
@@ -1212,12 +1263,10 @@ void MoveTabsToExistingWindow(Browser* source,
     bool pinned = source->tab_strip_model()->IsTabPinned(adjusted_index);
     std::unique_ptr<tabs::TabModel> tab_model =
         source->tab_strip_model()->DetachTabAtForInsertion(adjusted_index);
-    std::unique_ptr<content::WebContents> contents_move =
-        tabs::TabModel::DestroyAndTakeWebContents(std::move(tab_model));
     int add_types =
         AddTabTypes::ADD_ACTIVE | (pinned ? AddTabTypes::ADD_PINNED : 0);
-    target->tab_strip_model()->AddWebContents(
-        std::move(contents_move), -1, ui::PAGE_TRANSITION_TYPED, add_types);
+    target->tab_strip_model()->AddTab(std::move(tab_model), -1,
+                                      ui::PAGE_TRANSITION_TYPED, add_types);
   }
   target->window()->Show();
 }
@@ -1287,11 +1336,20 @@ bool HasKeyboardFocusedTab(const Browser* browser) {
 void ConvertPopupToTabbedBrowser(Browser* browser) {
   base::RecordAction(UserMetricsAction("ShowAsTab"));
   TabStripModel* tab_strip = browser->tab_strip_model();
+  // If this popup is the last browser object, removing it from the browser-list
+  // will trigger OnShutdownStarting for Window close. Create the new browser
+  // object first, before removing the existing object from the browser-list in
+  // order to avoid incorrectly triggering a shutdown.
+  Browser* b = Browser::Create(Browser::CreateParams(browser->profile(), true));
   std::unique_ptr<tabs::TabModel> tab_model =
       tab_strip->DetachTabAtForInsertion(tab_strip->active_index());
+  // This method moves a WebContents from a non-normal browser window to a
+  // normal browser window. We cannot move the Tab over directly since TabModel
+  // enforces the requirement that it cannot move between window types.
+  // https://crbug.com/334281979): Non-normal browser windows should not have a
+  // tab to begin with.
   std::unique_ptr<content::WebContents> contents_move =
       tabs::TabModel::DestroyAndTakeWebContents(std::move(tab_model));
-  Browser* b = Browser::Create(Browser::CreateParams(browser->profile(), true));
 
   // This method moves a WebContents from a non-normal browser window to a
   // normal browser window. We cannot move the Tab over directly since TabModel
@@ -1426,6 +1484,23 @@ bool MoveTabToReadLater(Browser* browser, content::WebContents* web_contents) {
   base::UmaHistogramEnumeration(
       "ReadingList.BookmarkBarState.OnEveryAddToReadingList",
       browser->bookmark_bar_state());
+#if !BUILDFLAG(IS_ANDROID)
+  if (toast_features::IsEnabled(toast_features::kReadingListToast)) {
+    // Don't show the reading list toast if the side panel is visible.
+    std::optional<SidePanelEntry::Id> id =
+        browser->GetFeatures().side_panel_ui()->GetCurrentEntryId();
+    if (id.has_value() && id.value() == SidePanelEntryId::kReadingList) {
+      return true;
+    }
+
+    ToastController* const toast_controller =
+        browser->GetFeatures().toast_controller();
+    if (toast_controller) {
+      toast_controller->MaybeShowToast(
+          ToastParams(ToastId::kAddedToReadingList));
+    }
+  }
+#endif
   return true;
 }
 
@@ -1508,7 +1583,7 @@ void SaveAutofillAddress(Browser* browser) {
       browser->tab_strip_model()->GetActiveWebContents();
   autofill::AddressBubblesController* controller =
       autofill::AddressBubblesController::FromWebContents(web_contents);
-  controller->OnPageActionIconClicked();
+  controller->OnIconClicked();
 }
 
 void ShowVirtualCardManualFallbackBubble(Browser* browser) {
@@ -1538,6 +1613,7 @@ void StartTabOrganizationRequest(Browser* browser) {
       TabOrganizationServiceFactory::GetForProfile(browser->profile());
   UMA_HISTOGRAM_BOOLEAN("Tab.Organization.AllEntrypoints.Clicked", true);
   UMA_HISTOGRAM_BOOLEAN("Tab.Organization.ThreeDotMenu.Clicked", true);
+  browser->window()->NotifyPromoFeatureUsed(features::kTabOrganization);
 
   service->RestartSessionAndShowUI(browser,
                                    TabOrganizationEntryPoint::kThreeDotMenu);
@@ -1659,7 +1735,7 @@ void SavePage(Browser* browser) {
     base::RecordAction(UserMetricsAction("PDF.SavePage"));
 #if BUILDFLAG(ENABLE_PDF)
     // The PDF viewer may handle the event by itself.
-    if (base::FeatureList::IsEnabled(chrome_pdf::features::kPdfOopif) &&
+    if (chrome_pdf::features::IsOopifPdfEnabled() &&
         pdf_extension_util::MaybeDispatchSaveEvent(
             current_tab->GetPrimaryMainFrame())) {
       return;
@@ -1689,6 +1765,23 @@ bool CanSavePage(const Browser* browser) {
 void Print(Browser* browser) {
 #if BUILDFLAG(ENABLE_PRINTING)
   auto* web_contents = browser->tab_strip_model()->GetActiveWebContents();
+
+  // Launch ChromeOS print preview only if in a ChromeOS build and
+  // `kPrintPreviewCrosPrimary` enabled. Otherwise use browser print preview.
+#if BUILDFLAG(IS_CHROMEOS)
+  if (base::FeatureList::IsEnabled(::features::kPrintPreviewCrosPrimary)) {
+    chromeos::printing::StartPrint(
+        web_contents,
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+        /*print_renderer=*/mojo::NullAssociatedRemote(),
+#endif
+        browser->profile()->GetPrefs()->GetBoolean(
+            prefs::kPrintPreviewDisabled),
+        /*has_selection=*/false);
+    return;
+  }
+#endif
+
   printing::StartPrint(
       web_contents,
 #if BUILDFLAG(IS_CHROMEOS_ASH)
@@ -1754,17 +1847,6 @@ void RouteMediaInvokedFromAppMenu(Browser* browser) {
 
   dialog_controller->ShowMediaRouterDialog(
       media_router::MediaRouterDialogActivationLocation::APP_MENU);
-}
-
-void CutCopyPaste(Browser* browser, int command_id) {
-  if (command_id == IDC_CUT) {
-    base::RecordAction(UserMetricsAction("Cut"));
-  } else if (command_id == IDC_COPY) {
-    base::RecordAction(UserMetricsAction("Copy"));
-  } else {
-    base::RecordAction(UserMetricsAction("Paste"));
-  }
-  browser->window()->CutCopyPaste(command_id);
 }
 
 void Find(Browser* browser) {
@@ -1901,12 +1983,12 @@ void OpenTaskManager(Browser* browser) {
   base::RecordAction(UserMetricsAction("TaskManager"));
   chrome::ShowTaskManager(browser);
 #else
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 #endif
 }
 
 void OpenFeedbackDialog(Browser* browser,
-                        FeedbackSource source,
+                        feedback::FeedbackSource source,
                         const std::string& description_template,
                         const std::string& category_tag) {
   base::RecordAction(UserMetricsAction("Feedback"));
@@ -1927,6 +2009,13 @@ void ToggleShowFullURLs(Browser* browser) {
       omnibox::kPreventUrlElisionsInOmnibox, !pref_enabled);
 }
 
+void ToggleShowGoogleLensShortcut(Browser* browser) {
+  bool pref_enabled = browser->profile()->GetPrefs()->GetBoolean(
+      omnibox::kShowGoogleLensShortcut);
+  browser->profile()->GetPrefs()->SetBoolean(omnibox::kShowGoogleLensShortcut,
+                                             !pref_enabled);
+}
+
 void ShowAppMenu(Browser* browser) {
   // We record the user metric for this event in AppMenu::RunMenu.
   browser->window()->ShowAppMenu();
@@ -1937,25 +2026,24 @@ void ShowAvatarMenu(Browser* browser) {
       /*is_source_accelerator=*/true);
 }
 
+// TODO(crbug.com/345770406): Rename the function name.
+// We removed the extra confirmation step in the Chrome update flow. After the
+// full rollout of the code, this name will be misleading. We will clean up the
+// code and its related source enums.
 void OpenUpdateChromeDialog(Browser* browser) {
   if (UpgradeDetector::GetInstance()->is_outdated_install()) {
     UpgradeDetector::GetInstance()->NotifyOutdatedInstall();
   } else if (UpgradeDetector::GetInstance()->is_outdated_install_no_au()) {
     UpgradeDetector::GetInstance()->NotifyOutdatedInstallNoAutoUpdate();
   } else {
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+    if (base::FeatureList::IsEnabled(features::kFewerUpdateConfirmations)) {
+      chrome::AttemptRelaunch();
+      return;
+    }
+#endif
     base::RecordAction(UserMetricsAction("UpdateChrome"));
     browser->window()->ShowUpdateChromeDialog();
-  }
-}
-
-void ToggleDistilledView(Browser* browser) {
-  auto* current_web_contents =
-      browser->tab_strip_model()->GetActiveWebContents();
-  if (dom_distiller::url_utils::IsDistilledPage(
-          current_web_contents->GetLastCommittedURL())) {
-    ReturnToOriginalPage(current_web_contents);
-  } else {
-    DistillCurrentPageAndView(current_web_contents);
   }
 }
 
@@ -2037,9 +2125,32 @@ bool IsDebuggerAttachedToCurrentTab(Browser* browser) {
                   : false;
 }
 
-void CopyURL(content::WebContents* web_contents) {
+void CopyURL(Browser* browser, content::WebContents* web_contents) {
   ui::ScopedClipboardWriter scw(ui::ClipboardBuffer::kCopyPaste);
   scw.WriteText(base::UTF8ToUTF16(web_contents->GetVisibleURL().spec()));
+
+#if !BUILDFLAG(IS_ANDROID)
+  if (toast_features::IsEnabled(toast_features::kLinkCopiedToast)) {
+    ToastController* const toast_controller =
+        browser->GetFeatures().toast_controller();
+    if (toast_controller) {
+      toast_controller->MaybeShowToast(ToastParams(ToastId::kLinkCopied));
+    }
+  }
+#endif
+}
+
+bool CanCopyUrl(const Browser* browser) {
+  return IsWebAppOrCustomTab(browser) ||
+         !sharing_hub::SharingIsDisabledByPolicy(browser->profile());
+}
+
+bool IsWebAppOrCustomTab(const Browser* browser) {
+  return
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+      browser->is_type_custom_tab() ||
+#endif
+      web_app::AppBrowserController::IsWebApp(browser);
 }
 
 Browser* OpenInChrome(Browser* hosted_app_browser) {
@@ -2196,35 +2307,21 @@ void ProcessInterceptedChromeURLNavigationInIncognito(Browser* browser,
   } else if (url == GURL(chrome::kChromeUIHistoryURL)) {
     ShowIncognitoHistoryDisclaimerDialog(browser);
   } else {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
   }
 }
 
-void FollowSite(content::WebContents* web_contents) {
-  DCHECK(!Profile::FromBrowserContext(web_contents->GetBrowserContext())
-              ->IsIncognitoProfile());
-  feed::FollowSite(web_contents);
-}
-
-void UnfollowSite(content::WebContents* web_contents) {
-  DCHECK(!Profile::FromBrowserContext(web_contents->GetBrowserContext())
-              ->IsIncognitoProfile());
-  feed::UnfollowSite(web_contents);
-}
-
-#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
-void RunScreenAILayoutExtraction(Browser* browser) {
+void ExecLensOverlay(Browser* browser) {
   content::WebContents* web_contents =
       browser->tab_strip_model()->GetActiveWebContents();
-  if (!web_contents) {
-    return;
-  }
+  CHECK(web_contents);
 
-  screen_ai::AXScreenAIAnnotatorFactory::GetForBrowserContext(
-      browser->profile())
-      ->AnnotateScreenshot(web_contents);
+  LensOverlayController* const controller =
+      LensOverlayController::GetController(web_contents);
+  CHECK(controller);
+  controller->ShowUI(lens::LensOverlayInvocationSource::kAppMenu);
+  browser->window()->NotifyPromoFeatureUsed(lens::features::kLensOverlay);
 }
-#endif  // BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
 
 void ExecLensRegionSearch(Browser* browser) {
 #if BUILDFLAG(ENABLE_LENS_DESKTOP_GOOGLE_BRANDED_FEATURES)
@@ -2247,7 +2344,7 @@ void ExecLensRegionSearch(Browser* browser) {
         std::make_unique<lens::LensRegionSearchController>();
     lens_region_search_controller_data->lens_region_search_controller->Start(
         contents, lens::features::IsLensFullscreenSearchEnabled(),
-        is_google_dsp, entry_point);
+        /*force_open_in_new_tab=*/false, is_google_dsp, entry_point);
     browser->SetUserData(lens::LensRegionSearchControllerData::kDataKey,
                          std::move(lens_region_search_controller_data));
   }
@@ -2259,6 +2356,21 @@ void OpenCommerceProductSpecificationsTab(Browser* browser,
                                           const int position) {
   if (static_cast<int>(urls.size()) <
       commerce::kProductSpecificationsMinTabsCount) {
+    return;
+  }
+
+  auto* prefs = browser->profile()->GetPrefs();
+  // If user has not accepted the latest disclosure, show the disclosure dialog
+  // first.
+  if (prefs &&
+      prefs->GetInteger(
+          commerce::kProductSpecificationsAcceptedDisclosureVersion) !=
+          static_cast<int>(shopping_service::mojom::
+                               ProductSpecificationsDisclosureVersion::kV1)) {
+    commerce::DialogArgs dialog_args(urls, std::string(), /*in_new_tab=*/true);
+    commerce::ProductSpecificationsDisclosureDialog::ShowDialog(
+        browser->profile(), browser->tab_strip_model()->GetActiveWebContents(),
+        std::move(dialog_args));
     return;
   }
 

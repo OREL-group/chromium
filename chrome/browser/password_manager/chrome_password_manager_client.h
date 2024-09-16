@@ -36,17 +36,20 @@
 #include "components/safe_browsing/buildflags.h"
 #include "components/signin/public/base/signin_buildflags.h"
 #include "components/sync/service/sync_service.h"
+#include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host_receiver_set.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "url/origin.h"
 
 #if BUILDFLAG(IS_ANDROID)
+#include "chrome/browser/password_manager/android/account_storage_notice/account_storage_notice.h"
 #include "chrome/browser/password_manager/android/generated_password_saved_message_delegate.h"
 #include "chrome/browser/password_manager/android/password_manager_error_message_delegate.h"
 #include "chrome/browser/password_manager/android/password_migration_warning_startup_launcher.h"
 #include "chrome/browser/password_manager/android/save_update_password_message_delegate.h"
 #include "components/password_manager/core/browser/credential_cache.h"
+#include "components/password_manager/core/browser/first_cct_page_load_passwords_ukm_recorder.h"
 
 class PasswordAccessoryController;
 class TouchToFillController;
@@ -78,7 +81,7 @@ struct PasswordGenerationUIData;
 namespace content {
 class RenderFrameHost;
 class WebContents;
-}
+}  // namespace content
 
 namespace device_reauth {
 class DeviceAuthenticator;
@@ -89,7 +92,7 @@ class FieldInfoManager;
 class WebAuthnCredentialsDelegate;
 class CredManController;
 class KeyboardReplacingSurfaceVisibilityController;
-}
+}  // namespace password_manager
 
 namespace webauthn {
 #if BUILDFLAG(IS_ANDROID)
@@ -145,13 +148,14 @@ class ChromePasswordManagerClient
       password_manager::ErrorMessageFlowType flow_type,
       password_manager::PasswordStoreBackendErrorType error_type) override;
 
-  bool ShowKeyboardReplacingSurface(
+  void ShowKeyboardReplacingSurface(
       password_manager::PasswordManagerDriver* driver,
-      const password_manager::SubmissionReadinessParams& submission_readiness,
-      bool is_webauthn_form) override;
+      const password_manager::PasswordFillingParams& password_filling_params,
+      bool is_webauthn_form,
+      base::OnceCallback<void(bool)> shown_cb) override;
 #endif
 
-  bool CanUseBiometricAuthForFilling(
+  bool IsReauthBeforeFillingRequired(
       device_reauth::DeviceAuthenticator* authenticator) override;
   // Returns a pointer to the DeviceAuthenticator which is created on demand.
   // This is currently only implemented for Android, Mac and Windows. On all
@@ -187,8 +191,7 @@ class ChromePasswordManagerClient
   void PasswordWasAutofilled(
       base::span<const password_manager::PasswordForm> best_matches,
       const url::Origin& origin,
-      const std::vector<raw_ptr<const password_manager::PasswordForm,
-                                VectorExperimental>>* federated_matches,
+      base::span<const password_manager::PasswordForm> federated_matches,
       bool was_autofilled_on_pageload) override;
   void AutofillHttpAuth(
       const password_manager::PasswordForm& preferred_match,
@@ -234,9 +237,10 @@ class ChromePasswordManagerClient
   autofill::LogManager* GetLogManager() override;
   void AnnotateNavigationEntry(bool has_password_field) override;
   autofill::LanguageCode GetPageLanguage() const override;
-
   safe_browsing::PasswordProtectionService* GetPasswordProtectionService()
       const override;
+  void TriggerUserPerceptionOfPasswordManagerSurvey(
+      const std::string& filling_assistance) override;
 
 #if defined(ON_FOCUS_PING_ENABLED)
   void CheckSafeBrowsingReputation(const GURL& form_action,
@@ -248,7 +252,7 @@ class ChromePasswordManagerClient
   void MaybeReportEnterpriseLoginEvent(
       const GURL& url,
       bool is_federated,
-      const url::Origin& federated_origin,
+      const url::SchemeHostPort& federated_origin,
       const std::u16string& login_user_name) const override;
   void MaybeReportEnterprisePasswordBreachEvent(
       const std::vector<std::pair<GURL, std::u16string>>& identities)
@@ -258,6 +262,10 @@ class ChromePasswordManagerClient
   ukm::SourceId GetUkmSourceId() override;
   password_manager::PasswordManagerMetricsRecorder* GetMetricsRecorder()
       override;
+#if BUILDFLAG(IS_ANDROID)
+  password_manager::FirstCctPageLoadPasswordsUkmRecorder*
+  GetFirstCctPageLoadUkmRecorder() override;
+#endif
   password_manager::PasswordRequirementsService*
   GetPasswordRequirementsService() override;
   favicon::FaviconService* GetFaviconService() override;
@@ -287,6 +295,8 @@ class ChromePasswordManagerClient
   version_info::Channel GetChannel() const override;
   void RefreshPasswordManagerSettingsIfNeeded() const override;
 #if !BUILDFLAG(IS_ANDROID)
+  void OpenPasswordDetailsBubble(
+      const password_manager::PasswordForm& form) override;
   std::unique_ptr<
       password_manager::PasswordCrossDomainConfirmationPopupController>
   ShowCrossDomainConfirmationPopup(
@@ -296,6 +306,9 @@ class ChromePasswordManagerClient
       const std::u16string& password_origin,
       base::OnceClosure confirmation_callback) override;
 #endif  // !BUILDFLAG(IS_ANDROID)
+  void ShowCredentialsInAmbientBubble(
+      std::vector<std::unique_ptr<password_manager::PasswordForm>> forms,
+      CredentialsCallback callback) override;
 
   // autofill::mojom::PasswordGenerationDriver overrides.
   void AutomaticGenerationAvailable(
@@ -351,8 +364,6 @@ class ChromePasswordManagerClient
 #if BUILDFLAG(IS_ANDROID)
   PasswordAccessoryController* GetOrCreatePasswordAccessory();
 
-  TouchToFillController* GetOrCreateTouchToFillController();
-
   password_manager::CredentialCache* GetCredentialCacheForTesting() {
     return &credential_cache_;
   }
@@ -364,6 +375,17 @@ class ChromePasswordManagerClient
 
  private:
   friend class content::WebContentsUserData<ChromePasswordManagerClient>;
+
+#if BUILDFLAG(IS_ANDROID)
+  TouchToFillController* GetOrCreateTouchToFillController();
+
+  void MaybeShowAccountStorageNotice(base::OnceClosure callback);
+
+  void ShowKeyboardReplacingSurfaceOnAccountStorageNoticeDone(
+      base::WeakPtr<password_manager::ContentPasswordManagerDriver> weak_driver,
+      const password_manager::PasswordFillingParams& password_filling_params,
+      base::OnceCallback<void(bool)> shown_cb);
+#endif
 
   // content::WebContentsObserver overrides.
   void PrimaryPageChanged(content::Page& page) override;
@@ -387,10 +409,6 @@ class ChromePasswordManagerClient
   // Checks if the current page specified in |url| fulfils the conditions for
   // the password manager to be active on it.
   bool IsPasswordManagementEnabledForCurrentPage(const GURL& url) const;
-
-  // Returns true if this profile has metrics reporting and active sync
-  // without custom sync passphrase.
-  static bool ShouldAnnotateNavigationEntries(Profile* profile);
 
   // Called back by the PasswordGenerationAgent when the generation flow is
   // completed. If |ui_data| is non-empty, will create a UI to display the
@@ -421,6 +439,9 @@ class ChromePasswordManagerClient
   // Called on startup. It will show the post password migration sheet if
   // needed.
   void TryToShowPostPasswordMigrationSheet();
+
+  // Called on startup. It will show the access loss warning sheet if needed.
+  void TryToShowAccessLossWarningSheet();
 
   password_manager::CredManController* GetOrCreateCredManController();
 
@@ -458,6 +479,8 @@ class ChromePasswordManagerClient
   SaveUpdatePasswordMessageDelegate save_update_password_message_delegate_;
   GeneratedPasswordSavedMessageDelegate
       generated_password_saved_message_delegate_;
+
+  std::unique_ptr<AccountStorageNotice> account_storage_notice_;
 #endif  // BUILDFLAG(IS_ANDROID)
 
   // As a mojo service, will be registered into service registry
@@ -511,6 +534,13 @@ class ChromePasswordManagerClient
   // have been fetched. Only invoked once on startup.
   std::unique_ptr<PasswordMigrationWarningStartupLauncher>
       password_migration_warning_startup_launcher_;
+
+  // Recorder of metrics that is associated with the first page loaded by a
+  // CCT. Created only if the WebContents corresponds to a CCT. Records
+  // metrics on destruction, which happens on navigation.
+  std::unique_ptr<password_manager::FirstCctPageLoadPasswordsUkmRecorder>
+      first_cct_page_load_metrics_recorder_;
+
 #endif  // BUILDFLAG(IS_ANDROID)
 
   // Observes `AutofillManager`s of the `WebContents` that `this` belongs to.

@@ -208,7 +208,7 @@ bool VideoToolboxDecompressionSessionManager::CreateSession(
 #endif
 
   // Build destination image buffer attributes.
-  // TODO(crbug.com/1331597): Also set size using the visible rect.
+  // TODO(crbug.com/40227557): Also set size using the visible rect.
 
   // It is possible to create a decompression session with no destination image
   // buffer attributes, but then we must be able to handle any kind of pixel
@@ -226,21 +226,18 @@ bool VideoToolboxDecompressionSessionManager::CreateSession(
   // VideoToolboxFrameConverter, it may be possible to introspect the IOSurfaces
   // at run time and map them to viz formats.
   //
-  // For now we just ask VideoToolbox to convert all 400/420 contents to
-  // NV12/P010 contents and all 422/444 contents to RGBA which could avoid
-  // chroma downsampling.
-  //
-  // TODO(crbug.com/1331597): Do not create an image config for known-supported
+  // TODO(crbug.com/40227557): Do not create an image config for known-supported
   // formats, and add full-range versions as supported formats.
-  // TODO(crbug.com/331679628): Add 422/444 multi-planar format for 8/10/12-bit
-  // 422/444 contents.
   FourCharCode pixel_format;
 
-  if (session_metadata.chroma_sampling == VideoChromaSampling::k422 ||
-      session_metadata.chroma_sampling == VideoChromaSampling::k444) {
+  if (session_metadata.chroma_sampling == VideoChromaSampling::k444) {
     pixel_format = session_metadata.bit_depth > 8
-                       ? kCVPixelFormatType_64RGBAHalf
-                       : kCVPixelFormatType_32BGRA;
+                       ? kCVPixelFormatType_444YpCbCr10BiPlanarVideoRange
+                       : kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange;
+  } else if (session_metadata.chroma_sampling == VideoChromaSampling::k422) {
+    pixel_format = session_metadata.bit_depth > 8
+                       ? kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange
+                       : kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange;
   } else {
     pixel_format = session_metadata.bit_depth > 8
                        ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange

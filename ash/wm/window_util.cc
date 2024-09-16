@@ -7,7 +7,6 @@
 #include <memory>
 #include <tuple>
 
-#include "ash/constants/app_types.h"
 #include "ash/constants/ash_features.h"
 #include "ash/constants/ash_pref_names.h"
 #include "ash/multi_user/multi_user_window_manager_impl.h"
@@ -18,6 +17,7 @@
 #include "ash/public/mojom/input_device_settings.mojom.h"
 #include "ash/root_window_controller.h"
 #include "ash/screen_util.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shelf/shelf.h"
 #include "ash/shell.h"
 #include "ash/shell_delegate.h"
@@ -43,7 +43,9 @@
 #include "base/memory/raw_ptr.h"
 #include "base/ranges/algorithm.h"
 #include "chromeos/constants/chromeos_features.h"
+#include "chromeos/ui/base/app_types.h"
 #include "chromeos/ui/base/chromeos_ui_constants.h"
+#include "chromeos/ui/base/window_properties.h"
 #include "chromeos/ui/base/window_state_type.h"
 #include "chromeos/ui/frame/caption_buttons/snap_controller.h"
 #include "chromeos/ui/frame/interior_resize_handler_targeter.h"
@@ -57,6 +59,7 @@
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/aura/window_targeter.h"
 #include "ui/base/hit_test.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/layer.h"
@@ -78,29 +81,6 @@
 namespace ash::window_util {
 namespace {
 
-// This window targeter reserves space for the portion of the resize handles
-// that extend within a top level window.
-class InteriorResizeHandleTargeterAsh
-    : public chromeos::InteriorResizeHandleTargeter {
- public:
-  InteriorResizeHandleTargeterAsh() = default;
-  InteriorResizeHandleTargeterAsh(const InteriorResizeHandleTargeterAsh&) =
-      delete;
-  InteriorResizeHandleTargeterAsh& operator=(
-      const InteriorResizeHandleTargeterAsh&) = delete;
-  ~InteriorResizeHandleTargeterAsh() override = default;
-
-  bool ShouldUseExtendedBounds(const aura::Window* target) const override {
-    // Fullscreen/maximized windows can't be drag-resized.
-    const WindowState* window_state = WindowState::Get(window());
-    if (window_state && window_state->IsMaximizedOrFullscreenOrPinned())
-      return false;
-
-    // The shrunken hit region only applies to children of |window()|.
-    return InteriorResizeHandleTargeter::ShouldUseExtendedBounds(target);
-  }
-};
-
 // Returns true if `window` has any descendant that is a system modal window or
 // is itself a system modal window.
 bool ContainsSystemModalWindow(const aura::Window* window) {
@@ -109,7 +89,7 @@ bool ContainsSystemModalWindow(const aura::Window* window) {
   }
 
   if (window->GetProperty(aura::client::kModalKey) ==
-      ui::ModalType::MODAL_TYPE_SYSTEM) {
+      ui::mojom::ModalType::kSystem) {
     return true;
   }
 
@@ -190,7 +170,7 @@ gfx::RoundedCornersF GetMiniWindowRoundedCorners(const aura::Window* window,
             snap_group_controller->GetSnapGroupForGivenWindow(window)) {
       const bool is_in_horizontal_snap_group =
           snap_group->IsSnapGroupLayoutHorizontal();
-      if (window == snap_group->window1()) {
+      if (window == snap_group->GetPhysicallyLeftOrTopWindow()) {
         return is_in_horizontal_snap_group
                    ? gfx::RoundedCornersF(
                          /*upper_left=*/include_header_rounding
@@ -259,7 +239,9 @@ bool IsStackedBelow(aura::Window* win1, aura::Window* win2) {
 
 aura::Window* GetTopMostWindow(const aura::Window::Windows& windows) {
   aura::Window* lowest_common_parent = FindLowestCommonParent(windows);
-  CHECK(lowest_common_parent);
+  if (!lowest_common_parent) {
+    return nullptr;
+  }
 
   return FindTopMostChild(lowest_common_parent, windows);
 }
@@ -345,7 +327,6 @@ bool MoveWindowToDisplay(aura::Window* window, int64_t display_id) {
   aura::Window* root = Shell::GetRootWindowForDisplayId(display_id);
   if (!root || root == window->GetRootWindow()) {
     NOTREACHED();
-    return false;
   }
 
   WindowState* window_state = WindowState::Get(window);
@@ -357,7 +338,8 @@ bool MoveWindowToDisplay(aura::Window* window, int64_t display_id) {
     gfx::Rect bounds = window->bounds();
     gfx::Rect work_area_in_display(display.size());
     work_area_in_display.Inset(display.GetWorkAreaInsets());
-    AdjustBoundsToEnsureMinimumWindowVisibility(work_area_in_display, &bounds);
+    AdjustBoundsToEnsureMinimumWindowVisibility(
+        work_area_in_display, /*client_controlled=*/false, &bounds);
     SetBoundsWMEvent event(bounds, display_id);
     window_state->OnWMEvent(&event);
     return true;
@@ -401,7 +383,13 @@ void CloseWidgetForWindow(aura::Window* window) {
 }
 
 void InstallResizeHandleWindowTargeterForWindow(aura::Window* window) {
-  window->SetEventTargeter(std::make_unique<InteriorResizeHandleTargeterAsh>());
+  window->SetEventTargeter(
+      std::make_unique<chromeos::InteriorResizeHandleTargeter>(
+          base::BindRepeating([](const aura::Window* window) {
+            const WindowState* window_state = WindowState::Get(window);
+            return window_state ? window_state->GetStateType()
+                                : chromeos::WindowStateType::kDefault;
+          })));
 }
 
 bool IsDraggingTabs(const aura::Window* window) {
@@ -443,34 +431,36 @@ bool ShouldExcludeForOverview(const aura::Window* window) {
 
   // A window should be excluded from being shown in Overview in clamshell mode
   // when:
-  // 1. In partial Overview:
-  //   - The window itself is the snapped window;
-  //   - The window belongs to a snap group.
+  // 1. The window itself is the snapped window in partial Overview;
   SplitViewController* split_view_controller = SplitViewController::Get(window);
   SplitViewController::State split_view_state = split_view_controller->state();
-  SnapGroupController* snap_group_controller = SnapGroupController::Get();
-  if (split_view_state == SplitViewController::State::kPrimarySnapped ||
-      split_view_state == SplitViewController::State::kSecondarySnapped) {
-    if (window == split_view_controller->GetDefaultSnappedWindow()) {
-      return true;
-    }
-
-    if (snap_group_controller &&
-        snap_group_controller->GetSnapGroupForGivenWindow(window)) {
-      return true;
-    }
-
-    return false;
+  const bool in_partial_overview =
+      split_view_state == SplitViewController::State::kPrimarySnapped ||
+      split_view_state == SplitViewController::State::kSecondarySnapped;
+  if (in_partial_overview &&
+      window == split_view_controller->GetDefaultSnappedWindow()) {
+    return true;
   }
 
-  // 2. In full Overview:
-  //   -  The window is not the most recently used (MRU) window within its snap
-  //   group. i.e. the corresponding overview item representation for the snap
-  //   group has been created.
-  if (snap_group_controller) {
-    if (SnapGroup* snap_group =
-            snap_group_controller->GetSnapGroupForGivenWindow(window)) {
-      return window != snap_group->GetTopMostWindowInGroup();
+  // 2. The given `window` or its transient parent is not the most recently used
+  // (MRU) window within its snap group i.e. the corresponding Overview item
+  // representation for the snap group has been created. Note that the
+  // activatable transient window is included in the window cycle list
+  if (SnapGroupController* snap_group_controller = SnapGroupController::Get()) {
+    SnapGroup* snap_group =
+        snap_group_controller->GetSnapGroupForGivenWindow(window);
+    const aura::Window* transient_parent = wm::GetTransientParent(window);
+    if (!snap_group) {
+      snap_group =
+          snap_group_controller->GetSnapGroupForGivenWindow(transient_parent);
+    }
+
+    if (snap_group) {
+      const aura::Window* top_most_window_in_snap_group =
+          snap_group->GetTopMostWindowInGroup();
+      return window != top_most_window_in_snap_group &&
+             (!transient_parent ||
+              transient_parent != top_most_window_in_snap_group);
     }
   }
 
@@ -654,9 +644,9 @@ bool ShouldMinimizeTopWindowOnBack() {
 
   // ARC and crostini apps will handle the back event that follows on the client
   // side and will minimize/close the window there.
-  const int app_type = window->GetProperty(aura::client::kAppType);
-  if (app_type == static_cast<int>(AppType::ARC_APP) ||
-      app_type == static_cast<int>(AppType::CROSTINI_APP)) {
+  const chromeos::AppType app_type = window->GetProperty(chromeos::kAppTypeKey);
+  if (app_type == chromeos::AppType::ARC_APP ||
+      app_type == chromeos::AppType::CROSTINI_APP) {
     return false;
   }
 
@@ -689,11 +679,11 @@ void SendBackKeyEvent(aura::Window* root_window) {
   // Send up event as well as down event as ARC++ clients expect this
   // sequence.
   // TODO: Investigate if we should be using the current modifiers.
-  ui::KeyEvent press_key_event(ui::ET_KEY_PRESSED, ui::VKEY_BROWSER_BACK,
-                               ui::EF_NONE);
+  ui::KeyEvent press_key_event(ui::EventType::kKeyPressed,
+                               ui::VKEY_BROWSER_BACK, ui::EF_NONE);
   std::ignore = root_window->GetHost()->SendEventToSink(&press_key_event);
-  ui::KeyEvent release_key_event(ui::ET_KEY_RELEASED, ui::VKEY_BROWSER_BACK,
-                                 ui::EF_NONE);
+  ui::KeyEvent release_key_event(ui::EventType::kKeyReleased,
+                                 ui::VKEY_BROWSER_BACK, ui::EF_NONE);
   std::ignore = root_window->GetHost()->SendEventToSink(&release_key_event);
 }
 
@@ -752,6 +742,26 @@ gfx::RectF GetTransformedBounds(aura::Window* transformed_window,
     bounds.Union(window_bounds);
   }
   return bounds;
+}
+
+views::BubbleDialogDelegate* AsBubbleDialogDelegate(
+    aura::Window* transient_window) {
+  views::Widget* widget =
+      views::Widget::GetWidgetForNativeWindow(transient_window);
+  if (!widget || !widget->widget_delegate()) {
+    return nullptr;
+  }
+  return widget->widget_delegate()->AsBubbleDialogDelegate();
+}
+
+views::DialogDelegate* AsDialogDelegate(aura::Window* transient_window) {
+  views::Widget* widget =
+      views::Widget::GetWidgetForNativeWindow(transient_window);
+  if (!widget || !widget->widget_delegate()) {
+    return nullptr;
+  }
+
+  return widget->widget_delegate()->AsDialogDelegate();
 }
 
 bool ShouldShowForCurrentUser(aura::Window* window) {
@@ -826,12 +836,6 @@ float GetSnapRatioForWindow(aura::Window* window) {
 void RegisterProfilePrefs(PrefRegistrySimple* registry) {
   // TODO(sophiewen): Determine whether to enable the setting by default.
   registry->RegisterBooleanPref(prefs::kSnapWindowSuggestions, true);
-}
-
-bool IsFasterSplitScreenOrSnapGroupEnabledInClamshell() {
-  return !Shell::Get()->IsInTabletMode() &&
-         (features::IsFasterSplitScreenSetupEnabled() ||
-          SnapGroupController::Get());
 }
 
 bool IsInFasterSplitScreenSetupSession(const aura::Window* window) {

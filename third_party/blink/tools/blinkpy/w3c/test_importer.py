@@ -11,7 +11,9 @@ If this script is given the argument --auto-update, it will also:
 """
 
 import argparse
+import collections
 import contextlib
+import itertools
 import json
 import logging
 import textwrap
@@ -19,7 +21,12 @@ from functools import cached_property
 from typing import List, Mapping, Optional, Set
 
 from blinkpy.common.checkout.git import CommitRange
-from blinkpy.common.net.git_cl import CLRevisionID, GitCL
+from blinkpy.common.net.git_cl import (
+    BuildStatus,
+    CLRevisionID,
+    CLStatus,
+    GitCL,
+)
 from blinkpy.common.net.network_transaction import NetworkTimeout
 from blinkpy.common.path_finder import PathFinder
 from blinkpy.common.system.log_utils import configure_logging
@@ -28,7 +35,6 @@ from blinkpy.w3c.chromium_commit import ChromiumCommit
 from blinkpy.w3c.chromium_exportable_commits import exportable_commits_over_last_n_commits
 from blinkpy.w3c.common import (
     read_credentials,
-    is_testharness_baseline,
     is_file_exportable,
     WPT_GH_URL,
     WPT_GH_RANGE_URL_TEMPLATE,
@@ -130,8 +136,7 @@ class TestImporter:
                          '#GitHub-credentials for instructions on how to set '
                          'your credentials up.')
         self.github = self.github or WPTGitHub(self.host, gh_user, gh_token)
-        self.git_cl = GitCL(
-            self.host, auth_refresh_token_json=options.auth_refresh_token_json)
+        self.git_cl = GitCL(self.host)
 
         _log.debug('Noting the current Chromium revision.')
         chromium_revision = self.project_git.latest_git_commit()
@@ -184,11 +189,8 @@ class TestImporter:
         # expectations for renamed tests. This requires the old WPT manifest, so
         # must happen before we regenerate it.
         self.expectations_updater.cleanup_test_expectations_files()
-
         self._generate_manifest()
-
-        # TODO(crbug.com/800570 robertma): Re-enable it once we fix the bug.
-        # self._delete_orphaned_baselines()
+        self.delete_orphaned_baselines()
 
         if not self.project_git.has_working_directory_changes():
             _log.info('Done: no changes to import.')
@@ -222,14 +224,14 @@ class TestImporter:
         return 0
 
     def _ensure_cl_closed(self, issue: Optional[int] = None):
-        if self.git_cl.get_cl_status(issue).lower() != 'closed':
+        if self.git_cl.get_cl_status(issue) is not CLStatus.CLOSED:
             self.git_cl.close(issue)
 
     def log_try_job_results(self, try_job_results) -> None:
         if try_job_results:
             _log.info('Failing builder results:')
             for builder, try_job_status in try_job_results.items():
-                if try_job_status.status != 'COMPLETED' or try_job_status.result != 'SUCCESS':
+                if try_job_status is not BuildStatus.SUCCESS:
                     _log.info(f'{builder}: {try_job_status}')
 
     def update_expectations_for_cl(self) -> bool:
@@ -256,7 +258,7 @@ class TestImporter:
             self.log_try_job_results(try_job_results)
             return False
 
-        if cl_status.status == 'closed':
+        if cl_status.status is CLStatus.CLOSED:
             _log.error('The CL was closed, aborting.')
             return False
 
@@ -301,7 +303,7 @@ class TestImporter:
             _log.error('Timed out waiting for CQ; aborting.')
             return False
 
-        if cl_status.status == 'closed':
+        if cl_status.status is CLStatus.CLOSED:
             _log.error('The CL was closed; aborting.')
             return False
 
@@ -377,10 +379,6 @@ class TestImporter:
             '--auto-file-bugs',
             action='store_true',
             help='file new failures automatically to crbug.com')
-        parser.add_argument(
-            '--auth-refresh-token-json',
-            help='authentication refresh token JSON file used for try jobs, '
-            'generally not necessary on developer machines')
         parser.add_argument(
             '--credentials-json',
             help='A JSON file with GitHub credentials, '
@@ -531,42 +529,49 @@ class TestImporter:
                                  for commit in locally_applied_commits) + '\n'
         return message
 
-    def _delete_orphaned_baselines(self):
-        _log.info('Deleting any orphaned baselines.')
+    def delete_orphaned_baselines(self):
+        """Delete baselines that don't correspond to any external WPTs.
 
-        is_baseline_filter = lambda fs, dirname, basename: is_testharness_baseline(basename)
+        Notes:
+          * This method should be called after importing the new tests and
+            regenerating the manifest.
+          * There's no need to handle renames explicitly because any failures
+            in the renamed tests will be rebaselined later.
+        """
+        port = self.host.port_factory.get()
 
-        baselines = self.fs.files_under(
-            self.dest_path, file_filter=is_baseline_filter)
+        # Find which baselines should be deleted for each deleted test. Because
+        # baseline paths are lossily sanitized, it's not easy to determine what
+        # test corresponds to a baseline path. Therefore, this map is keyed on
+        # the generic baseline as a proxy for the test URL instead.
+        baselines_by_generic_path = collections.defaultdict(set)
+        baseline_glob = self.fs.join(port.web_tests_dir(), '**', 'external',
+                                     'wpt', '**', '*-expected.txt')
+        for baseline in self.fs.glob(baseline_glob):
+            _, generic_baseline = port.parse_output_filename(baseline)
+            baselines_by_generic_path[generic_baseline].add(baseline)
 
         # Note about possible refactoring:
         #  - the manifest path could be factored out to a common location, and
         #  - the logic for reading the manifest could be factored out from here
         # and the Port class.
-        manifest_path = self.finder.path_from_web_tests(
-            'external', 'wpt', 'MANIFEST.json')
-        manifest = WPTManifest.from_file(self.host.port_factory.get(),
-                                         manifest_path)
-        wpt_urls = manifest.all_urls()
+        manifest_path = self.finder.path_from_wpt_tests('MANIFEST.json')
+        # Exclude test types `(print-)reftest` and `crashtest`, which can't
+        # have `*-expected.txt`.
+        manifest = WPTManifest.from_file(port, manifest_path,
+                                         ['testharness', 'wdspec', 'manual'])
+        for url_from_test_root in manifest.all_urls():
+            test = self.finder.wpt_prefix() + url_from_test_root
+            generic_baseline = port.output_filename(test, Port.BASELINE_SUFFIX,
+                                                    '.txt')
+            baselines_by_generic_path.pop(generic_baseline, None)
 
-        # Currently baselines for tests with query strings are merged,
-        # so that the tests foo.html?r=1 and foo.html?r=2 both have the same
-        # baseline, foo-expected.txt.
-        # TODO(qyearsley): Remove this when this behavior is fixed.
-        wpt_urls = [url.split('?')[0] for url in wpt_urls]
-
-        wpt_dir = self.finder.path_from_web_tests('external', 'wpt')
-        for full_path in baselines:
-            rel_path = self.fs.relpath(full_path, wpt_dir)
-            if not self._has_corresponding_test(rel_path, wpt_urls):
-                self.fs.remove(full_path)
-
-    def _has_corresponding_test(self, rel_path, wpt_urls):
-        # TODO(qyearsley): Ensure that this works with platform baselines and
-        # virtual baselines, and add unit tests.
-        base = '/' + rel_path.replace('-expected.txt', '')
-        return any(
-            (base + ext) in wpt_urls for ext in Port.supported_file_extensions)
+        orphan_count = 0
+        for baseline_to_delete in itertools.chain.from_iterable(
+                baselines_by_generic_path.values()):
+            self.remove(baseline_to_delete)
+            orphan_count += 1
+        _log.info(f'Deleted {orphan_count} orphaned baseline(s).')
 
     def copyfile(self, source, destination):
         _log.debug('cp %s %s', source, destination)
@@ -799,8 +804,8 @@ class TestImporter:
         expectations: TestExpectations,
         bug: BuganizerIssue,
         path: str,
-        target_line: typ_types.Expectation,
-    ) -> Optional[typ_types.Expectation]:
+        target_line: typ_types.ExpectationType,
+    ) -> Optional[typ_types.ExpectationType]:
         """Add a bug for a matching line, if any, in a given file.
 
         Returns:

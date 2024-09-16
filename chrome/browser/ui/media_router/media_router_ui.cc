@@ -417,14 +417,23 @@ void MediaRouterUI::OnFreezeInfoChanged() {
 }
 
 void MediaRouterUI::UpdateSinks() {
-  std::vector<UIMediaSink> media_sinks;
-  for (const MediaSinkWithCastModes& sink : GetEnabledSinks()) {
-    auto route_it = base::ranges::find(routes(), sink.sink.id(),
-                                       &MediaRoute::media_sink_id);
-    const MediaRoute* route = route_it == routes().end() ? nullptr : &*route_it;
-    media_sinks.push_back(ConvertToUISink(sink, route, issue_));
+  if (base::FeatureList::IsEnabled(kShowCastPermissionRejectedError) &&
+      issue_.has_value() && issue_->is_permission_rejected_issue()) {
+    // Clean up the discovered sinks if the permission is rejected.
+    model_.set_media_sinks({});
+    model_.set_is_permission_rejected(true);
+  } else {
+    std::vector<UIMediaSink> media_sinks;
+    for (const MediaSinkWithCastModes& sink : GetEnabledSinks()) {
+      auto route_it = base::ranges::find(routes(), sink.sink.id(),
+                                         &MediaRoute::media_sink_id);
+      const MediaRoute* route =
+          route_it == routes().end() ? nullptr : &*route_it;
+      media_sinks.push_back(ConvertToUISink(sink, route, issue_));
+    }
+    model_.set_media_sinks(std::move(media_sinks));
   }
-  model_.set_media_sinks(std::move(media_sinks));
+
   for (CastDialogController::Observer& observer : observers_)
     observer.OnModelUpdated(model_);
 }
@@ -494,7 +503,7 @@ void MediaRouterUI::SendIssueForScreenPermission(const MediaSink::Id& sink_id) {
   IssueInfo issue_info(issue_title, IssueInfo::Severity::WARNING, sink_id);
   AddIssue(issue_info);
 #else
-  NOTREACHED() << "Only valid for MAC OS!";
+  NOTREACHED_IN_MIGRATION() << "Only valid for MAC OS!";
 #endif
 }
 

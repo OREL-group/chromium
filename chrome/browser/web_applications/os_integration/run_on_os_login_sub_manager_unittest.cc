@@ -26,6 +26,7 @@
 #include "chrome/browser/web_applications/web_app_install_info.h"
 #include "chrome/browser/web_applications/web_app_install_params.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
+#include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "components/prefs/pref_service.h"
@@ -52,10 +53,8 @@ class RunOnOsLoginSubManagerTestBase : public WebAppTest {
         std::make_unique<WebAppFileHandlerManager>(profile());
     auto protocol_handler_manager =
         std::make_unique<WebAppProtocolHandlerManager>(profile());
-    auto shortcut_manager = std::make_unique<WebAppShortcutManager>(
-        profile(), file_handler_manager.get(), protocol_handler_manager.get());
     auto os_integration_manager = std::make_unique<OsIntegrationManager>(
-        profile(), std::move(shortcut_manager), std::move(file_handler_manager),
+        profile(), std::move(file_handler_manager),
         std::move(protocol_handler_manager));
 
     provider_->SetOsIntegrationManager(std::move(os_integration_manager));
@@ -69,8 +68,7 @@ class RunOnOsLoginSubManagerTestBase : public WebAppTest {
 
   webapps::AppId InstallWebApp() {
     std::unique_ptr<WebAppInstallInfo> info =
-        std::make_unique<WebAppInstallInfo>();
-    info->start_url = kWebAppUrl;
+        WebAppInstallInfo::CreateWithStartUrlForTesting(kWebAppUrl);
     info->title = u"Test App";
     info->user_display_mode = web_app::mojom::UserDisplayMode::kStandalone;
     base::test::TestFuture<const webapps::AppId&, webapps::InstallResultCode>

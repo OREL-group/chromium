@@ -95,10 +95,6 @@ protocol::Audits::GenericIssueErrorType
 AuditsIssue::GenericIssueErrorTypeToProtocol(
     mojom::blink::GenericIssueErrorType error_type) {
   switch (error_type) {
-    case mojom::blink::GenericIssueErrorType::
-        kCrossOriginPortalPostMessageError:
-      return protocol::Audits::GenericIssueErrorTypeEnum::
-          CrossOriginPortalPostMessageError;
     case mojom::blink::GenericIssueErrorType::kFormLabelForNameError:
       return protocol::Audits::GenericIssueErrorTypeEnum::FormLabelForNameError;
     case mojom::blink::GenericIssueErrorType::kFormDuplicateIdForInputError:
@@ -251,6 +247,10 @@ BuildAttributionReportingIssueType(AttributionReportingIssueType type) {
     case AttributionReportingIssueType::kNoRegisterOsTriggerHeader:
       return protocol::Audits::AttributionReportingIssueTypeEnum::
           NoRegisterOsTriggerHeader;
+    case AttributionReportingIssueType::
+        kNavigationRegistrationUniqueScopeAlreadySet:
+      return protocol::Audits::AttributionReportingIssueTypeEnum::
+          NavigationRegistrationUniqueScopeAlreadySet;
   }
 }
 
@@ -319,6 +319,14 @@ protocol::Audits::BlockedByResponseReason BlockedByResponseReasonToProtocol(
         kCorpNotSameOriginAfterDefaultedToSameOriginByCoep:
       return protocol::Audits::BlockedByResponseReasonEnum::
           CorpNotSameOriginAfterDefaultedToSameOriginByCoep;
+    case network::mojom::BlockedByResponseReason::
+        kCorpNotSameOriginAfterDefaultedToSameOriginByDip:
+      return protocol::Audits::BlockedByResponseReasonEnum::
+          CorpNotSameOriginAfterDefaultedToSameOriginByDip;
+    case network::mojom::BlockedByResponseReason::
+        kCorpNotSameOriginAfterDefaultedToSameOriginByCoepAndDip:
+      return protocol::Audits::BlockedByResponseReasonEnum::
+          CorpNotSameOriginAfterDefaultedToSameOriginByCoepAndDip;
     case network::mojom::BlockedByResponseReason::kCorpNotSameSite:
       return protocol::Audits::BlockedByResponseReasonEnum::CorpNotSameSite;
   }

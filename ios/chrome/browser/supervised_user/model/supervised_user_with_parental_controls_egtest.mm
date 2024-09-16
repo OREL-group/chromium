@@ -4,6 +4,7 @@
 
 #import "base/test/ios/wait_util.h"
 #import "components/policy/policy_constants.h"
+#import "components/signin/internal/identity_manager/account_capabilities_constants.h"
 #import "components/supervised_user/core/browser/supervised_user_url_filter.h"
 #import "components/supervised_user/core/common/features.h"
 #import "ios/chrome/browser/metrics/model/metrics_app_interface.h"
@@ -17,6 +18,7 @@
 #import "ios/chrome/browser/ui/authentication/signin_earl_grey_ui_test_util.h"
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_constants.h"
 #import "ios/chrome/browser/ui/popup_menu/popup_menu_constants.h"
+#import "ios/chrome/browser/ui/settings/clear_browsing_data/features.h"
 #import "ios/chrome/browser/ui/settings/google_services/manage_sync_settings_constants.h"
 #import "ios/chrome/browser/ui/settings/supervised_user_settings_app_interface.h"
 #import "ios/chrome/grit/ios_strings.h"
@@ -56,16 +58,20 @@ static const char* kInterstitialFirstTimeBanner =
 
 @implementation SupervisedUserWithParentalControlsTestCase
 
-- (void)signInSupervisedUserWithSync:(BOOL)withSync {
-  FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
-  [SigninEarlGrey addFakeIdentity:fakeIdentity];
-  [SigninEarlGrey setIsSubjectToParentalControls:YES forIdentity:fakeIdentity];
-
-  [SigninEarlGreyUI signinWithFakeIdentity:fakeIdentity enableSync:withSync];
+- (AppLaunchConfiguration)appConfigurationForTestCase {
+  AppLaunchConfiguration config = [super appConfigurationForTestCase];
+  config.features_enabled.push_back(kIOSQuickDelete);
+  return config;
 }
 
 - (void)signInSupervisedUser {
-  [self signInSupervisedUserWithSync:YES];
+  FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
+  [SigninEarlGrey addFakeIdentity:fakeIdentity
+                 withCapabilities:@{
+                   @(kIsSubjectToParentalControlsCapabilityName) : @YES,
+                 }];
+
+  [SigninEarlGreyUI signinWithFakeIdentity:fakeIdentity];
 }
 
 - (void)setUp {
@@ -140,15 +146,12 @@ static const char* kInterstitialFirstTimeBanner =
       tapSettingsMenuButton:chrome_test_util::SettingsMenuPrivacyButton()];
   [ChromeEarlGreyUI
       tapPrivacyMenuButton:chrome_test_util::ClearBrowsingDataCell()];
+
   // "Browsing history", "Cookies, Site Data" and "Cached Images and Files"
   // are the default checked options when the prefs are registered. No need to
   // modify them.
   [ChromeEarlGreyUI tapClearBrowsingDataMenuButton:
                         chrome_test_util::ClearBrowsingDataButton()];
-  [[EarlGrey selectElementWithMatcher:chrome_test_util::
-                                          ConfirmClearBrowsingDataButton()]
-      performAction:grey_tap()];
-
   [[EarlGrey selectElementWithMatcher:chrome_test_util::SettingsDoneButton()]
       performAction:grey_tap()];
 }
@@ -321,17 +324,9 @@ static const char* kInterstitialFirstTimeBanner =
   [self checkInterstitalIsShown];
 }
 
-#if !TARGET_IPHONE_SIMULATOR
-#define MAYBE_testSupervisedUserWithAllowAllSitesAndSafeSearchRestricted \
-  DISABLED_testSupervisedUserWithAllowAllSitesAndSafeSearchRestricted
-#else
-#define MAYBE_testSupervisedUserWithAllowAllSitesAndSafeSearchRestricted \
-  testSupervisedUserWithAllowAllSitesAndSafeSearchRestricted
-#endif
-// TODO(crbug.com/331644931): Re-enable on device when fixed.
 // Tests that users with "Allow All" filtering are shown the interstitial
 // when they navigate to a site that ClassifyUrl classifies as unsafe.
-- (void)MAYBE_testSupervisedUserWithAllowAllSitesAndSafeSearchRestricted {
+- (void)testSupervisedUserWithAllowAllSitesAndSafeSearchRestricted {
   [self signInSupervisedUser];
   [SupervisedUserSettingsAppInterface setFilteringToAllowAllSites];
   [SupervisedUserSettingsAppInterface
@@ -584,17 +579,9 @@ static const char* kInterstitialFirstTimeBanner =
   [self checkHideDetailsLinkVisibility:NO];
 }
 
-#if !TARGET_IPHONE_SIMULATOR
-#define MAYBE_testSupervisedUserInterstitialShowBlockReasonAndDetails \
-  DISABLED_testSupervisedUserInterstitialShowBlockReasonAndDetails
-#else
-#define MAYBE_testSupervisedUserInterstitialShowBlockReasonAndDetails \
-  testSupervisedUserInterstitialShowBlockReasonAndDetails
-#endif
-// TODO(crbug.com/331644931): Re-enable on device when fixed.
 // Tests that the that the Details link / Block reason is displayed on the
 // interstitial "Ask your parent" screen depending on the screen width.
-- (void)MAYBE_testSupervisedUserInterstitialShowBlockReasonAndDetails {
+- (void)testSupervisedUserInterstitialShowBlockReasonAndDetails {
   [self signInSupervisedUser];
   [SupervisedUserSettingsAppInterface setFilteringToAllowApprovedSites];
 
@@ -618,16 +605,8 @@ static const char* kInterstitialFirstTimeBanner =
   }
 }
 
-#if !TARGET_IPHONE_SIMULATOR
-#define MAYBE_testSupervisedUserInterstitialOnBackButton \
-  DISABLED_testSupervisedUserInterstitialOnBackButton
-#else
-#define MAYBE_testSupervisedUserInterstitialOnBackButton \
-  testSupervisedUserInterstitialOnBackButton
-#endif
-// TODO(crbug.com/331644931): Re-enable on device when fixed.
 // Tests that the Back Button of the interstitial gets us to the previous page.
-- (void)MAYBE_testSupervisedUserInterstitialOnBackButton {
+- (void)testSupervisedUserInterstitialOnBackButton {
   [self signInSupervisedUser];
   [SupervisedUserSettingsAppInterface setFakePermissionCreator];
   [SupervisedUserSettingsAppInterface setFilteringToAllowAllSites];
@@ -703,16 +682,8 @@ static const char* kInterstitialFirstTimeBanner =
   [self checkElementDisplayStyleVisibility:@"banner" isVisible:NO];
 }
 
-#if !TARGET_IPHONE_SIMULATOR
-#define MAYBE_testSupervisedUserInterstitialSupportsZoom \
-  DISABLED_testSupervisedUserInterstitialSupportsZoom
-#else
-#define MAYBE_testSupervisedUserInterstitialSupportsZoom \
-  testSupervisedUserInterstitialSupportsZoom
-#endif
-// TODO(crbug.com/331644931): Re-enable on device when fixed.
 // Tests that the Zoom Text option is available for the interstitial.
-- (void)MAYBE_testSupervisedUserInterstitialSupportsZoom {
+- (void)testSupervisedUserInterstitialSupportsZoom {
   [self signInSupervisedUser];
   [SupervisedUserSettingsAppInterface setFilteringToAllowApprovedSites];
 
@@ -734,29 +705,34 @@ static const char* kInterstitialFirstTimeBanner =
 
 #pragma mark - Clear Content Behaviour
 
-// Tests that a logged in user with enabled "Sync" remains logged in after
+// Tests that a user in the legacy "syncing" state remains signed in after
 // clearing the browsing data (Cookies and BrowsingHistory).
-- (void)testSupervisedUserWithSyncIsLoggedInAfterClearingBrowsingData {
-  [self signInSupervisedUserWithSync:YES];
+// TODO(crbug.com/40066949): Delete this test after the syncing state is gone.
+- (void)testSupervisedUserWithLegacySyncStaysSignedInAfterClearingBrowsingData {
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
+  [SigninEarlGrey addFakeIdentity:fakeIdentity
+                 withCapabilities:@{
+                   @(kIsSubjectToParentalControlsCapabilityName) : @YES,
+                 }];
+  [SigninEarlGrey signinAndEnableLegacySyncFeature:fakeIdentity];
   [SigninEarlGrey verifySignedInWithFakeIdentity:fakeIdentity];
 
   [self clearBrowsingData];
 
-  // The user should be still logged in.
+  // The user should be still signed in.
   [SigninEarlGrey verifySignedInWithFakeIdentity:fakeIdentity];
 }
 
-// Tests that a logged in user with disabled "Sync" remains logged in after
-// clearing the browsing data (Cookies and BrowsingHistory).
-- (void)testSupervisedUserWithoutSyncIsLoggedInAfterClearingBrowsingData {
-  [self signInSupervisedUserWithSync:NO];
+// Tests that a signed in user remains signed in after clearing the browsing
+// data (Cookies and BrowsingHistory).
+- (void)testSupervisedUserStaysSignedInAfterClearingBrowsingData {
+  [self signInSupervisedUser];
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
   [SigninEarlGrey verifySignedInWithFakeIdentity:fakeIdentity];
 
   [self clearBrowsingData];
 
-  // The user should be still logged in.
+  // The user should be still signed in.
   [SigninEarlGrey verifySignedInWithFakeIdentity:fakeIdentity];
 }
 

@@ -16,12 +16,13 @@ namespace autofill {
 class AddressNormalizer;
 class AutofillProfile;
 class AutofillType;
-struct FormFieldData;
+class FormFieldData;
 
 // Returns the appropriate `profile` value based on `field_type` to fill
 // into `field_data`, as well as the field type used to retrieve that value.
 // Returns an empty string if no value could be found for the given `field_data`
 // and `field_type`.
+// TODO(crbug.com/40264633): Pass a `FieldType` instead of `AutofillType`.
 std::pair<std::u16string, FieldType> GetFillingValueAndTypeForProfile(
     const AutofillProfile& profile,
     const std::string& app_locale,

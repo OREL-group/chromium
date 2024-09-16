@@ -19,11 +19,10 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/test/scoped_feature_list.h"
+#include "build/android_buildflags.h"
 #include "components/favicon/content/large_icon_service_getter.h"
 #include "components/favicon/core/large_icon_service.h"
 #include "components/favicon_base/favicon_types.h"
-#include "components/webapps/browser/features.h"
 #include "components/webapps/browser/installable/installable_data.h"
 #include "components/webapps/browser/installable/installable_logging.h"
 #include "components/webapps/browser/installable/installable_manager.h"
@@ -330,57 +329,77 @@ class AddToHomescreenDataFetcherTest
     installable_manager_->SetShouldManifestTimeOut(should_time_out);
   }
 
-  base::test::ScopedFeatureList scoped_feature_list_;
-
  private:
   class NullLargeIconService : public favicon::LargeIconService {
    public:
     NullLargeIconService() = default;
     ~NullLargeIconService() override = default;
 
-    MOCK_METHOD5(GetLargeIconRawBitmapOrFallbackStyleForPageUrl,
-                 base::CancelableTaskTracker::TaskId(
-                     const GURL& page_url,
-                     int min_source_size_in_pixel,
-                     int desired_size_in_pixel,
-                     favicon_base::LargeIconCallback callback,
-                     base::CancelableTaskTracker* tracker));
-    MOCK_METHOD5(GetLargeIconImageOrFallbackStyleForPageUrl,
-                 base::CancelableTaskTracker::TaskId(
-                     const GURL& page_url,
-                     int min_source_size_in_pixel,
-                     int desired_size_in_pixel,
-                     favicon_base::LargeIconImageCallback callback,
-                     base::CancelableTaskTracker* tracker));
-    MOCK_METHOD5(GetLargeIconRawBitmapOrFallbackStyleForIconUrl,
-                 base::CancelableTaskTracker::TaskId(
-                     const GURL& icon_url,
-                     int min_source_size_in_pixel,
-                     int desired_size_in_pixel,
-                     favicon_base::LargeIconCallback callback,
-                     base::CancelableTaskTracker* tracker));
-    MOCK_METHOD4(GetIconRawBitmapOrFallbackStyleForPageUrl,
-                 base::CancelableTaskTracker::TaskId(
-                     const GURL& page_url,
-                     int desired_size_in_pixel,
-                     favicon_base::LargeIconCallback callback,
-                     base::CancelableTaskTracker* tracker));
-    MOCK_METHOD5(
-        GetLargeIconOrFallbackStyleFromGoogleServerSkippingLocalCache,
-        void(const GURL& page_url,
-             bool may_page_url_be_private,
-             bool should_trim_page_url_path,
-             const net::NetworkTrafficAnnotationTag& traffic_annotation,
-             favicon_base::GoogleFaviconServerCallback callback));
-    MOCK_METHOD1(TouchIconFromGoogleServer, void(const GURL& icon_url));
+    MOCK_METHOD(base::CancelableTaskTracker::TaskId,
+                GetLargeIconRawBitmapOrFallbackStyleForPageUrl,
+                (const GURL& page_url,
+                 int min_source_size_in_pixel,
+                 int desired_size_in_pixel,
+                 favicon_base::LargeIconCallback callback,
+                 base::CancelableTaskTracker* tracker),
+                (override));
+    MOCK_METHOD(base::CancelableTaskTracker::TaskId,
+                GetLargeIconImageOrFallbackStyleForPageUrl,
+                (const GURL& page_url,
+                 int min_source_size_in_pixel,
+                 int desired_size_in_pixel,
+                 favicon_base::LargeIconImageCallback callback,
+                 base::CancelableTaskTracker* tracker),
+                (override));
+    MOCK_METHOD(base::CancelableTaskTracker::TaskId,
+                GetLargeIconRawBitmapOrFallbackStyleForIconUrl,
+                (const GURL& icon_url,
+                 int min_source_size_in_pixel,
+                 int desired_size_in_pixel,
+                 favicon_base::LargeIconCallback callback,
+                 base::CancelableTaskTracker* tracker),
+                (override));
+    MOCK_METHOD(base::CancelableTaskTracker::TaskId,
+                GetIconRawBitmapOrFallbackStyleForPageUrl,
+                (const GURL& page_url,
+                 int desired_size_in_pixel,
+                 favicon_base::LargeIconCallback callback,
+                 base::CancelableTaskTracker* tracker),
+                (override));
+    MOCK_METHOD(void,
+                GetLargeIconOrFallbackStyleFromGoogleServerSkippingLocalCache,
+                (const GURL& page_url,
+                 bool should_trim_page_url_path,
+                 const net::NetworkTrafficAnnotationTag& traffic_annotation,
+                 favicon_base::GoogleFaviconServerCallback callback),
+                (override));
+    MOCK_METHOD(void,
+                GetLargeIconFromCacheFallbackToGoogleServer,
+                (const GURL& page_url,
+                 StandardIconSize min_source_size_in_pixel,
+                 std::optional<StandardIconSize> size_in_pixel_to_resize_to,
+                 NoBigEnoughIconBehavior no_big_enough_icon_behavior,
+                 bool should_trim_page_url_path,
+                 const net::NetworkTrafficAnnotationTag& traffic_annotation,
+                 favicon_base::LargeIconCallback callback,
+                 base::CancelableTaskTracker* tracker),
+                (override));
+    MOCK_METHOD(void,
+                TouchIconFromGoogleServer,
+                (const GURL& icon_url),
+                (override));
     base::CancelableTaskTracker::TaskId GetLargeIconRawBitmapForPageUrl(
         const GURL& page_url,
         int min_source_size_in_pixel,
-        favicon_base::FaviconRawBitmapCallback callback,
+        std::optional<int> size_in_pixel_to_resize_to,
+        NoBigEnoughIconBehavior no_big_enough_icon_behavior,
+        favicon_base::LargeIconCallback callback,
         base::CancelableTaskTracker* tracker) override {
       content::GetUIThreadTaskRunner({})->PostTask(
-          FROM_HERE, base::BindOnce(std::move(callback),
-                                    favicon_base::FaviconRawBitmapResult()));
+          FROM_HERE,
+          base::BindOnce(std::move(callback),
+                         favicon_base::LargeIconResult(
+                             favicon_base::FaviconRawBitmapResult())));
       return base::CancelableTaskTracker::kBadTaskId;
     }
   };
@@ -400,6 +419,21 @@ TEST_F(AddToHomescreenDataFetcherTest, NoManifest) {
              InstallableStatusCode::NO_MANIFEST);
   CheckHistograms(histograms);
 }
+
+#if BUILDFLAG(IS_DESKTOP_ANDROID)
+TEST_F(AddToHomescreenDataFetcherTest, NoManifestDesktopAndroid) {
+  // Fake that `InstallableIconFetcher` generated the icon, which is the
+  // fallback behavior on desktop Android.
+  SetPrimaryIcon(GURL(kDefaultIconUrl));
+
+  ObserverWaiter waiter;
+  std::unique_ptr<AddToHomescreenDataFetcher> fetcher = BuildFetcher(&waiter);
+  RunFetcher(fetcher.get(), waiter, kWebAppInstallInfoTitle,
+             blink::mojom::DisplayMode::kStandalone,
+             AddToHomescreenParams::AppType::WEBAPK_DIY,
+             InstallableStatusCode::NO_MANIFEST);
+}
+#endif  // BUILDFLAG(IS_DESKTOP_ANDROID)
 
 TEST_F(AddToHomescreenDataFetcherTest, NoIconManifest) {
   // Test a manifest with no icons. This should use the short name and have
@@ -506,36 +540,6 @@ TEST_F(AddToHomescreenDataFetcherTest, InstallableManifest) {
 }
 
 TEST_F(AddToHomescreenDataFetcherTest, ManifestNoNameNoShortName) {
-  scoped_feature_list_.InitAndDisableFeature(
-      features::kUniversalInstallManifest);
-  // Test that when the manifest does not provide either Manifest::short_name
-  // nor Manifest::name that:
-  //  - The page is not WebAPK compatible.
-  //  - WebAppInstallInfo::title is used as the "name".
-  //  - We still use the icons from the manifest.
-  blink::mojom::ManifestPtr manifest = BuildWebAPKManifest();
-  manifest->name = std::nullopt;
-  manifest->short_name = std::nullopt;
-
-  SetManifest(std::move(manifest));
-  ObserverWaiter waiter;
-  std::unique_ptr<AddToHomescreenDataFetcher> fetcher = BuildFetcher(&waiter);
-  RunFetcher(fetcher.get(), waiter, kWebAppInstallInfoTitle,
-             blink::mojom::DisplayMode::kStandalone,
-             AddToHomescreenParams::AppType::SHORTCUT,
-             InstallableStatusCode::MANIFEST_MISSING_NAME_OR_SHORT_NAME);
-
-  EXPECT_EQ(fetcher->shortcut_info().name, kWebAppInstallInfoTitle);
-  EXPECT_EQ(fetcher->shortcut_info().short_name, kWebAppInstallInfoTitle);
-  EXPECT_FALSE(fetcher->primary_icon().drawsNothing());
-  EXPECT_EQ(fetcher->shortcut_info().best_primary_icon_url,
-            GURL(kDefaultIconUrl));
-}
-
-TEST_F(AddToHomescreenDataFetcherTest,
-       UniversalInstallManifestNoNameNoShortName) {
-  scoped_feature_list_.InitAndEnableFeature(
-      features::kUniversalInstallManifest);
   // Test that when the manifest does not provide either Manifest::short_name
   // nor Manifest::name but web page metadata provides a application-name.
   blink::mojom::ManifestPtr manifest = BuildWebAPKManifest();
@@ -559,10 +563,7 @@ TEST_F(AddToHomescreenDataFetcherTest,
             GURL(kDefaultIconUrl));
 }
 
-TEST_F(AddToHomescreenDataFetcherTest, UniversalInstallNoManifestIcons) {
-  scoped_feature_list_.InitWithFeatures(
-      {features::kUniversalInstallManifest, features::kUniversalInstallIcon},
-      {});
+TEST_F(AddToHomescreenDataFetcherTest, NoManifestIcons) {
   // Test that when the manifest does not provide any icon, we fallback to use
   // favicon.
   blink::mojom::ManifestPtr manifest = BuildWebAPKManifest();
@@ -593,9 +594,7 @@ TEST_F(AddToHomescreenDataFetcherTest, UniversalInstallNoManifestIcons) {
             GURL(kDefaultIconUrl));
 }
 
-TEST_F(AddToHomescreenDataFetcherTest, UniversalManifestDisplay) {
-  scoped_feature_list_.InitAndEnableFeature(
-      features::kUniversalInstallManifest);
+TEST_F(AddToHomescreenDataFetcherTest, ManifestDisplayMode) {
   // Test that when the manifest does not provide display mode, we fallback to
   // install with DisplayMode::kMinimalUi.
   blink::mojom::ManifestPtr manifest = BuildWebAPKManifest();
@@ -620,12 +619,6 @@ TEST_F(AddToHomescreenDataFetcherTest, UniversalManifestDisplay) {
 
 TEST_F(AddToHomescreenDataFetcherTest,
        UniversalInstallEmptyManifestAtRootScope) {
-  scoped_feature_list_.InitWithFeatures(
-      {features::kUniversalInstallManifest,
-       features::kUniversalInstallRootScopeNoManifest,
-       features::kUniversalInstallIcon},
-      {});
-
   GURL document_url = GURL("https://www.example.com/index.html");
   NavigateAndCommit(document_url);
 
@@ -656,12 +649,6 @@ TEST_F(AddToHomescreenDataFetcherTest,
 
 TEST_F(AddToHomescreenDataFetcherTest,
        UniversalInstallEmptyManifestNotRootScope) {
-  scoped_feature_list_.InitWithFeatures(
-      {features::kUniversalInstallManifest,
-       features::kUniversalInstallRootScopeNoManifest,
-       features::kUniversalInstallIcon},
-      {});
-
   GURL document_url = GURL("https://www.example.com/scope/index.html");
   NavigateAndCommit(document_url);
 
@@ -678,10 +665,19 @@ TEST_F(AddToHomescreenDataFetcherTest,
 
   ObserverWaiter waiter;
   std::unique_ptr<AddToHomescreenDataFetcher> fetcher = BuildFetcher(&waiter);
+#if BUILDFLAG(IS_DESKTOP_ANDROID)
+  // Desktop Android expects a standalone DIY WebAPK.
+  RunFetcher(fetcher.get(), waiter, kWebAppInstallInfoTitle,
+             blink::mojom::DisplayMode::kStandalone,
+             AddToHomescreenParams::AppType::WEBAPK_DIY,
+             InstallableStatusCode::NO_MANIFEST);
+#else
+  // Regular Android expects a shortcut.
   RunFetcher(fetcher.get(), waiter, kWebAppInstallInfoTitle,
              blink::mojom::DisplayMode::kBrowser,
              AddToHomescreenParams::AppType::SHORTCUT,
              InstallableStatusCode::NO_MANIFEST);
+#endif  // BUILDFLAG(IS_DESKTOP_ANDROID)
 
   EXPECT_EQ(fetcher->shortcut_info().name, kWebAppInstallInfoTitle);
   EXPECT_EQ(fetcher->shortcut_info().short_name, kWebAppInstallInfoTitle);

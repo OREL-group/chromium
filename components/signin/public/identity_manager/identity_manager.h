@@ -94,7 +94,7 @@ class IdentityManager : public KeyedService,
 
     // Called when a new refresh token is associated with |account_info|.
     // NOTE: On a signin event, the ordering of this callback wrt the
-    // OnPrimaryAccountSet() callback is undefined. If you as a client are
+    // |OnPrimaryAccountChanged| callback is undefined. If you as a client are
     // interested in both callbacks, PrimaryAccountAccessTokenFetcher will
     // likely meet your needs. Otherwise, if this lack of ordering is
     // problematic for your use case, please contact blundell@chromium.org.
@@ -252,6 +252,15 @@ class IdentityManager : public KeyedService,
   bool HasAccountWithRefreshTokenInPersistentErrorState(
       const CoreAccountId& account_id) const;
 
+#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+  // Returns the wrapped binding key of a refresh token associated with
+  // `account_id`, if any.
+  // Returns a non-empty vector iff (a) a refresh token exists for `account_id`,
+  // and (b) the refresh token is bound to a device.
+  std::vector<uint8_t> GetWrappedBindingKeyOfRefreshTokenForAccount(
+      const CoreAccountId& account_id) const;
+#endif
+
   // Returns the error state of the refresh token associated with |account_id|.
   // In particular: Returns GoogleServiceAuthError::AuthErrorNone() if either
   // (a) no refresh token exists for |account_id|, or (b) the refresh token is
@@ -317,11 +326,12 @@ class IdentityManager : public KeyedService,
 
     // Called when an access token request is completed. Contains diagnostic
     // information about the access token request.
-    virtual void OnAccessTokenRequestCompleted(const CoreAccountId& account_id,
-                                               const std::string& consumer_id,
-                                               const ScopeSet& scopes,
-                                               GoogleServiceAuthError error,
-                                               base::Time expiration_time) {}
+    virtual void OnAccessTokenRequestCompleted(
+        const CoreAccountId& account_id,
+        const std::string& consumer_id,
+        const ScopeSet& scopes,
+        const GoogleServiceAuthError& error,
+        base::Time expiration_time) {}
 
     // Called when an access token was removed.
     virtual void OnAccessTokenRemovedFromCache(const CoreAccountId& account_id,
@@ -427,13 +437,6 @@ class IdentityManager : public KeyedService,
   void PrepareForAddingNewAccount();
 
 #if BUILDFLAG(IS_ANDROID)
-  // Returns a pointer to the AccountTrackerService Java instance associated
-  // with this object.
-  // TODO(https://crbug.com/934688): Eliminate this method once
-  // AccountTrackerService.java has no more client usage.
-  base::android::ScopedJavaLocalRef<jobject>
-  LegacyGetAccountTrackerServiceJavaObject();
-
   // Get the reference on the java IdentityManager.
   base::android::ScopedJavaLocalRef<jobject> GetJavaObject();
 
@@ -467,7 +470,7 @@ class IdentityManager : public KeyedService,
   // Refreshes account associated with |j_core_account_id| if it's not null.
   // Else refreshes all accounts with refresh tokens if they are stale. See
   // RefreshAccountInfoIfStale(const CoreAccountId&).
-  // TODO(crbug.com/1491005): Remove |j_core_account_id| from parameters.
+  // TODO(crbug.com/40284908): Remove |j_core_account_id| from parameters.
   void RefreshAccountInfoIfStale(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& j_core_account_id);
@@ -492,9 +495,15 @@ class IdentityManager : public KeyedService,
       const AccountAvailabilityOptions& options);
   friend void SetAutomaticIssueOfAccessTokens(IdentityManager* identity_manager,
                                               bool grant);
-  friend void SetRefreshTokenForAccount(IdentityManager* identity_manager,
-                                        const CoreAccountId& account_id,
-                                        const std::string& token_value);
+  friend void SetRefreshTokenForAccount(
+      IdentityManager* identity_manager,
+      const CoreAccountId& account_id,
+      const std::string& token_value
+#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+      ,
+      const std::vector<uint8_t>& wrapped_binding_key
+#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+  );
   friend void SetInvalidRefreshTokenForAccount(
       IdentityManager* identity_manager,
       const CoreAccountId& account_id,
@@ -595,7 +604,7 @@ class IdentityManager : public KeyedService,
   FRIEND_TEST_ALL_PREFIXES(IdentityManagerTest, FindExtendedPrimaryAccountInfo);
 
   // Both classes only call FindExtendedPrimaryAccountInfo().
-  // TODO(https://crbug.com/1213351): Delete once the private calls have been
+  // TODO(crbug.com/40183609): Delete once the private calls have been
   // removed.
   friend class ::NewTabPageUI;
   friend class ::PrivacySandboxSettingsDelegate;
@@ -604,7 +613,7 @@ class IdentityManager : public KeyedService,
   // does not require tokens to be loaded.
   // Do not add more external callers, as account info is generally not
   // available until tokens are loaded.
-  // TODO(https://crbug.com/1213351): Remove existing external callers.
+  // TODO(crbug.com/40183609): Remove existing external callers.
   AccountInfo FindExtendedPrimaryAccountInfo(ConsentLevel consent_level);
 
   // Private getters used for testing only (i.e. see identity_test_utils.h).
@@ -650,7 +659,7 @@ class IdentityManager : public KeyedService,
   void OnFetchAccessTokenComplete(const CoreAccountId& account_id,
                                   const std::string& consumer_id,
                                   const ScopeSet& scopes,
-                                  GoogleServiceAuthError error,
+                                  const GoogleServiceAuthError& error,
                                   base::Time expiration_time) override;
   void OnAccessTokenRemoved(const CoreAccountId& account_id,
                             const ScopeSet& scopes) override;

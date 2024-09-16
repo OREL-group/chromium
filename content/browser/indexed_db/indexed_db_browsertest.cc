@@ -76,7 +76,9 @@ using storage::QuotaManager;
 using storage::mojom::FailClass;
 using storage::mojom::FailMethod;
 
-namespace content {
+namespace content::indexed_db {
+
+namespace {
 
 // This browser test is aimed towards exercising the IndexedDB bindings and
 // the actual implementation that lives in the browser side.
@@ -104,7 +106,6 @@ class IndexedDBBrowserTest : public ContentBrowserTest {
     // Enable experimental web platform features to enable write access.
     command_line->AppendSwitch(
         switches::kEnableExperimentalWebPlatformFeatures);
-    ContentBrowserTest::SetUpCommandLine(command_line);
   }
 
   void TearDownOnMainThread() override { failure_injector_.reset(); }
@@ -337,20 +338,27 @@ IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, KeyTypesTest) {
 IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, ObjectStoreTest) {
   base::HistogramTester tester;
 
-  tester.ExpectTotalCount("WebCore.IndexedDB.RequestDuration.Open", 0);
+  tester.ExpectTotalCount("WebCore.IndexedDB.RequestDuration2.Open", 0);
 
   // This test opens a database and does 3 adds and 3 gets in the versionchange
   // transaction (no readonly or readwrite transactions).
   SimpleTest(GetTestUrl("indexeddb", "object_store_test.html"));
   content::FetchHistogramsFromChildProcesses();
 
-  tester.ExpectTotalCount("WebCore.IndexedDB.RequestDuration.Open", 1);
-  tester.ExpectTotalCount("WebCore.IndexedDB.RequestDuration.ObjectStorePut",
+  tester.ExpectTotalCount("WebCore.IndexedDB.RequestDuration2.Open", 1);
+  tester.ExpectTotalCount("WebCore.IndexedDB.RequestDuration2.ObjectStorePut",
                           0);
-  tester.ExpectTotalCount("WebCore.IndexedDB.RequestDuration.ObjectStoreAdd",
+  tester.ExpectTotalCount("WebCore.IndexedDB.RequestDuration2.ObjectStoreAdd",
                           3);
-  tester.ExpectTotalCount("WebCore.IndexedDB.RequestDuration.ObjectStoreGet",
+  // 2 of the adds succeed and one fails (due to the key already existing).
+  tester.ExpectBucketCount(
+      "WebCore.IndexedDB.RequestDispatchOutcome.ObjectStoreAdd", 1, 2);
+  tester.ExpectBucketCount(
+      "WebCore.IndexedDB.RequestDispatchOutcome.ObjectStoreAdd", 0, 1);
+  tester.ExpectTotalCount("WebCore.IndexedDB.RequestDuration2.ObjectStoreGet",
                           3);
+  tester.ExpectBucketCount(
+      "WebCore.IndexedDB.RequestDispatchOutcome.ObjectStoreGet", 1, 3);
 
   tester.ExpectTotalCount("WebCore.IndexedDB.Transaction.ReadWrite.TimeQueued",
                           0);
@@ -370,13 +378,20 @@ IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, ObjectStoreTest) {
   SimpleTest(GetTestUrl("indexeddb", "transaction_get_test.html"));
   content::FetchHistogramsFromChildProcesses();
 
-  tester.ExpectTotalCount("WebCore.IndexedDB.RequestDuration.Open", 2);
-  tester.ExpectTotalCount("WebCore.IndexedDB.RequestDuration.ObjectStorePut",
+  tester.ExpectTotalCount("WebCore.IndexedDB.RequestDuration2.Open", 2);
+  tester.ExpectBucketCount("WebCore.IndexedDB.RequestDispatchOutcome.Open", 1,
+                           2);
+  tester.ExpectTotalCount("WebCore.IndexedDB.RequestDuration2.ObjectStorePut",
                           0);
-  tester.ExpectTotalCount("WebCore.IndexedDB.RequestDuration.ObjectStoreAdd",
+  tester.ExpectTotalCount("WebCore.IndexedDB.RequestDuration2.ObjectStoreAdd",
                           4);
-  tester.ExpectTotalCount("WebCore.IndexedDB.RequestDuration.ObjectStoreGet",
+  // One more success than before.
+  tester.ExpectBucketCount(
+      "WebCore.IndexedDB.RequestDispatchOutcome.ObjectStoreAdd", 1, 3);
+  tester.ExpectTotalCount("WebCore.IndexedDB.RequestDuration2.ObjectStoreGet",
                           5);
+  tester.ExpectBucketCount(
+      "WebCore.IndexedDB.RequestDispatchOutcome.ObjectStoreGet", 1, 5);
 
   tester.ExpectTotalCount("WebCore.IndexedDB.Transaction.ReadWrite.TimeQueued",
                           0);
@@ -554,6 +569,10 @@ class IndexedDBBrowserTestWithGCExposed : public IndexedDBBrowserTest {
 IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTestWithGCExposed,
                        DatabaseCallbacksTest) {
   SimpleTest(GetTestUrl("indexeddb", "database_callbacks_first.html"));
+}
+
+IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTestWithGCExposed, Bug346955148Test) {
+  SimpleTest(GetTestUrl("indexeddb", "bug_346955148.html"));
 }
 
 struct BlobModificationTime {
@@ -866,17 +885,15 @@ IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, DeleteBucketDataIncognito) {
 IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, DiskFullOnCommit) {
   // Ignore several preceding transactions:
   // * The test calls deleteDatabase() which opens the backing store:
-  //   #1: IndexedDBTransaction::Commit - initial "versionchange" transaction
+  //   #1: Transaction::Commit - initial "versionchange" transaction
   // * Once the connection is opened, the test runs:
-  //   #2: IndexedDBTransaction::Commit - the test's "readwrite" transaction)
+  //   #2: Transaction::Commit - the test's "readwrite" transaction)
   const int instance_num = 2;
   const int call_num = 1;
   FailOperation(FailClass::LEVELDB_TRANSACTION, FailMethod::COMMIT_DISK_FULL,
                 instance_num, call_num);
   SimpleTest(GetTestUrl("indexeddb", "disk_full_on_commit.html"));
 }
-
-namespace {
 
 std::unique_ptr<net::test_server::HttpResponse> ServePath(
     std::string request_path) {
@@ -887,13 +904,13 @@ std::unique_ptr<net::test_server::HttpResponse> ServePath(
 
   std::string file_contents;
   if (!base::ReadFileToString(resource_path, &file_contents))
-    NOTREACHED() << "could not read file " << resource_path;
+    NOTREACHED_IN_MIGRATION() << "could not read file " << resource_path;
   http_response->set_content(file_contents);
   return std::move(http_response);
 }
 
 #if !BUILDFLAG(IS_WIN)
-void CorruptIndexedDBDatabase(const base::FilePath& idb_data_path) {
+void CorruptDatabase(const base::FilePath& idb_data_path) {
   int num_files = 0;
   int num_errors = 0;
   const bool recursive = false;
@@ -971,7 +988,7 @@ std::unique_ptr<net::test_server::HttpResponse> CorruptDBRequestHandler(
           control_test->GetFilePathForTesting(
               bucket_locator,
               base::BindLambdaForTesting([&](const base::FilePath& path) {
-                CorruptIndexedDBDatabase(path);
+                CorruptDatabase(path);
                 loop.Quit();
               }));
         }));
@@ -981,7 +998,9 @@ std::unique_ptr<net::test_server::HttpResponse> CorruptDBRequestHandler(
         std::make_unique<net::test_server::BasicHttpResponse>();
     http_response->set_code(net::HTTP_OK);
     return std::move(http_response);
-  } else if (request_path == "fail" && !request_query.empty()) {
+  }
+
+  if (request_path == "fail" && !request_query.empty()) {
     FailClass failure_class = FailClass::NOTHING;
     FailMethod failure_method = FailMethod::NOTHING;
     int instance_num = 1;
@@ -1009,7 +1028,7 @@ std::unique_ptr<net::test_server::HttpResponse> CorruptDBRequestHandler(
       else if (key == "callNum")
         call_num = atoi(value.c_str());
       else
-        NOTREACHED() << "Unknown param: \"" << key << "\"";
+        NOTREACHED_IN_MIGRATION() << "Unknown param: \"" << key << "\"";
     }
 
     if (fail_class == "LevelDBTransaction") {
@@ -1019,27 +1038,31 @@ std::unique_ptr<net::test_server::HttpResponse> CorruptDBRequestHandler(
       else if (fail_method == "Commit")
         failure_method = FailMethod::COMMIT;
       else
-        NOTREACHED() << "Unknown method: \"" << fail_method << "\"";
+        NOTREACHED_IN_MIGRATION()
+            << "Unknown method: \"" << fail_method << "\"";
     } else if (fail_class == "LevelDBIterator") {
       failure_class = FailClass::LEVELDB_ITERATOR;
       if (fail_method == "Seek")
         failure_method = FailMethod::SEEK;
       else
-        NOTREACHED() << "Unknown method: \"" << fail_method << "\"";
+        NOTREACHED_IN_MIGRATION()
+            << "Unknown method: \"" << fail_method << "\"";
     } else if (fail_class == "LevelDBDatabase") {
       failure_class = FailClass::LEVELDB_DATABASE;
       if (fail_method == "Write")
         failure_method = FailMethod::WRITE;
       else
-        NOTREACHED() << "Unknown method: \"" << fail_method << "\"";
+        NOTREACHED_IN_MIGRATION()
+            << "Unknown method: \"" << fail_method << "\"";
     } else if (fail_class == "LevelDBDirectTransaction") {
       failure_class = FailClass::LEVELDB_DIRECT_TRANSACTION;
       if (fail_method == "Get")
         failure_method = FailMethod::GET;
       else
-        NOTREACHED() << "Unknown method: \"" << fail_method << "\"";
+        NOTREACHED_IN_MIGRATION()
+            << "Unknown method: \"" << fail_method << "\"";
     } else {
-      NOTREACHED() << "Unknown class: \"" << fail_class << "\"";
+      NOTREACHED_IN_MIGRATION() << "Unknown class: \"" << fail_class << "\"";
     }
 
     DCHECK_GE(instance_num, 1);
@@ -1072,8 +1095,6 @@ std::unique_ptr<net::test_server::HttpResponse> StaticFileRequestHandler(
       request.relative_url.substr(std::string(s_indexeddb_test_prefix).size());
   return ServePath(request_path);
 }
-
-}  // namespace
 
 // See TODO in CorruptDBRequestHandler.  Windows does not support nested
 // message loops on the IO thread, so run this test on other platforms.
@@ -1221,6 +1242,53 @@ IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, ShutdownWithRequests) {
   SimpleTest(GetTestUrl("indexeddb", "shutdown_with_requests.html"));
 }
 
+// Verifies that a "NotFound" DOMException is thrown on reading a large value
+// when the underlying blob file has been deleted but the record is not.
+IN_PROC_BROWSER_TEST_F(IndexedDBBrowserTest, LargeValueReadBlobMissing) {
+  base::HistogramTester histogram_tester;
+
+  // First write a large value that gets wrapped in a blob.
+  const GURL kTestUrl =
+      GetTestUrl("indexeddb", "write_and_read_large_value.html");
+  SimpleTest(kTestUrl);
+
+  // Delete the blob file that got created.
+  {
+    base::ScopedAllowBlockingForTesting allow_blocking;
+    ASSERT_OK_AND_ASSIGN(
+        const storage::BucketInfo bucket_info,
+        GetOrCreateBucket(storage::BucketInitParams::ForDefaultBucket(
+            blink::StorageKey::CreateFirstParty(
+                url::Origin::Create(kTestUrl)))));
+    base::FilePath blob_path =
+        PathForBlob(bucket_info.ToBucketLocator(), /*database_id=*/1,
+                    DatabaseMetaDataKey::kBlobNumberGeneratorInitialNumber);
+    ASSERT_TRUE(base::PathExists(blob_path));
+    ASSERT_TRUE(base::DeleteFile(blob_path));
+  }
+
+  // Now attempt to read the large value again and expect an error.
+  EvalJsResult result = EvalJs(shell(), "readData()");
+  EXPECT_THAT(result.error,
+              testing::HasSubstr(
+                  "NotFoundError: Failed to read large IndexedDB value"));
+
+  // Verify that the right set of histograms were recorded.
+  content::FetchHistogramsFromChildProcesses();
+  const int kExpectedBucketCount = 1;
+  const int kFailureTypeBackendReadError = 3;  // From file_reader_loader.h.
+  const int kFileErrorCodeNotFoundErr = 1;     // From file_error.h.
+  histogram_tester.ExpectUniqueSample(
+      "Storage.Blob.FileReaderLoader.ReadError2", -net::ERR_FILE_NOT_FOUND,
+      kExpectedBucketCount);
+  histogram_tester.ExpectUniqueSample(
+      "Storage.Blob.FileReaderLoader.FailureType2",
+      kFailureTypeBackendReadError, kExpectedBucketCount);
+  histogram_tester.ExpectUniqueSample("IndexedDB.LargeValueReadError",
+                                      kFileErrorCodeNotFoundErr,
+                                      kExpectedBucketCount);
+}
+
 // The blob key corruption test runs in a separate class to avoid corrupting
 // an IDB store that other tests use.
 // This test is for https://crbug.com/1039446.
@@ -1299,4 +1367,5 @@ IN_PROC_BROWSER_TEST_P(IndexedDBIncognitoTest, BucketDurabilityOverride) {
 
 INSTANTIATE_TEST_SUITE_P(All, IndexedDBIncognitoTest, testing::Bool());
 
-}  // namespace content
+}  // namespace
+}  // namespace content::indexed_db

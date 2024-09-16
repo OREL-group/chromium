@@ -173,7 +173,7 @@ gfx::Rect BoundsForCharacter(const blink::WebAXObject& object,
                          inline_text_box_rect.width(), character_offsets[0]);
       }
       default:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
         return gfx::Rect();
     }
   }
@@ -969,7 +969,7 @@ bool WebAXObjectProxy::IsIgnored() {
   if (!UpdateLayout()) {
     return false;
   }
-  return accessibility_object_.AccessibilityIsIgnored();
+  return accessibility_object_.IsIgnored();
 }
 
 v8::Local<v8::Object> WebAXObjectProxy::ActiveDescendant() {

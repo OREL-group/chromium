@@ -43,10 +43,10 @@ using ScopedWebStateListObservation =
                     webStateList:(WebStateList*)webStateList
                      prefService:(PrefService*)prefService {
   CHECK(IsInactiveTabsAvailable());
-  // TODO(crbug.com/1466411): Reinstate this CHECK once
+  // TODO(crbug.com/40923937): Reinstate this CHECK once
   // InactiveTabsButtonMediator is not created when not needed (for example when
   // a policy disables the regular tab grid).
-  //CHECK(consumer);
+  // CHECK(consumer);
   CHECK(webStateList);
   CHECK(prefService);
   self = [super init];
@@ -131,7 +131,7 @@ using ScopedWebStateListObservation =
     case WebStateListChange::Type::kGroupVisualDataUpdate:
     case WebStateListChange::Type::kGroupMove:
     case WebStateListChange::Type::kGroupDelete:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 

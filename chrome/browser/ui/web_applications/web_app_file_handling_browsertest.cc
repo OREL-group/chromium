@@ -93,8 +93,7 @@ class WebAppFileHandlingTestBase : public WebAppBrowserTestBase {
   void InstallFileHandlingPWA() {
     GURL url = GetSecureAppURL();
 
-    auto web_app_info = std::make_unique<WebAppInstallInfo>();
-    web_app_info->start_url = url;
+    auto web_app_info = WebAppInstallInfo::CreateWithStartUrlForTesting(url);
     web_app_info->scope = url.GetWithoutFilename();
     web_app_info->title = u"A Hosted App";
 
@@ -128,8 +127,8 @@ class WebAppFileHandlingTestBase : public WebAppBrowserTestBase {
   }
 
   webapps::AppId InstallAnotherFileHandlingPwa(const GURL& start_url) {
-    auto web_app_info = std::make_unique<WebAppInstallInfo>();
-    web_app_info->start_url = start_url;
+    auto web_app_info =
+        WebAppInstallInfo::CreateWithStartUrlForTesting(start_url);
     web_app_info->scope = start_url.GetWithoutFilename();
     web_app_info->title = u"A second app";
 
@@ -206,10 +205,11 @@ class WebAppFileHandlingBrowserTest : public WebAppFileHandlingTestBase {
 
   webapps::AppId InstallFileHandlingWebApp(const std::u16string& title,
                                            const GURL& handler_url) {
-    auto web_app_info = std::make_unique<WebAppInstallInfo>();
-    web_app_info->start_url =
+    GURL start_url =
         https_server()->GetURL("app.com", "/web_app_file_handling/index.html");
-    web_app_info->scope = web_app_info->start_url.GetWithoutFilename();
+    auto web_app_info =
+        WebAppInstallInfo::CreateWithStartUrlForTesting(start_url);
+    web_app_info->scope = web_app_info->start_url().GetWithoutFilename();
     web_app_info->title = title;
     apps::FileHandler entry;
     entry.action = handler_url;

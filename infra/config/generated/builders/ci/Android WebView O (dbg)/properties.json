@@ -89,18 +89,9 @@
           "builder": "android_arm64_dbg_recipe",
           "group": "tryserver.chromium.android"
         }
-      ]
+      ],
+      "targets_spec_directory": "src/infra/config/generated/builders/ci/Android WebView O (dbg)/targets"
     }
-  },
-  "$build/siso": {
-    "configs": [
-      "builder"
-    ],
-    "enable_cloud_profiler": true,
-    "enable_cloud_trace": true,
-    "experiments": [],
-    "project": "rbe-chromium-trusted",
-    "remote_jobs": 500
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],
@@ -110,6 +101,9 @@
     ]
   },
   "builder_group": "chromium.android",
+  "gardener_rotations": [
+    "android"
+  ],
   "recipe": "chromium",
   "sheriff_rotations": [
     "android"

@@ -22,7 +22,6 @@
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/switches.h"
 #include "third_party/blink/public/platform/platform.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/scheduler/common/features.h"
 #include "third_party/blink/renderer/platform/scheduler/common/throttling/budget_pool.h"
 #include "third_party/blink/renderer/platform/scheduler/common/throttling/cpu_time_budget_pool.h"
@@ -187,12 +186,6 @@ PageSchedulerImpl::PageSchedulerImpl(
       base::Unretained(this)));
   on_audio_silent_closure_.Reset(base::BindRepeating(
       &PageSchedulerImpl::OnAudioSilent, base::Unretained(this)));
-  update_frozen_state_callback_.Reset(base::BindRepeating(
-      [](PageSchedulerImpl* page_scheduler) {
-        PolicyUpdater policy_updater;
-        page_scheduler->UpdateFrozenState(policy_updater);
-      },
-      base::Unretained(this)));
 }
 
 PageSchedulerImpl::~PageSchedulerImpl() {
@@ -253,12 +246,14 @@ void PageSchedulerImpl::SetPageFrozen(bool frozen) {
   SetPageFrozenImpl(frozen, policy_updater);
 }
 
-void PageSchedulerImpl::SetPageFrozenImpl(bool frozen,
-                                          PolicyUpdater& policy_updater) {
+void PageSchedulerImpl::SetPageFrozenImpl(
+    bool frozen,
+    PolicyUpdater& policy_updater,
+    base::MemoryReductionTaskContext called_from) {
   // Only pages owned by web views can be frozen.
   DCHECK(!frozen || IsOrdinary());
 
-  update_frozen_state_callback_.Cancel();
+  update_frozen_state_timer_.Stop();
   if (is_frozen_ == frozen)
     return;
   is_frozen_ = frozen;
@@ -268,7 +263,7 @@ void PageSchedulerImpl::SetPageFrozenImpl(bool frozen,
   }
   policy_updater.UpdatePagePolicy(this);
   if (frozen) {
-    main_thread_scheduler_->OnPageFrozen();
+    main_thread_scheduler_->OnPageFrozen(called_from);
     if (audio_state_ == AudioState::kRecentlyAudible) {
       // A recently audible page is being frozen before the audio silent timer
       // fired, which can happen if freezing from outside the scheduler (e.g.
@@ -373,10 +368,6 @@ std::unique_ptr<blink::FrameScheduler> PageSchedulerImpl::CreateFrameScheduler(
 void PageSchedulerImpl::Unregister(FrameSchedulerImpl* frame_scheduler) {
   DCHECK(base::Contains(frame_schedulers_, frame_scheduler));
   frame_schedulers_.erase(frame_scheduler);
-}
-
-void PageSchedulerImpl::ReportIntervention(const String& message) {
-  delegate_->ReportIntervention(message);
 }
 
 void PageSchedulerImpl::AudioStateChanged(bool is_audio_playing) {
@@ -831,7 +822,9 @@ bool PageSchedulerImpl::HasWakeUpBudgetPools() const {
   return !!unimportant_wake_up_budget_pool_;
 }
 
-void PageSchedulerImpl::UpdateFrozenState(PolicyUpdater& policy_updater) {
+void PageSchedulerImpl::UpdateFrozenState(
+    PolicyUpdater& policy_updater,
+    base::MemoryReductionTaskContext called_from) {
   // Only ordinary pages can be frozen.
   if (!IsOrdinary()) {
     CHECK(!IsFrozen());
@@ -854,22 +847,41 @@ void PageSchedulerImpl::UpdateFrozenState(PolicyUpdater& policy_updater) {
       freeze_time = now;
     } else if (base::FeatureList::IsEnabled(
                    blink::features::kStopInBackground)) {
-      freeze_time =
-          std::max(page_visibility_changed_time_, audio_state_changed_time_) +
-          delay_for_background_tab_freezing_;
+      if (called_from == base::MemoryReductionTaskContext::kProactive) {
+        // Special case: Freeze now if the timer has been fast-forwarded to
+        // proactively reduce memory.
+        freeze_time = now;
+      } else {
+        freeze_time =
+            std::max(page_visibility_changed_time_, audio_state_changed_time_) +
+            delay_for_background_tab_freezing_;
+      }
     }
   }
 
   if (freeze_time > now) {
-    SetPageFrozenImpl(/* frozen=*/false, policy_updater);
+    SetPageFrozenImpl(/* frozen=*/false, policy_updater, called_from);
     if (!freeze_time.is_max()) {
-      base::PostDelayedMemoryReductionTask(
-          main_thread_scheduler_->ControlTaskRunner(), FROM_HERE,
-          update_frozen_state_callback_.GetCallback(), freeze_time - now);
+      update_frozen_state_timer_.SetTaskRunner(
+          main_thread_scheduler_->ControlTaskRunner());
+      update_frozen_state_timer_.Start(
+          FROM_HERE, freeze_time - now,
+          base::BindOnce(
+              [](PageSchedulerImpl* page_scheduler,
+                 base::MemoryReductionTaskContext called_from) {
+                PolicyUpdater policy_updater;
+                page_scheduler->UpdateFrozenState(policy_updater, called_from);
+              },
+              base::Unretained(this)));
     }
   } else {
-    SetPageFrozenImpl(/* frozen=*/true, policy_updater);
+    SetPageFrozenImpl(/* frozen=*/true, policy_updater, called_from);
   }
+}
+
+void PageSchedulerImpl::UpdateFrozenState(PolicyUpdater& policy_updater) {
+  PageSchedulerImpl::UpdateFrozenState(
+      policy_updater, base::MemoryReductionTaskContext::kDelayExpired);
 }
 
 std::array<WakeUpBudgetPool*, PageSchedulerImpl::kNumWakeUpBudgetPools>

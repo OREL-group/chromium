@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/atomic_sequence_num.h"
+#include "base/not_fatal_until.h"
 #include "base/notreached.h"
 #include "base/numerics/safe_math.h"
 #include "base/strings/stringprintf.h"
@@ -34,7 +35,7 @@ base::AtomicSequenceNumber g_next_display_resource_provider_tracing_id;
 DisplayResourceProvider::DisplayResourceProvider(Mode mode)
     : mode_(mode),
       tracing_id_(g_next_display_resource_provider_tracing_id.GetNext()) {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   // In certain cases, SingleThreadTaskRunner::CurrentDefaultHandle isn't set
   // (Android Webview).  Don't register a dump provider in these cases.
   // TODO(crbug.com/40430067): Get this working in Android Webview.
@@ -60,7 +61,7 @@ void DisplayResourceProvider::Destroy() {
 bool DisplayResourceProvider::OnMemoryDump(
     const base::trace_event::MemoryDumpArgs& args,
     base::trace_event::ProcessMemoryDump* pmd) {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   for (const auto& resource_entry : resources_) {
     const auto& resource = resource_entry.second;
@@ -105,12 +106,7 @@ bool DisplayResourceProvider::OnMemoryDump(
       pmd->CreateSharedMemoryOwnershipEdge(
           dump->guid(), resource.shared_bitmap_tracing_guid, kImportance);
     } else {
-      // Shared ownership edges for legacy mailboxes aren't supported.
-      if (!resource.transferable.mailbox_holder.mailbox.IsSharedImage())
-        continue;
-
-      auto guid = GetSharedImageGUIDForTracing(
-          resource.transferable.mailbox_holder.mailbox);
+      auto guid = GetSharedImageGUIDForTracing(resource.transferable.mailbox());
       pmd->CreateSharedGlobalAllocatorDump(guid);
       pmd->AddOwnershipEdge(dump->guid(), guid, kImportance);
     }
@@ -170,12 +166,6 @@ const gfx::Size DisplayResourceProvider::GetResourceBackedSize(
   return GetResource(id)->transferable.size;
 }
 
-gfx::BufferFormat DisplayResourceProvider::GetBufferFormat(
-    ResourceId id) const {
-  const ChildResource* resource = GetResource(id);
-  return gpu::ToBufferFormat(resource->transferable.format);
-}
-
 SharedImageFormat DisplayResourceProvider::GetSharedImageFormat(
     ResourceId id) const {
   const ChildResource* resource = GetResource(id);
@@ -201,7 +191,7 @@ const gfx::HDRMetadata& DisplayResourceProvider::GetHDRMetadata(
 
 int DisplayResourceProvider::CreateChild(ReturnCallback return_callback,
                                          const SurfaceId& surface_id) {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   int child_id = next_child_++;
   Child& child = children_[child_id];
@@ -214,14 +204,14 @@ int DisplayResourceProvider::CreateChild(ReturnCallback return_callback,
 
 void DisplayResourceProvider::DestroyChild(int child_id) {
   auto it = children_.find(child_id);
-  DCHECK(it != children_.end());
+  CHECK(it != children_.end(), base::NotFatalUntil::M130);
   DestroyChildInternal(it, NORMAL);
 }
 
 void DisplayResourceProvider::ReceiveFromChild(
     int child_id,
     const std::vector<TransferableResource>& resources) {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   auto child_it = children_.find(child_id);
   DCHECK(child_it != children_.end());
@@ -239,7 +229,7 @@ void DisplayResourceProvider::ReceiveFromChild(
     }
 
     if (transferable_resource.is_software != IsSoftware() ||
-        transferable_resource.mailbox_holder.mailbox.IsZero()) {
+        transferable_resource.is_empty()) {
       TRACE_EVENT0(
           "viz", "DisplayResourceProvider::ReceiveFromChild dropping invalid");
       std::vector<ReturnedResource> returned;
@@ -249,9 +239,11 @@ void DisplayResourceProvider::ReceiveFromChild(
     }
 
     ResourceId local_id = resource_id_generator_.GenerateNextId();
+
+    // If using legacy shared bitmaps, verify that the format is supported.
     DCHECK(!transferable_resource.is_software ||
-           transferable_resource.mailbox_holder.mailbox.IsSharedImage() ||
-           (!transferable_resource.mailbox_holder.mailbox.IsSharedImage() &&
+           transferable_resource.IsSoftwareSharedImage() ||
+           (!transferable_resource.IsSoftwareSharedImage() &&
             transferable_resource.format.IsBitmapFormatSupported()));
     resources_.emplace(local_id,
                        ChildResource(child_id, transferable_resource));
@@ -262,7 +254,7 @@ void DisplayResourceProvider::ReceiveFromChild(
 void DisplayResourceProvider::DeclareUsedResourcesFromChild(
     int child,
     const ResourceIdSet& resources_from_child) {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   auto child_it = children_.find(child);
   DCHECK(child_it != children_.end());
@@ -284,14 +276,14 @@ gpu::Mailbox DisplayResourceProvider::GetMailbox(ResourceId resource_id) const {
   const ChildResource* resource = TryGetResource(resource_id);
   if (!resource)
     return gpu::Mailbox();
-  return resource->transferable.mailbox_holder.mailbox;
+  return resource->transferable.mailbox();
 }
 
 const std::unordered_map<ResourceId, ResourceId, ResourceIdHasher>&
 DisplayResourceProvider::GetChildToParentMap(int child) const {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   auto it = children_.find(child);
-  DCHECK(it != children_.end());
+  CHECK(it != children_.end(), base::NotFatalUntil::M130);
   DCHECK(!it->second.marked_for_deletion);
   return it->second.child_to_parent_map;
 }
@@ -303,10 +295,10 @@ bool DisplayResourceProvider::InUse(ResourceId id) const {
 
 const DisplayResourceProvider::ChildResource*
 DisplayResourceProvider::GetResource(ResourceId id) const {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(id);
   auto it = resources_.find(id);
-  DCHECK(it != resources_.end());
+  CHECK(it != resources_.end(), base::NotFatalUntil::M130);
   return &it->second;
 }
 
@@ -318,7 +310,7 @@ DisplayResourceProvider::ChildResource* DisplayResourceProvider::GetResource(
 
 const DisplayResourceProvider::ChildResource*
 DisplayResourceProvider::TryGetResource(ResourceId id) const {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!id)
     return nullptr;
   auto it = resources_.find(id);
@@ -387,7 +379,7 @@ void DisplayResourceProvider::DeleteAndReturnUnusedResourcesToChild(
     ChildMap::iterator child_it,
     DeleteStyle style,
     const std::vector<ResourceId>& unused) {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(child_it != children_.end());
   Child& child_info = child_it->second;
 
@@ -418,7 +410,7 @@ void DisplayResourceProvider::DeleteAndReturnUnusedResourcesToChild(
 
 void DisplayResourceProvider::DestroyChildInternal(ChildMap::iterator it,
                                                    DeleteStyle style) {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   Child& child = it->second;
   DCHECK(style == FOR_SHUTDOWN || !child.marked_for_deletion);
@@ -482,10 +474,6 @@ DisplayResourceProvider::ScopedReadLockSharedImage::ScopedReadLockSharedImage(
       resource_(resource_provider_->GetResource(resource_id_)) {
   DCHECK(resource_);
   DCHECK(resource_->is_gpu_resource_type());
-  // Remove this #if BUILDFLAG(IS_WIN), when shared image is used on Windows.
-#if !BUILDFLAG(IS_WIN)
-  DCHECK(resource_->transferable.mailbox_holder.mailbox.IsSharedImage());
-#endif
   resource_->lock_for_overlay_count++;
 }
 
@@ -530,8 +518,7 @@ void DisplayResourceProvider::ScopedReadLockSharedImage::Reset() {
     return;
   DCHECK(resource_->lock_for_overlay_count);
   resource_->lock_for_overlay_count--;
-  resource_provider_->TryReleaseResource(resource_id_,
-                                         resource_.ExtractAsDangling());
+  resource_provider_->TryReleaseResource(resource_id_, resource_);
   resource_provider_ = nullptr;
   resource_id_ = kInvalidResourceId;
 }
@@ -565,7 +552,7 @@ DisplayResourceProvider::ChildResource::ChildResource(
     const TransferableResource& transferable)
     : child_id(child_id), transferable(transferable) {
   if (is_gpu_resource_type())
-    UpdateSyncToken(transferable.mailbox_holder.sync_token);
+    UpdateSyncToken(transferable.sync_token());
 }
 
 DisplayResourceProvider::ChildResource::ChildResource(ChildResource&& other) =

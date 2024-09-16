@@ -11,6 +11,7 @@
 #include "chrome/browser/extensions/browsertest_util.h"
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
 #include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/views/extensions/extensions_toolbar_container.h"
@@ -204,11 +205,20 @@ void ExtensionsToolbarUITest::NavigateTo(const GURL& url) {
   EXPECT_TRUE(observer.last_navigation_succeeded());
 }
 
+void ExtensionsToolbarUITest::AddSiteAccessRequest(
+    const extensions::Extension& extension,
+    content::WebContents* web_contents) {
+  int tab_id = extensions::ExtensionTabUtil::GetTabId(web_contents);
+  extensions::PermissionsManager::Get(profile())->AddSiteAccessRequest(
+      web_contents, tab_id, extension);
+}
+
 void ExtensionsToolbarUITest::ClickButton(views::Button* button) const {
-  ui::MouseEvent press_event(ui::ET_MOUSE_PRESSED, gfx::Point(), gfx::Point(),
-                             base::TimeTicks(), ui::EF_LEFT_MOUSE_BUTTON, 0);
+  ui::MouseEvent press_event(ui::EventType::kMousePressed, gfx::Point(),
+                             gfx::Point(), base::TimeTicks(),
+                             ui::EF_LEFT_MOUSE_BUTTON, 0);
   button->OnMousePressed(press_event);
-  ui::MouseEvent release_event(ui::ET_MOUSE_RELEASED, gfx::Point(),
+  ui::MouseEvent release_event(ui::EventType::kMouseReleased, gfx::Point(),
                                gfx::Point(), base::TimeTicks(),
                                ui::EF_LEFT_MOUSE_BUTTON, 0);
   button->OnMouseReleased(release_event);

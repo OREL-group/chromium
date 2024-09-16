@@ -7,7 +7,6 @@
 #include <memory>
 
 #include "ash/bluetooth_devices_observer.h"
-#include "ash/constants/app_types.h"
 #include "ash/constants/ash_features.h"
 #include "ash/public/cpp/keyboard/keyboard_controller.h"
 #include "ash/public/cpp/session/session_controller.h"
@@ -544,7 +543,7 @@ void UILockController::OnKeyEvent(ui::KeyEvent* event) {
 
   if (event->code() == ui::DomCode::ESCAPE &&
       (event->flags() & kExcludedFlags) == 0) {
-    OnEscapeKey(event->type() == ui::ET_KEY_PRESSED);
+    OnEscapeKey(event->type() == ui::EventType::kKeyPressed);
   }
 }
 

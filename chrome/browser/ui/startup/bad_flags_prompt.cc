@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <string>
+#include <string_view>
 
 #include "base/base_switches.h"
 #include "base/command_line.h"
@@ -104,18 +105,12 @@ const char* const kBadFlags[] = {
     extensions::switches::kExtensionsOnChromeURLs,
 #endif
 
-// TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
+// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
 // of lacros-chrome is complete.
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
     // Speech dispatcher is buggy, it can crash and it can make Chrome freeze.
     // http://crbug.com/327295
     switches::kEnableSpeechDispatcher,
-#endif
-
-#if BUILDFLAG(IS_MAC)
-    // This flag is only used for performance tests in mac, to ensure that
-    // calculated values are reliable. Should not be used elsewhere.
-    switches::kUseHighGPUThreadPriorityForPerfTests,
 #endif
 
     // These flags control Blink feature state, which is not supported and is
@@ -189,9 +184,7 @@ const char* const kBadFlags[] = {
 // Dangerous feature flags in about:flags for which to display a warning that
 // "stability and security will suffer".
 static const base::Feature* kBadFeatureFlagsInAboutFlags[] = {
-    // These features enables experimental support for isolated web apps, which
-    // unlock capabilities with a high potential for security / privacy abuse.
-    &features::kIsolatedWebApps,
+    // This feature enables developer mode support for Isolated Web Apps.
     &features::kIsolatedWebAppDevMode,
 
 #if BUILDFLAG(IS_ANDROID)
@@ -204,12 +197,12 @@ static const base::Feature* kBadFeatureFlagsInAboutFlags[] = {
 
     // This flag disables security for the Page Embedded Permission Control, for
     // testing purposes. Can only be enabled via the command line.
-    &blink::features::kDisablePepcSecurityForTesting,
+    &blink::features::kBypassPepcSecurityForTesting,
 };
 
 void ShowBadFlagsInfoBarHelper(content::WebContents* web_contents,
                                int message_id,
-                               base::StringPiece flag) {
+                               std::string_view flag) {
   // Animating the infobar also animates the content area size which can trigger
   // a flood of page layout, compositing, texture reallocations, etc.  Do not
   // animate the infobar to reduce noise in perf benchmarks because they pass

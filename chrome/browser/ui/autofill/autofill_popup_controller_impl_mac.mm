@@ -9,8 +9,8 @@
 #import "chrome/browser/ui/autofill/popup_controller_common.h"
 #import "chrome/browser/ui/cocoa/touchbar/web_textfield_touch_bar_controller.h"
 #include "components/autofill/core/browser/filling_product.h"
-#include "components/autofill/core/browser/ui/autofill_popup_delegate.h"
-#include "components/autofill/core/browser/ui/popup_item_ids.h"
+#include "components/autofill/core/browser/ui/autofill_suggestion_delegate.h"
+#include "components/autofill/core/browser/ui/suggestion_type.h"
 
 using base::WeakPtr;
 
@@ -19,7 +19,7 @@ namespace autofill {
 // static
 WeakPtr<AutofillSuggestionController> AutofillSuggestionController::GetOrCreate(
     WeakPtr<AutofillSuggestionController> previous,
-    WeakPtr<AutofillPopupDelegate> delegate,
+    WeakPtr<AutofillSuggestionDelegate> delegate,
     content::WebContents* web_contents,
     PopupControllerCommon controller_common,
     int32_t form_control_ax_id) {
@@ -34,7 +34,7 @@ WeakPtr<AutofillSuggestionController> AutofillSuggestionController::GetOrCreate(
   }
 
   if (previous.get())
-    previous->Hide(PopupHidingReason::kViewDestroyed);
+    previous->Hide(SuggestionHidingReason::kViewDestroyed);
 
   auto* controller = new AutofillPopupControllerImplMac(
       delegate, web_contents, std::move(controller_common), form_control_ax_id);
@@ -42,7 +42,7 @@ WeakPtr<AutofillSuggestionController> AutofillSuggestionController::GetOrCreate(
 }
 
 AutofillPopupControllerImplMac::AutofillPopupControllerImplMac(
-    base::WeakPtr<AutofillPopupDelegate> delegate,
+    base::WeakPtr<AutofillSuggestionDelegate> delegate,
     content::WebContents* web_contents,
     PopupControllerCommon controller_common,
     int32_t form_control_ax_id)
@@ -58,6 +58,7 @@ AutofillPopupControllerImplMac::AutofillPopupControllerImplMac(
 AutofillPopupControllerImplMac::~AutofillPopupControllerImplMac() = default;
 
 void AutofillPopupControllerImplMac::Show(
+    UiSessionId ui_session_id,
     std::vector<autofill::Suggestion> suggestions,
     AutofillSuggestionTriggerSource trigger_source,
     AutoselectFirstSuggestion autoselect_first_suggestion) {
@@ -67,7 +68,8 @@ void AutofillPopupControllerImplMac::Show(
     [touch_bar_controller_ showCreditCardAutofillWithController:this];
   }
 
-  AutofillPopupControllerImpl::Show(std::move(suggestions), trigger_source,
+  AutofillPopupControllerImpl::Show(ui_session_id, std::move(suggestions),
+                                    trigger_source,
                                     autoselect_first_suggestion);
   // No code below this line!
   // |Show| may hide the popup and destroy |this|, so |Show| should be the last

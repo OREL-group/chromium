@@ -28,6 +28,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_ACCESSIBILITY_AX_OBJECT_CACHE_H_
 
 #include "base/gtest_prod_util.h"
+#include "base/memory/stack_allocated.h"
 #include "third_party/blink/renderer/core/accessibility/axid.h"
 #include "third_party/blink/renderer/core/accessibility/blink_ax_event_intent.h"
 #include "third_party/blink/renderer/core/core_export.h"
@@ -106,9 +107,9 @@ class CORE_EXPORT AXObjectCache : public GarbageCollected<AXObjectCache> {
   // parent will recompute its children and be reserialized.
   virtual void Remove(AccessibleNode*) = 0;
   virtual void Remove(Node*) = 0;
-  virtual void RemoveSubtreeWhenSafe(Node*, bool remove_root = true) = 0;
+  virtual void RemoveSubtree(const Node*) = 0;
+  virtual void RemoveSubtree(const Node*, bool remove_root) = 0;
   virtual void RemoveAXObjectsInLayoutSubtree(LayoutObject*) = 0;
-  virtual void RemoveAXObjectsInLayoutSubtree(Node*) = 0;
   virtual void RemovePopup(Document*) = 0;
   virtual void Remove(AbstractInlineTextBox*) = 0;
 
@@ -131,7 +132,6 @@ class CORE_EXPORT AXObjectCache : public GarbageCollected<AXObjectCache> {
   virtual void SubtreeIsAttached(Node*) = 0;
 
   // Called to process queued subtree removals when flat tree traversal is safe.
-  virtual void ProcessSubtreeRemovals() = 0;
   virtual void HandleAttributeChanged(const QualifiedName& attr_name,
                                       Element*) = 0;
   virtual void HandleFocusedUIElementChanged(Element* old_focused_node,
@@ -145,8 +145,8 @@ class CORE_EXPORT AXObjectCache : public GarbageCollected<AXObjectCache> {
   virtual void HandleTextFormControlChanged(Node*) = 0;
   virtual void HandleValueChanged(Node*) = 0;
   virtual void HandleUpdateActiveMenuOption(Node*) = 0;
-  virtual void DidShowMenuListPopup(LayoutObject*) = 0;
-  virtual void DidHideMenuListPopup(LayoutObject*) = 0;
+  virtual void DidShowMenuListPopup(Node*) = 0;
+  virtual void DidHideMenuListPopup(Node*) = 0;
   virtual void HandleLoadStart(Document*) = 0;
   virtual void HandleLoadComplete(Document*) = 0;
   virtual void HandleClicked(Node*) = 0;
@@ -158,8 +158,7 @@ class CORE_EXPORT AXObjectCache : public GarbageCollected<AXObjectCache> {
 
   // Handle any notifications which arrived while layout was dirty.
   // If |force|, then process regardless of any active batching or pauses.
-  virtual void ProcessDeferredAccessibilityEvents(Document&,
-                                                  bool force = false) = 0;
+  virtual void CommitAXUpdates(Document&, bool force) = 0;
 
   // Changes to virtual Accessibility Object Model nodes.
   virtual void HandleAttributeChanged(const QualifiedName& attr_name,
@@ -198,6 +197,8 @@ class CORE_EXPORT AXObjectCache : public GarbageCollected<AXObjectCache> {
   virtual void OnTouchAccessibilityHover(const gfx::Point&) = 0;
 
   virtual AXObject* ObjectFromAXID(AXID) const = 0;
+
+  virtual AXObject* FirstObjectWithRole(ax::mojom::blink::Role role) = 0;
 
   virtual AXObject* Root() = 0;
 
@@ -239,25 +240,13 @@ class CORE_EXPORT AXObjectCache : public GarbageCollected<AXObjectCache> {
 
   virtual void MarkElementDirty(const Node*) = 0;
 
-  // Notifies that an AXObject is dirty and its state needs
-  // to be serialized again. If |subtree| is true, the entire subtree is
-  // dirty.
-  // |event_from| and |event_from_action| annotate this node change with info
-  // about the event which caused the change. For example, an event from a user
-  // or an event from a focus action.
-  virtual void AddDirtyObjectToSerializationQueue(
-      AXObject* obj,
-      ax::mojom::blink::EventFrom event_from,
-      ax::mojom::blink::Action event_from_action,
-      const std::vector<ui::AXEventIntent>& event_intents) = 0;
-
   // Returns a vector of the images found in |updates|.
   virtual void GetImagesToAnnotate(ui::AXTreeUpdate& updates,
                                    std::vector<ui::AXNodeData*>&) = 0;
 
   // Note that any pending event also causes its corresponding object to
   // become dirty.
-  virtual bool HasDirtyObjects() const = 0;
+  virtual bool HasObjectsPendingSerialization() const = 0;
 
   // Ensure that a call to ProcessDeferredAccessibilityEvents() will occur soon.
   virtual void ScheduleAXUpdate() const = 0;
@@ -305,7 +294,9 @@ class CORE_EXPORT AXObjectCache : public GarbageCollected<AXObjectCache> {
   static AXObjectCacheCreateFunction create_function_;
 };
 
-class ScopedFreezeAXCache : public GarbageCollected<ScopedFreezeAXCache> {
+class ScopedFreezeAXCache {
+  STACK_ALLOCATED();
+
  public:
   explicit ScopedFreezeAXCache(AXObjectCache& cache) : cache_(&cache) {
     cache.Freeze();
@@ -319,10 +310,8 @@ class ScopedFreezeAXCache : public GarbageCollected<ScopedFreezeAXCache> {
     cache_->Thaw();
   }
 
-  void Trace(Visitor* visitor) const { visitor->Trace(cache_); }
-
  private:
-  WeakMember<AXObjectCache> cache_;
+  AXObjectCache* cache_;
 };
 
 }  // namespace blink

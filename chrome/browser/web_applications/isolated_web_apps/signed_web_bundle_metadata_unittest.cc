@@ -92,7 +92,7 @@ class SignedWebBundleMetadataTest : public WebAppTest {
 
     GURL url(
         base::StrCat({chrome::kIsolatedAppScheme, url::kStandardSchemeSeparator,
-                      kTestEd25519WebBundleId,
+                      test::GetDefaultEd25519WebBundleId().id(),
                       "/.well-known/_generated_install_page.html"}));
     auto& page_state = fake_web_contents_manager.GetOrCreatePageState(url);
 
@@ -156,8 +156,9 @@ TEST_F(SignedWebBundleMetadataTest, FailsWhenWebBundleIdNotTrusted) {
 TEST_F(SignedWebBundleMetadataTest, FailsWhenBundleInvalid) {
   IsolatedWebAppUrlInfo url_info = WriteBundleToDisk(
       TestSignedWebBundleBuilder::BuildOptions().SetErrorsForTesting(
-          {web_package::WebBundleSigner::ErrorForTesting::
-               kInvalidIntegrityBlockStructure}));
+          {{web_package::test::WebBundleSigner::IntegrityBlockErrorForTesting::
+                kInvalidIntegrityBlockStructure},
+           {}}));
   SetTrustedWebBundleIdsForTesting({url_info.web_bundle_id()});
   FakeWebContentsManager& fake_web_contents_manager =
       static_cast<FakeWebContentsManager&>(
@@ -172,7 +173,9 @@ TEST_F(SignedWebBundleMetadataTest, FailsWhenBundleInvalid) {
   base::expected<SignedWebBundleMetadata, std::string> metadata =
       metadata_future.Get();
 
-  EXPECT_THAT(metadata, ErrorIs(HasSubstr("Wrong array size or magic bytes")));
+  EXPECT_THAT(
+      metadata,
+      ErrorIs(HasSubstr("Integrity block array of length 6 - should be 4.")));
 }
 
 }  // namespace

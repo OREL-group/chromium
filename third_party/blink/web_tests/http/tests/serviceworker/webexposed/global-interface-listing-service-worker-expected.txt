@@ -1,4 +1,82 @@
 [INTERFACES]
+interface AI
+    attribute @@toStringTag
+    getter assistant
+    getter rewriter
+    getter summarizer
+    getter writer
+    method constructor
+interface AIAssistant
+    attribute @@toStringTag
+    getter maxTokens
+    getter temperature
+    getter tokensLeft
+    getter tokensSoFar
+    getter topK
+    method clone
+    method constructor
+    method destroy
+    method prompt
+    method promptStreaming
+interface AIAssistantCapabilities
+    attribute @@toStringTag
+    getter available
+    getter defaultTemperature
+    getter defaultTopK
+    getter maxTopK
+    method constructor
+interface AIAssistantFactory
+    attribute @@toStringTag
+    method capabilities
+    method constructor
+    method create
+interface AIRewriter
+    attribute @@toStringTag
+    getter length
+    getter sharedContext
+    getter tone
+    method constructor
+    method destroy
+    method rewrite
+    method rewriteStreaming
+interface AIRewriterFactory
+    attribute @@toStringTag
+    method constructor
+    method create
+interface AISummarizer
+    attribute @@toStringTag
+    getter format
+    getter length
+    getter sharedContext
+    getter type
+    method constructor
+    method destroy
+    method summarize
+    method summarizeStreaming
+interface AISummarizerCapabilities
+    attribute @@toStringTag
+    getter available
+    method constructor
+    method supportsFormat
+    method supportsInputLanguage
+    method supportsLength
+    method supportsType
+interface AISummarizerFactory
+    attribute @@toStringTag
+    method capabilities
+    method constructor
+    method create
+interface AIWriter
+    attribute @@toStringTag
+    getter sharedContext
+    method constructor
+    method destroy
+    method write
+    method writeStreaming
+interface AIWriterFactory
+    attribute @@toStringTag
+    method constructor
+    method create
 interface AbortController
     attribute @@toStringTag
     getter signal
@@ -456,8 +534,8 @@ interface EventTarget
     method addEventListener
     method constructor
     method dispatchEvent
-    method on
     method removeEventListener
+    method when
 interface ExtendableCookieChangeEvent : ExtendableEvent
     attribute @@toStringTag
     getter changed
@@ -616,6 +694,7 @@ interface GPU
 interface GPUAdapter
     attribute @@toStringTag
     getter features
+    getter info
     getter isCompatibilityMode
     getter isFallbackAdapter
     getter limits
@@ -1101,6 +1180,14 @@ interface InstallEvent : ExtendableEvent
     attribute @@toStringTag
     method addRoutes
     method constructor
+interface LanguageDetector
+    attribute @@toStringTag
+    method constructor
+    method detect
+interface LanguageTranslator
+    attribute @@toStringTag
+    method constructor
+    method translate
 interface Lock
     attribute @@toStringTag
     getter mode
@@ -1271,14 +1358,20 @@ interface NotificationEvent : ExtendableEvent
 interface Observable
     static method from
     attribute @@toStringTag
+    method catch
     method constructor
     method drop
+    method every
     method filter
+    method find
     method first
     method flatMap
     method forEach
+    method inspect
     method last
     method map
+    method reduce
+    method some
     method subscribe
     method switchMap
     method take
@@ -1331,12 +1424,10 @@ interface OffscreenCanvasRenderingContext2D
     method arcTo
     method beginLayer
     method beginPath
-    method beginWebGPUAccess
     method bezierCurveTo
     method clearRect
     method clip
     method closePath
-    method commit
     method constructor
     method createConicGradient
     method createImageData
@@ -1350,7 +1441,6 @@ interface OffscreenCanvasRenderingContext2D
     method drawMesh
     method ellipse
     method endLayer
-    method endWebGPUAccess
     method fill
     method fillRect
     method fillText
@@ -1379,6 +1469,8 @@ interface OffscreenCanvasRenderingContext2D
     method stroke
     method strokeRect
     method strokeText
+    method transferBackFromGPUTexture
+    method transferToGPUTexture
     method transform
     method translate
     setter direction
@@ -1584,6 +1676,28 @@ interface PushSubscriptionOptions
     attribute @@toStringTag
     getter applicationServerKey
     getter userVisibleOnly
+    method constructor
+interface RTCRtpAcks
+    attribute @@toStringTag
+    getter explicitCongestionNotification
+    getter receivedTime
+    getter remoteSendTimestamp
+    method acks
+    method constructor
+interface RTCRtpSendResult
+    attribute @@toStringTag
+    getter sent
+    getter unsent
+    method constructor
+interface RTCRtpSendStream
+    attribute @@toStringTag
+    method constructor
+    method sendRtp
+interface RTCRtpSent
+    attribute @@toStringTag
+    getter ackId
+    getter size
+    getter time
     method constructor
 interface ReadableByteStreamController
     attribute @@toStringTag
@@ -1853,7 +1967,6 @@ interface TextMetrics
     getter actualBoundingBoxDescent
     getter actualBoundingBoxLeft
     getter actualBoundingBoxRight
-    getter advances
     getter alphabeticBaseline
     getter emHeightAscent
     getter emHeightDescent
@@ -1862,7 +1975,10 @@ interface TextMetrics
     getter hangingBaseline
     getter ideographicBaseline
     getter width
+    method caretPositionFromPoint
     method constructor
+    method getActualBoundingBox
+    method getSelectionRects
 interface TimestampTrigger
     attribute @@toStringTag
     getter timestamp
@@ -1879,6 +1995,13 @@ interface TransformStreamDefaultController
     method enqueue
     method error
     method terminate
+interface Translation
+    attribute @@toStringTag
+    method canDetect
+    method canTranslate
+    method constructor
+    method createDetector
+    method createTranslator
 interface TrustedHTML
     static method fromLiteral
     attribute @@toStringTag
@@ -1921,6 +2044,7 @@ interface TrustedTypePolicyFactory : EventTarget
     setter onbeforecreatepolicy
 interface URL
     static method canParse
+    static method parse
     attribute @@toStringTag
     getter hash
     getter host
@@ -2797,23 +2921,26 @@ interface WebGLActiveInfo
     getter size
     getter type
     method constructor
-interface WebGLBuffer
+interface WebGLBuffer : WebGLObject
     attribute @@toStringTag
     method constructor
 interface WebGLContextEvent : Event
     attribute @@toStringTag
     getter statusMessage
     method constructor
-interface WebGLFramebuffer
+interface WebGLFramebuffer : WebGLObject
     attribute @@toStringTag
     method constructor
-interface WebGLProgram
+interface WebGLObject
     attribute @@toStringTag
     method constructor
-interface WebGLQuery
+interface WebGLProgram : WebGLObject
     attribute @@toStringTag
     method constructor
-interface WebGLRenderbuffer
+interface WebGLQuery : WebGLObject
+    attribute @@toStringTag
+    method constructor
+interface WebGLRenderbuffer : WebGLObject
     attribute @@toStringTag
     method constructor
 interface WebGLRenderingContext
@@ -3264,10 +3391,10 @@ interface WebGLRenderingContext
     method viewport
     setter drawingBufferColorSpace
     setter unpackColorSpace
-interface WebGLSampler
+interface WebGLSampler : WebGLObject
     attribute @@toStringTag
     method constructor
-interface WebGLShader
+interface WebGLShader : WebGLObject
     attribute @@toStringTag
     method constructor
 interface WebGLShaderPrecisionFormat
@@ -3276,19 +3403,19 @@ interface WebGLShaderPrecisionFormat
     getter rangeMax
     getter rangeMin
     method constructor
-interface WebGLSync
+interface WebGLSync : WebGLObject
     attribute @@toStringTag
     method constructor
-interface WebGLTexture
+interface WebGLTexture : WebGLObject
     attribute @@toStringTag
     method constructor
-interface WebGLTransformFeedback
+interface WebGLTransformFeedback : WebGLObject
     attribute @@toStringTag
     method constructor
 interface WebGLUniformLocation
     attribute @@toStringTag
     method constructor
-interface WebGLVertexArrayObject
+interface WebGLVertexArrayObject : WebGLObject
     attribute @@toStringTag
     method constructor
 interface WebSocket : EventTarget
@@ -3372,6 +3499,7 @@ interface WindowClient : Client
     method navigate
 interface WorkerGlobalScope : EventTarget
     attribute @@toStringTag
+    getter ai
     getter caches
     getter crossOriginEmbedderPolicy
     getter crossOriginIsolated
@@ -3390,6 +3518,7 @@ interface WorkerGlobalScope : EventTarget
     getter performance
     getter scheduler
     getter self
+    getter translation
     getter trustedTypes
     method atob
     method btoa
@@ -3404,6 +3533,7 @@ interface WorkerGlobalScope : EventTarget
     method setInterval
     method setTimeout
     method structuredClone
+    setter ai
     setter onerror
     setter onlanguagechange
     setter onrejectionhandled
@@ -3412,6 +3542,7 @@ interface WorkerGlobalScope : EventTarget
     setter origin
     setter performance
     setter scheduler
+    setter translation
 interface WorkerLocation
     attribute @@toStringTag
     getter hash

@@ -6,6 +6,7 @@ import 'chrome://multidevice-setup/strings.m.js';
 import 'chrome://resources/ash/common/multidevice_setup/start_setup_page.js';
 
 import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import {assertEquals} from 'chrome://webui-test/chai_assert.js';
 
 /**
  * In the testing framework, a click on a select option does not cause a
@@ -36,12 +37,12 @@ suite('MultiDeviceSetup', () => {
 
   const START = 'start-setup-page';
 
-  // TODO(https://crbug.com/1019206): When v1 DeviceSync is turned off, all
+  // TODO(crbug.com/40105247): When v1 DeviceSync is turned off, all
   // devices should have an Instance ID.
   const DEVICES = [
-    // TODO(crbug.com/1022196) Replace the hard-coded values with the deviceSync
-    // enum. This is currently causing an import error where chromeos is not
-    // defined.
+    // TODO(crbug.com/40106510) Replace the hard-coded values with the
+    // deviceSync enum. This is currently causing an import error where
+    // chromeos is not defined.
     {
       remoteDevice: {deviceName: 'Pixel XL', deviceId: 'legacy-id-1'},
       connectivityStatus: 0,  // kOnline
@@ -81,7 +82,7 @@ suite('MultiDeviceSetup', () => {
     }
   };
 
-  // TODO(https://crbug.com/1019206): When v1 DeviceSync is turned off, all
+  // TODO(crbug.com/40105247): When v1 DeviceSync is turned off, all
   // selected IDs will be Instance IDs.
   test('Finding devices populates dropdown and defines selected device', () => {
     assertEquals(
@@ -93,7 +94,7 @@ suite('MultiDeviceSetup', () => {
         'legacy-id-1');
   });
 
-  // TODO(https://crbug.com/1019206): When v1 DeviceSync is turned off, all
+  // TODO(crbug.com/40105247): When v1 DeviceSync is turned off, all
   // selected IDs will be Instance IDs.
   test('Selected ID changes when dropdown options are selected', () => {
     selectOptionByTextContent('Nexus 6P (offline)');

@@ -267,8 +267,12 @@ void NavigateEvent::CommitNow() {
       dispatch_params_->url, dispatch_params_->destination_item,
       mojom::blink::SameDocumentNavigationType::kNavigationApiIntercept,
       state_object, dispatch_params_->frame_load_type,
+      dispatch_params_->event_type == NavigateEventType::kHistoryApi
+          ? FirePopstate::kNo
+          : FirePopstate::kYes,
       dispatch_params_->is_browser_initiated,
-      dispatch_params_->is_synchronously_committed_same_document);
+      dispatch_params_->is_synchronously_committed_same_document,
+      dispatch_params_->soft_navigation_heuristics_task_id);
 }
 
 void NavigateEvent::React(ScriptState* script_state) {
@@ -470,7 +474,7 @@ WebFrameLoadType LoadTypeFromNavigation(const String& navigation_type) {
     return WebFrameLoadType::kBackForward;
   if (navigation_type == "reload")
     return WebFrameLoadType::kReload;
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 void NavigateEvent::ProcessScrollBehavior() {
@@ -481,13 +485,16 @@ void NavigateEvent::ProcessScrollBehavior() {
       dispatch_params_->destination_item
           ? dispatch_params_->destination_item->GetViewState()
           : std::nullopt;
+  auto scroll_behavior = has_ua_visual_transition_
+                             ? mojom::blink::ScrollBehavior::kInstant
+                             : mojom::blink::ScrollBehavior::kAuto;
   // Use mojom::blink::ScrollRestorationType::kAuto unconditionally here
   // because we are certain that we want to actually scroll if we reach this
   // point. Using mojom::blink::ScrollRestorationType::kManual would block the
   // scroll.
   DomWindow()->GetFrame()->Loader().ProcessScrollForSameDocumentNavigation(
       dispatch_params_->url, LoadTypeFromNavigation(navigation_type_),
-      view_state, mojom::blink::ScrollRestorationType::kAuto);
+      view_state, mojom::blink::ScrollRestorationType::kAuto, scroll_behavior);
 }
 
 const AtomicString& NavigateEvent::InterfaceName() const {

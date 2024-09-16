@@ -70,11 +70,11 @@ aura::Window* GetPowerMenuContainer() {
 std::unique_ptr<views::Widget> CreateMenuWidget() {
   auto menu_widget = std::make_unique<views::Widget>();
   views::Widget::InitParams params(
+      views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET,
       views::Widget::InitParams::TYPE_WINDOW_FRAMELESS);
   params.opacity = views::Widget::InitParams::WindowOpacity::kTranslucent;
   params.z_order = ui::ZOrderLevel::kFloatingWindow;
   params.accept_events = true;
-  params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.name = "PowerButtonMenuWindow";
   params.layer_type = ui::LAYER_SOLID_COLOR;
   params.parent = GetPowerMenuContainer();
@@ -233,9 +233,8 @@ void PowerButtonController::OnPowerButtonEvent(
     }
   } else {
     uint32_t up_state = UP_NONE;
-    if (lock_state_controller_->CanCancelShutdownAnimation()) {
+    if (lock_state_controller_->MaybeCancelShutdownAnimation()) {
       up_state |= UP_CAN_CANCEL_SHUTDOWN_ANIMATION;
-      lock_state_controller_->CancelShutdownAnimation();
     }
     const base::TimeTicks previous_up_time = last_button_up_time_;
     last_button_up_time_ = timestamp;
@@ -349,7 +348,7 @@ void PowerButtonController::CancelPowerButtonEvent() {
   StopTimersAndDismissMenu();
 }
 
-void PowerButtonController::OnDisplayModeChanged(
+void PowerButtonController::OnDisplayConfigurationChanged(
     const display::DisplayConfigurator::DisplayStateList& display_states) {
   bool internal_display_off = false;
   bool external_display_on = false;
@@ -406,7 +405,7 @@ void PowerButtonController::SuspendDone(base::TimeDelta sleep_duration) {
 
 void PowerButtonController::OnLoginStatusChanged(LoginStatus status) {
   // Destroy |menu_widget_| on login status change to reset the content of the
-  // menu since the menu items change if login stauts changed.
+  // menu since the menu items change if login status changed.
   menu_widget_.reset();
 }
 

@@ -251,7 +251,7 @@ be signed on the command line, e.g.:
 $ autoninja -C out/Debug-iphoneos ios_web_shell
 ninja: Entering directory `out/Debug-iphoneos'
 FAILED: ios_web_shell.app/ios_web_shell ios_web_shell.app/_CodeSignature/CodeResources ios_web_shell.app/embedded.mobileprovision
-python ../../build/config/ios/codesign.py code-sign-bundle -t=iphoneos -i=0123456789ABCDEF0123456789ABCDEF01234567 -e=../../build/config/ios/entitlements.plist -b=obj/ios/web/shell/ios_web_shell ios_web_shell.app
+python ../../build/config/apple/codesign.py code-sign-bundle -t=iphoneos -i=0123456789ABCDEF0123456789ABCDEF01234567 -e=../../build/config/ios/entitlements.plist -b=obj/ios/web/shell/ios_web_shell ios_web_shell.app
 Error: no mobile provisioning profile found for "org.chromium.ios-web-shell".
 ninja: build stopped: subcommand failed.
 ```
@@ -417,7 +417,7 @@ is open before checking out. This will increase your chances of success.
 
 ### Debugging
 
-To help with deterministic builds, and to work with Goma, the path to source
+To help with deterministic builds, and to work with reclient, the path to source
 files in debugging symbols are relative to source directory. To allow Xcode
 to find the source files, you need to ensure to have an `~/.lldbinit-Xcode`
 file with the following lines into it (substitute {SRC} for your actual path

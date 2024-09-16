@@ -185,7 +185,8 @@ class PipelineImplTest : public ::testing::Test {
   void SetRendererPostStartExpectations() {
     EXPECT_CALL(*renderer_, SetPlaybackRate(0.0));
     EXPECT_CALL(*renderer_, SetVolume(1.0f));
-    EXPECT_CALL(*renderer_, SetWasPlayedWithUserActivation(false));
+    EXPECT_CALL(*renderer_,
+                SetWasPlayedWithUserActivationAndHighMediaEngagement(false));
     EXPECT_CALL(*renderer_, StartPlayingFrom(start_time_))
         .WillOnce(SetBufferingState(&renderer_client_, BUFFERING_HAVE_ENOUGH,
                                     BUFFERING_CHANGE_REASON_UNKNOWN));
@@ -312,7 +313,8 @@ class PipelineImplTest : public ::testing::Test {
         .WillOnce(RunOnceCallback<1>(PIPELINE_OK));
     EXPECT_CALL(*renderer_, SetPlaybackRate(_));
     EXPECT_CALL(*renderer_, SetVolume(_));
-    EXPECT_CALL(*renderer_, SetWasPlayedWithUserActivation(false));
+    EXPECT_CALL(*renderer_,
+                SetWasPlayedWithUserActivationAndHighMediaEngagement(false));
     EXPECT_CALL(*renderer_, StartPlayingFrom(seek_time))
         .WillOnce(SetBufferingState(&renderer_client_, BUFFERING_HAVE_ENOUGH,
                                     BUFFERING_CHANGE_REASON_UNKNOWN));
@@ -648,7 +650,8 @@ TEST_F(PipelineImplTest, SetVolumeDuringStartup) {
   // The audio renderer should receive two calls to SetVolume().
   float expected = 0.5f;
   EXPECT_CALL(*renderer_, SetVolume(expected)).Times(2);
-  EXPECT_CALL(*renderer_, SetWasPlayedWithUserActivation(false));
+  EXPECT_CALL(*renderer_,
+              SetWasPlayedWithUserActivationAndHighMediaEngagement(false));
   EXPECT_CALL(callbacks_, OnStart(HasStatusCode(PIPELINE_OK)));
   EXPECT_CALL(callbacks_, OnMetadata(_))
       .WillOnce(RunOnceClosure(base::BindOnce(&PipelineImpl::SetVolume,
@@ -893,7 +896,7 @@ TEST_F(PipelineImplTest, GetMediaTime) {
   EXPECT_EQ(kMediaTime, pipeline_->GetMediaTime());
 
   // Media time should not go backwards even if the renderer returns an
-  // errorneous value. PipelineImpl should clamp it to last reported value.
+  // erroneous value. PipelineImpl should clamp it to last reported value.
   EXPECT_CALL(*renderer_, GetMediaTime())
       .WillRepeatedly(Return(base::Seconds(1)));
   EXPECT_EQ(kMediaTime, pipeline_->GetMediaTime());
@@ -1053,7 +1056,8 @@ class PipelineTeardownTest : public PipelineImplTest {
     CreateVideoStream();
     SetDemuxerExpectations(base::Seconds(3000));
     EXPECT_CALL(*renderer_, SetVolume(1.0f));
-    EXPECT_CALL(*renderer_, SetWasPlayedWithUserActivation(false));
+    EXPECT_CALL(*renderer_,
+                SetWasPlayedWithUserActivationAndHighMediaEngagement(false));
 
     if (state == kInitRenderer) {
       if (stop_or_error == kStop) {
@@ -1139,7 +1143,7 @@ class PipelineTeardownTest : public PipelineImplTest {
       return;
     }
 
-    NOTREACHED() << "State not supported: " << state;
+    NOTREACHED_IN_MIGRATION() << "State not supported: " << state;
   }
 
   void DoSuspend(TeardownState state, StopOrError stop_or_error) {
@@ -1178,7 +1182,7 @@ class PipelineTeardownTest : public PipelineImplTest {
             .WillOnce(Stop(pipeline_.get()));
       }
     } else if (state != kSuspended && state != kSuspending) {
-      NOTREACHED() << "State not supported: " << state;
+      NOTREACHED_IN_MIGRATION() << "State not supported: " << state;
     }
   }
 

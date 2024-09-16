@@ -1047,10 +1047,6 @@ void GLES2InterfaceStub::DrawElementsInstancedBaseVertexBaseInstanceANGLE(
     GLuint /* baseinstance */) {}
 void GLES2InterfaceStub::VertexAttribDivisorANGLE(GLuint /* index */,
                                                   GLuint /* divisor */) {}
-GLuint GLES2InterfaceStub::CreateAndConsumeTextureCHROMIUM(
-    const GLbyte* /* mailbox */) {
-  return 0;
-}
 void GLES2InterfaceStub::BindUniformLocationCHROMIUM(GLuint /* program */,
                                                      GLint /* location */,
                                                      const char* /* name */) {}
@@ -1065,7 +1061,6 @@ void GLES2InterfaceStub::LoseContextCHROMIUM(GLenum /* current */,
                                              GLenum /* other */) {}
 void GLES2InterfaceStub::DrawBuffersEXT(GLsizei /* count */,
                                         const GLenum* /* bufs */) {}
-void GLES2InterfaceStub::DiscardBackbufferCHROMIUM() {}
 void GLES2InterfaceStub::FlushDriverCachesCHROMIUM() {}
 GLuint GLES2InterfaceStub::GetLastFlushIdCHROMIUM() {
   return 0;

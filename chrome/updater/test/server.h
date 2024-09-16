@@ -28,17 +28,22 @@ class HttpResponse;
 }  // namespace test_server
 }  // namespace net
 
-namespace updater {
-namespace test {
+namespace updater::test {
 
 class IntegrationTestCommands;
 
 class ScopedServer {
  public:
   // Creates and starts a scoped server. Sets up the updater to communicate
-  // with it. Multiple scoped servers are not allowed.
+  // with it (see `ConfigureTestMode`). Multiple scoped servers are not allowed.
+  // The provided `IntegrationTestCommands` object is not retained.
   explicit ScopedServer(
       scoped_refptr<IntegrationTestCommands> integration_test_commands);
+
+  // Creates and starts a scoped server, without configuring any updater to
+  // communicate with it. (`ConfigureTestMode` can be used later to do this.)
+  // Multiple scoped servers are not allowed.
+  ScopedServer();
 
   // Shuts down the server and verifies that all expectations were met and that
   // no extra communications were received.
@@ -51,6 +56,15 @@ class ScopedServer {
     return test_server_->host_port_pair().ToString();
   }
 
+  // Configures the update service constants for the updater represented
+  // by the provided IntegrationTestCommands object to send updates to this
+  // `ScopedServer` instance. The configuration continues to persist after this
+  // `ScopedServer` is destroyed.
+  //
+  // Multiple instances of `IntegrationTestCommands` can be configured to use
+  // the same `ScopedServer` simultaneously.
+  void ConfigureTestMode(IntegrationTestCommands* commands);
+
   // Registers an expected request with the server. Requests must match the
   // expectation defined by applying all individual request matchers composing
   // the `request_matcher_group` in the order the expectations were set.
@@ -62,6 +76,8 @@ class ScopedServer {
   void ExpectOnce(request::MatcherGroup request_matcher_group,
                   const std::string& response_body,
                   net::HttpStatusCode response_status_code = net::HTTP_OK);
+
+  GURL base_url() const { return test_server_->base_url(); }
 
   std::string update_path() const { return "/update"; }
   GURL update_url() const { return test_server_->GetURL(update_path()); }
@@ -98,19 +114,22 @@ class ScopedServer {
     return proxy;
   }
 
+  bool gzip_response() const { return gzip_response_; }
+  void set_gzip_response(bool gzip_response) { gzip_response_ = gzip_response; }
+
  private:
   std::unique_ptr<net::test_server::HttpResponse> HandleRequest(
       const net::test_server::HttpRequest& request);
 
-  std::unique_ptr<net::test_server::EmbeddedTestServer> test_server_;
+  std::unique_ptr<net::test_server::EmbeddedTestServer> test_server_ =
+      std::make_unique<net::test_server::EmbeddedTestServer>();
   net::test_server::EmbeddedTestServerHandle test_server_handle_;
   std::list<request::MatcherGroup> request_matcher_groups_;
   std::list<std::pair<net::HttpStatusCode, std::string>> responses_;
-  scoped_refptr<IntegrationTestCommands> integration_test_commands_;
   base::TimeDelta download_delay_;
+  bool gzip_response_ = false;
 };
 
-}  // namespace test
-}  // namespace updater
+}  // namespace updater::test
 
 #endif  // CHROME_UPDATER_TEST_SERVER_H_

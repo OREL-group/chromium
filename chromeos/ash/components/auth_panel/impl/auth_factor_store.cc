@@ -4,9 +4,10 @@
 
 #include "chromeos/ash/components/auth_panel/impl/auth_factor_store.h"
 
-#include "ash/shell.h"
+#include "ash/public/cpp/ime_controller.h"
 #include "base/callback_list.h"
 #include "base/check.h"
+#include "base/check_op.h"
 #include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "chromeos/ash/components/auth_panel/impl/auth_panel_event_dispatcher.h"
@@ -29,22 +30,21 @@ void AuthFactorStore::State::InitializePasswordViewState(bool is_capslock_on) {
 
 AuthFactorStore::State::PasswordViewState::~PasswordViewState() = default;
 
-AuthFactorStore::AuthFactorStore(Shell* shell,
+AuthFactorStore::AuthFactorStore(ImeController* ime_controller,
                                  AuthHubConnector* connector,
-                                 std::optional<AshAuthFactor> password_type)
-    : auth_hub_connector_(connector) {
-  CHECK(password_type == AshAuthFactor::kLocalPassword ||
-        password_type == AshAuthFactor::kGaiaPassword)
-      << "password_type must be a password-based AshAuthFactor";
-
+                                 std::optional<AshAuthFactor> password_type,
+                                 AuthHub* auth_hub)
+    : auth_hub_connector_(connector), auth_hub_(auth_hub) {
   password_type_ = password_type;
 
-  auto* ime_controller = shell->ime_controller();
   // For now, assume the password view state is always required to be present
   // because we always have a password. We default to `false` for the state of
   // capslock if `ime_controller` is not available.
   state_.InitializePasswordViewState(
       ime_controller == nullptr ? false : ime_controller->IsCapsLockEnabled());
+
+  submit_password_callback_ =
+      base::BindRepeating(&AuthEngineApi::AuthenticateWithPassword);
 }
 
 AuthFactorStore::~AuthFactorStore() = default;
@@ -64,19 +64,28 @@ void AuthFactorStore::OnUserAction(
     case AuthPanelEventDispatcher::UserAction::kPasswordSubmit: {
       CHECK(state_.password_view_state_.has_value());
 
-      if (!state_.password_view_state_->password_.empty() &&
+      auto password =
+          state_.password_view_state_->auth_textfield_state_.password_;
+      if (!password.empty() &&
           state_.password_view_state_->is_factor_enabled_) {
         state_.authentication_stage_ =
             State::AuthenticationStage::kAuthenticating;
-        SubmitPassword(state_.password_view_state_->password_);
+        SubmitPassword(password);
+      } else {
+        NOTREACHED_IN_MIGRATION()
+            << "AuthPanel: Password was submitted while textfield is "
+            << "empty or password factor is disabled";
       }
+
       break;
     }
     case AuthPanelEventDispatcher::UserAction::kDisplayPasswordButtonPressed: {
       CHECK(state_.password_view_state_.has_value());
 
-      state_.password_view_state_->is_password_visible_ =
-          !state_.password_view_state_->is_password_visible_;
+      bool& previous = state_.password_view_state_->auth_textfield_state_
+                           .is_password_visible_;
+      previous = !previous;
+
       break;
     }
     case AuthPanelEventDispatcher::UserAction::
@@ -85,7 +94,8 @@ void AuthFactorStore::OnUserAction(
       CHECK(state_.password_view_state_.has_value());
 
       auto new_field_contents = *action.payload_;
-      state_.password_view_state_->password_ = new_field_contents;
+      state_.password_view_state_->auth_textfield_state_.password_ =
+          new_field_contents;
       break;
     }
     case AuthPanelEventDispatcher::UserAction::kCapslockKeyPressed: {
@@ -98,13 +108,20 @@ void AuthFactorStore::OnUserAction(
     case AuthPanelEventDispatcher::UserAction::kPasswordTextfieldFocused: {
       CHECK(state_.password_view_state_.has_value());
 
-      state_.password_view_state_->is_capslock_icon_highlighted_ = true;
+      state_.password_view_state_->is_password_textfield_focused_ = true;
       break;
     }
     case AuthPanelEventDispatcher::UserAction::kPasswordTextfieldBlurred: {
       CHECK(state_.password_view_state_.has_value());
 
-      state_.password_view_state_->is_capslock_icon_highlighted_ = false;
+      state_.password_view_state_->is_password_textfield_focused_ = false;
+      break;
+    }
+    case AuthPanelEventDispatcher::UserAction::
+        kEscapePressedOnPasswordTextfield: {
+      CHECK(state_.password_view_state_.has_value());
+
+      auth_hub_->CancelCurrentAttempt(auth_hub_connector_);
       break;
     }
   }
@@ -117,9 +134,13 @@ void AuthFactorStore::OnFactorStateChanged(AshAuthFactor factor,
   switch (factor) {
     case AshAuthFactor::kGaiaPassword:
     case AshAuthFactor::kLocalPassword:
+      CHECK(password_type_.has_value());
+      CHECK_EQ(factor, password_type_.value());
+
       state_.password_view_state_->factor_state_ = state;
       break;
     case AshAuthFactor::kCryptohomePin:
+    case AshAuthFactor::kFingerprint:
     case AshAuthFactor::kSmartCard:
     case AshAuthFactor::kSmartUnlock:
     case AshAuthFactor::kRecovery:
@@ -128,6 +149,8 @@ void AuthFactorStore::OnFactorStateChanged(AshAuthFactor factor,
       NOTIMPLEMENTED();
       break;
   }
+
+  NotifyStateChanged();
 }
 
 void AuthFactorStore::OnAuthVerdict(
@@ -152,8 +175,8 @@ void AuthFactorStore::SubmitPassword(const std::string& password) {
   // for it would not have been shown. Check this invariant here.
   CHECK(password_type_.has_value());
 
-  AuthEngineApi::AuthenticateWithPassword(auth_hub_connector_,
-                                          password_type_.value(), password);
+  submit_password_callback_.Run(auth_hub_connector_, password_type_.value(),
+                                password);
 }
 
 }  // namespace ash

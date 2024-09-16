@@ -70,15 +70,15 @@ id<GREYMatcher> OptInScreenMatcher() {
   [super tearDown];
 }
 
-// Triggers the Notifications Opt-In Screen through the Set Up List "See More"
+// Triggers the Notifications Opt-In Screen through the Set Up List "See more"
 // view.
 - (void)triggerOptInScreen {
-  // Open the "See More" view.
+  // Open the "See more" view.
   id seeMoreButton =
-      grey_allOf(grey_text(@"See More"), grey_sufficientlyVisible(), nil);
+      grey_allOf(grey_text(@"See more"), grey_sufficientlyVisible(), nil);
   [[EarlGrey selectElementWithMatcher:seeMoreButton] performAction:grey_tap()];
 
-  // Swipe up to expand the "See More" view.
+  // Swipe up to expand the "See more" view.
   id setUpListSubtitle = chrome_test_util::ContainsPartialText(
       @"Complete these suggested actions below");
   [[EarlGrey selectElementWithMatcher:setUpListSubtitle]
@@ -86,7 +86,7 @@ id<GREYMatcher> OptInScreenMatcher() {
 
   // Tap on the "Try" button for the Notifications item.
   [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
-                                          @"Get Notifications Try Button")]
+                                          @"Get notifications Try Button")]
       performAction:grey_tap()];
 
   // Verify the opt-in screen is showing.
@@ -132,21 +132,17 @@ id<GREYMatcher> OptInScreenMatcher() {
       assertWithMatcher:grey_notVisible()];
 }
 
-// Tests that toggling the Content switch triggers the sign-in view when the
-// user is not signed in.
-- (void)testSignInScreenTriggered {
+// Tests that Content Notificaion item is not shown without user eligibility
+// fulfilled and feature flag enalbed.
+- (void)testContentNotificationItemNotShow {
   [SigninEarlGrey addFakeIdentity:[FakeSystemIdentity fakeIdentity1]];
   [ChromeEarlGreyUI waitForAppToIdle];
   [self triggerOptInScreen];
 
-  // Toggle on the Content switch.
+  // The Content Notification item should not be shown at this time, becasue
+  // feature flag and user eligibility is not fulfilled by default setup.
   [[EarlGrey selectElementWithMatcher:ContentSwitchMatcher()]
-      performAction:grey_turnSwitchOn(YES)];
-
-  // Verify the sign-in screen is showing.
-  id<GREYMatcher> signinView =
-      grey_accessibilityID(kWebSigninAccessibilityIdentifier);
-  [ChromeEarlGrey waitForUIElementToAppearWithMatcher:signinView];
+      assertWithMatcher:grey_nil()];
 }
 
 @end

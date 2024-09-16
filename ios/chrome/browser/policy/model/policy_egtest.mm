@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#import "ios/testing/earl_grey/earl_grey_test.h"
-
 #import "base/strings/strcat.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
@@ -19,6 +17,7 @@
 #import "components/policy/test_support/signature_provider.h"
 #import "components/safe_browsing/core/common/features.h"
 #import "components/strings/grit/components_strings.h"
+#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_constants.h"
 #import "ios/chrome/browser/policy/model/cloud/user_policy_constants.h"
 #import "ios/chrome/browser/policy/model/policy_app_interface.h"
 #import "ios/chrome/browser/policy/model/policy_earl_grey_utils.h"
@@ -30,9 +29,8 @@
 #import "ios/chrome/browser/ui/authentication/signin_earl_grey.h"
 #import "ios/chrome/browser/ui/authentication/signin_earl_grey_ui_test_util.h"
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_constants.h"
-#import "ios/chrome/browser/ui/ntp/new_tab_page_constants.h"
 #import "ios/chrome/browser/ui/popup_menu/popup_menu_constants.h"
-#import "ios/chrome/browser/ui/settings/autofill/autofill_constants.h"
+#import "ios/chrome/browser/ui/settings/autofill/autofill_settings_constants.h"
 #import "ios/chrome/browser/ui/settings/elements/elements_constants.h"
 #import "ios/chrome/browser/ui/settings/language/language_settings_ui_constants.h"
 #import "ios/chrome/browser/ui/settings/password/password_settings/password_settings_constants.h"
@@ -52,6 +50,7 @@
 #import "ios/chrome/test/earl_grey/test_switches.h"
 #import "ios/testing/earl_grey/app_launch_configuration.h"
 #import "ios/testing/earl_grey/app_launch_manager.h"
+#import "ios/testing/earl_grey/earl_grey_test.h"
 #import "net/test/embedded_test_server/embedded_test_server.h"
 #import "ui/base/l10n/l10n_util.h"
 
@@ -59,7 +58,7 @@ using policy_test_utils::SetPolicy;
 
 namespace {
 
-// TODO(crbug.com/1065522): Add helpers as needed for:
+// TODO(crbug.com/40124201): Add helpers as needed for:
 //    - STRING
 //    - LIST (and subtypes, e.g. int list, string list, etc)
 //    - DICTIONARY (and subtypes, e.g. int dictionary, string dictionary, etc)
@@ -481,9 +480,7 @@ NSString* const kDomain2 = @"domain2.com";
   NSString* managedAccountEmail = base::SysUTF8ToNSString(
       base::StrCat({"enterprise@", policy::SignatureProvider::kTestDomain1}));
   FakeSystemIdentity* fakeManagedIdentity =
-      [FakeSystemIdentity identityWithEmail:managedAccountEmail
-                                     gaiaID:@"exampleManagedID"
-                                       name:@"Fake Managed"];
+      [FakeSystemIdentity identityWithEmail:managedAccountEmail];
   [SigninEarlGrey signinWithFakeIdentity:fakeManagedIdentity];
 
   // Open the menu and click on the item.
@@ -511,9 +508,7 @@ NSString* const kDomain2 = @"domain2.com";
   NSString* managedAccountEmail = base::SysUTF8ToNSString(
       base::StrCat({"enterprise@", policy::SignatureProvider::kTestDomain1}));
   FakeSystemIdentity* fakeManagedIdentity =
-      [FakeSystemIdentity identityWithEmail:managedAccountEmail
-                                     gaiaID:@"exampleManagedID"
-                                       name:@"Fake Managed"];
+      [FakeSystemIdentity identityWithEmail:managedAccountEmail];
   [SigninEarlGrey signinWithFakeIdentity:fakeManagedIdentity];
 
   // Open the menu and click on the item.
@@ -593,9 +588,7 @@ NSString* const kDomain2 = @"domain2.com";
   NSString* managedAccountEmail =
       [@"enterprise@" stringByAppendingString:kDomain1];
   FakeSystemIdentity* fakeManagedIdentity =
-      [FakeSystemIdentity identityWithEmail:managedAccountEmail
-                                     gaiaID:@"exampleManagedID"
-                                       name:@"Fake Managed"];
+      [FakeSystemIdentity identityWithEmail:managedAccountEmail];
   [SigninEarlGrey signinWithFakeIdentity:fakeManagedIdentity];
 
   // Open the management page and check if the content is expected.
@@ -637,9 +630,7 @@ NSString* const kDomain2 = @"domain2.com";
   NSString* managedAccountEmail =
       [@"enterprise@" stringByAppendingString:kDomain2];
   FakeSystemIdentity* fakeManagedIdentity =
-      [FakeSystemIdentity identityWithEmail:managedAccountEmail
-                                     gaiaID:@"exampleManagedID"
-                                       name:@"Fake Managed"];
+      [FakeSystemIdentity identityWithEmail:managedAccountEmail];
   [SigninEarlGrey signinWithFakeIdentity:fakeManagedIdentity];
 
   // Open the management page and check if the content is expected.
@@ -683,9 +674,7 @@ NSString* const kDomain2 = @"domain2.com";
   NSString* managedAccountEmail =
       [@"enterprise@" stringByAppendingString:kDomain1];
   FakeSystemIdentity* fakeManagedIdentity =
-      [FakeSystemIdentity identityWithEmail:managedAccountEmail
-                                     gaiaID:@"exampleManagedID"
-                                       name:@"Fake Managed"];
+      [FakeSystemIdentity identityWithEmail:managedAccountEmail];
   [SigninEarlGrey signinWithFakeIdentity:fakeManagedIdentity];
 
   // Open the management page and check if the content is expected.

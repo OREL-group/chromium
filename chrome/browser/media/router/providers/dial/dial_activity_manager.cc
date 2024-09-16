@@ -8,6 +8,7 @@
 
 #include "base/containers/contains.h"
 #include "base/functional/bind.h"
+#include "base/not_fatal_until.h"
 #include "base/ranges/algorithm.h"
 #include "base/strings/string_split.h"
 #include "chrome/browser/media/router/discovery/dial/dial_app_discovery_service.h"
@@ -138,7 +139,7 @@ void DialActivityManager::AddActivity(const DialActivity& activity) {
 
   MediaRoute::Id route_id = activity.route.media_route_id();
   DCHECK(!base::Contains(records_, route_id));
-  // TODO(https://crbug.com/816628): Consider adding a timeout for transitioning
+  // TODO(crbug.com/40090609): Consider adding a timeout for transitioning
   // to kLaunched state to clean up unresponsive launches.
   records_.emplace(route_id,
                    std::make_unique<DialActivityManager::Record>(activity));
@@ -233,7 +234,7 @@ void DialActivityManager::StopApp(
     mojom::MediaRouteProvider::TerminateRouteCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   auto record_it = records_.find(route_id);
-  DCHECK(record_it != records_.end());
+  CHECK(record_it != records_.end(), base::NotFatalUntil::M130);
   std::unique_ptr<Record>& record = record_it->second;
   DCHECK(!record->pending_stop_request);
 

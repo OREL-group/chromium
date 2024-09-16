@@ -58,6 +58,7 @@
 #include "components/strings/grit/components_strings.h"
 #include "net/cookies/cookie_util.h"
 #include "third_party/metrics_proto/omnibox_focus_type.pb.h"
+#include "third_party/omnibox_proto/types.pb.h"
 #include "ui/base/webui/resource_path.h"
 #include "ui/base/webui/web_ui_util.h"
 #include "ui/base/window_open_disposition_utils.h"
@@ -79,7 +80,7 @@ class RealboxOmniboxClient final : public OmniboxClient {
   bool IsPasteAndGoEnabled() const override;
   SessionID GetSessionID() const override;
   PrefService* GetPrefs() override;
-  bookmarks::CoreBookmarkModel* GetBookmarkModel() override;
+  bookmarks::BookmarkModel* GetBookmarkModel() override;
   AutocompleteControllerEmitter* GetAutocompleteControllerEmitter() override;
   TemplateURLService* GetTemplateURLService() override;
   const AutocompleteSchemeClassifier& GetSchemeClassifier() const override;
@@ -93,11 +94,13 @@ class RealboxOmniboxClient final : public OmniboxClient {
   std::u16string GetURLForDisplay() const override;
   GURL GetNavigationEntryURL() const override;
   metrics::OmniboxEventProto::PageClassification GetPageClassification(
-      OmniboxFocusSource focus_source,
       bool is_prefetch) override;
   security_state::SecurityLevel GetSecurityLevel() const override;
   net::CertStatus GetCertStatus() const override;
   const gfx::VectorIcon& GetVectorIcon() const override;
+  std::optional<lens::proto::LensOverlayInteractionResponse>
+    GetLensOverlayInteractionResponse() const override;
+  void OnThumbnailRemoved() override;
   gfx::Image GetFaviconForPageUrl(
       const GURL& page_url,
       FaviconFetchedCallback on_favicon_fetched) override;
@@ -162,6 +165,9 @@ bool RealboxOmniboxClient::IsPasteAndGoEnabled() const {
 }
 
 SessionID RealboxOmniboxClient::GetSessionID() const {
+  if (lens_searchbox_client_) {
+    return lens_searchbox_client_->GetTabId();
+  }
   return sessions::SessionTabHelper::IdForTab(web_contents_);
 }
 
@@ -169,7 +175,7 @@ PrefService* RealboxOmniboxClient::GetPrefs() {
   return profile_->GetPrefs();
 }
 
-bookmarks::CoreBookmarkModel* RealboxOmniboxClient::GetBookmarkModel() {
+bookmarks::BookmarkModel* RealboxOmniboxClient::GetBookmarkModel() {
   return BookmarkModelFactory::GetForBrowserContext(profile_);
 }
 
@@ -222,8 +228,7 @@ GURL RealboxOmniboxClient::GetNavigationEntryURL() const {
 }
 
 metrics::OmniboxEventProto::PageClassification
-RealboxOmniboxClient::GetPageClassification(OmniboxFocusSource focus_source,
-                                            bool is_prefetch) {
+RealboxOmniboxClient::GetPageClassification(bool is_prefetch) {
   if (lens_searchbox_client_) {
     return lens_searchbox_client_->GetPageClassification();
   }
@@ -246,6 +251,21 @@ gfx::Image RealboxOmniboxClient::GetFaviconForPageUrl(
     const GURL& page_url,
     FaviconFetchedCallback on_favicon_fetched) {
   return gfx::Image();
+}
+
+std::optional<lens::proto::LensOverlayInteractionResponse>
+    RealboxOmniboxClient::GetLensOverlayInteractionResponse() const {
+  if (lens_searchbox_client_ &&
+      lens_searchbox_client_->GetLensResponse().has_suggest_signals()) {
+    return lens_searchbox_client_->GetLensResponse();
+  }
+  return std::nullopt;
+}
+
+void RealboxOmniboxClient::OnThumbnailRemoved() {
+  if (lens_searchbox_client_) {
+    lens_searchbox_client_->OnThumbnailRemoved();
+  }
 }
 
 void RealboxOmniboxClient::OnBookmarkLaunched() {
@@ -276,7 +296,9 @@ void RealboxOmniboxClient::OnAutocompleteAccept(
     const AutocompleteMatch& alternative_nav_match,
     IDNA2008DeviationCharacter deviation_char_in_hostname) {
   if (lens_searchbox_client_) {
-    lens_searchbox_client_->OnSuggestionAccepted(destination_url);
+    lens_searchbox_client_->OnSuggestionAccepted(
+        destination_url, match.type,
+        match.subtypes.contains(omnibox::SUBTYPE_ZERO_PREFIX));
     return;
   }
   web_contents_->OpenURL(
@@ -363,6 +385,10 @@ void RealboxHandler::OnFocusChanged(bool focused) {
 
 void RealboxHandler::QueryAutocomplete(const std::u16string& input,
                                        bool prevent_inline_autocomplete) {
+  if (lens_searchbox_client_) {
+    lens_searchbox_client_->OnTextModified();
+  }
+
   // TODO(tommycli): We use the input being empty as a signal we are requesting
   // on-focus suggestions. It would be nice if we had a more explicit signal.
   bool is_on_focus = input.empty();
@@ -379,7 +405,6 @@ void RealboxHandler::QueryAutocomplete(const std::u16string& input,
   // RealboxOmniboxClient::GetPageClassification() ignores the arguments.
   const auto page_classification =
       omnibox_controller()->client()->GetPageClassification(
-          OmniboxFocusSource::INVALID,
           /*is_prefetch=*/false);
   AutocompleteInput autocomplete_input(
       input, page_classification, ChromeAutocompleteSchemeClassifier(profile_));
@@ -393,10 +418,9 @@ void RealboxHandler::QueryAutocomplete(const std::u16string& input,
   autocomplete_input.set_prefer_keyword(false);
   autocomplete_input.set_allow_exact_keyword_match(false);
   // Set the lens overlay interaction response, if available.
-  if (lens_searchbox_client_ &&
-      lens_searchbox_client_->GetLensResponse().has_encoded_response()) {
-    autocomplete_input.set_lens_overlay_interaction_response(
-        lens_searchbox_client_->GetLensResponse());
+  if (std::optional<lens::proto::LensOverlayInteractionResponse> response =
+          controller_->client()->GetLensOverlayInteractionResponse()) {
+    autocomplete_input.set_lens_overlay_interaction_response(*response);
   }
 
   omnibox_controller()->StartAutocomplete(autocomplete_input);
@@ -446,9 +470,7 @@ void RealboxHandler::OnNavigationLikely(
 }
 
 void RealboxHandler::OnThumbnailRemoved() {
-  if (lens_searchbox_client_) {
-    lens_searchbox_client_->OnThumbnailRemoved();
-  }
+  omnibox_controller()->client()->OnThumbnailRemoved();
 }
 
 void RealboxHandler::PopupElementSizeChanged(const gfx::Size& size) {
@@ -521,7 +543,7 @@ searchbox::mojom::SelectionLineState ConvertLineState(
       return searchbox::mojom::SelectionLineState::
           kFocusedButtonRemoveSuggestion;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
   }
   return searchbox::mojom::SelectionLineState::kNormal;

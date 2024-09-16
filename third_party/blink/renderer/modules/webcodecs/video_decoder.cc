@@ -2,11 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/modules/webcodecs/video_decoder.h"
 
 #include <utility>
 #include <vector>
 
+#include "base/containers/span.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/time/time.h"
 #include "media/base/decoder_buffer.h"
@@ -121,11 +127,10 @@ VideoDecoderConfig* CopyConfig(const VideoDecoderConfig& config) {
     auto desc_wrapper = AsSpan<const uint8_t>(config.description());
     if (!desc_wrapper.data()) {
       // Checked by IsValidVideoDecoderConfig.
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return nullptr;
     }
-    DOMArrayBuffer* buffer_copy =
-        DOMArrayBuffer::Create(desc_wrapper.data(), desc_wrapper.size());
+    DOMArrayBuffer* buffer_copy = DOMArrayBuffer::Create(desc_wrapper);
     copy->setDescription(
         MakeGarbageCollected<AllowSharedBufferSource>(buffer_copy));
   }
@@ -292,7 +297,7 @@ ScriptPromise<VideoDecoderSupport> VideoDecoder::isConfigSupported(
       IsValidVideoDecoderConfig(*config, &js_error_message /* out */);
   if (!video_type) {
     exception_state.ThrowTypeError(js_error_message);
-    return ScriptPromise<VideoDecoderSupport>();
+    return EmptyPromise();
   }
 
   // Run the "Clone Configuration" algorithm.
@@ -438,7 +443,7 @@ VideoDecoder::MakeMediaVideoDecoderConfigInternal(
   media::VideoType video_type;
   if (!ParseCodecString(config.codec(), video_type, *js_error_message)) {
     // Checked by IsValidVideoDecoderConfig().
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return std::nullopt;
   }
   if (video_type.codec == media::VideoCodec::kUnknown) {
@@ -450,7 +455,7 @@ VideoDecoder::MakeMediaVideoDecoderConfigInternal(
     auto desc_wrapper = AsSpan<const uint8_t>(config.description());
     if (!desc_wrapper.data()) {
       // Checked by IsValidVideoDecoderConfig().
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return std::nullopt;
     }
     if (!desc_wrapper.empty()) {
@@ -486,6 +491,9 @@ VideoDecoder::MakeMediaVideoDecoderConfigInternal(
       }
       return std::nullopt;
     }
+    // The description should not be provided to the decoder because the stream
+    // will be converted to Annex B format.
+    extra_data.clear();
   }
 
   if (video_type.codec == media::VideoCodec::kAV1) {
@@ -591,7 +599,7 @@ VideoDecoder::MakeInput(const InputType& chunk, bool verify_key_frame) {
     // Note: this may not be safe if support for SharedArrayBuffers is added.
     uint32_t output_size =
         decoder_specific_data_->decoder_helper->CalculateNeededOutputBufferSize(
-            src, static_cast<uint32_t>(src_size));
+            src, static_cast<uint32_t>(src_size), verify_key_frame);
     if (!output_size) {
       return media::DecoderStatus(
           media::DecoderStatus::Codes::kMalformedBitstream,
@@ -601,14 +609,15 @@ VideoDecoder::MakeInput(const InputType& chunk, bool verify_key_frame) {
     std::vector<uint8_t> buf(output_size);
     if (decoder_specific_data_->decoder_helper
             ->ConvertNalUnitStreamToByteStream(
-                src, static_cast<uint32_t>(src_size), buf.data(),
-                &output_size) != VideoDecoderHelper::Status::kSucceed) {
+                src, static_cast<uint32_t>(src_size), buf.data(), &output_size,
+                verify_key_frame) != VideoDecoderHelper::Status::kSucceed) {
       return media::DecoderStatus(
           media::DecoderStatus::Codes::kMalformedBitstream,
           "Unable to convert NALU to byte stream.");
     }
 
-    decoder_buffer = media::DecoderBuffer::CopyFrom(buf.data(), output_size);
+    decoder_buffer =
+        media::DecoderBuffer::CopyFrom(base::span(buf).first(output_size));
     decoder_buffer->set_timestamp(chunk.buffer()->timestamp());
     decoder_buffer->set_duration(chunk.buffer()->duration());
   }

@@ -108,16 +108,16 @@ bool IsSupportedCountryForFeature(const std::string& country_code,
 // Enables page content to be annotated.
 BASE_FEATURE(kPageContentAnnotations,
              "PageContentAnnotations",
-             enabled_by_default_desktop_only);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Enables the page visibility model to be annotated on every page load.
 BASE_FEATURE(kPageVisibilityPageContentAnnotations,
              "PageVisibilityPageContentAnnotations",
-             enabled_by_default_non_ios);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kPageVisibilityBatchAnnotations,
              "PageVisibilityBatchAnnotations",
-             enabled_by_default_non_ios);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kTextEmbeddingBatchAnnotations,
              "TextEmbeddingBatchAnnotations",
@@ -142,7 +142,7 @@ BASE_FEATURE(kPageContentAnnotationsPersistSalientImageMetadata,
 
 BASE_FEATURE(kExtractRelatedSearchesFromPrefetchedZPSResponse,
              "ExtractRelatedSearchesFromPrefetchedZPSResponse",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             enabled_by_default_desktop_only);
 
 // Enables text embeddings to annotated on every page visit and later queried.
 BASE_FEATURE(kQueryInMemoryTextEmbeddings,
@@ -188,9 +188,9 @@ bool ShouldExtractRelatedSearches() {
 
 bool ShouldExecutePageVisibilityModelOnPageContent(const std::string& locale) {
   return base::FeatureList::IsEnabled(kPageVisibilityPageContentAnnotations) &&
-         IsSupportedLocaleForFeature(locale,
-                                     kPageVisibilityPageContentAnnotations,
-                                     /*default_value=*/"en");
+         IsSupportedLocaleForFeature(
+             locale, kPageVisibilityPageContentAnnotations,
+             /*default_value=*/"ar,en,es,fa,fr,hi,id,pl,pt,tr,vi");
 }
 
 bool RemotePageMetadataEnabled(const std::string& locale,
@@ -228,9 +228,14 @@ bool TextEmbeddingBatchAnnotationsEnabled() {
 }
 
 size_t AnnotateVisitBatchSize() {
-  return std::max(
-      1, GetFieldTrialParamByFeatureAsInt(kPageContentAnnotations,
-                                          "annotate_visit_batch_size", 1));
+  // When new visits are synced, the service gets visit notifications in a loop.
+  // The service drops new visits during processing a batch. Often only the
+  // `kDefaultBatchSize` entries are annotated when new visits are synced. Set
+  // the limit to 5 since up to 5 URLs are shown on tab resume module.
+  constexpr int kDefaultBatchSize = 5;
+  return std::max(1, GetFieldTrialParamByFeatureAsInt(
+                         kPageContentAnnotations, "annotate_visit_batch_size",
+                         kDefaultBatchSize));
 }
 
 base::TimeDelta PageContentAnnotationValidationStartupDelay() {
@@ -244,6 +249,11 @@ size_t PageContentAnnotationsValidationBatchSize() {
   return switches::PageContentAnnotationsValidationBatchSize().value_or(
       std::max(1, GetFieldTrialParamByFeatureAsInt(
                       kPageContentAnnotationsValidation, "batch_size", 25)));
+}
+
+base::TimeDelta PageContentAnnotationBatchSizeTimeoutDuration() {
+  return base::Seconds(GetFieldTrialParamByFeatureAsInt(
+      kPageContentAnnotations, "batch_annotations_timeout_seconds", 30));
 }
 
 size_t MaxVisitAnnotationCacheSize() {

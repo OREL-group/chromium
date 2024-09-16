@@ -103,7 +103,7 @@ IN_PROC_BROWSER_TEST_F(ContentBrowserTest, MANUAL_RendererCrash) {
 #endif
 
 // Tests that browser tests print the callstack when a child process crashes.
-// TODO(https://crbug.com/1317397): Enable this test on Fuchsia once the test
+// TODO(crbug.com/40834746): Enable this test on Fuchsia once the test
 // expectations have been updated.
 #if BUILDFLAG(IS_FUCHSIA)
 #define MAYBE_RendererCrashCallStack DISABLED_RendererCrashCallStack
@@ -159,7 +159,7 @@ IN_PROC_BROWSER_TEST_F(ContentBrowserTest, MANUAL_BrowserCrash) {
 
 // Tests that browser tests print the callstack on asserts.
 // Disabled on Windows crbug.com/1034784
-// TODO(https://crbug.com/1317397): Enable this test on Fuchsia once the test
+// TODO(crbug.com/40834746): Enable this test on Fuchsia once the test
 // expectations have been updated.
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_FUCHSIA)
 #define MAYBE_BrowserCrashCallStack DISABLED_BrowserCrashCallStack
@@ -286,7 +286,7 @@ class ContentBrowserTestSanityTest : public ContentBrowserTest {
 
   void SetUp() override {
     ASSERT_FALSE(ran_);
-    BrowserTestBase::SetUp();
+    ContentBrowserTest::SetUp();
   }
 
   void SetUpOnMainThread() override { ASSERT_FALSE(ran_); }
@@ -308,7 +308,7 @@ class ContentBrowserTestSanityTest : public ContentBrowserTest {
 
   void TearDown() override {
     ASSERT_TRUE(ran_);
-    BrowserTestBase::TearDown();
+    ContentBrowserTest::TearDown();
   }
 
  private:

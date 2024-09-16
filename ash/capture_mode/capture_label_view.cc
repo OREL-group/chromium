@@ -244,10 +244,8 @@ void CaptureLabelView::UpdateIconAndText() {
       if (!capture_mode_session_->is_selecting_region()) {
         if (CaptureModeController::Get()->user_capture_region().IsEmpty()) {
           // We're now in waiting to select a capture region phase.
-          text = l10n_util::GetStringUTF16(
-              is_capturing_image
-                  ? IDS_ASH_SCREEN_CAPTURE_LABEL_REGION_IMAGE_CAPTURE
-                  : IDS_ASH_SCREEN_CAPTURE_LABEL_REGION_VIDEO_RECORD);
+          text = capture_mode_session_->active_behavior()
+                     ->GetCaptureLabelRegionText();
         } else {
           // We're now in fine-tuning phase (i.e. there's a valid region, and
           // therefore we can show the capture button).
@@ -339,7 +337,8 @@ void CaptureLabelView::Layout(PassKey) {
   LayoutSuperclass<views::View>(this);
 }
 
-gfx::Size CaptureLabelView::CalculatePreferredSize() const {
+gfx::Size CaptureLabelView::CalculatePreferredSize(
+    const views::SizeBounds& available_size) const {
   if (countdown_finished_callback_)
     return gfx::Size(kCaptureLabelRadius * 2, kCaptureLabelRadius * 2);
 

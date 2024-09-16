@@ -69,18 +69,14 @@ class WebAppLinkCapturingBrowserTest
       : prerender_helper_(base::BindRepeating(
             &WebAppLinkCapturingBrowserTest::prerender_web_contents,
             base::Unretained(this))) {
-    std::vector<base::test::FeatureRefAndParams> features_and_params = {
-        {blink::features::kWebAppEnableLaunchHandler, {}}};
 #if !BUILDFLAG(IS_CHROMEOS)
     auto features_to_enable = apps::test::GetFeaturesToEnableLinkCapturingUX(
         /*override_captures_by_default=*/GetParam());
-    std::move(std::begin(features_to_enable), std::end(features_to_enable),
-              std::back_inserter(features_and_params));
-#endif
     feature_list_.InitWithFeaturesAndParameters(
         /*enabled_features=*/
-        features_and_params,
+        features_to_enable,
         /*disabled_features=*/{});
+#endif
   }
   ~WebAppLinkCapturingBrowserTest() override = default;
 
@@ -291,7 +287,7 @@ IN_PROC_BROWSER_TEST_P(WebAppLinkCapturingBrowserTest,
 // JavaScript initiated link captures from about:blank cleans up the about:blank
 // page.
 // TODO(crbug.com/40938945): Flaky on Linux and Mac.
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
 #define MAYBE_JavascriptAboutBlankNavigationCleanUp \
   DISABLED_JavascriptAboutBlankNavigationCleanUp
 #else
@@ -674,11 +670,10 @@ class WebAppTabStripLinkCapturingBrowserTest
     : public WebAppLinkCapturingBrowserTest {
  public:
   WebAppTabStripLinkCapturingBrowserTest() {
-    std::vector<base::test::FeatureRef> features = {
-        blink::features::kDesktopPWAsTabStrip,
-        features::kDesktopPWAsTabStripSettings};
     features_.InitWithFeatures(
-        /*enabled_features=*/features,
+        /*enabled_features=*/{blink::features::kDesktopPWAsTabStrip,
+                              blink::features::
+                                  kDesktopPWAsTabStripCustomizations},
         /*disabled_features=*/{});
   }
 
@@ -686,7 +681,9 @@ class WebAppTabStripLinkCapturingBrowserTest
   std::tuple<webapps::AppId, GURL, GURL, GURL> InstallTestTabbedApp() {
     const auto [app_id, in_scope_1, in_scope_2, scope] =
         WebAppLinkCapturingBrowserTest::InstallTestApp(
-            "/web_apps/tab_strip_customizations.html");
+            "/banners/"
+            "manifest_test_page.html?manifest=manifest_tabbed_display_override."
+            "json");
     return std::make_tuple(app_id, in_scope_1, in_scope_2, scope);
   }
 

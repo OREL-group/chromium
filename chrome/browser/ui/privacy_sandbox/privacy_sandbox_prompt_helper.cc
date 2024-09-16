@@ -42,7 +42,8 @@ PrivacySandboxService::PromptType GetRequiredPromptType(Profile* profile) {
     return PrivacySandboxService::PromptType::kNone;
   }
 
-  return privacy_sandbox_service->GetRequiredPromptType();
+  return privacy_sandbox_service->GetRequiredPromptType(
+      PrivacySandboxService::SurfaceType::kDesktop);
 }
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
@@ -157,7 +158,7 @@ void PrivacySandboxPromptHelper::DidFinishNavigation(
   SearchEngineChoiceDialogService* search_engine_choice_dialog_service =
       SearchEngineChoiceDialogServiceFactory::GetForProfile(profile());
   if (search_engine_choice_dialog_service &&
-      !search_engine_choice_dialog_service->CanSuppressPrivacySandboxPromo()) {
+      search_engine_choice_dialog_service->CanSuppressPrivacySandboxPromo()) {
     base::UmaHistogramEnumeration(kPrivacySandboxPromptHelperEventHistogram,
                                   SettingsPrivacySandboxPromptHelperEvent::
                                       kSearchEngineChoiceDialogShown);

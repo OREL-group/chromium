@@ -159,7 +159,6 @@ void AssistantSuggestionsControllerImpl::UpdateOnboardingSuggestions() {
             assistant::util::IconName::kScreenshot);
       default:
         NOTREACHED();
-        return GURL();
     }
   };
 

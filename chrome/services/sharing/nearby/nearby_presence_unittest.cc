@@ -9,12 +9,14 @@
 #include "base/run_loop.h"
 #include "base/test/bind.h"
 #include "base/test/task_environment.h"
+#include "chromeos/ash/components/nearby/presence/conversions/nearby_presence_conversions.h"
 #include "chromeos/ash/services/nearby/public/mojom/nearby_presence.mojom.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver_set.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/abseil-cpp/absl/status/status.h"
+#include "third_party/nearby/src/internal/interop/fake_device_provider.h"
 #include "third_party/nearby/src/presence/fake_presence_client.h"
 #include "third_party/nearby/src/presence/fake_presence_service.h"
 #include "third_party/nearby/src/presence/presence_client_impl.h"
@@ -107,7 +109,7 @@ class NearbyPresenceTest : public testing::Test,
   void CallStartScan(base::OnceClosure on_complete) {
     std::vector<ash::nearby::presence::mojom::IdentityType> type_vector;
     type_vector.push_back(
-        ash::nearby::presence::mojom::IdentityType::kIdentityTypePrivate);
+        ash::nearby::presence::mojom::IdentityType::kIdentityTypePrivateGroup);
     std::vector<mojom::PresenceScanFilterPtr> filters_vector;
     mojom::PresenceScanFilterPtr filter =
         ash::nearby::presence::mojom::PresenceScanFilter::New(
@@ -477,6 +479,12 @@ TEST_F(NearbyPresenceTest, GetLocalSharedCredentials_Failure) {
             run_loop.Quit();
           }));
   run_loop.Run();
+}
+
+TEST_F(NearbyPresenceTest, GetLocalDeviceProvider) {
+  ::nearby::FakeDeviceProvider fake_device_provider;
+  fake_presence_service_->SetDeviceProvider(&fake_device_provider);
+  EXPECT_TRUE(nearby_presence_->GetLocalDeviceProvider());
 }
 
 }  // namespace ash::nearby::presence

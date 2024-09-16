@@ -434,6 +434,15 @@ OVERLAY_CONFIGS = {
         AllHardwareSupportDirectCompositionConfig(),
         0x9bc5:
         AllHardwareSupportDirectCompositionConfig(),
+        0x4680: BasicDirectCompositionConfig()\
+                .WithHardwareNV12Support(supported_rotations=[
+                    VideoRotation.ROT180])\
+                .WithHardwareYUY2Support()\
+                .WithHardwareBGRA8Support()\
+                .WithZeroCopyConfig(ZeroCopyConfig(
+                    supports_scaled_video=False,
+                    supported_codecs=[
+                        ZeroCopyCodec.H264])),
     },
     constants.GpuVendor.NVIDIA: {
         # For some reason, software BGRA8 software overlay support changes
@@ -449,9 +458,26 @@ OVERLAY_CONFIGS = {
                     supports_scaled_video=True,
                     supported_codecs=[
                         ZeroCopyCodec.H264])),
+        0x2783: BasicDirectCompositionConfig()\
+                .WithHardwareNV12Support()\
+                .WithHardwareYUY2Support()\
+                .WithZeroCopyConfig(ZeroCopyConfig(
+                    supports_scaled_video=True,
+                    supported_codecs=[
+                        ZeroCopyCodec.H264])),
     },
     constants.GpuVendor.QUALCOMM: {
         0x41333430: BasicDirectCompositionConfig()\
+                    .WithHardwareNV12Support(supported_rotations=[
+                        VideoRotation.ROT180])\
+                    .WithZeroCopyConfig(ZeroCopyConfig(
+                        supports_scaled_video=True)),
+        0x36333630: BasicDirectCompositionConfig()\
+                    .WithHardwareNV12Support(supported_rotations=[
+                        VideoRotation.ROT180])\
+                    .WithZeroCopyConfig(ZeroCopyConfig(
+                        supports_scaled_video=True)),
+        0x36334330: BasicDirectCompositionConfig()\
                     .WithHardwareNV12Support(supported_rotations=[
                         VideoRotation.ROT180])\
                     .WithZeroCopyConfig(ZeroCopyConfig(

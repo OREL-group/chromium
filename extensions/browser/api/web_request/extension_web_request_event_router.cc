@@ -18,6 +18,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
 #include "extensions/browser/api/declarative/rules_registry_service.h"
+#include "extensions/browser/api/declarative_net_request/action_tracker.h"
 #include "extensions/browser/api/declarative_net_request/constants.h"
 #include "extensions/browser/api/declarative_net_request/request_action.h"
 #include "extensions/browser/api/declarative_net_request/rules_monitor_service.h"
@@ -25,22 +26,29 @@
 #include "extensions/browser/api/declarative_webrequest/webrequest_constants.h"
 #include "extensions/browser/api/declarative_webrequest/webrequest_rules_registry.h"
 #include "extensions/browser/api/extensions_api_client.h"
+#include "extensions/browser/api/web_accessible_resources/web_accessible_resources_router.h"
 #include "extensions/browser/api/web_request/permission_helper.h"
 #include "extensions/browser/api/web_request/web_request_api_constants.h"
 #include "extensions/browser/api/web_request/web_request_api_helpers.h"
 #include "extensions/browser/api/web_request/web_request_event_details.h"
 #include "extensions/browser/api/web_request/web_request_event_router_factory.h"
 #include "extensions/browser/api/web_request/web_request_info.h"
+#include "extensions/browser/api/web_request/web_request_permissions.h"
 #include "extensions/browser/api/web_request/web_request_time_tracker.h"
 #include "extensions/browser/api_activity_monitor.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extensions_browser_client.h"
 #include "extensions/browser/process_map.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/api/web_request/web_request_activity_log_constants.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/extension_id.h"
 #include "extensions/common/mojom/event_dispatcher.mojom.h"
+
+#if BUILDFLAG(ENABLE_GUEST_VIEW)
+#include "extensions/browser/guest_view/guest_view_events.h"
+#endif
 
 using content::BrowserThread;
 using extension_web_request_api_helpers::ExtraInfoSpec;
@@ -123,16 +131,19 @@ events::HistogramValue GetEventHistogramValue(const std::string& event_name) {
     }
   }
 
+#if BUILDFLAG(ENABLE_GUEST_VIEW)
   // If there is no webRequest event, it might be a guest view webRequest event.
   events::HistogramValue guest_view_histogram_value =
       guest_view_events::GetEventHistogramValue(event_name);
   if (guest_view_histogram_value != events::UNKNOWN) {
     return guest_view_histogram_value;
   }
+#endif
 
   // There is no histogram value for this event name. It should be added to
   // either the mapping here, or in guest_view_events.
-  NOTREACHED() << "Event " << event_name << " must have a histogram value";
+  NOTREACHED_IN_MIGRATION()
+      << "Event " << event_name << " must have a histogram value";
   return events::UNKNOWN;
 }
 
@@ -159,7 +170,7 @@ const char* GetRequestStageAsString(WebRequestEventRouter::EventTypes type) {
     case WebRequestEventRouter::kOnCompleted:
       return keys::kOnCompleted;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return "Not reached";
 }
 
@@ -215,23 +226,10 @@ bool IsRequestFromExtension(const WebRequestInfo& request,
     return false;
   }
 
-  const std::set<std::string> extension_ids =
-      ProcessMap::Get(context)->GetExtensionsInProcess(
+  const Extension* extension =
+      ProcessMap::Get(context)->GetEnabledExtensionByProcessID(
           request.render_process_id);
-  if (extension_ids.empty()) {
-    return false;
-  }
-
-  // Treat hosted apps as normal web pages (crbug.com/526413).
-  for (const ExtensionId& extension_id : extension_ids) {
-    const Extension* extension =
-        ExtensionRegistry::Get(context)->enabled_extensions().GetByID(
-            extension_id);
-    if (extension && !extension->is_hosted_app()) {
-      return true;
-    }
-  }
-  return false;
+  return extension && !extension->is_hosted_app();
 }
 
 // Sends an event to subscribers of chrome.declarativeWebRequest.onMessage or
@@ -386,11 +384,28 @@ void OnDNRActionMatched(content::BrowserContext* browser_context,
 
   action_tracker.OnRuleMatched(action, request);
   action.tracked = true;
+
+  // If `action` is tracked and it may match an entry in
+  // `request.max_priority_allow_action`, the entry doesn't need to have its
+  // `tracked` updated.
+  // `request.ShouldRecordMatchedAllowRuleInOnHeadersReceived` will only record
+  // an allow rule matched in OnHeadersReceived with a greater priority than one
+  // matched in OnBeforeRequest.
+}
+
+// The `use_dynamic_url` feature for web accessible resources requires that the
+// requested url be a dynamic url. A dynamic url is one where a session GUID is
+// used for the host instead of the static extension id.
+GURL GetNewUrl(const GURL& redirect_url,
+               content::BrowserContext* browser_context) {
+  auto dynamic_url =
+      TransformToDynamicURLIfNecessary(redirect_url, browser_context);
+  return dynamic_url.value_or(redirect_url);
 }
 
 using CallbacksForPageLoad = std::list<base::OnceClosure>;
 
-// TODO(crbug.com/1433136): We need to investigate why this is a global
+// TODO(crbug.com/40264286): We need to investigate why this is a global
 // structure instead of a per-BrowserContext structure. It seems incorrect
 // that a page load in one BrowserContext should interact with a page load
 // in another one.
@@ -460,7 +475,7 @@ WebRequestEventRouter::WebRequestEventRouter(content::BrowserContext* context)
 WebRequestEventRouter::~WebRequestEventRouter() = default;
 
 void WebRequestEventRouter::Shutdown() {
-  // TODO(crbug.com/1433136): This overlaps with OnOTRBrowserContextDestroyed.
+  // TODO(crbug.com/40264286): This overlaps with OnOTRBrowserContextDestroyed.
   // We should decide whether this can be cleaned up.
   OnBrowserContextShutdown(browser_context_);
   ClearCrossContextData(browser_context_);
@@ -590,7 +605,7 @@ helpers::EventResponseDelta CalculateDelta(
           response->extension_id, response->extension_install_time,
           response->cancel, response->auth_credentials);
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return helpers::EventResponseDelta("", base::Time());
   }
 }
@@ -906,7 +921,7 @@ int WebRequestEventRouter::OnBeforeRequest(
     }
   }
 
-  // Whether to initialized |blocked_requests_|.
+  // Whether to initialized `blocked_requests_`.
   bool initialize_blocked_requests = false;
 
   initialize_blocked_requests |= ProcessDeclarativeRules(
@@ -930,17 +945,12 @@ int WebRequestEventRouter::OnBeforeRequest(
         browser_context, request, listeners, std::move(event_details));
   }
 
-  // Handle Declarative Net Request API rules. In case the request is blocked or
-  // redirected, we un-block the request and ignore any subsequent responses
-  // from webRequestBlocking listeners. Note: We don't remove the request from
-  // the |EventListener::blocked_requests| set of any blocking listeners it was
-  // dispatched to, since the listener's response will be ignored in
-  // |DecrementBlockCount| anyway.
-
-  // Only checking the rules in the OnBeforeRequest stage works, since the rules
-  // currently only depend on the request url, initiator and resource type,
-  // which should stay the same during the diffierent network request stages. A
-  // redirect should cause another OnBeforeRequest call.
+  // Handle Declarative Net Request API rules matched in this request phase.
+  // In case the request is blocked or redirected, we un-block the request and
+  // ignore any subsequent responses from webRequestBlocking listeners. Note: We
+  // don't remove the request from the `EventListener::blocked_requests` set of
+  // any blocking listeners it was dispatched to, since the listener's response
+  // will be ignored in `DecrementBlockCount` anyway.
   declarative_net_request::RulesetManager* ruleset_manager =
       declarative_net_request::RulesMonitorService::Get(browser_context)
           ->ruleset_manager();
@@ -966,9 +976,12 @@ int WebRequestEventRouter::OnBeforeRequest(
       scoped_timer = base::ScopedClosureRunner(
           base::BindOnce(record_completion_time,
                          &GetExtensionWebRequestTimeTracker(), request->id));
-    }
 
-    for (const auto& action : actions) {
+      // Only the first action in `actions` need to be checked, as all action
+      // types except MODIFY_HEADERS expect only one action, and for
+      // MODIFY_HEADERS, a check is performed to make sure all `actions` are
+      // MODIFY_HEADERS.
+      const DNRRequestAction& action = actions[0];
       switch (action.type) {
         case DNRRequestAction::Type::BLOCK:
           ClearPendingCallbacks(browser_context, *request);
@@ -992,7 +1005,15 @@ int WebRequestEventRouter::OnBeforeRequest(
           DCHECK_EQ(1u, actions.size());
           DCHECK(action.redirect_url);
           OnDNRActionMatched(browser_context, *request, action);
-          *new_url = action.redirect_url.value();
+          *new_url = GetNewUrl(action.redirect_url.value(), browser_context);
+          // Collect redirect action data for the Extension Telemetry Service.
+          if (action.type == DNRRequestAction::Type::REDIRECT) {
+            ExtensionsBrowserClient::Get()
+                ->NotifyExtensionDeclarativeNetRequestRedirectAction(
+                    browser_context, action.extension_id, request->url,
+                    action.redirect_url.value());
+          }
+
           return net::OK;
         case DNRRequestAction::Type::MODIFY_HEADERS:
           // Unlike other actions, allow web request extensions to intercept
@@ -1046,7 +1067,7 @@ int WebRequestEventRouter::OnBeforeSendHeaders(
       ProcessDeclarativeRules(browser_context, keys::kOnBeforeSendHeadersEvent,
                               request, ON_BEFORE_SEND_HEADERS, nullptr);
 
-  DCHECK(request->dnr_actions);
+  CHECK(request->dnr_actions);
   initialize_blocked_requests |= base::ranges::any_of(
       *request->dnr_actions, [](const DNRRequestAction& action) {
         return action.type == DNRRequestAction::Type::MODIFY_HEADERS &&
@@ -1117,7 +1138,7 @@ void WebRequestEventRouter::OnSendHeaders(
 
 int WebRequestEventRouter::OnHeadersReceived(
     content::BrowserContext* browser_context,
-    const WebRequestInfo* request,
+    WebRequestInfo* request,
     net::CompletionOnceCallback callback,
     const net::HttpResponseHeaders* original_response_headers,
     scoped_refptr<net::HttpResponseHeaders>* override_response_headers,
@@ -1132,12 +1153,7 @@ int WebRequestEventRouter::OnHeadersReceived(
   bool initialize_blocked_requests = false;
   const bool is_incognito_context = browser_context->IsOffTheRecord();
 
-  DCHECK(request->dnr_actions);
-  initialize_blocked_requests |= base::ranges::any_of(
-      *request->dnr_actions, [](const DNRRequestAction& action) {
-        return action.type == DNRRequestAction::Type::MODIFY_HEADERS &&
-               !action.response_headers_to_modify.empty();
-      });
+  CHECK(request->dnr_actions);
 
   initialize_blocked_requests |= ProcessDeclarativeRules(
       browser_context, keys::kOnHeadersReceivedEvent, request,
@@ -1169,9 +1185,14 @@ int WebRequestEventRouter::OnHeadersReceived(
             *request, original_response_headers, is_incognito_context);
 
     // TODO(crbug.com/40727004): This shares a lot of logic with the equivalent
-    // loop in OnBeforeRequest. Refactor into a common method once all action
+    // block in OnBeforeRequest. Refactor into a common method once all action
     // types are supported.
-    for (const auto& action : actions) {
+    if (!actions.empty()) {
+      // Similar to OnBeforeRequest, only the first action needs to be examined.
+      // In the case of MODIFY_HEADERS, any operations needed to re-compute
+      // `request->dnr_actions` only needs to be executed once.
+      const DNRRequestAction& action = actions[0];
+
       switch (action.type) {
         case DNRRequestAction::Type::BLOCK:
           ClearPendingCallbacks(browser_context, *request);
@@ -1185,8 +1206,17 @@ int WebRequestEventRouter::OnHeadersReceived(
           *should_collapse_initiator = true;
           return net::ERR_BLOCKED_BY_CLIENT;
         case DNRRequestAction::Type::ALLOW:
+        case DNRRequestAction::Type::ALLOW_ALL_REQUESTS:
           DCHECK_EQ(1u, actions.size());
-          OnDNRActionMatched(browser_context, *request, action);
+          // Prune any actions matched during previous request stages that are
+          // outprioritized by allow rules matched during this request stage.
+          request->EraseOutprioritizedDNRActions();
+
+          if (request->ShouldRecordMatchedAllowRuleInOnHeadersReceived(
+                  action)) {
+            OnDNRActionMatched(browser_context, *request, action);
+          }
+
           break;
         case DNRRequestAction::Type::REDIRECT:
         case DNRRequestAction::Type::UPGRADE:
@@ -1203,18 +1233,62 @@ int WebRequestEventRouter::OnHeadersReceived(
 
           extension_web_request_api_helpers::
               RedirectRequestAfterHeadersReceived(
-                  *action.redirect_url, **override_response_headers,
+                  GetNewUrl(action.redirect_url.value(), browser_context),
+                  **override_response_headers,
                   preserve_fragment_on_redirect_url);
           return net::OK;
-        case DNRRequestAction::Type::ALLOW_ALL_REQUESTS:
         case DNRRequestAction::Type::MODIFY_HEADERS:
-          // TODO(crbug.com/40727004): Implement support for allow all request
-          // and modify header rules that match on response headers.
-          NOTREACHED();
+          // Modify header actions can only combine with actions of the same
+          // type, see RulesetManager::EvaluateRequestInternal for the
+          // implementation.
+          DCHECK(base::ranges::all_of(actions, [](const auto& action) {
+            return action.type == DNRRequestAction::Type::MODIFY_HEADERS;
+          }));
+
+          // Prune any actions matched during previous request stages that are
+          // outprioritized by allow rules matched during this request stage.
+          request->EraseOutprioritizedDNRActions();
+
+          // For other action types, actions matched here don't need to be saved
+          // to `request->dnr_actions` since said action(s) can be taken on the
+          // request now. Modify header actions need to be saved since they will
+          // take effect later.
+          // Note: Since `actions` will be moved here either way, `action` is
+          // unsafe to use after this point!
+
+          // If no modify header actions were matched in previous request
+          // stages, then `request->dnr_actions` can simply be overwritten by
+          // actions matched at this stage.
+          if (request->dnr_actions->empty() ||
+              (*request->dnr_actions)[0].type !=
+                  DNRRequestAction::Type::MODIFY_HEADERS) {
+            request->dnr_actions = std::move(actions);
+          } else {
+            // Otherwise, modify header actions from all request stages will
+            // need to be merged. MergeModifyHeaderActions will also sort these
+            // actions by descending order of priority.
+            request->dnr_actions = ruleset_manager->MergeModifyHeaderActions(
+                std::move(*request->dnr_actions), std::move(actions));
+
+            // Verify that if `request->dnr_actions` contains any modify headers
+            // actions, then all actions in `request->dnr_actions` must be
+            // modify headers actions.
+            DCHECK(base::ranges::all_of(
+                *request->dnr_actions, [](const auto& action) {
+                  return action.type == DNRRequestAction::Type::MODIFY_HEADERS;
+                }));
+          }
+
           break;
       }
     }
   }
+
+  initialize_blocked_requests |= base::ranges::any_of(
+      *request->dnr_actions, [](const DNRRequestAction& action) {
+        return action.type == DNRRequestAction::Type::MODIFY_HEADERS &&
+               !action.response_headers_to_modify.empty();
+      });
 
   if (!initialize_blocked_requests) {
     return net::OK;  // Nobody saw a reason for modifying the request.
@@ -1872,7 +1946,7 @@ void WebRequestEventRouter::CleanUpForListener(const EventListener& listener,
   // Note that we do this even for deactivations, since if the service worker
   // is shut down (which would happen if it reached the hard lifetime timeout),
   // it won't be able to respond to the request.
-  // TODO(https://crbug.com/1024211): This likely won't be sufficient, since it
+  // TODO(crbug.com/40107353): This likely won't be sufficient, since it
   // means requests can leak through.
   for (uint64_t blocked_request_id : listener.blocked_requests) {
     DecrementBlockCount(listener.id.browser_context, listener.id.extension_id,
@@ -2035,7 +2109,7 @@ WebRequestEventRouter::BlockedRequestMap&
 WebRequestEventRouter::GetBlockedRequestMap(
     content::BrowserContext* browser_context) {
   // Blocked requests are stored in the data for the regular context.
-  // TODO(crbug.com/1474688): Blocked requests should be isolated to
+  // TODO(crbug.com/40279375): Blocked requests should be isolated to
   // a particular BrowserContext and not shared between the main and
   // OTR contexts.
   if (browser_context->IsOffTheRecord()) {
@@ -2362,7 +2436,7 @@ int WebRequestEventRouter::ExecuteDeltas(
         blocked_request.response_deltas, blocked_request.auth_credentials,
         &ignored_actions);
   } else {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
   }
 
   SendMessages(browser_context, blocked_request);
@@ -2502,11 +2576,10 @@ bool WebRequestEventRouter::ProcessDeclarativeRules(
     // The rules registry is still loading. Block this request until it
     // finishes.
     rules_registry->ready().Post(
-        FROM_HERE,
-        base::BindOnce(&WebRequestEventRouter::OnRulesRegistryReady,
-                       weak_ptr_factory_.GetWeakPtr(),
-                       base::UnsafeDanglingUntriaged(browser_context),
-                       event_name, request->id, request_stage));
+        FROM_HERE, base::BindOnce(&WebRequestEventRouter::OnRulesRegistryReady,
+                                  weak_ptr_factory_.GetWeakPtr(),
+                                  static_cast<void*>(browser_context),
+                                  event_name, request->id, request_stage));
     BlockedRequest& blocked_request =
         GetOrAddBlockedRequest(browser_context, request->id);
     blocked_request.num_handlers_blocking++;
@@ -2537,19 +2610,21 @@ bool WebRequestEventRouter::ProcessDeclarativeRules(
   return deltas_created;
 }
 
-void WebRequestEventRouter::OnRulesRegistryReady(
-    content::BrowserContext* browser_context,
-    const std::string& event_name,
-    uint64_t request_id,
-    RequestStage request_stage) {
-  // TODO(crbug.com/1433136): We should be able to remove this once we roll
+void WebRequestEventRouter::OnRulesRegistryReady(void* browser_context_id,
+                                                 const std::string& event_name,
+                                                 uint64_t request_id,
+                                                 RequestStage request_stage) {
+  // TODO(crbug.com/40264286): We should be able to remove this once we roll
   // out the per-BrowserContext event router, since the WeakPtr that was bound
   // to the callback will be invalidated when the BrowserContext shuts down.
   // Some additional special handling will be needed since this might be a
   // pointer to an off-the-record instance.
-  if (!ExtensionsBrowserClient::Get()->IsValidContext(browser_context)) {
+  if (!ExtensionsBrowserClient::Get()->IsValidContext(browser_context_id)) {
     return;
   }
+
+  content::BrowserContext* browser_context =
+      reinterpret_cast<content::BrowserContext*>(browser_context_id);
 
   // It's possible that this request was deleted, or cancelled by a previous
   // event handler. If so, ignore this response.

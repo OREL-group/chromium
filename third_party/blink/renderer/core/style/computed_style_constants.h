@@ -56,7 +56,8 @@ enum class BoxSide : unsigned { kTop, kRight, kBottom, kLeft };
 enum PseudoId : uint8_t {
   // The order must be NOP ID, public IDs, and then internal IDs.
   // If you add or remove a public ID, you must update the field_size of
-  // "PseudoBits" in computed_style_extra_fields.json5.
+  // "PseudoElementStyles" in computed_style_extra_fields.json5 to
+  // (kLastTrackedPublicPseudoId - kFirstPublicPseudoId + 1).
   //
   // The above is necessary because presence of a public pseudo element style
   // for an element is tracked on the element's ComputedStyle. This is done for
@@ -71,10 +72,17 @@ enum PseudoId : uint8_t {
   kPseudoIdSelection,
   kPseudoIdScrollbar,
   kPseudoIdScrollMarker,
-  kPseudoIdScrollMarkers,
+  kPseudoIdScrollMarkerGroup,
+  kPseudoIdScrollNextButton,
+  kPseudoIdScrollPrevButton,
+  kPseudoIdColumn,
+  kPseudoIdSearchText,
   kPseudoIdTargetText,
   kPseudoIdHighlight,
   kPseudoIdSpellingError,
+  kPseudoIdColumnScrollMarker,  // Used to store the combined
+                                // ::column::scroll-marker style on the
+                                // originating element's ComputedStyle cache.
   kPseudoIdGrammarError,
   // The following IDs are public but not tracked.
   kPseudoIdViewTransition,
@@ -89,8 +97,16 @@ enum PseudoId : uint8_t {
   kPseudoIdScrollbarTrack,
   kPseudoIdScrollbarTrackPiece,
   kPseudoIdScrollbarCorner,
+  kPseudoIdScrollMarkerGroupAfter,
+  kPseudoIdScrollMarkerGroupBefore,
   kPseudoIdResizer,
   kPseudoIdInputListButton,
+  kPseudoIdPlaceholder,
+  kPseudoIdFileSelectorButton,
+  kPseudoIdDetailsContent,
+  kPseudoIdSelectFallbackButton,
+  kPseudoIdSelectFallbackButtonText,
+  kPseudoIdPickerSelect,
   // Special values follow:
   kAfterLastInternalPseudoId,
   kPseudoIdInvalid,
@@ -102,6 +118,7 @@ enum PseudoId : uint8_t {
 inline bool IsHighlightPseudoElement(PseudoId pseudo_id) {
   switch (pseudo_id) {
     case kPseudoIdSelection:
+    case kPseudoIdSearchText:
     case kPseudoIdTargetText:
     case kPseudoIdHighlight:
     case kPseudoIdSpellingError:
@@ -118,6 +135,7 @@ inline bool UsesHighlightPseudoInheritance(PseudoId pseudo_id) {
   // highlight inheritance feature is enabled.
   return ((IsHighlightPseudoElement(pseudo_id) &&
            RuntimeEnabledFeatures::HighlightInheritanceEnabled()) ||
+          pseudo_id == PseudoId::kPseudoIdSearchText ||
           pseudo_id == PseudoId::kPseudoIdHighlight ||
           pseudo_id == PseudoId::kPseudoIdSpellingError ||
           pseudo_id == PseudoId::kPseudoIdGrammarError);
@@ -493,7 +511,7 @@ enum class CompositingOperator : unsigned {
   kPlusLighter
 };
 
-// https://drafts.csswg.org/css-anchor-position-1/#typedef-position-try-options-try-tactic
+// https://drafts.csswg.org/css-anchor-position-1/#typedef-position-try-fallbacks-try-tactic
 enum class TryTactic : uint8_t {
   kNone,
   kFlipBlock,

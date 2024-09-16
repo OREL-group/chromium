@@ -159,12 +159,8 @@ TEST_F(AffiliationPrefetcherTest,
   RunUntilIdle();
 
   FacetURI facet = FacetURI::FromCanonicalSpec("https://foo.com");
-  {
-    testing::InSequence in_sequence;
-    EXPECT_CALL(*mock_affiliation_service(),
-                CancelPrefetch(facet, base::Time::Max()));
-    EXPECT_CALL(*mock_affiliation_service(), TrimCacheForFacetURI(facet));
-  }
+  EXPECT_CALL(*mock_affiliation_service(),
+              CancelPrefetch(facet, base::Time::Max()));
 
   src_ptr->RemoveFacet(facet);
 }
@@ -215,6 +211,9 @@ TEST_F(AffiliationPrefetcherTest, TestSourceRegisteredLater) {
 // Verifies that affiliations are refetched if a new source is registered while
 // other sources are being initialized.
 TEST_F(AffiliationPrefetcherTest, TestSourcesRegisteredAfterDelay) {
+  EXPECT_CALL(*mock_affiliation_service(),
+              KeepPrefetchForFacets(testing::IsEmpty()));
+  EXPECT_CALL(*mock_affiliation_service(), TrimUnusedCache(testing::IsEmpty()));
   FastForwardBy(kInitializationDelayOnStartup);
   RunUntilIdle();
 
@@ -260,6 +259,16 @@ TEST_F(AffiliationPrefetcherTest, TestSourcesRegisteredAfterDelay) {
   // again.
   std::move(first_callback).Run(facets1);
 
+  RunUntilIdle();
+}
+
+// Verifies that the affiliations cache is reset if no sources are registered
+// `kInitializationDelayOnStartup` seconds after start-up.
+TEST_F(AffiliationPrefetcherTest, TestNoSourcesAfterStartup) {
+  EXPECT_CALL(*mock_affiliation_service(),
+              KeepPrefetchForFacets(testing::IsEmpty()));
+  EXPECT_CALL(*mock_affiliation_service(), TrimUnusedCache(testing::IsEmpty()));
+  FastForwardBy(kInitializationDelayOnStartup);
   RunUntilIdle();
 }
 

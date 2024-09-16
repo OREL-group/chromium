@@ -30,7 +30,6 @@ namespace gpu {
 
 class DawnContextProvider;
 class GpuDriverBugWorkarounds;
-class MailboxManager;
 class SharedContextState;
 class SharedImageManager;
 class SingleTaskSequence;
@@ -74,7 +73,6 @@ class VIZ_SERVICE_EXPORT SkiaOutputSurfaceDependency {
   virtual gpu::DawnContextProvider* GetDawnContextProvider() = 0;
   virtual const gpu::GpuPreferences& GetGpuPreferences() const = 0;
   virtual const gpu::GpuFeatureInfo& GetGpuFeatureInfo() = 0;
-  virtual gpu::MailboxManager* GetMailboxManager() = 0;
   // Note it is possible for IsOffscreen to be false and GetSurfaceHandle to
   // return kNullSurfaceHandle.
   virtual bool IsOffscreen() = 0;
@@ -82,16 +80,18 @@ class VIZ_SERVICE_EXPORT SkiaOutputSurfaceDependency {
   virtual scoped_refptr<gl::Presenter> CreatePresenter() = 0;
   virtual scoped_refptr<gl::GLSurface> CreateGLSurface(
       gl::GLSurfaceFormat format) = 0;
+#if BUILDFLAG(IS_ANDROID)
   // Hold a ref of the given surface until the returned closure is fired.
   virtual base::ScopedClosureRunner CacheGLSurface(gl::GLSurface* surface) = 0;
   virtual base::ScopedClosureRunner CachePresenter(
       gl::Presenter* presenter) = 0;
+#endif
   virtual void ScheduleGrContextCleanup() = 0;
 
   void PostTaskToClientThread(base::OnceClosure closure) {
     GetClientTaskRunner()->PostTask(FROM_HERE, std::move(closure));
   }
-  virtual scoped_refptr<base::TaskRunner> GetClientTaskRunner() = 0;
+  virtual scoped_refptr<base::SingleThreadTaskRunner> GetClientTaskRunner() = 0;
 
   // This function schedules delayed task to be run on GPUThread. It can be
   // called only from GPU Thread.

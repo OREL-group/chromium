@@ -442,7 +442,7 @@ TEST_F(LockStateControllerTest, LegacyHonorPowerButtonInDockedMode) {
   SendBrightnessChange(0, kUserCause);
   internal_display->set_current_mode(nullptr);
   external_display->set_current_mode(nullptr);
-  power_button_controller_->OnDisplayModeChanged(outputs);
+  power_button_controller_->OnDisplayConfigurationChanged(outputs);
   PressPowerButton();
   EXPECT_FALSE(power_button_test_api_->IsMenuOpened());
   ReleasePowerButton();
@@ -451,7 +451,7 @@ TEST_F(LockStateControllerTest, LegacyHonorPowerButtonInDockedMode) {
   // on (indicating either docked mode or the user having manually decreased the
   // brightness to 0%), the power button should still be handled.
   external_display->set_current_mode(external_display->modes().back().get());
-  power_button_controller_->OnDisplayModeChanged(outputs);
+  power_button_controller_->OnDisplayConfigurationChanged(outputs);
   PressPowerButton();
   EXPECT_TRUE(power_button_test_api_->IsMenuOpened());
   ReleasePowerButton();
@@ -688,7 +688,7 @@ TEST_P(LockStateControllerAnimationTest, RequestShutdownFromLockScreen) {
   EXPECT_EQ(1, NumShutdownRequests());
 }
 
-// Test that historgram of time delta was recorded if a previous shutdown was
+// Test that histogram of time delta was recorded if a previous shutdown was
 // initiated from login/lock screen.
 TEST_F(LockStateControllerTest, RequestShutdownFromLoginScreenThenRestart) {
   Initialize(ButtonType::NORMAL, LoginStatus::NOT_LOGGED_IN);
@@ -739,7 +739,7 @@ TEST_F(LockStateControllerTest, RequestShutdownFromLockScreenThenRestart) {
   histograms().ExpectTotalCount(kShelfShutdownConfirmationHistogramName, 1);
 }
 
-// Test that historgram of time delta was not recorded if a previous shutdown
+// Test that histogram of time delta was not recorded if a previous shutdown
 // was not initiated from login/lock screen.
 TEST_F(LockStateControllerTest, LegacyShowMenuAndShutDownThenRestart) {
   Initialize(ButtonType::LEGACY, LoginStatus::USER);
@@ -1038,45 +1038,43 @@ TEST_F(LockStateControllerMockTimeTest, LockWithoutAnimation) {
   EXPECT_TRUE(Shell::Get()->session_controller()->IsScreenLocked());
 }
 
-class LockStateControllerPineTest : public LockStateControllerTest {
+class LockStateControllerInformedRestoreTest : public LockStateControllerTest {
  public:
-  LockStateControllerPineTest() {
-    switches::SetIgnoreForestSecretKeyForTest(true);
-  }
-  LockStateControllerPineTest(const LockStateControllerPineTest&) = delete;
-  LockStateControllerPineTest& operator=(const LockStateControllerPineTest&) =
-      delete;
-  ~LockStateControllerPineTest() override {
-    switches::SetIgnoreForestSecretKeyForTest(false);
-  }
+  LockStateControllerInformedRestoreTest() = default;
+  LockStateControllerInformedRestoreTest(
+      const LockStateControllerInformedRestoreTest&) = delete;
+  LockStateControllerInformedRestoreTest& operator=(
+      const LockStateControllerInformedRestoreTest&) = delete;
+  ~LockStateControllerInformedRestoreTest() override = default;
 
   // LockStateControllerTest:
   void SetUp() override {
     LockStateControllerTest::SetUp();
 
     CHECK(temp_dir_.CreateUniqueTempDir());
-    file_path_ = temp_dir_.GetPath().AppendASCII("test_pine.png");
-    SetPineImagePathForTest(file_path_);
+    file_path_ = temp_dir_.GetPath().AppendASCII("test_informed_restore.png");
+    SetInformedRestoreImagePathForTest(file_path_);
     Initialize(ButtonType::NORMAL, LoginStatus::USER);
   }
 
   void TearDown() override {
-    SetPineImagePathForTest(base::FilePath());
+    SetInformedRestoreImagePathForTest(base::FilePath());
     LockStateControllerTest::TearDown();
   }
 
   void RequestShutdownWithoutFailTimer() {
     base::RunLoop run_loop;
-    lock_state_test_api_->set_pine_image_callback(run_loop.QuitClosure());
+    lock_state_test_api_->set_informed_restore_image_callback(
+        run_loop.QuitClosure());
     lock_state_test_api_->disable_screenshot_timeout_for_test(true);
     lock_state_controller_->RequestShutdown(
         ShutdownReason::TRAY_SHUT_DOWN_BUTTON);
     run_loop.Run();
   }
 
-  // Checks that the pine image was taken and saved at `file_path` on disk
-  // successfully.
-  void VerifyPineImageOnDisk() {
+  // Checks that the informed restore image was taken and saved at `file_path`
+  // on disk successfully.
+  void VerifyInformedRestoreImageOnDisk() {
     EXPECT_TRUE(base::PathExists(file_path()));
     int64_t file_size = 0;
     ASSERT_TRUE(base::GetFileSize(file_path(), &file_size));
@@ -1092,32 +1090,33 @@ class LockStateControllerPineTest : public LockStateControllerTest {
   base::test::ScopedFeatureList scoped_feature_list_{features::kForestFeature};
 };
 
-// Tests that a pine image is taken when there are windows open.
-TEST_F(LockStateControllerPineTest, ShutdownWithWindows) {
+// Tests that a informed restore image is taken when there are windows open.
+TEST_F(LockStateControllerInformedRestoreTest, ShutdownWithWindows) {
   std::unique_ptr<aura::Window> window = CreateTestWindow();
   base::HistogramTester histogram_tester;
 
   RequestShutdownWithoutFailTimer();
-  // The pine image was taken and not empty.
-  VerifyPineImageOnDisk();
+  // The informed restore image was taken and not empty.
+  VerifyInformedRestoreImageOnDisk();
   EXPECT_THAT(histogram_tester.GetAllSamples(kScreenshotOnShutdownStatus),
               testing::ElementsAre(
                   base::Bucket(ScreenshotOnShutdownStatus::kSucceeded, 1)));
 
   auto* local_state = Shell::Get()->local_state();
-  // Pine screenshot related durations were recorded.
+  // Informed restore screenshot related durations were recorded.
   const base::TimeDelta screenshot_taken_duration =
-      local_state->GetTimeDelta(prefs::kPineScreenshotTakenDuration);
+      local_state->GetTimeDelta(prefs::kInformedRestoreScreenshotTakenDuration);
   EXPECT_FALSE(screenshot_taken_duration.is_zero());
   const base::TimeDelta screenshot_encode_and_save_duration =
-      local_state->GetTimeDelta(prefs::kPineScreenshotEncodeAndSaveDuration);
+      local_state->GetTimeDelta(
+          prefs::kInformedRestoreScreenshotEncodeAndSaveDuration);
   EXPECT_FALSE(screenshot_encode_and_save_duration.is_zero());
 }
 
-// Tests that no pine image is taken when there are no windows opened and the
-// existing pine image should be deleted.
-TEST_F(LockStateControllerPineTest, ShutdownWithoutWindows) {
-  // Create an empty file to simulate an old pine image.
+// Tests that no informed restore image is taken when there are no windows
+// opened and the existing informed restore image should be deleted.
+TEST_F(LockStateControllerInformedRestoreTest, ShutdownWithoutWindows) {
+  // Create an empty file to simulate an old informed restore image.
   ASSERT_TRUE(base::WriteFile(file_path(), ""));
 
   base::HistogramTester histogram_tester;
@@ -1126,12 +1125,13 @@ TEST_F(LockStateControllerPineTest, ShutdownWithoutWindows) {
               testing::ElementsAre(base::Bucket(
                   ScreenshotOnShutdownStatus::kFailedWithNoWindows, 1)));
 
-  // Existing pine image was deleted.
+  // Existing informed restore image was deleted.
+  EXPECT_FALSE(lock_state_test_api_->mirror_wallpaper_layer());
   EXPECT_FALSE(base::PathExists(file_path()));
 }
 
-TEST_F(LockStateControllerPineTest, ShutdownInOverview) {
-  // Create an empty file to simulate an old pine image.
+TEST_F(LockStateControllerInformedRestoreTest, ShutdownInOverview) {
+  // Create an empty file to simulate an old informed restore image.
   ASSERT_TRUE(base::WriteFile(file_path(), ""));
 
   base::HistogramTester histogram_tester;
@@ -1143,13 +1143,37 @@ TEST_F(LockStateControllerPineTest, ShutdownInOverview) {
   EXPECT_THAT(histogram_tester.GetAllSamples(kScreenshotOnShutdownStatus),
               testing::ElementsAre(base::Bucket(
                   ScreenshotOnShutdownStatus::kFailedInOverview, 1)));
-  // The pine image should not be taken if it is in overview when shutting down.
-  // The existing pine image should be deleted as well.
+  // The informed restore image should not be taken if it is in overview when
+  // shutting down. The existing informed restore image should be deleted as
+  // well.
+  EXPECT_FALSE(lock_state_test_api_->mirror_wallpaper_layer());
   EXPECT_FALSE(base::PathExists(file_path()));
 }
 
-TEST_F(LockStateControllerPineTest, ShutdownInLockScreen) {
-  // Create an empty file to simulate an old pine image.
+TEST_F(LockStateControllerInformedRestoreTest, ShutdownInGuest) {
+  SimulateUserLogin("foo@example.com", user_manager::UserType::kGuest);
+
+  // Create an empty file to simulate an old informed restore image.
+  ASSERT_TRUE(base::WriteFile(file_path(), ""));
+
+  base::HistogramTester histogram_tester;
+  CreateTestWindow();
+  ASSERT_TRUE(Shell::Get()->session_controller()->IsUserGuest());
+
+  // Request shutdown while in guest mode.
+  RequestShutdownWithoutFailTimer();
+  EXPECT_THAT(
+      histogram_tester.GetAllSamples(kScreenshotOnShutdownStatus),
+      testing::ElementsAre(base::Bucket(
+          ScreenshotOnShutdownStatus::kFailedInGuestOrPublicUserSession, 1)));
+  // The informed restore image should not be taken if it is in the guest
+  // session. The existing informed restore image should be deleted as well.
+  EXPECT_FALSE(lock_state_test_api_->mirror_wallpaper_layer());
+  EXPECT_FALSE(base::PathExists(file_path()));
+}
+
+TEST_F(LockStateControllerInformedRestoreTest, ShutdownInLockScreen) {
+  // Create an empty file to simulate an old informed restore image.
   ASSERT_TRUE(base::WriteFile(file_path(), ""));
 
   base::HistogramTester histogram_tester;
@@ -1162,13 +1186,14 @@ TEST_F(LockStateControllerPineTest, ShutdownInLockScreen) {
   EXPECT_THAT(histogram_tester.GetAllSamples(kScreenshotOnShutdownStatus),
               testing::ElementsAre(base::Bucket(
                   ScreenshotOnShutdownStatus::kFailedInLockScreen, 1)));
-  // The pine image should not be taken if it is in the lock screen. The
-  // existing pine image should be deleted as well.
+  // The informed restore image should not be taken if it is in the lock screen.
+  // The existing informed restore image should be deleted as well.
+  EXPECT_FALSE(lock_state_test_api_->mirror_wallpaper_layer());
   EXPECT_FALSE(base::PathExists(file_path()));
 }
 
-TEST_F(LockStateControllerPineTest, ShutdownInHomeLauncher) {
-  // Create an empty file to simulate an old pine image.
+TEST_F(LockStateControllerInformedRestoreTest, ShutdownInHomeLauncher) {
+  // Create an empty file to simulate an old informed restore image.
   ASSERT_TRUE(base::WriteFile(file_path(), ""));
 
   base::HistogramTester histogram_tester;
@@ -1186,13 +1211,15 @@ TEST_F(LockStateControllerPineTest, ShutdownInHomeLauncher) {
               testing::ElementsAre(base::Bucket(
                   ScreenshotOnShutdownStatus::kFailedInHomeLauncher, 1)));
 
-  // The pine image should not be taken if it is in the home launcher page when
-  // shutting down. The existing image should be deleted as well.
+  // The informed restore image should not be taken if it is in the home
+  // launcher page when shutting down. The existing image should be deleted as
+  // well.
+  EXPECT_FALSE(lock_state_test_api_->mirror_wallpaper_layer());
   EXPECT_FALSE(base::PathExists(file_path()));
 }
 
-TEST_F(LockStateControllerPineTest, PinnedState) {
-  // Create an empty file to simulate an old pine image.
+TEST_F(LockStateControllerInformedRestoreTest, PinnedState) {
+  // Create an empty file to simulate an old informed restore image.
   ASSERT_TRUE(base::WriteFile(file_path(), ""));
 
   base::HistogramTester histogram_tester;
@@ -1205,13 +1232,14 @@ TEST_F(LockStateControllerPineTest, PinnedState) {
   EXPECT_THAT(histogram_tester.GetAllSamples(kScreenshotOnShutdownStatus),
               testing::ElementsAre(base::Bucket(
                   ScreenshotOnShutdownStatus::kFailedInPinnedMode, 1)));
-  // The pine image should not be taken when it is in pinned state. The existing
-  // image should be deleted as well.
+  // The informed restore image should not be taken when it is in pinned state.
+  // The existing image should be deleted as well.
+  EXPECT_FALSE(lock_state_test_api_->mirror_wallpaper_layer());
   EXPECT_FALSE(base::PathExists(file_path()));
 }
 
-TEST_F(LockStateControllerPineTest, AllWindowsMinimized) {
-  // Create an empty file to simulate an old pine image.
+TEST_F(LockStateControllerInformedRestoreTest, AllWindowsMinimized) {
+  // Create an empty file to simulate an old informed restore image.
   ASSERT_TRUE(base::WriteFile(file_path(), ""));
 
   base::HistogramTester histogram_tester;
@@ -1224,13 +1252,16 @@ TEST_F(LockStateControllerPineTest, AllWindowsMinimized) {
   EXPECT_THAT(histogram_tester.GetAllSamples(kScreenshotOnShutdownStatus),
               testing::ElementsAre(base::Bucket(
                   ScreenshotOnShutdownStatus::kFailedWithNoWindows, 1)));
-  // The pine image should not be taken if all the windows inside the active
-  // desk are minimized. The existing image should be deleted as well.
+  // The informed restore image should not be taken if all the windows inside
+  // the active desk are minimized. The existing image should be deleted as
+  // well.
+  EXPECT_FALSE(lock_state_test_api_->mirror_wallpaper_layer());
   EXPECT_FALSE(base::PathExists(file_path()));
 }
 
-// Tests that the pine image should be taken with only the floated window.
-TEST_F(LockStateControllerPineTest, ShutdownWithFloatWindow) {
+// Tests that the informed restore image should be taken with only the floated
+// window.
+TEST_F(LockStateControllerInformedRestoreTest, ShutdownWithFloatWindow) {
   base::HistogramTester histogram_tester;
   std::unique_ptr<aura::Window> floated_window = CreateAppWindow();
   PressAndReleaseKey(ui::VKEY_F, ui::EF_ALT_DOWN | ui::EF_COMMAND_DOWN);
@@ -1240,12 +1271,14 @@ TEST_F(LockStateControllerPineTest, ShutdownWithFloatWindow) {
   EXPECT_THAT(histogram_tester.GetAllSamples(kScreenshotOnShutdownStatus),
               testing::ElementsAre(
                   base::Bucket(ScreenshotOnShutdownStatus::kSucceeded, 1)));
-  // The pine image was taken and not empty with the float window only.
-  VerifyPineImageOnDisk();
+  // The informed restore image was taken and not empty with the float window
+  // only.
+  VerifyInformedRestoreImageOnDisk();
 }
 
-// Tests that the pine image should be taken with only the always on top window.
-TEST_F(LockStateControllerPineTest, ShutdownWithAlwaysOnTopWindow) {
+// Tests that the informed restore image should be taken with only the always on
+// top window.
+TEST_F(LockStateControllerInformedRestoreTest, ShutdownWithAlwaysOnTopWindow) {
   base::HistogramTester histogram_tester;
   aura::Window* top_container = Shell::GetContainer(
       Shell::GetPrimaryRootWindow(), kShellWindowId_AlwaysOnTopContainer);
@@ -1256,18 +1289,20 @@ TEST_F(LockStateControllerPineTest, ShutdownWithAlwaysOnTopWindow) {
   EXPECT_THAT(histogram_tester.GetAllSamples(kScreenshotOnShutdownStatus),
               testing::ElementsAre(
                   base::Bucket(ScreenshotOnShutdownStatus::kSucceeded, 1)));
-  // The pine image was taken and not empty with the always on top window only.
-  VerifyPineImageOnDisk();
+  // The informed restore image was taken and not empty with the always on top
+  // window only.
+  VerifyInformedRestoreImageOnDisk();
 }
 
-TEST_F(LockStateControllerPineTest, TakeScreenshotTimeout) {
-  // Create an empty file to simulate an old pine image.
+TEST_F(LockStateControllerInformedRestoreTest, TakeScreenshotTimeout) {
+  // Create an empty file to simulate an old informed restore image.
   ASSERT_TRUE(base::WriteFile(file_path(), ""));
 
   base::HistogramTester histogram_tester;
   std::unique_ptr<aura::Window> window(CreateTestWindow());
   base::RunLoop run_loop;
-  lock_state_test_api_->set_pine_image_callback(run_loop.QuitClosure());
+  lock_state_test_api_->set_informed_restore_image_callback(
+      run_loop.QuitClosure());
   lock_state_controller_->RequestShutdown(
       ShutdownReason::TRAY_SHUT_DOWN_BUTTON);
 
@@ -1282,6 +1317,23 @@ TEST_F(LockStateControllerPineTest, TakeScreenshotTimeout) {
       histogram_tester.GetAllSamples(kScreenshotOnShutdownStatus),
       testing::ElementsAre(base::Bucket(
           ScreenshotOnShutdownStatus::kFailedOnTakingScreenshotTimeout, 1)));
+}
+
+TEST_F(LockStateControllerInformedRestoreTest, CancelShutdown) {
+  // Create an empty file to simulate an old informed restore image.
+  ASSERT_TRUE(base::WriteFile(file_path(), ""));
+  std::unique_ptr<aura::Window> window(CreateTestWindow());
+  base::RunLoop run_loop;
+  lock_state_test_api_->set_informed_restore_image_callback(
+      run_loop.QuitClosure());
+  lock_state_controller_->RequestCancelableShutdown(
+      ShutdownReason::TRAY_SHUT_DOWN_BUTTON);
+
+  // The shutdown should be cancelable and the existing informed restore image
+  // should be deleted as the shutdown was canceled.
+  EXPECT_TRUE(lock_state_controller_->MaybeCancelShutdownAnimation());
+  run_loop.Run();
+  EXPECT_FALSE(base::PathExists(file_path()));
 }
 
 }  // namespace ash

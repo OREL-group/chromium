@@ -4,6 +4,8 @@
 
 #include "ui/aura/window_tree_host.h"
 
+#include <optional>
+
 #include "base/command_line.h"
 #include "base/containers/contains.h"
 #include "base/feature_list.h"
@@ -128,9 +130,9 @@ WindowTreeHost* WindowTreeHost::GetForAcceleratedWidget(
 }
 
 void WindowTreeHost::InitHost() {
-  display::Display display =
-      display::Screen::GetScreen()->GetDisplayNearestWindow(window());
-  device_scale_factor_ = display.device_scale_factor();
+  device_scale_factor_ = display::Screen::GetScreen()
+                             ->GetPreferredScaleFactorForWindow(window())
+                             .value_or(1.f);
 
   UpdateRootWindowSize();
   InitCompositor();
@@ -455,10 +457,12 @@ WindowTreeHost::CreateVideoCaptureLock() {
 
 WindowTreeHost::WindowTreeHost(std::unique_ptr<Window> window)
     : window_(window.release()) {  // See header for details on ownership.
-  if (!window_)
+  if (!window_) {
     window_ = new Window(nullptr);
-  auto display = display::Screen::GetScreen()->GetDisplayNearestWindow(window_);
-  device_scale_factor_ = display.device_scale_factor();
+  }
+  device_scale_factor_ = display::Screen::GetScreen()
+                             ->GetPreferredScaleFactorForWindow(window_)
+                             .value_or(1.f);
 #if BUILDFLAG(IS_WIN)
   // The feature state is necessary but not sufficient for checking if
   // occlusion is enabled. It may be disabled by other means (e.g., policy).
@@ -511,9 +515,9 @@ void WindowTreeHost::DestroyDispatcher() {
   // isn't called from WED, and WED isn't a subclass of Window. So it seems
   // like we could just rely on ~Window now.
   // Destroy child windows while we're still valid. This is also done by
-  // ~Window, but by that time any calls to virtual methods overriden here (such
-  // as GetRootWindow()) result in Window's implementation. By destroying here
-  // we ensure GetRootWindow() still returns this.
+  // ~Window, but by that time any calls to virtual methods overridden here
+  // (such as GetRootWindow()) result in Window's implementation. By destroying
+  // here we ensure GetRootWindow() still returns this.
   // window()->RemoveOrDestroyChildren();
 }
 
@@ -586,12 +590,12 @@ void WindowTreeHost::OnHostResizedInPixels(
   if (!compositor_)
     return;
 
-  display::Display display =
-      display::Screen::GetScreen()->GetDisplayNearestWindow(window());
-  // If we don't have the actual display, don't overwrite the scale factor with
-  // the default value. See https://crbug.com/1285476 for details.
-  if (display.is_valid())
-    device_scale_factor_ = display.device_scale_factor();
+  // If we don't have the actual preferred scale, don't overwrite the scale
+  // factor with the default value. See https://crbug.com/1285476 for details.
+  auto* screen = display::Screen::GetScreen();
+  if (auto scale = screen->GetPreferredScaleFactorForWindow(window())) {
+    device_scale_factor_ = scale.value();
+  }
 
   UpdateRootWindowSize();
 
@@ -714,7 +718,7 @@ bool WindowTreeHost::CalculateCompositorVisibilityFromOcclusionState() const {
     case Window::OcclusionState::VISIBLE:
       return true;
     case Window::OcclusionState::OCCLUDED: {
-      // TODO(crbug.com/1278648): For lacros, make sure non-maximized but
+      // TODO(crbug.com/40208263): For lacros, make sure non-maximized but
       // occluded windows are visible.
       // The compositor needs to be visible when capturing video.
       return video_capture_count_ != 0;
@@ -789,7 +793,7 @@ void WindowTreeHost::MoveCursorToInternal(const gfx::Point& root_location,
   dispatcher()->OnCursorMovedToRootLocation(root_location);
 }
 
-void WindowTreeHost::OnCompositingEnded(ui::Compositor* compositor) {
+void WindowTreeHost::OnCompositingAckDeprecated(ui::Compositor* compositor) {
   // Currently, input is only throttled on ash and is not well supported on
   // other platforms. See crbug.com/41359082.
 #if BUILDFLAG(IS_CHROMEOS_ASH)
@@ -816,6 +820,13 @@ void WindowTreeHost::OnFrameSinksToThrottleUpdated(
     const base::flat_set<viz::FrameSinkId>& ids) {
   for (auto& observer : observers_)
     observer.OnCompositingFrameSinksToThrottleUpdated(this, ids);
+}
+
+void WindowTreeHost::OnSetPreferredRefreshRate(ui::Compositor*,
+                                               float preferred_refresh_rate) {
+  for (auto& observer : observers_) {
+    observer.OnSetPreferredRefreshRate(this, preferred_refresh_rate);
+  }
 }
 
 }  // namespace aura

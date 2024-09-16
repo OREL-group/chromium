@@ -76,7 +76,6 @@ MultiDeviceNotificationPresenter::GetMetricValueForNotification(
       return NotificationType::kExistingUserNewChromebookAdded;
     case Status::kNoNotificationVisible:
       NOTREACHED();
-      return NotificationType::kErrorUnknown;
   }
 }
 

@@ -252,7 +252,9 @@ public class AwWebContentsObserverTest extends AwParameterizedTest {
                 /* errorCode= */ 0,
                 /* httpStatusCode= */ 200,
                 /* isExternalProtocol= */ false,
-                /* isPdf= */ false);
+                /* isPdf= */ false,
+                /* mimeType= */ "",
+                /* isSaveableNavigation= */ false);
         mWebContentsObserver.didFinishNavigationInPrimaryMainFrame(navigation);
     }
 }

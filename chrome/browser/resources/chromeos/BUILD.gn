@@ -38,6 +38,8 @@ group("resources") {
     "mako:resources",
     "manage_mirrorsync:resources",
     "multidevice_internals:resources",
+    "nearby_internals:resources",
+    "nearby_share:resources",
     "network_ui:resources",
     "notification_tester:resources",
     "parent_access:resources",
@@ -46,6 +48,7 @@ group("resources") {
     "seal:resources",
     "sensor_info:resources",
     "set_time_dialog:resources",
+    "skyvault:resources",
     "supervision:resources",
     "vc_tray_tester:resources",
   ]

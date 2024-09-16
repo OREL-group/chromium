@@ -105,10 +105,7 @@ public final class ChromePreferenceKeys {
     public static final String BOOKMARKS_SORT_ORDER = "Chrome.Bookmarks.BookmarkRowSortOrder";
     public static final String BOOKMARKS_VISUALS_PREF = "Chrome.Bookmarks.BookmarkRowDisplay";
 
-    /**
-     * Whether Chrome is set as the default browser.
-     * Default value is false.
-     */
+    /** Whether Chrome is set as the default browser. Default value is false. */
     public static final String CHROME_DEFAULT_BROWSER = "applink.chrome_default_browser";
 
     /**
@@ -263,6 +260,10 @@ public final class ChromePreferenceKeys {
 
     public static final String HISTORY_SHOW_HISTORY_INFO = "history_home_show_info";
 
+    /** Whether the app-specific history info text was already seen by users. */
+    public static final String HISTORY_APP_SPECIFIC_INFO_SEEN =
+            "Chrome.History.AppSpecificInfoSeen";
+
     /** Keys used to save settings related to homepage. */
     public static final String DEPRECATED_HOMEPAGE_CUSTOM_URI = "homepage_custom_uri";
 
@@ -307,6 +308,10 @@ public final class ChromePreferenceKeys {
      */
     public static final String ISOLATED_SPLITS_DEX_COMPILE_VERSION =
             "Chrome.IsolatedSplits.VersionCode";
+
+    /** Whether Google is set as Chrome's default search engine. Default value is false. */
+    public static final String IS_CHROME_DEFAULT_SEARCH_ENGINE_GOOGLE =
+            "Chrome.GoogleBottomBar.IsDefaultSearchEngineGoogle";
 
     /** Whether the device is from an EEA country. */
     public static final String IS_EEA_CHOICE_COUNTRY = "Chrome.SearchEngine.IsEeaChoiceCountry";
@@ -535,6 +540,14 @@ public final class ChromePreferenceKeys {
             new KeyPrefix("Chrome.HomeModules.FreshnessCount.*");
 
     /**
+     * The timestamp of the last time when a freshness store was logged for the module type. The
+     * number at the end should be consistent with {@link
+     * org.chromium.chrome.browser.magic_stack.ModuleDelegate.ModuleType}
+     */
+    public static final KeyPrefix HOME_MODULES_FRESHNESS_TIMESTAMP_MS =
+            new KeyPrefix("Chrome.HomeModules.FreshnessScoreTimeStamp.*");
+
+    /**
      * Save the timestamp of the last time that we record metrics on whether user enables the price
      * tracking annotations.
      */
@@ -630,14 +643,6 @@ public final class ChromePreferenceKeys {
      */
     public static final String PWA_RESTORE_PROMO_STAGE = "Chrome.PwaRestore.PromoStage";
 
-    /**
-     * Keys used to store user actions for behavioral targeting of showing Start surface on startup.
-     */
-    public static final String START_RETURN_TIME_SEGMENTATION_RESULT_MS =
-            "Chrome.StartSurface.StartReturnTimeSegmentationResultMs";
-
-    public static final String REGULAR_TAB_COUNT = "Chrome.StartSurface.RegularTabCount";
-    public static final String INCOGNITO_TAB_COUNT = "Chrome.StartSurface.IncognitoTabCount";
     public static final String IS_LAST_VISITED_TAB_SRP = "Chrome.StartSurface.IsLastVisitedTabSRP";
 
     /** Key used to store user actions for collapsing search resumption module on NTP. */
@@ -708,6 +713,10 @@ public final class ChromePreferenceKeys {
     public static final String SHARING_LAST_SHARED_COMPONENT_NAME =
             "Chrome.Sharing.LastSharedComponentName";
 
+    /** Stores whether the tab group creation dialog should be shown. */
+    public static final String SHOW_TAB_GROUP_CREATION_DIALOG =
+            "Chrome.Tab.ShowTabGroupCreationDialog";
+
     public static final String SIGNIN_ACCOUNTS_CHANGED = "prefs_sync_accounts_changed";
 
     /** Holds the new account's name if the currently signed in account has been renamed. */
@@ -753,15 +762,15 @@ public final class ChromePreferenceKeys {
     public static final String SIGNIN_PROMO_BOOKMARKS_DECLINED = "signin_promo_bookmarks_declined";
 
     /**
-     * Whether the user dismissed the personalized sign in promo from the Settings.
-     * Default value is false.
+     * Whether the user dismissed the personalized sign in promo from the Settings. Default value is
+     * false.
      */
     public static final String SIGNIN_PROMO_SETTINGS_PERSONALIZED_DISMISSED =
             "settings_personalized_signin_promo_dismissed";
 
-    // TODO(https://crbug.com/1091858): Remove this after migrating the legacy code that uses
-    //                                  the sync account before the native is loaded.
-    public static final String SIGNIN_LEGACY_SYNC_ACCOUNT_EMAIL = "google.services.username";
+    // TODO(crbug.com/40697988): Remove this after migrating the legacy code that uses
+    //                                  the primary account before the native is loaded.
+    public static final String SIGNIN_LEGACY_PRIMARY_ACCOUNT_EMAIL = "google.services.username";
 
     public static final String SNAPSHOT_DATABASE_REMOVED = "snapshot_database_removed";
 
@@ -795,14 +804,28 @@ public final class ChromePreferenceKeys {
             "Chrome.Tab.ArchiveAutoDeleteEnabled";
     public static final String TAB_DECLUTTER_AUTO_DELETE_TIME_DELTA_HOURS =
             "Chrome.Tab.ArchiveAutoDeleteTimeDeltaHours";
+    public static final String TAB_DECLUTTER_DIALOG_IPH_DISMISS_COUNT =
+            "Chrome.Tab.DialogIphDismissCount";
+
     public static final String TAB_ID_MANAGER_NEXT_ID =
             "org.chromium.chrome.browser.tab.TabIdManager.NEXT_ID";
+
+    // Start timestamp of 1-day period for measuring the number of times the max-instance toast is
+    // shown when tab tearing fails.
+    public static final String TAB_TEARING_MAX_INSTANCES_FAILURE_START_TIME_MS =
+            "Chrome.TabTearing.MaxInstancesFailureStartTimeMs";
+    // Number of times in a day the max-instance toast is shown when tab tearing fails.
+    public static final String TAB_TEARING_MAX_INSTANCES_FAILURE_COUNT =
+            "Chrome.TabTearing.MaxInstancesFailureCount";
+
+    // If the toolbar should be shown on top.
+    public static final String TOOLBAR_TOP_ANCHORED = "Chrome.Toolbar.TopAnchored";
 
     public static final String TOS_ACKED_ACCOUNTS = "ToS acknowledged accounts";
 
     /**
-     * Keys for deferred recording of the outcomes of showing the clear data dialog after
-     * Trusted Web Activity client apps are uninstalled or have their data cleared.
+     * Keys for deferred recording of the outcomes of showing the clear data dialog after Trusted
+     * Web Activity client apps are uninstalled or have their data cleared.
      */
     public static final String TWA_DIALOG_NUMBER_OF_DISMISSALS_ON_CLEAR_DATA =
             "twa_dialog_number_of_dismissals_on_clear_data";
@@ -934,8 +957,10 @@ public final class ChromePreferenceKeys {
                 EXPLORE_OFFLINE_CONTENT_AVAILABILITY_STATUS,
                 FIRST_RUN_SKIPPED_BY_POLICY,
                 FLAGS_LAST_CACHED_MINIMAL_BROWSER_FLAGS_TIME_MILLIS,
+                HISTORY_APP_SPECIFIC_INFO_SEEN,
                 HOME_MODULES_MODULE_TYPE.pattern(),
                 HOME_MODULES_FRESHNESS_COUNT.pattern(),
+                HOME_MODULES_FRESHNESS_TIMESTAMP_MS.pattern(),
                 HOMEPAGE_CUSTOM_GURL,
                 HOMEPAGE_LOCATION_POLICY_GURL,
                 HOMEPAGE_USE_CHROME_NTP,
@@ -944,7 +969,7 @@ public final class ChromePreferenceKeys {
                 IMAGE_DESCRIPTIONS_DONT_ASK_AGAIN,
                 INCOGNITO_REAUTH_PROMO_CARD_ENABLED,
                 INCOGNITO_REAUTH_PROMO_SHOW_COUNT,
-                INCOGNITO_TAB_COUNT,
+                IS_CHROME_DEFAULT_SEARCH_ENGINE_GOOGLE,
                 IS_EEA_CHOICE_COUNTRY,
                 IS_LAST_VISITED_TAB_SRP,
                 IS_DSE_GOOGLE,
@@ -1002,13 +1027,12 @@ public final class ChromePreferenceKeys {
                 PROMO_TIMES_SEEN.pattern(),
                 PWA_RESTORE_APPS_AVAILABLE,
                 PWA_RESTORE_PROMO_STAGE,
-                REGULAR_TAB_COUNT,
                 SEARCH_ENGINE_CHOICE_OS_CHOICE_APPLIED_TIMESTAMP,
                 SEGMENTATION_FEED_ACTIVE_USER,
                 SETTINGS_SAFETY_CHECK_LAST_RUN_TIMESTAMP,
                 SETTINGS_SAFETY_CHECK_RUN_COUNTER,
                 SHARING_LAST_SHARED_COMPONENT_NAME,
-                START_RETURN_TIME_SEGMENTATION_RESULT_MS,
+                SHOW_TAB_GROUP_CREATION_DIALOG,
                 SYNC_PROMO_SHOW_COUNT.pattern(),
                 SIGNIN_PROMO_NTP_FIRST_SHOWN_TIME,
                 SIGNIN_PROMO_NTP_LAST_SHOWN_TIME,
@@ -1021,6 +1045,10 @@ public final class ChromePreferenceKeys {
                 TAB_DECLUTTER_ARCHIVE_TIME_DELTA_HOURS,
                 TAB_DECLUTTER_AUTO_DELETE_ENABLED,
                 TAB_DECLUTTER_AUTO_DELETE_TIME_DELTA_HOURS,
+                TAB_DECLUTTER_DIALOG_IPH_DISMISS_COUNT,
+                TAB_TEARING_MAX_INSTANCES_FAILURE_START_TIME_MS,
+                TAB_TEARING_MAX_INSTANCES_FAILURE_COUNT,
+                TOOLBAR_TOP_ANCHORED,
                 TWA_DISCLOSURE_SEEN_PACKAGES,
                 UMA_ON_POSTCREATE_COUNTER,
                 UMA_ON_RESUME_COUNTER,

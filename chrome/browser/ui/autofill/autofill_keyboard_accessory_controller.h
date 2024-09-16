@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_UI_AUTOFILL_AUTOFILL_KEYBOARD_ACCESSORY_CONTROLLER_H_
 #define CHROME_BROWSER_UI_AUTOFILL_AUTOFILL_KEYBOARD_ACCESSORY_CONTROLLER_H_
 
+#include <memory>
+
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/ui/autofill/autofill_suggestion_controller.h"
 
@@ -29,12 +31,6 @@ class AutofillKeyboardAccessoryController
   virtual bool GetRemovalConfirmationText(int index,
                                           std::u16string* title,
                                           std::u16string* body) = 0;
-
-  // TODO(crbug.com/333316034): Rename to `GetWeakPtr` once
-  // `AutofillKeyboardAccessoryAdapter` does not exist anymore and there are no
-  // nameclashes with `AutofillPopupView`'s methods.
-  virtual base::WeakPtr<AutofillKeyboardAccessoryController>
-  GetWeakPtrToController() = 0;
 };
 
 }  // namespace autofill

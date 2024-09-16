@@ -93,11 +93,13 @@ class PLATFORM_EXPORT FontPlatformData
 #endif
 
   String FontFamilyName() const;
+  bool IsAhem() const;
   float size() const { return text_size_; }
   bool SyntheticBold() const { return synthetic_bold_; }
   bool SyntheticItalic() const { return synthetic_italic_; }
 
   SkTypeface* Typeface() const;
+  sk_sp<SkTypeface> TypefaceSp() const { return typeface_; }
   HarfBuzzFace* GetHarfBuzzFace() const;
   bool HasSpaceInLigaturesOrKerning(TypesettingFeatures) const;
   SkTypefaceID UniqueID() const;

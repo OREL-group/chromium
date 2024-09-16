@@ -8,6 +8,7 @@ import android.app.Activity;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences.Editor;
 import android.content.res.ColorStateList;
 import android.content.res.Resources;
 import android.graphics.drawable.Drawable;
@@ -36,9 +37,8 @@ import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ActivityUtils;
 import org.chromium.chrome.browser.IntentHandler;
 import org.chromium.chrome.browser.app.bookmarks.BookmarkActivity;
-import org.chromium.chrome.browser.app.bookmarks.BookmarkAddEditFolderActivity;
 import org.chromium.chrome.browser.app.bookmarks.BookmarkEditActivity;
-import org.chromium.chrome.browser.app.bookmarks.BookmarkFolderSelectActivity;
+import org.chromium.chrome.browser.app.bookmarks.BookmarkFolderPickerActivity;
 import org.chromium.chrome.browser.bookmarks.BookmarkUiPrefs.BookmarkRowDisplayPref;
 import org.chromium.chrome.browser.commerce.ShoppingServiceFactory;
 import org.chromium.chrome.browser.document.ChromeLauncherActivity;
@@ -112,6 +112,17 @@ public class BookmarkUtils {
             return;
         }
 
+        BookmarkId parent = null;
+        if (fromExplicitTrackUi) {
+            // If account bookmarks are enabled and active, they take precedence, otherwise fall
+            // back to the local-or-syncable mobile folder, e.g. for users that have
+            // sync-the-feature enabled.
+            parent =
+                    bookmarkModel.areAccountBookmarkFoldersActive()
+                            ? bookmarkModel.getAccountMobileFolderId()
+                            : bookmarkModel.getMobileFolderId();
+        }
+
         BookmarkId newBookmarkId =
                 addBookmarkInternal(
                         activity,
@@ -119,7 +130,7 @@ public class BookmarkUtils {
                         bookmarkModel,
                         tab.getTitle(),
                         tab.getOriginalUrl(),
-                        fromExplicitTrackUi ? bookmarkModel.getMobileFolderId() : null,
+                        parent,
                         bookmarkType);
         showSaveFlow(
                 activity,
@@ -397,6 +408,29 @@ public class BookmarkUtils {
     }
 
     /**
+     * Adds a bookmark with the given {@link Tab} without showing save flow.
+     *
+     * @param context The current Android {@link Context}.
+     * @param tab The tab to add or edit a bookmark.
+     * @param bookmarkModel The current {@link BookmarkModel} which talks to native.
+     */
+    public static BookmarkId addBookmarkWithoutShowingSaveFlow(
+            Context context, Tab tab, BookmarkModel bookmarkModel) {
+        BookmarkId parent =
+                bookmarkModel.areAccountBookmarkFoldersActive()
+                        ? bookmarkModel.getAccountMobileFolderId()
+                        : bookmarkModel.getMobileFolderId();
+        return addBookmarkInternal(
+                context,
+                tab.getProfile(),
+                bookmarkModel,
+                tab.getTitle(),
+                tab.getOriginalUrl(),
+                parent,
+                BookmarkType.NORMAL);
+    }
+
+    /**
      * Adds a bookmark with the given {@link Tab}. This will reset last used parent if it fails to
      * add a bookmark.
      *
@@ -493,7 +527,7 @@ public class BookmarkUtils {
             @Override
             public void onAction(Object actionData) {
                 RecordUserAction.record("TabMultiSelectV2.BookmarkTabsSnackbarEditClicked");
-                BookmarkAddEditFolderActivity.startEditFolderActivity(context, folder);
+                BookmarkUtils.startEditActivity(context, folder);
             }
         };
     }
@@ -615,10 +649,12 @@ public class BookmarkUtils {
                         ChromePreferenceKeys.BOOKMARKS_LAST_USED_URL, UrlConstants.BOOKMARKS_URL);
     }
 
-    static void clearLastUsedPrefs() {
-        SharedPreferencesManager prefsManager = ChromeSharedPreferences.getInstance();
-        prefsManager.removeKey(ChromePreferenceKeys.BOOKMARKS_LAST_USED_PARENT);
-        prefsManager.removeKey(ChromePreferenceKeys.BOOKMARKS_LAST_USED_URL);
+    @VisibleForTesting
+    public static void clearLastUsedPrefs() {
+        Editor editor = ChromeSharedPreferences.getInstance().getEditor();
+        editor.remove(ChromePreferenceKeys.BOOKMARKS_LAST_USED_PARENT);
+        editor.remove(ChromePreferenceKeys.BOOKMARKS_LAST_USED_URL);
+        editor.apply();
     }
 
     /** Save the last used {@link BookmarkId} as a folder to put new bookmarks to. */
@@ -679,9 +715,13 @@ public class BookmarkUtils {
         return bookmarkIds;
     }
 
-    /** Starts an {@link BookmarkFolderSelectActivity} for the given {@link BookmarkId}. */
-    public static void startFolderSelectActivity(Context context, BookmarkId bookmarkId) {
-        BookmarkFolderSelectActivity.startFolderSelectActivity(context, bookmarkId);
+    /** Starts an {@link BookmarkFolderPickerActivity} for the given {@link BookmarkId}s. */
+    public static void startFolderPickerActivity(Context context, BookmarkId... bookmarkIds) {
+        Intent intent = new Intent(context, BookmarkFolderPickerActivity.class);
+        intent.putStringArrayListExtra(
+                BookmarkFolderPickerActivity.INTENT_BOOKMARK_IDS,
+                BookmarkUtils.bookmarkIdsToStringList(bookmarkIds));
+        context.startActivity(intent);
     }
 
     /**
@@ -698,8 +738,7 @@ public class BookmarkUtils {
         ColorStateList tint = getFolderIconTint(context, bookmarkId.getType());
         if (bookmarkId.getType() == BookmarkType.READING_LIST) {
             return UiUtils.getTintedDrawable(context, R.drawable.ic_reading_list_folder_24dp, tint);
-        } else if (BookmarkFeatures.isAndroidImprovedBookmarksEnabled()
-                && bookmarkId.getType() == BookmarkType.NORMAL
+        } else if (bookmarkId.getType() == BookmarkType.NORMAL
                 && Objects.equals(bookmarkId, bookmarkModel.getDesktopFolderId())) {
             return UiUtils.getTintedDrawable(context, R.drawable.ic_toolbar_24dp, tint);
         }
@@ -720,8 +759,7 @@ public class BookmarkUtils {
     // TODO(crbug.com/40282037): This function isn't used in the new bookmarks manager, remove it
     // after android-improved-bookmarks is the default.
     public static ColorStateList getFolderIconTint(Context context, @BookmarkType int type) {
-        if (BookmarkFeatures.isAndroidImprovedBookmarksEnabled()
-                && type == BookmarkType.READING_LIST) {
+        if (type == BookmarkType.READING_LIST) {
             return ColorStateList.valueOf(SemanticColorUtils.getDefaultIconColorAccent1(context));
         }
 
@@ -811,34 +849,21 @@ public class BookmarkUtils {
 
     /** Returns the size to use when fetching favicons. */
     public static int getFaviconFetchSize(Resources resources) {
-        if (BookmarkFeatures.isAndroidImprovedBookmarksEnabled()) {
-            return resources.getDimensionPixelSize(R.dimen.tile_view_icon_min_size);
-        }
-        return resources.getDimensionPixelSize(R.dimen.default_favicon_min_size);
+        return resources.getDimensionPixelSize(R.dimen.tile_view_icon_min_size);
     }
 
     /** Returns the size to use when displaying an image. */
     public static int getImageIconSize(
             Resources resources, @BookmarkRowDisplayPref int displayPref) {
-        if (BookmarkFeatures.isAndroidImprovedBookmarksEnabled()) {
-            return displayPref == BookmarkRowDisplayPref.VISUAL
-                    ? resources.getDimensionPixelSize(
-                            R.dimen.improved_bookmark_start_image_size_visual)
-                    : resources.getDimensionPixelSize(
-                            R.dimen.improved_bookmark_start_image_size_compact);
-        }
-
-        return BookmarkFeatures.isLegacyBookmarksVisualRefreshEnabled()
-                ? resources.getDimensionPixelSize(R.dimen.list_item_v2_start_icon_width_compact)
-                : resources.getDimensionPixelSize(R.dimen.list_item_start_icon_width);
+        return displayPref == BookmarkRowDisplayPref.VISUAL
+                ? resources.getDimensionPixelSize(R.dimen.improved_bookmark_start_image_size_visual)
+                : resources.getDimensionPixelSize(
+                        R.dimen.improved_bookmark_start_image_size_compact);
     }
 
     /** Returns the size to use when displaying the favicon. */
     public static int getFaviconDisplaySize(Resources resources) {
-        if (BookmarkFeatures.isAndroidImprovedBookmarksEnabled()) {
-            return resources.getDimensionPixelSize(R.dimen.tile_view_icon_size_modern);
-        }
-        return resources.getDimensionPixelSize(R.dimen.bookmark_favicon_display_size);
+        return resources.getDimensionPixelSize(R.dimen.tile_view_icon_size_modern);
     }
 
     /**
@@ -888,7 +913,8 @@ public class BookmarkUtils {
     public static ColorStateList getIconTint(
             Context context, BookmarkModel bookmarkModel, BookmarkItem item) {
         if (isSpecialFolder(bookmarkModel, item)) {
-            return ColorStateList.valueOf(SemanticColorUtils.getDefaultIconColorAccent1(context));
+            return ColorStateList.valueOf(
+                    SemanticColorUtils.getDefaultIconColorOnAccent1Container(context));
         } else {
             return AppCompatResources.getColorStateList(
                     context, R.color.default_icon_color_secondary_tint_list);
@@ -906,14 +932,7 @@ public class BookmarkUtils {
     }
 
     private static int getDisplayTextSize(Resources resources) {
-        if (BookmarkFeatures.isAndroidImprovedBookmarksEnabled()) {
-            return resources.getDimensionPixelSize(R.dimen.improved_bookmark_favicon_text_size);
-        }
-
-        return BookmarkFeatures.isLegacyBookmarksVisualRefreshEnabled()
-                ? resources.getDimensionPixelSize(
-                        R.dimen.bookmark_refresh_circular_monogram_text_size)
-                : resources.getDimensionPixelSize(R.dimen.circular_monogram_text_size);
+        return resources.getDimensionPixelSize(R.dimen.improved_bookmark_favicon_text_size);
     }
 
     private static Locale getLocale(Activity activity) {

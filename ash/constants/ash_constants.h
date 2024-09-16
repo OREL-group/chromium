@@ -32,12 +32,14 @@ constexpr int kShelfDisplayOffset = 1;
 
 constexpr int kDefaultLargeCursorSize = 64;
 constexpr int kMinLargeCursorSize = 25;
-constexpr int kMaxLargeCursorSize = 64;
-constexpr int kMaxExtraLargeCursorSize = 128;
+constexpr int kMaxLargeCursorSize = 128;
 
 constexpr int kDefaultCaretBlinkIntervalMs = 500;
 
 constexpr SkColor kDefaultCursorColor = SK_ColorBLACK;
+
+// Default notification flash color is yellow.
+constexpr SkColor kDefaultFlashNotificationsColor = 0xffff00;
 
 // These device types are a subset of ui::InputDeviceType. These strings are
 // also used in Switch Access webui.

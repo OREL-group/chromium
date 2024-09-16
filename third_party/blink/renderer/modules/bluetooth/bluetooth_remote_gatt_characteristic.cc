@@ -193,7 +193,7 @@ BluetoothRemoteGATTCharacteristic::WriteCharacteristicValue(
         DOMExceptionCode::kNetworkError,
         BluetoothError::CreateNotConnectedExceptionMessage(
             BluetoothOperation::kGATT));
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   if (!GetGatt()->device()->IsValidCharacteristic(
@@ -201,13 +201,13 @@ BluetoothRemoteGATTCharacteristic::WriteCharacteristicValue(
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
         CreateInvalidCharacteristicErrorMessage());
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   if (value.IsDetached()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "Value buffer has been detached.");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   // Partial implementation of writeValue algorithm:
@@ -220,13 +220,12 @@ BluetoothRemoteGATTCharacteristic::WriteCharacteristicValue(
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidModificationError,
         "Value can't exceed 512 bytes.");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   // Let valueVector be a copy of the bytes held by value.
   Vector<uint8_t> value_vector;
-  value_vector.Append(value.Bytes(),
-                      static_cast<wtf_size_t>(value.ByteLength()));
+  value_vector.AppendSpan(value.ByteSpan());
 
   auto* resolver = MakeGarbageCollected<ScriptPromiseResolver<IDLUndefined>>(
       script_state, exception_state.GetContext());
@@ -332,7 +331,7 @@ BluetoothRemoteGATTCharacteristic::startNotifications(
         DOMExceptionCode::kNetworkError,
         BluetoothError::CreateNotConnectedExceptionMessage(
             BluetoothOperation::kGATT));
-    return ScriptPromise<BluetoothRemoteGATTCharacteristic>();
+    return EmptyPromise();
   }
 
   if (!GetGatt()->device()->IsValidCharacteristic(
@@ -340,7 +339,7 @@ BluetoothRemoteGATTCharacteristic::startNotifications(
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
         CreateInvalidCharacteristicErrorMessage());
-    return ScriptPromise<BluetoothRemoteGATTCharacteristic>();
+    return EmptyPromise();
   }
 
   auto* resolver = MakeGarbageCollected<
@@ -376,7 +375,7 @@ BluetoothRemoteGATTCharacteristic::stopNotifications(
         DOMExceptionCode::kNetworkError,
         BluetoothError::CreateNotConnectedExceptionMessage(
             BluetoothOperation::kGATT));
-    return ScriptPromise<BluetoothRemoteGATTCharacteristic>();
+    return EmptyPromise();
   }
 
   if (!GetGatt()->device()->IsValidCharacteristic(
@@ -384,7 +383,7 @@ BluetoothRemoteGATTCharacteristic::stopNotifications(
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
         CreateInvalidCharacteristicErrorMessage());
-    return ScriptPromise<BluetoothRemoteGATTCharacteristic>();
+    return EmptyPromise();
   }
 
   auto* resolver = MakeGarbageCollected<
@@ -411,7 +410,7 @@ BluetoothRemoteGATTCharacteristic::getDescriptor(
   String descriptor =
       BluetoothUUID::getDescriptor(descriptor_uuid, exception_state);
   if (exception_state.HadException())
-    return ScriptPromise<BluetoothRemoteGATTDescriptor>();
+    return EmptyPromise();
 
   auto* resolver = MakeGarbageCollected<
       ScriptPromiseResolver<BluetoothRemoteGATTDescriptor>>(

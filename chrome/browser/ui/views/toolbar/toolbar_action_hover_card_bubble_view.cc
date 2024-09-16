@@ -19,6 +19,7 @@
 #include "extensions/common/extension_features.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/layout/flex_layout.h"
@@ -35,7 +36,7 @@ using HoverCardState = ToolbarActionViewController::HoverCardState;
 constexpr int kHoverCardWidth = 240;
 
 // Hover card margins.
-// TODO(crbug.com/1351778): Move to a base hover card class.
+// TODO(crbug.com/40857356): Move to a base hover card class.
 constexpr int kHorizontalMargin = 12;
 constexpr int kVerticalMargin = 12;
 
@@ -57,7 +58,7 @@ std::u16string GetSiteAccessTitle(
       title_id = IDS_EXTENSIONS_TOOLBAR_ACTION_HOVER_CARD_TITLE_REQUESTS_ACCESS;
       break;
     case HoverCardState::SiteAccess::kExtensionDoesNotWantAccess:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
   return l10n_util::GetStringUTF16(title_id);
 }
@@ -83,7 +84,7 @@ std::u16string GetSiteAccessDescription(HoverCardState::SiteAccess state,
           IDS_EXTENSIONS_TOOLBAR_ACTION_HOVER_CARD_DESCRIPTION_EXTENSION_REQUESTS_ACCESS;
       break;
     case HoverCardState::SiteAccess::kExtensionDoesNotWantAccess:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
   return l10n_util::GetStringFUTF16(title_id, host);
 }
@@ -100,7 +101,7 @@ std::u16string GetPolicyText(HoverCardState::AdminPolicy state) {
           IDS_EXTENSIONS_TOOLBAR_ACTION_HOVER_CARD_POLICY_LABEL_INSTALLED_TEXT;
       break;
     case HoverCardState::AdminPolicy::kNone:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
   return l10n_util::GetStringUTF16(text_id);
 }
@@ -116,7 +117,7 @@ ToolbarActionHoverCardBubbleView::ToolbarActionHoverCardBubbleView(
       extensions_features::kExtensionsMenuAccessControl));
 
   // Remove dialog's default buttons.
-  SetButtons(ui::DIALOG_BUTTON_NONE);
+  SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
 
   // Remove the accessible role so that hover cards are not read when they
   // appear because tabs handle accessibility text.
@@ -282,6 +283,17 @@ std::u16string ToolbarActionHoverCardBubbleView::GetTitleTextForTesting()
 std::u16string ToolbarActionHoverCardBubbleView::GetActionTitleTextForTesting()
     const {
   return action_title_label_->GetText();
+}
+
+std::u16string
+ToolbarActionHoverCardBubbleView::GetSiteAccessTitleTextForTesting() const {
+  return site_access_title_label_->GetText();
+}
+
+std::u16string
+ToolbarActionHoverCardBubbleView::GetSiteAccessDescriptionTextForTesting()
+    const {
+  return site_access_description_label_->GetText();
 }
 
 bool ToolbarActionHoverCardBubbleView::IsActionTitleVisible() const {

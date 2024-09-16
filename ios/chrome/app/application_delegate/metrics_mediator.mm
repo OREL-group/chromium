@@ -40,6 +40,7 @@
 #import "ios/chrome/browser/shared/model/browser/browser_provider_interface.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
 #import "ios/chrome/browser/shared/model/url/chrome_url_constants.h"
+#import "ios/chrome/browser/shared/model/web_state_list/tab_group.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/shared/public/features/system_flags.h"
 #import "ios/chrome/browser/signin/model/signin_util.h"
@@ -63,7 +64,7 @@
 namespace {
 // The key to a NSUserDefaults entry logging the number of times classes are
 // loaded before a scene is attached.
-NSString* const kLoadTimePreferenceKey = @"LoadTimePreferenceKey";
+NSString* const kAppStartupCounterKey = @"LoadTimePreferenceKey";
 
 // The amount of time (in seconds) to wait for the user to start a new task.
 const NSTimeInterval kFirstUserActionTimeout = 30.0;
@@ -211,6 +212,18 @@ std::string WarmStartHistogramPrefix(bool version_mismatch) {
 }
 }  // namespace
 
+// A class to log the "load" count in uma.
+@interface AppStartupCounter : NSObject
+@end
+
+@implementation AppStartupCounter
++ (void)load {
+  NSUserDefaults* defaults = [NSUserDefaults standardUserDefaults];
+  [defaults setInteger:[defaults integerForKey:kAppStartupCounterKey] + 1
+                forKey:kAppStartupCounterKey];
+}
+@end
+
 namespace metrics_mediator {
 NSString* const kAppEnteredBackgroundDateKey = @"kAppEnteredBackgroundDate";
 NSString* const kAppDidFinishLaunchingConsecutiveCallsKey =
@@ -233,6 +246,10 @@ void RecordWidgetUsage(base::span<const HistogramNameCountPair> histograms) {
     kCredentialExtensionCopyURLCount : @"IOS.CredentialExtension.CopyURLCount",
     app_group::kCredentialExtensionCopyUsernameCount :
         @"IOS.CredentialExtension.CopyUsernameCount",
+    app_group::kCredentialExtensionCopyUserDisplayNameCount :
+        @"IOS.CredentialExtension.CopyUserDisplayNameCount",
+    app_group::kCredentialExtensionCopyCreationDateCount :
+        @"IOS.CredentialExtension.CopyCreationDateCount",
     app_group::kCredentialExtensionCopyPasswordCount :
         @"IOS.CredentialExtension.CopyPasswordCount",
     app_group::kCredentialExtensionShowPasswordCount :
@@ -241,8 +258,12 @@ void RecordWidgetUsage(base::span<const HistogramNameCountPair> histograms) {
     kCredentialExtensionSearchCount : @"IOS.CredentialExtension.SearchCount",
     app_group::kCredentialExtensionPasswordUseCount :
         @"IOS.CredentialExtension.PasswordUseCount",
+    app_group::kCredentialExtensionPasskeyUseCount :
+        @"IOS.CredentialExtension.PasskeyUseCount",
     app_group::kCredentialExtensionQuickPasswordUseCount :
         @"IOS.CredentialExtension.QuickPasswordUseCount",
+    app_group::kCredentialExtensionQuickPasskeyUseCount :
+        @"IOS.CredentialExtension.QuickPasskeyUseCount",
     app_group::kCredentialExtensionFetchPasswordFailureCount :
         @"IOS.CredentialExtension.FetchPasswordFailure",
     app_group::kCredentialExtensionFetchPasswordNilArgumentCount :
@@ -310,6 +331,10 @@ using metrics_mediator::kAppDidFinishLaunchingConsecutiveCallsKey;
 + (void)recordStartupPinnedTabCount:(int)tabCount;
 // Logs the number of tabs with UMAHistogramCount100 and allows testing.
 + (void)recordStartupTabCount:(int)tabCount;
+// Logs the number of tab groups with UmaHistogramCounts1M.
++ (void)recordStartupTabGroupCount:(int)tabGroupCount;
+// Logs the number of tabs per group with UMAHistogramCount10000.
++ (void)recordStartupTabsPerGroupCount:(int)tabsPerGroupCount;
 // Logs the number of tabs with UMAHistogramCount100 and allows testing.
 + (void)recordResumeTabCount:(int)tabCount;
 // Logs the number of NTP tabs with UMAHistogramCount100 and allows testing.
@@ -331,6 +356,8 @@ using metrics_mediator::kAppDidFinishLaunchingConsecutiveCallsKey;
 // Returns a corresponding TabAgeGroup for provided `timeSinceCreation` time.
 + (TabsAgeGroup)tabsAgeGroupFromTimeSinceCreation:
     (base::TimeDelta)timeSinceCreation;
+// Logs the number of connected and disconnected scenes.
++ (void)recordConnectedAndDisconnectedSceneCount:(int)connectedScenes;
 @end
 
 @implementation MetricsMediator
@@ -358,8 +385,8 @@ BOOL _credentialExtensionWasUsed = NO;
       now - [startupInformation firstSceneConnectionTime];
 
   NSUserDefaults* defaults = [NSUserDefaults standardUserDefaults];
-  int consecutiveLoads = [defaults integerForKey:kLoadTimePreferenceKey];
-  [defaults removeObjectForKey:kLoadTimePreferenceKey];
+  int consecutiveLoads = [defaults integerForKey:kAppStartupCounterKey];
+  [defaults removeObjectForKey:kAppStartupCounterKey];
   int consecutiveDidFinishLaunching =
       [defaults integerForKey:kAppDidFinishLaunchingConsecutiveCallsKey];
   [defaults removeObjectForKey:kAppDidFinishLaunchingConsecutiveCallsKey];
@@ -391,6 +418,7 @@ BOOL _credentialExtensionWasUsed = NO;
   RecordAndResetUkmLogSizeOnSuccessCounter();
 
   int tabCount = 0;
+  int tabGroupCount = 0;
   int pinnedTabCount = 0;
   int NTPTabCount = 0;
   int liveNTPTabCount = 0;
@@ -413,7 +441,7 @@ BOOL _credentialExtensionWasUsed = NO;
   for (SceneState* scene in scenes) {
     if (!scene.browserProviderInterface) {
       // The scene might not yet be initiated.
-      // TODO(crbug.com/1064611): This will not be an issue when the tabs are
+      // TODO(crbug.com/40123792): This will not be an issue when the tabs are
       // counted in sessions instead of scenes.
       continue;
     }
@@ -426,6 +454,11 @@ BOOL _credentialExtensionWasUsed = NO;
             ->GetWebStateList();
     const int webStateListCount = webStateList->count();
     const int inactiveWebStateListCount = inactiveWebStateList->count();
+
+    for (const TabGroup* group : webStateList->GetGroups()) {
+      tabGroupCount++;
+      [self recordStartupTabsPerGroupCount:group->range().count()];
+    }
 
     tabCount += webStateListCount + inactiveWebStateListCount;
     pinnedTabCount += webStateList->pinned_tabs_count();
@@ -494,6 +527,7 @@ BOOL _credentialExtensionWasUsed = NO;
     [self recordStartupAbsoluteInactiveTabCount:absoluteInactiveTabCount];
     [self recordStartupPinnedTabCount:pinnedTabCount];
     [self recordStartupTabCount:tabCount];
+    [self recordStartupTabGroupCount:tabGroupCount];
     [self recordStartupNTPTabCount:NTPTabCount];
     [self recordStartupOldTabCount:oldTabCount];
     [self recordStartupDuplicatedTabCount:duplicatedTabCount];
@@ -506,6 +540,8 @@ BOOL _credentialExtensionWasUsed = NO;
     // Only log at resume since there are likely no live NTPs on startup.
     [self recordResumeLiveNTPTabCount:liveNTPTabCount];
   }
+
+  [self recordConnectedAndDisconnectedSceneCount:scenes.count];
 
   if (UIAccessibilityIsVoiceOverRunning()) {
     base::RecordAction(
@@ -659,7 +695,7 @@ BOOL _credentialExtensionWasUsed = NO;
         prefs->GetInt64(metrics::prefs::kMetricsReportingEnabledTimestamp));
 
     // If metrics are enabled, process the logs. Otherwise, just delete them.
-    // TODO(crbug.com/782685): remove related code.
+    // TODO(crbug.com/40548746): remove related code.
   } else {
     app_group::main_app::DisableMetrics();
   }
@@ -682,7 +718,7 @@ BOOL _credentialExtensionWasUsed = NO;
 }
 
 - (void)updateMetricsPrefsOnPermissionChange:(BOOL)enabled {
-  // TODO(crbug.com/635669): Consolidate with metrics_reporting_state.cc
+  // TODO(crbug.com/41268699): Consolidate with metrics_reporting_state.cc
   // function.
   metrics::MetricsService* metrics =
       GetApplicationContext()->GetMetricsService();
@@ -731,7 +767,12 @@ BOOL _credentialExtensionWasUsed = NO;
       integerForKey:app_group::kCredentialExtensionPasswordUseCount];
   int quick_password_use_count = [shared_defaults
       integerForKey:app_group::kCredentialExtensionQuickPasswordUseCount];
-  if (password_use_count != 0 || quick_password_use_count != 0) {
+  int passkey_use_count = [shared_defaults
+      integerForKey:app_group::kCredentialExtensionPasskeyUseCount];
+  int quick_passkey_use_count = [shared_defaults
+      integerForKey:app_group::kCredentialExtensionQuickPasskeyUseCount];
+  if (password_use_count != 0 || quick_password_use_count != 0 ||
+      passkey_use_count != 0 || quick_passkey_use_count != 0) {
     _credentialExtensionWasUsed = YES;
   }
 }
@@ -760,14 +801,19 @@ BOOL _credentialExtensionWasUsed = NO;
 }
 
 + (void)recordStartupTabCount:(int)tabCount {
-  // TODO(crbug.com/1519707): Evaluate and remove old histogram.
-  base::UmaHistogramCounts100("Tabs.CountAtStartup", tabCount);
   base::UmaHistogramCounts1M("Tabs.CountAtStartup2", tabCount);
 }
 
++ (void)recordStartupTabGroupCount:(int)tabGroupCount {
+  base::UmaHistogramCounts1M("TabGroups.CountAtStartup", tabGroupCount);
+}
+
++ (void)recordStartupTabsPerGroupCount:(int)tabsPerGroupCount {
+  base::UmaHistogramCounts10000("TabGroups.TabsPerGroupCountAtStartup",
+                                tabsPerGroupCount);
+}
+
 + (void)recordResumeTabCount:(int)tabCount {
-  // TODO(crbug.com/1519707): Evaluate and remove old histogram.
-  base::UmaHistogramCounts100("Tabs.CountAtResume", tabCount);
   base::UmaHistogramCounts1M("Tabs.CountAtResume2", tabCount);
 }
 
@@ -797,6 +843,14 @@ BOOL _credentialExtensionWasUsed = NO;
         [self tabsAgeGroupFromTimeSinceCreation:timeSinceCreation];
     UMA_HISTOGRAM_ENUMERATION("Tabs.TimeSinceCreationAtStartup", tabsAgeGroup);
   }
+}
+
++ (void)recordConnectedAndDisconnectedSceneCount:(int)connectedScenes {
+  base::UmaHistogramCounts100("IOS.MultiWindow.ConnectedScenesCount",
+                              connectedScenes);
+  base::UmaHistogramCounts100(
+      "IOS.MultiWindow.DisconnectedScenesCount",
+      UIApplication.sharedApplication.openSessions.count - connectedScenes);
 }
 
 + (void)recordAndResetWarmStartCount {

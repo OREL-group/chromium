@@ -17,11 +17,6 @@ namespace password_manager {
 
 namespace {
 
-bool IsSigninUffEnabled() {
-  return base::FeatureList::IsEnabled(
-      password_manager::features::kIOSPasswordSignInUff);
-}
-
 // Returns true if credentials are eligible. For example, credentials are
 // ineglible when there are only credentials with an empty username available
 // for a single username form.
@@ -38,14 +33,14 @@ bool AreCredentialsEligibleForFilling(
     return c.username.empty();
   };
   return !(is_single_username &&
-           base::ranges::all_of(credentials, has_empty_username) &&
-           IsSigninUffEnabled());
+           base::ranges::all_of(credentials, has_empty_username));
 }
 
 }  // namespace
 
 FillData::FillData() = default;
 FillData::~FillData() = default;
+FillData::FillData(const FillData& other) = default;
 
 FormInfo::FormInfo() = default;
 FormInfo::~FormInfo() = default;
@@ -141,7 +136,7 @@ std::vector<UsernameAndRealm> AccountSelectFillData::RetrieveSuggestions(
 std::unique_ptr<FillData> AccountSelectFillData::GetFillData(
     const std::u16string& username) const {
   if (!last_requested_form_) {
-    NOTREACHED();
+    DUMP_WILL_BE_NOTREACHED();
     return nullptr;
   }
 

@@ -5,22 +5,25 @@
 #ifndef ASH_SYSTEM_MAHI_MAHI_CONSTANTS_H_
 #define ASH_SYSTEM_MAHI_MAHI_CONSTANTS_H_
 
+#include "base/time/time.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/size.h"
+#include "ui/views/highlight_border.h"
 
 namespace ash::mahi_constants {
 
 // The view ids that will be used for all children views within the Mahi panel.
 enum ViewId {
-  kCloseButton = 1,
-  kContentMetadataRow,
-  kContentTitle,
-  kContentIcon,
+  kMahiPanelMainContainer = 1,
+  kCloseButton,
+  kContentSourceButton,
   kScrollView,
   kScrollViewContents,
   kSummaryLabel,
+  kFeedbackButtonsContainer,
   kThumbsUpButton,
   kThumbsDownButton,
+  kFooterLabel,
   kLearnMoreLink,
   kRefreshView,
   kMahiPanelView,
@@ -47,6 +50,7 @@ enum ViewId {
   kErrorStatusRetryLink,
   kQuestionAnswerErrorImage,
   kQuestionAnswerErrorLabel,
+  kInfoSparkIcon,
 };
 
 // The size of the icon that appears in the panel's source row.
@@ -54,12 +58,13 @@ inline constexpr gfx::Size kContentIconSize = gfx::Size(16, 16);
 
 inline constexpr int kPanelDefaultWidth = 360;
 inline constexpr int kPanelDefaultHeight = 492;
-inline constexpr gfx::Insets kPanelPadding(/*all=*/16);
+inline constexpr gfx::Insets kPanelPadding = gfx::Insets::TLBR(12, 15, 15, 15);
+
+inline constexpr int kScrollViewWidth = kPanelDefaultWidth -
+                                        views::kHighlightBorderThickness * 2 -
+                                        kPanelPadding.width();
 
 inline constexpr int kScrollContentsViewBottomPadding = 40;
-
-// TODO(b/333111220): Replace the string here with the correct URL.
-inline constexpr char kLearnMorePage[] = "https://google.com";
 
 inline constexpr int kRefreshBannerStackDepth = 25;
 inline constexpr int kPanelCornerRadius = 16;
@@ -68,6 +73,11 @@ inline constexpr int kPanelCornerRadius = 16;
 inline constexpr int kFakeMahiManagerLoadAnswerDelaySeconds = 3;
 inline constexpr int kFakeMahiManagerLoadSummaryDelaySeconds = 4;
 inline constexpr int kFakeMahiManagerLoadOutlinesDelaySeconds = 6;
+
+// Nudge constants
+inline constexpr char kMahiNudgeId[] = "mahi.nudge";
+inline constexpr base::TimeDelta kNudgeTimeBetweenShown = base::Hours(24);
+inline constexpr int kNudgeMaxShownCount = 3;
 
 // Metrics
 // Contains the types of button existed in Mahi Panel widget. Note: this should
@@ -96,6 +106,8 @@ inline constexpr char kMahiQuestionSourceHistogramName[] =
     "Ash.Mahi.QuestionSource";
 inline constexpr char kQuestionCountPerMahiSessionHistogramName[] =
     "Ash.Mahi.QuestionCountPerMahiSession";
+inline constexpr char kTimesMahiPanelOpenedPerSessionHistogramName[] =
+    "Ash.Mahi.TimesPanelOpenedPerSession";
 
 }  // namespace ash::mahi_constants
 

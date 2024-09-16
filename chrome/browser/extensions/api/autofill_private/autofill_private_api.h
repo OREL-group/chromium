@@ -199,26 +199,6 @@ class AutofillPrivateLogServerIbanLinkClickedFunction
   ResponseAction Run() override;
 };
 
-class AutofillPrivateSetCreditCardFIDOAuthEnabledStateFunction
-    : public ExtensionFunction {
- public:
-  AutofillPrivateSetCreditCardFIDOAuthEnabledStateFunction() = default;
-  AutofillPrivateSetCreditCardFIDOAuthEnabledStateFunction(
-      const AutofillPrivateSetCreditCardFIDOAuthEnabledStateFunction&) = delete;
-  AutofillPrivateSetCreditCardFIDOAuthEnabledStateFunction& operator=(
-      const AutofillPrivateSetCreditCardFIDOAuthEnabledStateFunction&) = delete;
-  DECLARE_EXTENSION_FUNCTION(
-      "autofillPrivate.setCreditCardFIDOAuthEnabledState",
-      AUTOFILLPRIVATE_SETCREDITCARDFIDOAUTHENABLEDSTATE)
-
- protected:
-  ~AutofillPrivateSetCreditCardFIDOAuthEnabledStateFunction() override =
-      default;
-
-  // ExtensionFunction overrides.
-  ResponseAction Run() override;
-};
-
 class AutofillPrivateSaveIbanFunction : public ExtensionFunction {
  public:
   AutofillPrivateSaveIbanFunction() = default;
@@ -399,6 +379,60 @@ class AutofillPrivateSetAutofillSyncToggleEnabledFunction
 
  protected:
   ~AutofillPrivateSetAutofillSyncToggleEnabledFunction() override = default;
+
+  // ExtensionFunction overrides.
+  ResponseAction Run() override;
+};
+
+class AutofillPrivateGetUserAnnotationsEntriesFunction
+    : public ExtensionFunction {
+ public:
+  AutofillPrivateGetUserAnnotationsEntriesFunction() = default;
+  AutofillPrivateGetUserAnnotationsEntriesFunction(
+      const AutofillPrivateGetUserAnnotationsEntriesFunction&) = delete;
+  AutofillPrivateGetUserAnnotationsEntriesFunction& operator=(
+      const AutofillPrivateGetUserAnnotationsEntriesFunction&) = delete;
+  DECLARE_EXTENSION_FUNCTION("autofillPrivate.getUserAnnotationsEntries",
+                             AUTOFILLPRIVATE_GETUSERANNOTATIONSENTRIES)
+
+ protected:
+  ~AutofillPrivateGetUserAnnotationsEntriesFunction() override = default;
+
+  // ExtensionFunction overrides.
+  ResponseAction Run() override;
+};
+
+class AutofillPrivateDeleteUserAnnotationsEntryFunction
+    : public ExtensionFunction {
+ public:
+  AutofillPrivateDeleteUserAnnotationsEntryFunction() = default;
+  AutofillPrivateDeleteUserAnnotationsEntryFunction(
+      const AutofillPrivateDeleteUserAnnotationsEntryFunction&) = delete;
+  AutofillPrivateDeleteUserAnnotationsEntryFunction& operator=(
+      const AutofillPrivateDeleteUserAnnotationsEntryFunction&) = delete;
+  DECLARE_EXTENSION_FUNCTION("autofillPrivate.deleteUserAnnotationsEntry",
+                             AUTOFILLPRIVATE_DELETEUSERANNOTATIONSENTRY)
+
+ protected:
+  ~AutofillPrivateDeleteUserAnnotationsEntryFunction() override = default;
+
+  // ExtensionFunction overrides.
+  ResponseAction Run() override;
+};
+
+class AutofillPrivateDeleteAllUserAnnotationsEntriesFunction
+    : public ExtensionFunction {
+ public:
+  AutofillPrivateDeleteAllUserAnnotationsEntriesFunction() = default;
+  AutofillPrivateDeleteAllUserAnnotationsEntriesFunction(
+      const AutofillPrivateDeleteAllUserAnnotationsEntriesFunction&) = delete;
+  AutofillPrivateDeleteAllUserAnnotationsEntriesFunction& operator=(
+      const AutofillPrivateDeleteAllUserAnnotationsEntriesFunction&) = delete;
+  DECLARE_EXTENSION_FUNCTION("autofillPrivate.deleteAllUserAnnotationsEntries",
+                             AUTOFILLPRIVATE_DELETEALLUSERANNOTATIONSENTRIES)
+
+ protected:
+  ~AutofillPrivateDeleteAllUserAnnotationsEntriesFunction() override = default;
 
   // ExtensionFunction overrides.
   ResponseAction Run() override;

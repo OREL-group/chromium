@@ -39,6 +39,7 @@ import org.chromium.android_webview.metrics.MetricsFilteringDecorator;
 import org.chromium.android_webview.policy.AwPolicyProvider;
 import org.chromium.android_webview.proto.MetricsBridgeRecords.HistogramRecord;
 import org.chromium.android_webview.safe_browsing.AwSafeBrowsingConfigHelper;
+import org.chromium.android_webview.supervised_user.AwSupervisedUserUrlClassifier;
 import org.chromium.base.BaseSwitches;
 import org.chromium.base.CommandLine;
 import org.chromium.base.ContextUtils;
@@ -65,6 +66,7 @@ import org.chromium.components.policy.CombinedPolicyProvider;
 import org.chromium.content_public.browser.BrowserStartupController;
 import org.chromium.content_public.browser.ChildProcessCreationParams;
 import org.chromium.content_public.browser.ChildProcessLauncherHelper;
+import org.chromium.ui.display.DisplayAndroidManager;
 
 import java.io.File;
 import java.io.IOException;
@@ -108,16 +110,16 @@ public final class AwBrowserProcess {
     }
 
     /**
-     * Loads the native library, and performs basic static construction of objects needed
-     * to run webview in this process. Does not create threads; safe to call from zygote.
-     * Note: it is up to the caller to ensure this is only called once.
+     * Loads the native library, and performs basic static construction of objects needed to run
+     * webview in this process. Does not create threads; safe to call from zygote. Note: it is up to
+     * the caller to ensure this is only called once.
      *
      * @param processDataDirBasePath The base path to use when setting the data directory for this
-     *                             process; null to use default base path.
+     *     process; null to use default base path.
      * @param processCacheDirBasePath The base path to use when setting the cache directory for this
-     *                             process; null to use default base path.
+     *     process; null to use default base path.
      * @param processDataDirSuffix The suffix to use when setting the data directory for this
-     *                             process; null to use no suffix.
+     *     process; null to use no suffix.
      */
     public static void loadLibrary(
             String processDataDirBasePath,
@@ -217,6 +219,7 @@ public final class AwBrowserProcess {
                                                 appContext, true);
                                     });
                         }
+                        configureDisplayAndroidManager();
                         // The policies are used by browser startup, so we need to register the
                         // policy providers before starting the browser process. This only registers
                         // java objects and doesn't need the native library.
@@ -245,6 +248,11 @@ public final class AwBrowserProcess {
                             AwContentsLifecycleNotifier.initialize();
                         }
                     });
+
+            AwSupervisedUserUrlClassifier classifier = AwSupervisedUserUrlClassifier.getInstance();
+            if (classifier != null) {
+                classifier.checkIfNeedRestrictedContentBlocking();
+            }
         }
 
         PostTask.postTask(
@@ -364,7 +372,7 @@ public final class AwBrowserProcess {
         // to copy a file usually means that retrying won't succeed either,
         // because e.g. the disk is full, or the file system is corrupted.
         int fileCount = minidumpFiles.length;
-        // TODO(https://crbug.com/1399777): We should limit the number of crashes we upload in
+        // TODO(crbug.com/40883324): We should limit the number of crashes we upload in
         //     order to not use too much data, and in order to minimize the chance of exhausting
         //     file descriptors (https://crbug.com/1399777).
         ParcelFileDescriptor[] minidumpFds = new ParcelFileDescriptor[fileCount];
@@ -555,11 +563,8 @@ public final class AwBrowserProcess {
             IMetricsBridgeService metricsService = IMetricsBridgeService.Stub.asInterface(service);
 
             List<byte[]> data = metricsService.retrieveNonembeddedMetrics();
-            // Subtract one to avoid skewing NumHistograms because of
-            // the meta RetrieveMetricsTaskStatus histogram which is
-            // always added to the list.
             RecordHistogram.recordCount1000Histogram(
-                    "Android.WebView.NonEmbeddedMetrics.NumHistograms", data.size() - 1);
+                    "Android.WebView.NonEmbeddedMetrics.NumHistograms", data.size());
             long systemTime = System.currentTimeMillis();
             for (byte[] recordData : data) {
                 HistogramRecord record = HistogramRecord.parseFrom(recordData);
@@ -604,10 +609,6 @@ public final class AwBrowserProcess {
 
     /** Initialize the metrics uploader. */
     public static void initializeMetricsLogUploader() {
-        boolean useDefaultUploadQos =
-                AwFeatureMap.isEnabled(
-                        AwFeatures.WEBVIEW_UMA_UPLOAD_QUALITY_OF_SERVICE_SET_TO_DEFAULT);
-
         boolean metricServiceEnabledOnlySdkRuntime =
                 ContextUtils.isSdkSandboxProcess()
                         && AwFeatureMap.isEnabled(
@@ -618,7 +619,7 @@ public final class AwBrowserProcess {
             boolean isAsync =
                     AwFeatureMap.isEnabled(
                             AndroidMetricsFeatures.ANDROID_METRICS_ASYNC_METRIC_LOGGING);
-            AwMetricsLogUploader uploader = new AwMetricsLogUploader(isAsync, useDefaultUploadQos);
+            AwMetricsLogUploader uploader = new AwMetricsLogUploader(isAsync);
             // Open a connection during startup while connecting to other services such as
             // ComponentsProviderService and VariationSeedServer to try to avoid spinning the
             // nonembedded ":webview_service" twice.
@@ -627,11 +628,15 @@ public final class AwBrowserProcess {
         } else {
             AndroidMetricsLogConsumer directUploader =
                     data -> {
-                        PlatformServiceBridge.getInstance().logMetrics(data, useDefaultUploadQos);
+                        PlatformServiceBridge.getInstance().logMetrics(data);
                         return HttpURLConnection.HTTP_OK;
                     };
             AndroidMetricsLogUploader.setConsumer(new MetricsFilteringDecorator(directUploader));
         }
+    }
+
+    private static void configureDisplayAndroidManager() {
+        DisplayAndroidManager.disableHdrSdrRatioCallback();
     }
 
     // Do not instantiate this class.

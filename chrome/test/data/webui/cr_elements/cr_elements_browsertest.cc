@@ -23,6 +23,10 @@ IN_PROC_BROWSER_TEST_F(CrElementsTest, CrChip) {
   RunTest("cr_elements/cr_chip_test.js", "mocha.run()");
 }
 
+IN_PROC_BROWSER_TEST_F(CrElementsTest, CrCollapse) {
+  RunTest("cr_elements/cr_collapse_test.js", "mocha.run()");
+}
+
 IN_PROC_BROWSER_TEST_F(CrElementsTest, CrContainerShadowMixin) {
   RunTest("cr_elements/cr_container_shadow_mixin_test.js", "mocha.run()");
 }
@@ -57,8 +61,16 @@ IN_PROC_BROWSER_TEST_F(CrElementsTest, CrIconset) {
   RunTest("cr_elements/cr_iconset_test.js", "mocha.run()");
 }
 
+IN_PROC_BROWSER_TEST_F(CrElementsTest, IconsetMap) {
+  RunTest("cr_elements/iconset_map_test.js", "mocha.run()");
+}
+
 IN_PROC_BROWSER_TEST_F(CrElementsTest, FindShortcutMixin) {
   RunTest("cr_elements/find_shortcut_mixin_test.js", "mocha.run()");
+}
+
+IN_PROC_BROWSER_TEST_F(CrElementsTest, FindShortcutMixinLit) {
+  RunTest("cr_elements/find_shortcut_mixin_lit_test.js", "mocha.run()");
 }
 
 IN_PROC_BROWSER_TEST_F(CrElementsTest, I18nMixin) {
@@ -69,12 +81,25 @@ IN_PROC_BROWSER_TEST_F(CrElementsTest, I18nMixinLit) {
   RunTest("cr_elements/i18n_mixin_lit_test.js", "mocha.run()");
 }
 
-IN_PROC_BROWSER_TEST_F(CrElementsTest, IconButton) {
+IN_PROC_BROWSER_TEST_F(CrElementsTest, CrIconButton) {
   RunTest("cr_elements/cr_icon_button_test.js", "mocha.run()");
+}
+
+IN_PROC_BROWSER_TEST_F(CrElementsTest, CrInfiniteList) {
+  RunTest("cr_elements/cr_infinite_list_test.js",
+          "runMochaSuite('InfiniteListTest')");
+}
+
+IN_PROC_BROWSER_TEST_F(CrElementsTest, CrLazyList) {
+  RunTest("cr_elements/cr_lazy_list_test.js", "mocha.run()");
 }
 
 IN_PROC_BROWSER_TEST_F(CrElementsTest, CrLazyRender) {
   RunTest("cr_elements/cr_lazy_render_test.js", "mocha.run()");
+}
+
+IN_PROC_BROWSER_TEST_F(CrElementsTest, CrLazyRenderLit) {
+  RunTest("cr_elements/cr_lazy_render_lit_test.js", "mocha.run()");
 }
 
 IN_PROC_BROWSER_TEST_F(CrElementsTest, CrLinkRow) {
@@ -105,8 +130,12 @@ IN_PROC_BROWSER_TEST_F(CrElementsTest, CrRadioGroup) {
   RunTest("cr_elements/cr_radio_group_test.js", "mocha.run()");
 }
 
-IN_PROC_BROWSER_TEST_F(CrElementsTest, CrScrollableMixin) {
-  RunTest("cr_elements/cr_scrollable_mixin_test.js", "mocha.run()");
+IN_PROC_BROWSER_TEST_F(CrElementsTest, CrScrollObserverMixin) {
+  RunTest("cr_elements/cr_scroll_observer_mixin_test.js", "mocha.run()");
+}
+
+IN_PROC_BROWSER_TEST_F(CrElementsTest, CrScrollObserverMixinLit) {
+  RunTest("cr_elements/cr_scroll_observer_mixin_lit_test.js", "mocha.run()");
 }
 
 IN_PROC_BROWSER_TEST_F(CrElementsTest, CrSearchField) {
@@ -137,8 +166,16 @@ IN_PROC_BROWSER_TEST_F(CrElementsTest, CrViewManager) {
   RunTest("cr_elements/cr_view_manager_test.js", "mocha.run()");
 }
 
+IN_PROC_BROWSER_TEST_F(CrElementsTest, CrPageSelector) {
+  RunTest("cr_elements/cr_page_selector_test.js", "mocha.run()");
+}
+
 IN_PROC_BROWSER_TEST_F(CrElementsTest, CrPolicyIndicator) {
   RunTest("cr_elements/cr_policy_indicator_test.js", "mocha.run()");
+}
+
+IN_PROC_BROWSER_TEST_F(CrElementsTest, CrProgress) {
+  RunTest("cr_elements/cr_progress_test.js", "mocha.run()");
 }
 
 IN_PROC_BROWSER_TEST_F(CrElementsTest, CrAutoImg) {
@@ -147,6 +184,10 @@ IN_PROC_BROWSER_TEST_F(CrElementsTest, CrAutoImg) {
 
 IN_PROC_BROWSER_TEST_F(CrElementsTest, CrToolbar) {
   RunTest("cr_elements/cr_toolbar_test.js", "mocha.run()");
+}
+
+IN_PROC_BROWSER_TEST_F(CrElementsTest, CrTooltip) {
+  RunTest("cr_elements/cr_tooltip_test.js", "mocha.run()");
 }
 
 IN_PROC_BROWSER_TEST_F(CrElementsTest, CrTree) {

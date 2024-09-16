@@ -12,7 +12,6 @@ import 'chrome://resources/cr_elements/cr_toggle/cr_toggle.js';
 import 'chrome://resources/cr_elements/cr_shared_style.css.js';
 import 'chrome://resources/cr_components/theme_color_picker/theme_color_picker.js';
 import 'chrome://resources/polymer/v3_0/iron-flex-layout/iron-flex-layout-classes.js';
-import 'chrome://resources/polymer/v3_0/paper-styles/shadow.js';
 import '../settings_shared.css.js';
 import 'chrome://resources/cr_elements/cr_profile_avatar_selector/cr_profile_avatar_selector.js';
 
@@ -52,9 +51,9 @@ export class SettingsManageProfileElement extends
   static get properties() {
     return {
       /**
-       * The newly selected avatar. Populated only if the user manually changes
-       * the avatar selection. The observer ensures that the changes are
-       * propagated to the C++.
+       * The newly selected avatar. Defaults to null, populated only if the user
+       * manually changes the avatar selection. The observer ensures that the
+       * changes are propagated to the C++.
        */
       profileAvatar_: {
         type: Object,
@@ -176,6 +175,10 @@ export class SettingsManageProfileElement extends
    * Handler for when the profile avatar is changed by the user.
    */
   private profileAvatarChanged_() {
+    if (this.profileAvatar_ === null) {
+      return;
+    }
+
     if (this.profileAvatar_.isGaiaAvatar) {
       this.browserProxy_.setProfileIconToGaiaAvatar();
     } else {

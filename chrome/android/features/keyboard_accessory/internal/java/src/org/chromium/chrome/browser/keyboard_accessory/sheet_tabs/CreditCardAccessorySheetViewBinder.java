@@ -41,12 +41,13 @@ class CreditCardAccessorySheetViewBinder {
         switch (viewType) {
             case AccessorySheetDataPiece.Type.WARNING: // Fallthrough to reuse title container.
             case AccessorySheetDataPiece.Type.TITLE:
-                return new AccessorySheetTabViewBinder.TitleViewHolder(
-                        parent, R.layout.keyboard_accessory_sheet_tab_title);
+                return new AccessorySheetTabViewBinder.TitleViewHolder(parent);
             case AccessorySheetDataPiece.Type.CREDIT_CARD_INFO:
                 return new CreditCardInfoViewHolder(parent, uiConfiguration.cardDrawableFunction);
             case AccessorySheetDataPiece.Type.PROMO_CODE_INFO:
                 return new PromoCodeInfoViewHolder(parent);
+            case AccessorySheetDataPiece.Type.IBAN_INFO:
+                return new IbanInfoViewHolder(parent);
             case AccessorySheetDataPiece.Type.FOOTER_COMMAND:
                 return AccessorySheetTabViewBinder.create(parent, viewType);
         }
@@ -119,6 +120,21 @@ class CreditCardAccessorySheetViewBinder {
         }
     }
 
+    /** View which represents a single IBAN and its fields. */
+    static class IbanInfoViewHolder
+            extends ElementViewHolder<KeyboardAccessoryData.IbanInfo, IbanAccessoryInfoView> {
+        IbanInfoViewHolder(ViewGroup parent) {
+            super(parent, R.layout.keyboard_accessory_sheet_tab_iban_info);
+        }
+
+        @Override
+        protected void bind(KeyboardAccessoryData.IbanInfo info, IbanAccessoryInfoView view) {
+            bindChipView(view.getValue(), info.getValue());
+
+            view.setIcon(AppCompatResources.getDrawable(view.getContext(), R.drawable.iban_icon));
+        }
+    }
+
     static void initializeView(
             RecyclerView view, UiConfiguration uiConfiguration, AccessorySheetTabItemsModel model) {
         view.setAdapter(
@@ -130,6 +146,7 @@ class CreditCardAccessorySheetViewBinder {
                         (parent, viewType) -> create(uiConfiguration, parent, viewType)));
         view.addItemDecoration(new DynamicInfoViewBottomSpacer(CreditCardAccessoryInfoView.class));
         view.addItemDecoration(new DynamicInfoViewBottomSpacer(PromoCodeAccessoryInfoView.class));
+        view.addItemDecoration(new DynamicInfoViewBottomSpacer(IbanAccessoryInfoView.class));
     }
 
     static @DrawableRes int getDrawableForOrigin(String origin) {
@@ -156,6 +173,12 @@ class CreditCardAccessorySheetViewBinder {
                 return use_new_data ? R.drawable.troy_metadata_card : R.drawable.troy_card;
             case "unionPayCC":
                 return use_new_data ? R.drawable.unionpay_metadata_card : R.drawable.unionpay_card;
+            case "verveCC":
+                if (ChromeFeatureList.isEnabled(
+                            ChromeFeatureList.AUTOFILL_ENABLE_VERVE_CARD_SUPPORT)) {
+                    return use_new_data ? R.drawable.verve_metadata_card : R.drawable.verve_card;
+                }
+                break;
             case "visaCC":
                 return use_new_data ? R.drawable.visa_metadata_card : R.drawable.visa_card;
         }

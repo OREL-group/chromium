@@ -3,15 +3,23 @@
 // found in the LICENSE file.
 
 #include "components/saved_tab_groups/saved_tab_group.h"
+
 #include "base/token.h"
 #include "build/build_config.h"
 #include "components/saved_tab_groups/saved_tab_group_tab.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 #include "url/url_constants.h"
 
 namespace tab_groups {
 namespace {
+
+using testing::ElementsAre;
+
+MATCHER_P(HasTabGuid, guid, "") {
+  return arg.saved_tab_guid() == guid;
+}
 
 base::Uuid MakeUniqueGUID() {
   static uint64_t unique_value = 0;
@@ -24,7 +32,7 @@ base::Uuid MakeUniqueGUID() {
 LocalTabID MakeUniqueTabID() {
   static uint64_t unique_value = 0;
   unique_value++;
-#if BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
   return unique_value;
 #else
   return base::Token(0, unique_value);
@@ -182,6 +190,35 @@ TEST(SavedTabGroupTest, AddTabFromSyncRespectsPositions) {
   EXPECT_EQ(second_tab->position(), 0u);
 }
 
+TEST(SavedTabGroupTest, AddTabFromSyncUsesPositionAsIndexForSharedGroup) {
+  // Create a shared group and 2 tabs.
+  SavedTabGroup group = CreateDefaultEmptySavedTabGroup();
+  group.SetCollaborationId("collaboration");
+
+  SavedTabGroupTab tab_0 = CreateDefaultSavedTabGroupTab(group.saved_guid());
+  tab_0.SetPosition(0);
+  group.AddTabFromSync(tab_0);
+
+  // Insert a new tab to the end.
+  SavedTabGroupTab tab_1 = CreateDefaultSavedTabGroupTab(group.saved_guid());
+  tab_1.SetPosition(1);
+  group.AddTabFromSync(tab_1);
+
+  EXPECT_THAT(group.saved_tabs(),
+              ElementsAre(HasTabGuid(tab_0.saved_tab_guid()),
+                          HasTabGuid(tab_1.saved_tab_guid())));
+
+  // Insert a new tab to the beginning (before the given position).
+  SavedTabGroupTab tab_before_0 =
+      CreateDefaultSavedTabGroupTab(group.saved_guid());
+  tab_before_0.SetPosition(0);
+  group.AddTabFromSync(tab_before_0);
+  EXPECT_THAT(group.saved_tabs(),
+              ElementsAre(HasTabGuid(tab_before_0.saved_tab_guid()),
+                          HasTabGuid(tab_0.saved_tab_guid()),
+                          HasTabGuid(tab_1.saved_tab_guid())));
+}
+
 TEST(SavedTabGroupTest, RemoveTabFromSyncMaintainsPositions) {
   // Create a group and 2 tabs
   SavedTabGroup group = CreateDefaultEmptySavedTabGroup();
@@ -230,6 +267,20 @@ TEST(SavedTabGroupTest, PinAndUnpin) {
   group.SetPinned(false);
   EXPECT_FALSE(group.is_pinned());
   EXPECT_FALSE(group.position().has_value());
+}
+
+// Test updating the cache guid.
+TEST(SavedTabGroupTest, UpdateCreatorCacheGuid) {
+  std::string cache_guid_1 = "new_guid_1";
+  std::string cache_guid_2 = "new_guid_2";
+  SavedTabGroup group = CreateDefaultEmptySavedTabGroup();
+
+  ASSERT_EQ(group.creator_cache_guid(), std::nullopt);
+  group.SetCreatorCacheGuid(cache_guid_1);
+  EXPECT_EQ(group.creator_cache_guid(), cache_guid_1);
+
+  group.SetCreatorCacheGuid(cache_guid_2);
+  EXPECT_EQ(group.creator_cache_guid(), cache_guid_2);
 }
 
 }  // namespace tab_groups

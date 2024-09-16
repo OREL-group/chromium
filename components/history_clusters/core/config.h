@@ -63,23 +63,6 @@ struct Config {
   // reverse chronologically, but the clusters within batches will be resorted.
   bool sort_clusters_within_batch_for_query = false;
 
-  // The `kJourneysLabels` feature and child params.
-
-  // Whether to assign labels to clusters from the hostnames of the cluster.
-  // Does nothing if `should_label_clusters` is false. Note that since every
-  // cluster has a hostname, this flag in conjunction with
-  // `should_label_clusters` will give every cluster a label.
-  bool labels_from_hostnames = true;
-
-  // Whether to assign labels to clusters from the Entities of the cluster.
-  // Does nothing if `should_label_clusters` is false.
-  bool labels_from_entities = false;
-
-  // Whether to assign labels to clusters from the entities associated with
-  // search visits within a cluster if there are multiple search visits for the
-  // cluster.
-  bool labels_from_search_visit_entities = false;
-
   // The `kJourneysImages` feature and child params.
 
   // Whether to attempt to provide images for eligible Journeys.
@@ -273,17 +256,6 @@ struct Config {
 
   bool apply_zero_state_filtering = true;
 
-  // The `kNtpChromeCartInHistoryClusterModule` child params.
-
-  // Whether to use the NTP-specific algorithms and signals for determining
-  // intracluster ranking.
-  bool use_ntp_specific_intracluster_ranking = false;
-
-  // Returns the weight to use for the visit duration when ranking visits within
-  // a cluster. Will always be greater than or equal to 0 specifically on the
-  // NTP surface when `use_ntp_specific_intracluster_ranking is true`.
-  float ntp_visit_duration_ranking_weight = 1.0;
-
   // Lonely features without child params.
 
   // Enables debug info in non-user-visible surfaces, like Chrome Inspector.
@@ -316,9 +288,6 @@ struct Config {
   // should only be set to true via command line.
   bool should_show_all_clusters_unconditionally_on_prominent_ui_surfaces =
       false;
-
-  // Whether to include synced visits in clusters.
-  bool include_synced_visits = false;
 
   // Whether keyword caches should be written to and read from prefs.
   bool persist_caches_to_prefs = true;

@@ -50,14 +50,18 @@ bool GetIsItemComplete(SetUpListItemType type,
                 base::SysNSStringToUTF8(identity.gaiaID), prefs);
       } else {
         return push_notification_settings::
-            GetMobileNotificationPermissionStatusForClient(
-                PushNotificationClientId::kContent,
-                base::SysNSStringToUTF8(identity.gaiaID));
+                   GetMobileNotificationPermissionStatusForClient(
+                       PushNotificationClientId::kContent,
+                       base::SysNSStringToUTF8(identity.gaiaID)) ||
+               push_notification_settings::
+                   GetMobileNotificationPermissionStatusForClient(
+                       PushNotificationClientId::kSports,
+                       base::SysNSStringToUTF8(identity.gaiaID));
       }
     }
     case SetUpListItemType::kFollow:
     case SetUpListItemType::kAllSet:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -137,10 +141,18 @@ BOOL AllItemsComplete(NSArray<SetUpListItem*>* items) {
 + (instancetype)buildFromPrefs:(PrefService*)prefs
                     localState:(PrefService*)localState
                    syncService:(syncer::SyncService*)syncService
-         authenticationService:(AuthenticationService*)authService {
-  if (set_up_list_prefs::IsSetUpListDisabled(localState)) {
+         authenticationService:(AuthenticationService*)authService
+    contentNotificationEnabled:(BOOL)isContentNotificationEnabled {
+  if (IsHomeCustomizationEnabled() &&
+      !prefs->GetBoolean(prefs::kHomeCustomizationMagicStackSetUpListEnabled)) {
     return nil;
   }
+
+  if (!IsHomeCustomizationEnabled() &&
+      set_up_list_prefs::IsSetUpListDisabled(localState)) {
+    return nil;
+  }
+
   NSMutableArray<SetUpListItem*>* items =
       [[NSMutableArray<SetUpListItem*> alloc] init];
 
@@ -159,11 +171,8 @@ BOOL AllItemsComplete(NSArray<SetUpListItem*>* items) {
   AddItemIfNotNil(items, BuildItem(SetUpListItemType::kAutofill, prefs,
                                    localState, authService));
 
-  // Add content notification item if the feature is enabled and the user has
-  // signed in.
-  if (IsIOSTipsNotificationsEnabled() ||
-      (IsContentPushNotificationsSetUpListEnabled() &&
-       authService->HasPrimaryIdentity(signin::ConsentLevel::kSignin))) {
+  // Add notification item if any of the feature is enabled.
+  if (IsIOSTipsNotificationsEnabled() || isContentNotificationEnabled) {
     AddItemIfNotNil(items, BuildItem(SetUpListItemType::kNotifications, prefs,
                                      localState, authService));
   }
@@ -179,15 +188,17 @@ BOOL AllItemsComplete(NSArray<SetUpListItem*>* items) {
     set_up_list_prefs::MarkAllItemsComplete(localState);
   }
 
-  // TODO(crbug.com/1428070): Add a Follow item to the Set Up List.
+  // TODO(crbug.com/40262090): Add a Follow item to the Set Up List.
   return [[self alloc] initWithItems:items
                           localState:localState
-               authenticationService:authService];
+               authenticationService:authService
+          contentNotificationEnabled:isContentNotificationEnabled];
 }
 
 - (instancetype)initWithItems:(NSArray<SetUpListItem*>*)items
-                   localState:(PrefService*)localState
-        authenticationService:(AuthenticationService*)authService {
+                    localState:(PrefService*)localState
+         authenticationService:(AuthenticationService*)authService
+    contentNotificationEnabled:(BOOL)isContentNotificationEnabled {
   self = [super init];
   if (self) {
     _items = items;
@@ -205,9 +216,7 @@ BOOL AllItemsComplete(NSArray<SetUpListItem*>* items) {
     _prefObserverBridge->ObserveChangesForPreference(
         set_up_list_prefs::kNotificationsItemState, &_prefChangeRegistrar);
     _shouldIncludeNotificationItem =
-        IsIOSTipsNotificationsEnabled() ||
-        (IsContentPushNotificationsSetUpListEnabled() &&
-         authService->HasPrimaryIdentity(signin::ConsentLevel::kSignin));
+        IsIOSTipsNotificationsEnabled() || isContentNotificationEnabled;
   }
   return self;
 }

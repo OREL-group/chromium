@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/modules/webcodecs/video_frame.h"
 
 #include <limits>
@@ -204,7 +209,7 @@ std::optional<V8VideoPixelFormat> ToV8VideoPixelFormat(
     case media::PIXEL_FORMAT_XRGB:
       return V8VideoPixelFormat(V8VideoPixelFormat::Enum::kBGRX);
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return std::nullopt;
   }
 }
@@ -438,7 +443,7 @@ const base::TimeDelta CanvasResourceProviderCache::kIdleTimeout =
 
 std::optional<media::VideoPixelFormat> CopyToFormat(
     const media::VideoFrame& frame) {
-  const bool mappable = frame.IsMappable() || frame.HasGpuMemoryBuffer();
+  const bool mappable = frame.IsMappable() || frame.HasMappableGpuBuffer();
   const bool texturable = frame.HasTextures();
   if (!(mappable || texturable))
     return std::nullopt;
@@ -514,7 +519,6 @@ bool CopyTexturablePlanes(media::VideoFrame& src_frame,
     return false;
 
   auto* ri = provider->RasterInterface();
-  auto* gr_context = provider->GetGrContext();
   if (!ri)
     return false;
 
@@ -525,7 +529,7 @@ bool CopyTexturablePlanes(media::VideoFrame& src_frame,
     uint8_t* dest_pixels = dest_buffer.data() + dest_layout.Offset(i);
     if (!media::ReadbackTexturePlaneToMemorySync(
             src_frame, i, plane_src_rect, dest_pixels, dest_layout.Stride(i),
-            ri, gr_context, provider->GetCapabilities())) {
+            ri, provider->GetCapabilities())) {
       // It's possible to fail after copying some but not all planes, leaving
       // the output buffer in a corrupt state D:
       return false;
@@ -686,7 +690,7 @@ VideoFrame* VideoFrame::Create(ScriptState* script_state,
           source_frame = wmp->GetCurrentFrameThenUpdate();
         break;
       default:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
     }
 
     if (!source_frame) {
@@ -768,7 +772,7 @@ VideoFrame* VideoFrame::Create(ScriptState* script_state,
 
   SourceImageStatus status = kInvalidSourceImageStatus;
   auto image = image_source->GetSourceImageForCanvas(
-      FlushReason::kCreateVideoFrame, &status, source_size);
+      FlushReason::kCreateVideoFrame, &status, source_size, kPremultiplyAlpha);
   if (!image || status != kNormalSourceImageStatus) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "Invalid source state");
@@ -814,8 +818,7 @@ VideoFrame* VideoFrame::Create(ScriptState* script_state,
       return nullptr;
 
     auto* sbi = static_cast<StaticBitmapImage*>(image.get());
-    gpu::MailboxHolder mailbox_holders[media::VideoFrame::kMaxPlanes] = {
-        sbi->GetMailboxHolder()};
+    gpu::MailboxHolder mailbox_holder = sbi->GetMailboxHolder();
     const bool is_origin_top_left = sbi->IsOriginTopLeft();
 
     // The sync token needs to be updated when |frame| is released, but
@@ -828,9 +831,17 @@ VideoFrame* VideoFrame::Create(ScriptState* script_state,
             },
             std::move(image))));
 
-    frame = media::VideoFrame::WrapNativeTextures(
-        format, mailbox_holders, std::move(release_cb), coded_size,
-        parsed_init.visible_rect, parsed_init.display_size, timestamp);
+    auto client_shared_image = sbi->GetSharedImage();
+    if (client_shared_image) {
+      frame = media::VideoFrame::WrapSharedImage(
+          format, std::move(client_shared_image), mailbox_holder.sync_token,
+          mailbox_holder.texture_target, std::move(release_cb), coded_size,
+          parsed_init.visible_rect, parsed_init.display_size, timestamp);
+    } else {
+      frame = media::VideoFrame::WrapNativeTexture(
+          format, mailbox_holder, std::move(release_cb), coded_size,
+          parsed_init.visible_rect, parsed_init.display_size, timestamp);
+    }
 
     if (frame)
       frame->metadata().texture_origin_is_top_left = is_origin_top_left;
@@ -1204,7 +1215,7 @@ void VideoFrame::ConvertAndCopyToRGB(scoped_refptr<media::VideoFrame> frame,
                                      PredefinedColorSpace target_color_space) {
   DCHECK(media::IsRGB(dest_layout.Format()));
   SkColorType skia_pixel_format = media::SkColorTypeForPlane(
-      dest_layout.Format(), media::VideoFrame::kARGBPlane);
+      dest_layout.Format(), media::VideoFrame::Plane::kARGB);
 
   if (frame->visible_rect() != src_rect) {
     frame = media::VideoFrame::WrapVideoFrame(frame, frame->format(), src_rect,
@@ -1321,7 +1332,7 @@ ScriptPromise<IDLSequence<PlaneLayout>> VideoFrame::copyTo(
                         target_color_space);
   } else if (local_frame->IsMappable()) {
     CopyMappablePlanes(*local_frame, src_rect, dest_layout, buffer);
-  } else if (local_frame->HasGpuMemoryBuffer()) {
+  } else if (local_frame->HasMappableGpuBuffer()) {
     auto mapped_frame = media::ConvertToMemoryMappedFrame(local_frame);
     if (!mapped_frame) {
       exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
@@ -1490,7 +1501,7 @@ ScriptPromise<ImageBitmap> VideoFrame::CreateImageBitmap(
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
         "Cannot create ImageBitmap from closed VideoFrame.");
-    return ScriptPromise<ImageBitmap>();
+    return EmptyPromise();
   }
 
   // SkImages are always immutable, so we don't actually need to make a copy of
@@ -1535,7 +1546,7 @@ ScriptPromise<ImageBitmap> VideoFrame::CreateImageBitmap(
         String(("Unsupported VideoFrame: " +
                 local_handle->frame()->AsHumanReadableString())
                    .c_str()));
-    return ScriptPromise<ImageBitmap>();
+    return EmptyPromise();
   }
 
   auto* image_bitmap =

@@ -16,6 +16,7 @@
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/singleton.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/strings/strcat.h"
 #include "base/task/bind_post_task.h"
 #include "base/time/time.h"
@@ -29,6 +30,7 @@
 #include "chrome/browser/enterprise/browser_management/management_service_factory.h"
 #include "chrome/browser/policy/chrome_browser_policy_connector.h"
 #include "chrome/browser/policy/messaging_layer/upload/encrypted_reporting_client.h"
+#include "chrome/browser/policy/messaging_layer/util/upload_declarations.h"
 #include "chrome/browser/policy/messaging_layer/util/upload_response_parser.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/reporting_util.h"
@@ -45,6 +47,7 @@
 #include "components/reporting/proto/synced/record_constants.pb.h"
 #include "components/reporting/resources/resource_manager.h"
 #include "components/reporting/util/encrypted_reporting_json_keys.h"
+#include "components/reporting/util/reporting_errors.h"
 #include "components/reporting/util/status.h"
 #include "components/reporting/util/status_macros.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
@@ -155,6 +158,7 @@ void ReportingServerConnector::UploadEncryptedReport(
     int config_file_version,
     std::vector<EncryptedRecord> records,
     ScopedReservation scoped_reservation,
+    UploadEnqueuedCallback enqueued_cb,
     ResponseCallback callback) {
   // This function should be called on the UI task runner, and if it isn't, it
   // reschedules itself to do so.
@@ -164,13 +168,14 @@ void ReportingServerConnector::UploadEncryptedReport(
         base::BindOnce(&ReportingServerConnector::UploadEncryptedReport,
                        need_encryption_key, config_file_version,
                        std::move(records), std::move(scoped_reservation),
-                       std::move(callback)));
+                       std::move(enqueued_cb), std::move(callback)));
     return;
   }
   // Now we are on UI task runner.
   GetInstance()->UploadEncryptedReportInternal(
       need_encryption_key, config_file_version, std::move(records),
-      std::move(scoped_reservation), std::move(callback));
+      std::move(scoped_reservation), std::move(enqueued_cb),
+      std::move(callback));
 }
 
 void ReportingServerConnector::UploadEncryptedReportInternal(
@@ -178,6 +183,7 @@ void ReportingServerConnector::UploadEncryptedReportInternal(
     int config_file_version,
     std::vector<EncryptedRecord> records,
     ScopedReservation scoped_reservation,
+    UploadEnqueuedCallback enqueued_cb,
     ResponseCallback callback) {
   DCHECK_CURRENTLY_ON(::content::BrowserThread::UI);
 
@@ -192,14 +198,20 @@ void ReportingServerConnector::UploadEncryptedReportInternal(
     // Initialize the cloud policy client.
     auto client_status = EnsureUsableClient();
     if (!client_status.ok()) {
+      std::move(enqueued_cb).Run(base::unexpected(client_status));
       std::move(callback).Run(base::unexpected(std::move(client_status)));
       return;
     }
     dm_token = client_->dm_token();
     client_id = client_->client_id();
     if (dm_token.empty()) {
-      std::move(callback).Run(base::unexpected(
-          Status(error::UNAVAILABLE, "Device DM token not set")));
+      Status no_dm_token_status{error::UNAVAILABLE, "Device DM token not set"};
+      std::move(enqueued_cb).Run(base::unexpected(no_dm_token_status));
+      std::move(callback).Run(base::unexpected(std::move(no_dm_token_status)));
+      base::UmaHistogramEnumeration(
+          reporting::kUmaUnavailableErrorReason,
+          UnavailableErrorReason::DEVICE_DM_TOKEN_NOT_SET,
+          UnavailableErrorReason::MAX_VALUE);
       return;
     }
     context.Set(json_keys::kDevice,
@@ -217,7 +229,7 @@ void ReportingServerConnector::UploadEncryptedReportInternal(
   // Forward the `UploadEncryptedReport` to `client`.
   encrypted_reporting_client_->UploadReport(
       need_encryption_key, config_file_version, std::move(records),
-      std::move(scoped_reservation),
+      std::move(scoped_reservation), std::move(enqueued_cb),
       base::BindPostTaskToCurrentDefault(base::BindOnce(
           [](ResponseCallback callback, StatusOr<UploadResponseParser> result) {
             DCHECK_CURRENTLY_ON(::content::BrowserThread::UI);
@@ -243,6 +255,10 @@ ReportingServerConnector::GetUserCloudPolicyManager() {
   }
   if (!g_browser_process || !g_browser_process->platform_part() ||
       !g_browser_process->platform_part()->browser_policy_connector_ash()) {
+    base::UmaHistogramEnumeration(
+        reporting::kUmaUnavailableErrorReason,
+        UnavailableErrorReason::CANNOT_GET_CLOUD_POLICY_MANAGER_FOR_BROWSER,
+        UnavailableErrorReason::MAX_VALUE);
     return base::unexpected(
         Status(error::UNAVAILABLE,
                "Browser process not fit to retrieve CloudPolicyManager"));
@@ -254,6 +270,10 @@ ReportingServerConnector::GetUserCloudPolicyManager() {
   // Android doesn't have access to a device level CloudPolicyClient, so get
   // the PrimaryUserProfile CloudPolicyClient.
   if (!ProfileManager::GetPrimaryUserProfile()) {
+    base::UmaHistogramEnumeration(
+        reporting::kUmaUnavailableErrorReason,
+        UnavailableErrorReason::CANNOT_GET_CLOUD_POLICY_MANAGER_FOR_PROFILE,
+        UnavailableErrorReason::MAX_VALUE);
     return base::unexpected(Status(error::UNAVAILABLE,
                                    "PrimaryUserProfile not fit to retrieve "
                                    "CloudPolicyManager"));
@@ -261,6 +281,10 @@ ReportingServerConnector::GetUserCloudPolicyManager() {
   return ProfileManager::GetPrimaryUserProfile()->GetUserCloudPolicyManager();
 #else
   if (!g_browser_process || !g_browser_process->browser_policy_connector()) {
+    base::UmaHistogramEnumeration(
+        reporting::kUmaUnavailableErrorReason,
+        UnavailableErrorReason::CANNOT_GET_CLOUD_POLICY_MANAGER_FOR_BROWSER,
+        UnavailableErrorReason::MAX_VALUE);
     return base::unexpected(Status(error::UNAVAILABLE,
                                    "Browser process not fit to retrieve "
                                    "CloudPolicyManager"));

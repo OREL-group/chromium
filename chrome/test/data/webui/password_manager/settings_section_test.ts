@@ -11,16 +11,19 @@ import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min
 import {assertDeepEquals, assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {flushTasks} from 'chrome://webui-test/polymer_test_util.js';
 import {TestOpenWindowProxy} from 'chrome://webui-test/test_open_window_proxy.js';
-import {isVisible} from 'chrome://webui-test/test_util.js';
+import {$$, eventToPromise, isVisible} from 'chrome://webui-test/test_util.js';
 
 import {TestPasswordManagerProxy} from './test_password_manager_proxy.js';
 import {TestSyncBrowserProxy} from './test_sync_browser_proxy.js';
 import {createBlockedSiteEntry, createCredentialGroup, createPasswordEntry, makePasswordManagerPrefs} from './test_util.js';
 
 // clang-format off
+// <if expr="is_win or is_macosx or is_chromeos">
+import type { PrefToggleButtonElement } from 'chrome://password-manager/password_manager.js';
+// </if>
+
 // <if expr="is_win or is_macosx">
-import type { PrefToggleButtonElement} from 'chrome://password-manager/password_manager.js';
-import {PasskeysBrowserProxyImpl} from 'chrome://password-manager/password_manager.js';
+import { PasskeysBrowserProxyImpl } from 'chrome://password-manager/password_manager.js';
 
 import {TestPasskeysBrowserProxy} from './test_passkeys_browser_proxy.js';
 // </if>
@@ -142,7 +145,7 @@ suite('SettingsSectionTest', function() {
     assertFalse(settings.$.autosigninToggle.checked);
   });
 
-  // <if expr="is_win or is_macosx">
+  // <if expr="is_win or is_macosx or is_chromeos">
   // Tests that biometric auth pref is visible, and clicking on it triggers
   // biometric auth validation instead of directly updating the pref value.
   test('biometric auth prefs when feature is available', async function() {
@@ -277,16 +280,46 @@ suite('SettingsSectionTest', function() {
     assertFalse(!!settings.shadowRoot!.querySelector('#addShortcutBanner'));
   });
 
-  test('import hidden when policy disabled', async function() {
+  test(
+      'import visible when policy disabled and controlled by extension',
+      async function() {
+        const settings = document.createElement('settings-section');
+        settings.prefs = makePasswordManagerPrefs();
+        settings.prefs.credentials_enable_service.value = false;
+        settings.prefs.credentials_enable_service.enforcement =
+            chrome.settingsPrivate.Enforcement.ENFORCED;
+        settings.prefs.credentials_enable_service.controlledBy =
+            chrome.settingsPrivate.ControlledBy.EXTENSION;
+        document.body.appendChild(settings);
+        await flushTasks();
+
+        assertTrue(!!settings.shadowRoot!.querySelector('passwords-importer'));
+      });
+
+  test(
+      'import hidden when policy disabled and not controlled by extension',
+      async function() {
+        const settings = document.createElement('settings-section');
+        settings.prefs = makePasswordManagerPrefs();
+        settings.prefs.credentials_enable_service.value = false;
+        settings.prefs.credentials_enable_service.enforcement =
+            chrome.settingsPrivate.Enforcement.ENFORCED;
+        settings.prefs.credentials_enable_service.controlledBy =
+            chrome.settingsPrivate.ControlledBy.DEVICE_POLICY;
+        document.body.appendChild(settings);
+        await flushTasks();
+
+        assertFalse(!!settings.shadowRoot!.querySelector('passwords-importer'));
+      });
+
+  test('import visible when policy enabled', async function() {
     const settings = document.createElement('settings-section');
     settings.prefs = makePasswordManagerPrefs();
-    settings.prefs.credentials_enable_service.value = false;
-    settings.prefs.credentials_enable_service.enforcement =
-        chrome.settingsPrivate.Enforcement.ENFORCED;
+    settings.prefs.credentials_enable_service.value = true;
     document.body.appendChild(settings);
     await flushTasks();
 
-    assertFalse(!!settings.shadowRoot!.querySelector('passwords-importer'));
+    assertTrue(!!settings.shadowRoot!.querySelector('passwords-importer'));
   });
 
   test('Password exporter element', async function() {
@@ -438,23 +471,6 @@ suite('SettingsSectionTest', function() {
   });
   // </if>
 
-  test('iCloudKeychainToggleNotShown', async function() {
-    // The control for iCloud Keychain should appear only on macOS.
-    const settings = document.createElement('settings-section');
-    document.body.appendChild(settings);
-    flush();
-    const element = settings.shadowRoot!.querySelector<HTMLElement>(
-        '#createPasskeysInICloudKeychainRow');
-
-    // <if expr="not is_macosx">
-    assertFalse(!!element);
-    // </if>
-
-    // <if expr="is_macosx">
-    assertTrue(!!element);
-    // </if>
-  });
-
   test('blockedSites section hidden when no blocked sites', async function() {
     passwordManager.data.blockedSites = [];
     const settings = document.createElement('settings-section');
@@ -466,7 +482,6 @@ suite('SettingsSectionTest', function() {
   });
 
   test('Move passwords to account button is visible', async function() {
-    loadTimeData.overrideValues({enableButterOnDesktopFollowup: true});
     passwordManager.data.isOptedInAccountStorage = true;
     syncProxy.syncInfo = {
       isEligibleForAccountStorage: true,
@@ -495,7 +510,6 @@ suite('SettingsSectionTest', function() {
   });
 
   test('Move passwords to account button is not visible', async function() {
-    loadTimeData.overrideValues({enableButterOnDesktopFollowup: true});
     passwordManager.data.isOptedInAccountStorage = true;
     syncProxy.syncInfo = {
       isEligibleForAccountStorage: true,
@@ -524,41 +538,8 @@ suite('SettingsSectionTest', function() {
   });
 
   test(
-      'Move passwords to account button not visible because feature disabled',
-      async function() {
-        loadTimeData.overrideValues({enableButterOnDesktopFollowup: false});
-        passwordManager.data.isOptedInAccountStorage = true;
-        syncProxy.syncInfo = {
-          isEligibleForAccountStorage: true,
-          isSyncingPasswords: false,
-        };
-
-        const group = createCredentialGroup({
-          name: 'test.com',
-          credentials: [
-            createPasswordEntry({
-              id: 0,
-              username: 'test1',
-              inProfileStore: true,
-              inAccountStore: false,
-            }),
-          ],
-        });
-
-        passwordManager.data.groups = [group];
-        const settings = document.createElement('settings-section');
-        document.body.appendChild(settings);
-        await passwordManager.whenCalled('getSavedPasswordList');
-        await flushTasks();
-
-        assertFalse(
-            !!settings.shadowRoot!.getElementById('movePasswordsButton'));
-      });
-
-  test(
       'clicking save passwords in account opens move passwords dialog',
       async function() {
-        loadTimeData.overrideValues({enableButterOnDesktopFollowup: true});
         passwordManager.data.isOptedInAccountStorage = true;
         syncProxy.syncInfo = {
           isEligibleForAccountStorage: true,
@@ -629,31 +610,10 @@ suite('SettingsSectionTest', function() {
     document.body.appendChild(section);
     await flushTasks();
 
-    const changePasswordManagerPinRow =
-        section.shadowRoot!.querySelector<HTMLElement>(
-            '#changePasswordManagerPinRow');
-
-    assertFalse(!!changePasswordManagerPinRow);
+    assertFalse(isVisible($$(section, '#changePasswordManagerPinRow')));
   });
 
   test('Change Password Manager PIN is available', async function() {
-    passwordManager.data.isPasswordManagerPinAvailable = true;
-
-    const section = document.createElement('settings-section');
-    document.body.appendChild(section);
-    await flushTasks();
-
-    const changePasswordManagerPinRow =
-        section.shadowRoot!.querySelector<HTMLElement>(
-            '#changePasswordManagerPinRow');
-
-    assertTrue(!!changePasswordManagerPinRow);
-
-    changePasswordManagerPinRow.click();
-    await passwordManager.whenCalled('changePasswordManagerPin');
-  });
-
-  test('Change Password Manager PIN row hides with sync', async function() {
     syncProxy.syncInfo = {
       isEligibleForAccountStorage: false,
       isSyncingPasswords: true,
@@ -663,26 +623,140 @@ suite('SettingsSectionTest', function() {
     const section = document.createElement('settings-section');
     document.body.appendChild(section);
     await flushTasks();
-    await passwordManager.whenCalled('isPasswordManagerPinAvailable');
 
-    let changePasswordManagerPinRow =
-        section.shadowRoot!.querySelector<HTMLElement>(
-            '#changePasswordManagerPinRow');
+    const changePasswordManagerPinRow =
+        $$(section, '#changePasswordManagerPinRow');
 
     assertTrue(!!changePasswordManagerPinRow);
 
-    passwordManager.data.isPasswordManagerPinAvailable = false;
-    webUIListenerCallback('sync-info-changed', {
-      isEligibleForAccountStorage: false,
-      isSyncingPasswords: false,
-    });
-    await flushTasks();
-    await passwordManager.whenCalled('isPasswordManagerPinAvailable');
-
-    changePasswordManagerPinRow =
-        section.shadowRoot!.querySelector<HTMLElement>(
-            '#changePasswordManagerPinRow');
-
-    assertFalse(!!changePasswordManagerPinRow);
+    changePasswordManagerPinRow.click();
+    await passwordManager.whenCalled('changePasswordManagerPin');
   });
+
+  test(
+      'Change PIN and Disconnect Enclave rows hides with sync',
+      async function() {
+        syncProxy.syncInfo = {
+          isEligibleForAccountStorage: false,
+          isSyncingPasswords: true,
+        };
+        passwordManager.data.isPasswordManagerPinAvailable = true;
+        passwordManager.data.isConnectedToCloudAuthenticator = true;
+
+        const section = document.createElement('settings-section');
+        document.body.appendChild(section);
+        await flushTasks();
+        await passwordManager.whenCalled('isPasswordManagerPinAvailable');
+
+        assertTrue(isVisible($$(section, '#changePasswordManagerPinRow')));
+        assertTrue(isVisible($$(section, '#disconnectCloudAuthenticatorRow')));
+
+        webUIListenerCallback('sync-info-changed', {
+          isEligibleForAccountStorage: false,
+          isSyncingPasswords: false,
+        });
+        await flushTasks();
+        await passwordManager.whenCalled('isPasswordManagerPinAvailable');
+        await passwordManager.whenCalled('isConnectedToCloudAuthenticator');
+
+        assertFalse(isVisible($$(section, '#changePasswordManagerPinRow')));
+        assertFalse(isVisible($$(section, '#disconnectCloudAuthenticatorRow')));
+      });
+
+  test('After successful PIN Change toast is shown', async function() {
+    syncProxy.syncInfo = {
+      isEligibleForAccountStorage: false,
+      isSyncingPasswords: true,
+    };
+    passwordManager.data.isPasswordManagerPinAvailable = true;
+
+    const section = document.createElement('settings-section');
+    document.body.appendChild(section);
+    await flushTasks();
+
+    const changePasswordManagerPinRow =
+        $$(section, '#changePasswordManagerPinRow');
+
+    assertTrue(!!changePasswordManagerPinRow);
+
+    changePasswordManagerPinRow.click();
+
+    await passwordManager.whenCalled('changePasswordManagerPin');
+    assertFalse(section.$.toast.open);
+
+    passwordManager.data.changePasswordManagerPinSuccesful = false;
+    changePasswordManagerPinRow.click();
+
+    await passwordManager.whenCalled('changePasswordManagerPin');
+    assertFalse(section.$.toast.open);
+
+    passwordManager.data.changePasswordManagerPinSuccesful = true;
+    changePasswordManagerPinRow.click();
+
+    await passwordManager.whenCalled('changePasswordManagerPin');
+    assertTrue(section.$.toast.open);
+    assertEquals(
+        loadTimeData.getString('passwordManagerPinChanged'),
+        section.$.toast.textContent!.trim());
+  });
+
+  test('Disconnect Cloud Authenticator', async function() {
+    syncProxy.syncInfo = {
+      isEligibleForAccountStorage: false,
+      isSyncingPasswords: true,
+    };
+    passwordManager.data.isConnectedToCloudAuthenticator = true;
+    passwordManager.data.disconnectCloudAuthenticatorSuccessful = true;
+
+    const section = document.createElement('settings-section');
+    document.body.appendChild(section);
+    await flushTasks();
+
+    const disconnectCloudAuthenticatorRow =
+        $$(section, '#disconnectCloudAuthenticatorRow');
+    assertTrue(!!disconnectCloudAuthenticatorRow);
+
+    const disconnectButton =
+        disconnectCloudAuthenticatorRow.querySelector<HTMLElement>(
+            '#disconnectCloudAuthenticatorButton');
+    assertTrue(!!disconnectButton);
+    disconnectButton.click();
+
+    await eventToPromise('cr-dialog-open', section);
+    const dialog = $$(section, '#disconnectCloudAuthenticatorDialog');
+    assertTrue(!!dialog);
+
+    const confirmButton = $$(dialog, '#confirmButton')!;
+    assertTrue(isVisible(confirmButton));
+
+    confirmButton.click();
+    await passwordManager.whenCalled('disconnectCloudAuthenticator');
+
+    assertTrue(section.$.toast.open);
+    assertEquals(
+        loadTimeData.getString('disconnectCloudAuthenticatorToastMessage'),
+        section.$.toast.textContent!.trim());
+  });
+
+  test('enableWebAuthnGpmPin shows full-data-reset row', async function() {
+    loadTimeData.overrideValues({enableWebAuthnGpmPin: true});
+
+    const section = document.createElement('settings-section');
+    document.body.appendChild(section);
+    await flushTasks();
+
+    assertTrue(isVisible($$(section, 'full-data-reset')));
+  });
+
+  test(
+      'disabled enableWebAuthnGpmPin hides full-data-reset row',
+      async function() {
+        loadTimeData.overrideValues({enableWebAuthnGpmPin: false});
+
+        const section = document.createElement('settings-section');
+        document.body.appendChild(section);
+        await flushTasks();
+
+        assertFalse(isVisible($$(section, 'full-data-reset')));
+      });
 });

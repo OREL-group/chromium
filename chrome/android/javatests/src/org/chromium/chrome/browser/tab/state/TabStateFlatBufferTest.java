@@ -7,7 +7,6 @@ package org.chromium.chrome.browser.tab.state;
 import androidx.test.filters.LargeTest;
 
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.Rule;
@@ -15,6 +14,7 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.Token;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
@@ -24,6 +24,7 @@ import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.base.test.util.Matchers;
+import org.chromium.chrome.browser.crypto.CipherFactory;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.tab.Tab;
@@ -36,7 +37,6 @@ import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.batch.BlankCTATabInitialStateRule;
 import org.chromium.chrome.test.util.ByteBufferTestUtils;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.net.test.EmbeddedTestServer;
 
 import java.io.File;
@@ -66,6 +66,7 @@ public class TabStateFlatBufferTest {
     @Rule public TemporaryFolder temporaryFolder = new TemporaryFolder();
 
     private static EmbeddedTestServer sTestServer;
+    private static CipherFactory sCipherFactory;
 
     private static final String TEST_URL = "/chrome/test/data/browsing_data/e.html";
     private static final String TEST_URL_DISPLAY_TITLE = "My_title";
@@ -73,11 +74,7 @@ public class TabStateFlatBufferTest {
     @BeforeClass
     public static void beforeClass() {
         sTestServer = sActivityTestRule.getTestServer();
-    }
-
-    @Before
-    public void before() {
-        TabStateFileManager.resetDeferredStartupCompleteForTesting();
+        sCipherFactory = new CipherFactory();
     }
 
     @Test
@@ -85,8 +82,9 @@ public class TabStateFlatBufferTest {
     public void testFlatBufferTabStateRegularTab() throws ExecutionException, IOException {
         TabState state = getTestTabState(false);
         File file = getTestFile(1, false);
-        TabStateFileManager.saveStateInternal(file, state, false);
-        TabState restoredTabState = TabStateFileManager.restoreTabStateInternal(file, false);
+        TabStateFileManager.saveStateInternal(file, state, false, sCipherFactory);
+        TabState restoredTabState =
+                TabStateFileManager.restoreTabStateInternal(file, false, sCipherFactory);
         verifyTabStateResult(restoredTabState, state);
     }
 
@@ -95,14 +93,15 @@ public class TabStateFlatBufferTest {
     public void testFlatBufferTabStateIncognitoTab() throws ExecutionException, IOException {
         TabState state = getTestTabState(true);
         File file = getTestFile(2, true);
-        TabStateFileManager.saveStateInternal(file, state, false);
-        TabState restoredTabState = TabStateFileManager.restoreTabStateInternal(file, false);
+        TabStateFileManager.saveStateInternal(file, state, false, sCipherFactory);
+        TabState restoredTabState =
+                TabStateFileManager.restoreTabStateInternal(file, false, sCipherFactory);
         verifyTabStateResult(restoredTabState, state);
     }
 
     @Test
     @LargeTest
-    @DisableFeatures(ChromeFeatureList.TAB_STATE_FLATBUFFER)
+    @DisableFeatures(ChromeFeatureList.TAB_STATE_FLAT_BUFFER)
     public void testFlatBufferCleanup() throws IOException, TimeoutException, ExecutionException {
         List<File> flatBufferFiles = new ArrayList<>();
         List<File> legacyHandWrittenFiles = new ArrayList<>();
@@ -128,12 +127,14 @@ public class TabStateFlatBufferTest {
                     legacyHandWrittenFiles.get(tabId),
                     tabState,
                     /** encrypted = */
-                    tabId % 2 == 0);
+                    tabId % 2 == 0,
+                    sCipherFactory);
             TabStateFileManager.saveStateInternal(
                     flatBufferFiles.get(tabId),
                     tabState,
                     /** encrypted = */
-                    tabId % 2 == 0);
+                    tabId % 2 == 0,
+                    sCipherFactory);
         }
         for (File file :
                 Stream.concat(legacyHandWrittenFiles.stream(), flatBufferFiles.stream())
@@ -163,124 +164,41 @@ public class TabStateFlatBufferTest {
 
     @Test
     @LargeTest
-    @EnableFeatures(ChromeFeatureList.TAB_STATE_FLATBUFFER)
-    public void testFlatBufferMigration() throws IOException, ExecutionException {
-        List<File> expectedFlatBufferMigratedFiles = new ArrayList<>();
-        for (int tabId = 0; tabId < 4; tabId++) {
-            boolean isEncrypted = tabId % 2 == 0;
-            TabState state = getTestTabState(isEncrypted);
-            File legacyTabStateFile =
-                    temporaryFolder.newFile(
-                            TabStateFileManager.getTabStateFilename(
-                                    tabId, isEncrypted, /* isFlatBuffer= */ false));
-            TabStateFileManager.saveStateInternal(legacyTabStateFile, state, isEncrypted);
-            TabStateFileManager.restoreTabStateInternal(legacyTabStateFile, isEncrypted);
-            expectedFlatBufferMigratedFiles.add(
-                    TabStateFileManager.getTabStateFile(
-                            legacyTabStateFile.getParentFile(),
-                            tabId,
-                            isEncrypted,
-                            /* isFlatBuffer= */ true));
-        }
-        TabStateFileManager.onDeferredStartup();
-        CriteriaHelper.pollInstrumentationThread(
-                () -> {
-                    Criteria.checkThat(
-                            TabStateFileManager.isFinishedFlatBufferMigration(), Matchers.is(true));
-                });
-        CriteriaHelper.pollInstrumentationThread(
-                () -> {
-                    for (File expectedFlatBufferFile : expectedFlatBufferMigratedFiles) {
-                        Criteria.checkThat(expectedFlatBufferFile.exists(), Matchers.is(true));
-                    }
-                });
-    }
-
-    @Test
-    @LargeTest
-    @EnableFeatures(ChromeFeatureList.TAB_STATE_FLATBUFFER)
-    public void testCancelledMigration() throws IOException, ExecutionException {
-        List<File> expectedFlatBufferMigratedFiles = new ArrayList<>();
-        for (int tabId = 0; tabId < 4; tabId++) {
-            boolean isEncrypted = tabId % 2 == 0;
-            TabState state = getTestTabState(isEncrypted);
-            File legacyTabStateFile =
-                    temporaryFolder.newFile(
-                            TabStateFileManager.getTabStateFilename(
-                                    tabId, isEncrypted, /* isFlatBuffer= */ false));
-            TabStateFileManager.saveStateInternal(legacyTabStateFile, state, isEncrypted);
-            TabStateFileManager.restoreTabStateInternal(legacyTabStateFile, isEncrypted);
-            expectedFlatBufferMigratedFiles.add(
-                    TabStateFileManager.getTabStateFile(
-                            legacyTabStateFile.getParentFile(),
-                            tabId,
-                            isEncrypted,
-                            /* isFlatBuffer= */ true));
-        }
-        int cancelledTabId = 2;
-        TabStateFileManager.cancelMigrationIfExists(
-                cancelledTabId, /* isEncrypted= */ cancelledTabId % 2 == 0);
-        TabStateFileManager.onDeferredStartup();
-        CriteriaHelper.pollInstrumentationThread(
-                () -> {
-                    Criteria.checkThat(
-                            TabStateFileManager.isFinishedFlatBufferMigration(), Matchers.is(true));
-                });
-        CriteriaHelper.pollInstrumentationThread(
-                () -> {
-                    for (int tabId = 0; tabId < expectedFlatBufferMigratedFiles.size(); tabId++) {
-                        if (tabId == cancelledTabId) {
-                            Criteria.checkThat(
-                                    "Tab " + tabId + " should not have been migrated",
-                                    expectedFlatBufferMigratedFiles.get(tabId).exists(),
-                                    Matchers.is(false));
-                        } else {
-                            Criteria.checkThat(
-                                    "Tab " + tabId + " should have been migrated",
-                                    expectedFlatBufferMigratedFiles.get(tabId).exists(),
-                                    Matchers.is(true));
-                        }
-                    }
-                });
-    }
-
-    @Test
-    @LargeTest
-    @EnableFeatures(ChromeFeatureList.TAB_STATE_FLATBUFFER)
+    @EnableFeatures(ChromeFeatureList.TAB_STATE_FLAT_BUFFER)
     public void testFlatBufferMetrics() throws ExecutionException, IOException {
         TabState state = getTestTabState(false);
         File file = getTestFile(1, false);
-        TabStateFileManager.saveStateInternal(file, state, false);
+        TabStateFileManager.saveStateInternal(file, state, false, sCipherFactory);
         var histograms =
                 HistogramWatcher.newSingleRecordWatcher(
                         "Tabs.TabState.RestoreMethod",
                         TabStateFileManager.TabStateRestoreMethod.FLATBUFFER);
         TabState restoredTabState =
-                TabStateFileManager.restoreTabState(temporaryFolder.getRoot(), 1);
+                TabStateFileManager.restoreTabState(temporaryFolder.getRoot(), 1, sCipherFactory);
         Assert.assertNotNull(restoredTabState);
         histograms.assertExpected();
     }
 
     @Test
     @LargeTest
-    @EnableFeatures(ChromeFeatureList.TAB_STATE_FLATBUFFER)
+    @EnableFeatures(ChromeFeatureList.TAB_STATE_FLAT_BUFFER)
     public void testLegacyHandWrittenMetrics() throws ExecutionException, IOException {
         TabState state = getTestTabState(false);
         File file = getLegacyTestFile(1, false);
-        TabStateFileManager.saveStateInternal(file, state, false);
+        TabStateFileManager.saveStateInternal(file, state, false, sCipherFactory);
         var histograms =
                 HistogramWatcher.newSingleRecordWatcher(
                         "Tabs.TabState.RestoreMethod",
                         TabStateFileManager.TabStateRestoreMethod.LEGACY_HAND_WRITTEN);
         TabState restoredTabState =
-                TabStateFileManager.restoreTabState(temporaryFolder.getRoot(), 1);
+                TabStateFileManager.restoreTabState(temporaryFolder.getRoot(), 1, sCipherFactory);
         Assert.assertNotNull(restoredTabState);
         histograms.assertExpected();
     }
 
     @Test
     @LargeTest
-    @EnableFeatures(ChromeFeatureList.TAB_STATE_FLATBUFFER)
+    @EnableFeatures(ChromeFeatureList.TAB_STATE_FLAT_BUFFER)
     public void testCorruptTabStateFile() throws ExecutionException, IOException {
         File legacyFile = getLegacyTestFile(1, false);
         FileOutputStream legacyOutputStream = new FileOutputStream(legacyFile);
@@ -295,101 +213,14 @@ public class TabStateFlatBufferTest {
                         "Tabs.TabState.RestoreMethod",
                         TabStateFileManager.TabStateRestoreMethod.FAILED);
         TabState restoredTabState =
-                TabStateFileManager.restoreTabState(temporaryFolder.getRoot(), 1);
+                TabStateFileManager.restoreTabState(temporaryFolder.getRoot(), 1, sCipherFactory);
         Assert.assertNull(restoredTabState);
         histograms.assertExpected();
     }
 
     @Test
     @LargeTest
-    @EnableFeatures(ChromeFeatureList.TAB_STATE_FLATBUFFER)
-    public void testNoFlatBufferFileUntilAfterDeferredStartup() throws ExecutionException {
-        TabState state = getTestTabState(false);
-        TabStateFileManager.saveState(
-                temporaryFolder.getRoot(), state, /* tabId= */ 1, /* encrypted= */ false);
-        CriteriaHelper.pollInstrumentationThread(
-                () -> {
-                    File legacyFile =
-                            TabStateFileManager.getTabStateFile(
-                                    temporaryFolder.getRoot(),
-                                    /* tabId= */ 1,
-                                    /* encrypted= */ false,
-                                    /* isFlatBuffer= */ false);
-                    Criteria.checkThat(
-                            "Legacy file " + legacyFile + " should exist.",
-                            legacyFile.exists(),
-                            Matchers.is(true));
-                });
-        CriteriaHelper.pollInstrumentationThread(
-                () -> {
-                    File flatBufferFile =
-                            TabStateFileManager.getTabStateFile(
-                                    temporaryFolder.getRoot(),
-                                    /* tabId= */ 1,
-                                    /* encrypted= */ false,
-                                    /* isFlatBuffer= */ true);
-                    Criteria.checkThat(
-                            "FlatBuffer file " + flatBufferFile + " should not exist.",
-                            flatBufferFile.exists(),
-                            Matchers.is(false));
-                });
-        TabStateFileManager.onDeferredStartup();
-        // Queue should be flushed and FlatBuffer file should exist after Deferred startup.
-        CriteriaHelper.pollInstrumentationThread(
-                () -> {
-                    File flatBufferFile =
-                            TabStateFileManager.getTabStateFile(
-                                    temporaryFolder.getRoot(),
-                                    /* tabId= */ 1,
-                                    /* encrypted= */ false,
-                                    /* isFlatBuffer= */ true);
-                    Criteria.checkThat(
-                            "FlatBuffer file " + flatBufferFile + " should now exist.",
-                            flatBufferFile.exists(),
-                            Matchers.is(true));
-                });
-    }
-
-    @Test
-    @LargeTest
-    @EnableFeatures(ChromeFeatureList.TAB_STATE_FLATBUFFER)
-    public void testFlatBufferFileAutomaticallySavedAfterDeferredStartup()
-            throws ExecutionException {
-        TabState state = getTestTabState(false);
-        TabStateFileManager.saveState(
-                temporaryFolder.getRoot(), state, /* tabId= */ 1, /* encrypted= */ false);
-        TabStateFileManager.onDeferredStartup();
-        CriteriaHelper.pollInstrumentationThread(
-                () -> {
-                    File legacyFile =
-                            TabStateFileManager.getTabStateFile(
-                                    temporaryFolder.getRoot(),
-                                    /* tabId= */ 1,
-                                    /* encrypted= */ false,
-                                    /* isFlatBuffer= */ false);
-                    Criteria.checkThat(
-                            "Legacy file  " + legacyFile + " should exist.",
-                            legacyFile.exists(),
-                            Matchers.is(true));
-                });
-        CriteriaHelper.pollInstrumentationThread(
-                () -> {
-                    File flatBufferFile =
-                            TabStateFileManager.getTabStateFile(
-                                    temporaryFolder.getRoot(),
-                                    /* tabId= */ 1,
-                                    /* encrypted= */ false,
-                                    /* isFlatBuffer= */ true);
-                    Criteria.checkThat(
-                            "FlatBuffer file  " + flatBufferFile + " should exist.",
-                            flatBufferFile.exists(),
-                            Matchers.is(true));
-                });
-    }
-
-    @Test
-    @LargeTest
-    @EnableFeatures(ChromeFeatureList.TAB_STATE_FLATBUFFER)
+    @EnableFeatures(ChromeFeatureList.TAB_STATE_FLAT_BUFFER)
     public void testFlatBufferFormatIncognito() throws ExecutionException {
         TabState state = getTestTabState(/* isIncognito= */ true);
         TabStateFileManager.saveStateInternal(
@@ -399,8 +230,10 @@ public class TabStateFlatBufferTest {
                         /* encrypted= */ true,
                         /* isFlatBuffer= */ true),
                 state,
-                /* isEncrypted= */ true);
-        TabState restored = TabStateFileManager.restoreTabState(temporaryFolder.getRoot(), 4);
+                /* isEncrypted= */ true,
+                sCipherFactory);
+        TabState restored =
+                TabStateFileManager.restoreTabState(temporaryFolder.getRoot(), 4, sCipherFactory);
         Assert.assertTrue(restored.isIncognito);
     }
 
@@ -418,8 +251,7 @@ public class TabStateFlatBufferTest {
         String url = sTestServer.getURL(TEST_URL);
         Tab tab = sActivityTestRule.loadUrlInNewTab(url);
         state.contentsState =
-                TestThreadUtils.runOnUiThreadBlocking(
-                        () -> TabStateExtractor.getWebContentsState(tab));
+                ThreadUtils.runOnUiThreadBlocking(() -> TabStateExtractor.getWebContentsState(tab));
         state.openerAppId = "openerAppId";
         return state;
     }

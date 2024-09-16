@@ -140,12 +140,6 @@ struct WavyParams {
   DISALLOW_NEW();
 };
 
-float WavyDecorationSizing(const WavyParams& params) {
-  // Minimum unit we use to compute control point distance and step to define
-  // the path of the Bezier curve.
-  return std::max<float>(2, params.resolved_thickness);
-}
-
 float WavyControlPointDistance(const WavyParams& params) {
   // Distance between decoration's axis and Bezier curve's control points. The
   // height of the curve is based on this distance. Increases the curve's height
@@ -153,7 +147,9 @@ float WavyControlPointDistance(const WavyParams& params) {
   if (params.spelling_grammar)
     return 5 * params.effective_zoom;
 
-  return 3.5 * WavyDecorationSizing(params);
+  // Setting the distance to half-pixel values gives better antialiasing
+  // results, particularly for small values.
+  return 0.5 + roundf(3 * std::max<float>(1, params.resolved_thickness) + 0.5);
 }
 
 float WavyStep(const WavyParams& params) {
@@ -163,7 +159,9 @@ float WavyStep(const WavyParams& params) {
   if (params.spelling_grammar)
     return 3 * params.effective_zoom;
 
-  return 2.5 * WavyDecorationSizing(params);
+  // Setting the step to half-pixel values gives better antialiasing
+  // results, particularly for small values.
+  return 0.5 + roundf(2 * std::max<float>(1, params.resolved_thickness) + 0.5);
 }
 
 // Computes the wavy pattern rect, which is where the desired wavy pattern would
@@ -217,7 +215,7 @@ Path PrepareWavyStrokePath(const WavyParams& params) {
   // We paint the wave before and after the text line (to cover the whole length
   // of the line) and then we clip it at
   // AppliedDecorationPainter::StrokeWavyTextDecoration().
-  // Offset the start point, so the beizer curve starts before the current line,
+  // Offset the start point, so the bezier curve starts before the current line,
   // that way we can clip it exactly the same way in both ends.
   // For spelling and grammar errors we offset by half a step less, to get a
   // result closer to Microsoft Word circa 2021.
@@ -225,7 +223,7 @@ Path PrepareWavyStrokePath(const WavyParams& params) {
 
   // Midpoints at y=0.5, to reduce vertical antialiasing.
   gfx::PointF start{phase_shift, 0.5f};
-  gfx::PointF end{start + gfx::Vector2dF(2.f * step, 0.f)};
+  gfx::PointF end{start + gfx::Vector2dF(2.f * step, 0.0f)};
   gfx::PointF cp1{start + gfx::Vector2dF(step, +control_point_distance)};
   gfx::PointF cp2{start + gfx::Vector2dF(step, -control_point_distance)};
 
@@ -289,8 +287,7 @@ TextDecorationInfo::TextDecorationInfo(
       width_(width),
       target_ascent_(GetAscent(target_style, font_override)),
       scaling_factor_(scaling_factor),
-      use_decorating_box_(RuntimeEnabledFeatures::TextDecoratingBoxEnabled() &&
-                          inline_context && !decoration_override_ &&
+      use_decorating_box_(inline_context && !decoration_override_ &&
                           !font_override_ &&
                           ShouldUseDecoratingBox(target_style)),
       minimum_thickness_is_one_(minimum_thickness1) {
@@ -351,7 +348,7 @@ void TextDecorationInfo::UpdateForDecorationIndex() {
     // TODO(kojii): The vertical flow in alphabetic baseline may want to use the
     // decorating box. It needs supporting the rotated coordinate system text
     // painters use when painting vertical text.
-    if (UNLIKELY(!decorating_box_style->IsHorizontalWritingMode())) {
+    if (!decorating_box_style->IsHorizontalWritingMode()) [[unlikely]] {
       use_decorating_box_ = false;
       decorating_box_ = nullptr;
       decorating_box_style = &target_style_;
@@ -371,7 +368,7 @@ void TextDecorationInfo::UpdateForDecorationIndex() {
         original_underline_position_ == ResolvedUnderlinePosition::kOver;
   }
 
-  if (UNLIKELY(flip_underline_and_overline_)) {
+  if (flip_underline_and_overline_) [[unlikely]] {
     flipped_underline_position_ = ResolvedUnderlinePosition::kUnder;
     std::swap(has_underline_, has_overline_);
   } else {
@@ -423,7 +420,7 @@ void TextDecorationInfo::SetLineData(TextDecorationLine line,
     default:
       double_offset = 0.0f;
       wavy_offset_factor = 0;
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 
   line_data_.line = line;
@@ -466,9 +463,12 @@ void TextDecorationInfo::SetUnderlineLineData(
     const TextDecorationOffset& decoration_offset) {
   DCHECK(HasUnderline());
   // Don't apply text-underline-offset to overlines. |line_offset| is zero.
-  const Length line_offset = UNLIKELY(flip_underline_and_overline_)
-                                 ? Length()
-                                 : applied_text_decoration_->UnderlineOffset();
+  Length line_offset;
+  if (flip_underline_and_overline_) [[unlikely]] {
+    line_offset = Length();
+  } else {
+    line_offset = applied_text_decoration_->UnderlineOffset();
+  }
   float paint_underline_offset = decoration_offset.ComputeUnderlineOffset(
       FlippedUnderlinePosition(), ComputedFontSize(), FontData(), line_offset,
       ResolvedThickness());
@@ -483,13 +483,15 @@ void TextDecorationInfo::SetOverlineLineData(
     const TextDecorationOffset& decoration_offset) {
   DCHECK(HasOverline());
   // Don't apply text-underline-offset to overline.
-  const Length line_offset = UNLIKELY(flip_underline_and_overline_)
-                                 ? applied_text_decoration_->UnderlineOffset()
-                                 : Length();
-  const FontVerticalPositionType position =
-      UNLIKELY(flip_underline_and_overline_)
-          ? FontVerticalPositionType::TopOfEmHeight
-          : FontVerticalPositionType::TextTop;
+  Length line_offset;
+  FontVerticalPositionType position;
+  if (flip_underline_and_overline_) [[unlikely]] {
+    line_offset = applied_text_decoration_->UnderlineOffset();
+    position = FontVerticalPositionType::TopOfEmHeight;
+  } else {
+    line_offset = Length();
+    position = FontVerticalPositionType::TextTop;
+  }
   const int paint_overline_offset =
       decoration_offset.ComputeUnderlineOffsetForUnder(
           line_offset, TargetStyle().ComputedFontSize(), FontData(),
@@ -673,7 +675,7 @@ gfx::RectF TextDecorationInfo::Bounds() const {
     default:
       break;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return gfx::RectF();
 }
 

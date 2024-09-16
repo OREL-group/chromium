@@ -19,7 +19,6 @@ import android.content.SharedPreferences;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
@@ -28,14 +27,12 @@ import org.robolectric.annotation.Config;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features;
 
 /** Tests for {@link TabGroupTitleUtils}. */
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class TabGroupTitleUtilsUnitTest {
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
-    @Rule public TestRule mProcessor = new Features.JUnitProcessor();
 
     private static final String TAB_GROUP_TITLES_FILE_NAME = "tab_group_titles";
 
@@ -81,5 +78,21 @@ public class TabGroupTitleUtilsUnitTest {
 
         verify(mEditor).putString(eq(String.valueOf(TAB_ID)), eq(TAB_TITLE));
         verify(mPutStringEditor).apply();
+    }
+
+    @Test
+    public void testStoreTabGroupTitle_Empty() {
+        TabGroupTitleUtils.storeTabGroupTitle(TAB_ID, "");
+
+        verify(mEditor).remove(eq(String.valueOf(TAB_ID)));
+        verify(mRemoveEditor).apply();
+    }
+
+    @Test
+    public void testStoreTabGroupTitle_Null() {
+        TabGroupTitleUtils.storeTabGroupTitle(TAB_ID, null);
+
+        verify(mEditor).remove(eq(String.valueOf(TAB_ID)));
+        verify(mRemoveEditor).apply();
     }
 }

@@ -23,7 +23,6 @@
 #include "ash/app_list/views/app_list_view.h"
 #include "ash/app_list/views/contents_view.h"
 #include "ash/app_list/views/search_box_view.h"
-#include "ash/app_list/views/search_notifier_controller.h"
 #include "ash/assistant/assistant_controller_impl.h"
 #include "ash/assistant/model/assistant_ui_model.h"
 #include "ash/assistant/ui/assistant_view_delegate.h"
@@ -44,6 +43,7 @@
 #include "ash/public/cpp/shelf_config.h"
 #include "ash/public/cpp/shelf_types.h"
 #include "ash/public/cpp/shell_window_ids.h"
+#include "ash/public/cpp/wallpaper/wallpaper_controller.h"
 #include "ash/root_window_controller.h"
 #include "ash/screen_util.h"
 #include "ash/session/session_controller_impl.h"
@@ -51,7 +51,6 @@
 #include "ash/shelf/shelf_navigation_widget.h"
 #include "ash/shell.h"
 #include "ash/user_education/welcome_tour/welcome_tour_metrics.h"
-#include "ash/wallpaper/wallpaper_controller_impl.h"
 #include "ash/wm/float/float_controller.h"
 #include "ash/wm/mru_window_tracker.h"
 #include "ash/wm/overview/overview_controller.h"
@@ -258,6 +257,7 @@ void MaybeLogWelcomeTourInteraction(AppListShowSource show_source) {
   if (features::IsWelcomeTourEnabled() &&
       IsAppListShowSourceUserTriggered(show_source)) {
     welcome_tour_metrics::RecordInteraction(
+        GetLastActiveUserPrefService(),
         welcome_tour_metrics::Interaction::kLauncher);
   }
 }
@@ -292,13 +292,13 @@ AppListControllerImpl::AppListControllerImpl()
   OnSessionStateChanged(session_controller->GetSessionState());
 
   Shell* shell = Shell::Get();
-  shell->wallpaper_controller()->AddObserver(this);
+  WallpaperController::Get()->AddObserver(this);
   shell->AddShellObserver(this);
   shell->overview_controller()->AddObserver(this);
   display::Screen::GetScreen()->AddObserver(this);
   keyboard::KeyboardUIController::Get()->AddObserver(this);
   AssistantState::Get()->AddObserver(this);
-  shell->window_tree_host_manager()->AddObserver(this);
+  shell->display_manager()->AddDisplayManagerObserver(this);
   AssistantController::Get()->AddObserver(this);
   AssistantUiController::Get()->GetModel()->AddObserver(this);
   FeatureDiscoveryDurationReporter::GetInstance()->AddObserver(this);
@@ -340,6 +340,15 @@ void AppListControllerImpl::RegisterProfilePrefs(PrefRegistrySimple* registry) {
 
   // The prefs for launcher search controls.
   registry->RegisterDictionaryPref(prefs::kLauncherSearchCategoryControlStatus);
+
+  registry->RegisterTimePref(prefs::kLauncherSearchLastFileScanLogTime,
+                             base::Time());
+
+  // The prefs for apps collections experiment.
+  registry->RegisterIntegerPref(
+      prefs::kLauncherAppsCollectionsExperimentArm,
+      static_cast<int>(
+          AppsCollectionsController::ExperimentalArm::kDefaultValue));
 }
 
 void AppListControllerImpl::SetClient(AppListClient* client) {
@@ -491,7 +500,6 @@ void AppListControllerImpl::OnUserSessionAdded(const AccountId& account_id) {
       Shell::Get()->session_controller()->GetUserPrefServiceForUser(account_id);
   if (features::IsLauncherNudgeSessionResetEnabled()) {
     AppListNudgeController::ResetPrefsForNewUserSession(prefs);
-    SearchNotifierController::ResetPrefsForNewUserSession(prefs);
   }
 }
 
@@ -954,7 +962,7 @@ void AppListControllerImpl::OnAssistantFeatureAllowedChanged(
   UpdateSearchBoxUiVisibilities();
 }
 
-void AppListControllerImpl::OnDisplayConfigurationChanged() {
+void AppListControllerImpl::OnDidApplyDisplayChanges() {
   // Entering tablet mode triggers a display configuration change when we
   // automatically switch to mirror mode. Switching to mirror mode happens
   // asynchronously (see DisplayConfigurationObserver::OnTabletModeStarted()).
@@ -1240,6 +1248,7 @@ void AppListControllerImpl::OpenSearchResult(const std::string& result_id,
       case AppListLaunchedFrom::kLaunchedFromContinueTask:
       case AppListLaunchedFrom::kLaunchedFromQuickAppAccess:
       case AppListLaunchedFrom::kLaunchedFromAppsCollections:
+      case AppListLaunchedFrom::kLaunchedFromDiscoveryChip:
         break;
       case AppListLaunchedFrom::DEPRECATED_kLaunchedFromSuggestionChip:
         NOTREACHED();
@@ -1260,7 +1269,6 @@ void AppListControllerImpl::OpenSearchResult(const std::string& result_id,
           break;
         case AppListLaunchType::kApp:
           NOTREACHED();
-          break;
       }
       break;
     case AppListLaunchedFrom::kLaunchedFromContinueTask:
@@ -1273,8 +1281,8 @@ void AppListControllerImpl::OpenSearchResult(const std::string& result_id,
     case AppListLaunchedFrom::DEPRECATED_kLaunchedFromSuggestionChip:
     case AppListLaunchedFrom::kLaunchedFromQuickAppAccess:
     case AppListLaunchedFrom::kLaunchedFromAppsCollections:
+    case AppListLaunchedFrom::kLaunchedFromDiscoveryChip:
       NOTREACHED();
-      break;
   }
 
   base::RecordAction(base::UserMetricsAction("AppList_OpenSearchResult"));
@@ -1321,7 +1329,8 @@ void AppListControllerImpl::ViewClosing() {
 
 void AppListControllerImpl::ActivateItem(const std::string& id,
                                          int event_flags,
-                                         AppListLaunchedFrom launched_from) {
+                                         AppListLaunchedFrom launched_from,
+                                         bool is_app_above_the_fold) {
   RecordAppLaunched(launched_from);
 
   const bool is_tablet_mode = IsInTabletMode();
@@ -1337,19 +1346,21 @@ void AppListControllerImpl::ActivateItem(const std::string& id,
     case AppListLaunchedFrom::kLaunchedFromQuickAppAccess:
     // Metrics for quick app launch already recorded at RecordApplaunched().
     case AppListLaunchedFrom::kLaunchedFromAppsCollections:
-      // Metrics for apps collections launch recorded by the
-      // AppListViewDelegate.
+    // Metrics for apps collections launch recorded by the
+    // AppListViewDelegate.
+    case AppListLaunchedFrom::kLaunchedFromDiscoveryChip:
+      // Metrics for discovery chip already recorded at RecordApplaunched().
       break;
     case AppListLaunchedFrom::kLaunchedFromContinueTask:
     case AppListLaunchedFrom::kLaunchedFromSearchBox:
     case AppListLaunchedFrom::kLaunchedFromShelf:
     case AppListLaunchedFrom::DEPRECATED_kLaunchedFromSuggestionChip:
       NOTREACHED();
-      break;
   }
 
   if (client_)
-    client_->ActivateItem(profile_id_, id, event_flags, launched_from);
+    client_->ActivateItem(profile_id_, id, event_flags, launched_from,
+                          is_app_above_the_fold);
 
   ResetHomeLauncherIfShown();
 }
@@ -1501,6 +1512,16 @@ void AppListControllerImpl::SetCategoryEnabled(
   ScopedDictPrefUpdate pref_update(prefs,
                                    prefs::kLauncherSearchCategoryControlStatus);
   pref_update->Set(GetAppListControlCategoryName(category), enabled);
+}
+
+void AppListControllerImpl::RecordAppsDefaultVisibility(
+    const std::vector<std::string>& apps_above_the_fold,
+    const std::vector<std::string>& apps_below_the_fold,
+    bool is_apps_collections_page) {
+  if (client_) {
+    client_->RecordAppsDefaultVisibility(
+        apps_above_the_fold, apps_below_the_fold, is_apps_collections_page);
+  }
 }
 
 void AppListControllerImpl::GetAppLaunchedMetricParams(
@@ -1929,13 +1950,13 @@ void AppListControllerImpl::Shutdown() {
   Shell* shell = Shell::Get();
   AssistantController::Get()->RemoveObserver(this);
   AssistantUiController::Get()->GetModel()->RemoveObserver(this);
-  shell->window_tree_host_manager()->RemoveObserver(this);
+  shell->display_manager()->RemoveDisplayManagerObserver(this);
   AssistantState::Get()->RemoveObserver(this);
   keyboard::KeyboardUIController::Get()->RemoveObserver(this);
   display::Screen::GetScreen()->RemoveObserver(this);
   shell->overview_controller()->RemoveObserver(this);
   shell->RemoveShellObserver(this);
-  shell->wallpaper_controller()->RemoveObserver(this);
+  WallpaperController::Get()->RemoveObserver(this);
   shell->session_controller()->RemoveObserver(this);
   FeatureDiscoveryDurationReporter::GetInstance()->RemoveObserver(this);
 

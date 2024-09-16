@@ -8,14 +8,13 @@
 #include <optional>
 #include <string>
 
-#include "ash/constants/ash_features.h"
 #include "base/logging.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/browser/ash/policy/server_backed_state/server_backed_device_state.h"
 #include "components/policy/proto/device_management_backend.pb.h"
 
-// TODO(crbug.com/1271134): Logging as "WARNING" throughout the file to make
+// TODO(crbug.com/40805389): Logging as "WARNING" throughout the file to make
 // sure it's preserved in the logs.
 
 namespace policy {
@@ -278,12 +277,9 @@ class FREStateMessageProcessor : public AutoEnrollmentStateMessageProcessor {
       // Package license is not available during the re-enrollment
       parsed_response.is_license_packaged_with_device.reset();
 
-      if (ash::features::IsAutoEnrollmentKioskInOobeEnabled() &&
-          state_response.has_license_type()) {
+      if (state_response.has_license_type()) {
         parsed_response.license_type = ConvertAutoEnrollmentLicenseType(
             state_response.license_type().license_type());
-      } else {
-        parsed_response.license_type.reset();
       }
 
       LOG(WARNING) << "Received restore_mode=" << restore_mode << " ("

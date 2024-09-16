@@ -17,6 +17,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -325,9 +326,10 @@ class ExtensionWebRequestApiTest : public ExtensionApiTest {
       : ExtensionApiTest(context_type) {
     feature_list_.InitWithFeatures(
         /*enabled_features=*/{},
-        // TODO(crbug.com/1394910): Use HTTPS URLs in tests to avoid having to
+        // TODO(crbug.com/40248833): Use HTTPS URLs in tests to avoid having to
         // disable this feature.
-        /*disabled_features=*/{features::kHttpsUpgrades});
+        /*disabled_features=*/
+        {features::kHttpsUpgrades, features::kHttpsFirstModeIncognito});
   }
   ExtensionWebRequestApiTest(const ExtensionWebRequestApiTest&) = delete;
   ExtensionWebRequestApiTest& operator=(const ExtensionWebRequestApiTest&) =
@@ -475,7 +477,7 @@ INSTANTIATE_TEST_SUITE_P(
 class DevToolsFrontendInWebRequestApiTest : public ExtensionApiTest {
  public:
   DevToolsFrontendInWebRequestApiTest() {
-    // TODO(crbug.com/1394910): Use HTTPS URLs in tests to avoid having to
+    // TODO(crbug.com/40248833): Use HTTPS URLs in tests to avoid having to
     // disable this feature.
     feature_list_.InitAndDisableFeature(features::kHttpsUpgrades);
   }
@@ -788,7 +790,7 @@ IN_PROC_BROWSER_TEST_P(ExtensionDevToolsProtocolTest,
   ASSERT_EQ(*cookie_value, "cookieValue");
 }
 
-// TODO(crbug.com/1177120) The test is flaky on multiple bots.
+// TODO(crbug.com/40168662) The test is flaky on multiple bots.
 IN_PROC_BROWSER_TEST_F(ExtensionWebRequestApiTest, DISABLED_WebRequestTypes) {
   ASSERT_TRUE(StartEmbeddedTestServer());
   ASSERT_TRUE(RunExtensionTest("webrequest/test_types")) << message_;
@@ -998,7 +1000,7 @@ IN_PROC_BROWSER_TEST_P(ExtensionWebRequestApiTestWithContextType,
 // Slower and flaky tests should be isolated in the "slow" group of tests in
 // the JS file. This prevents losing test coverage for those tests that are
 // not causing timeouts and flakes.
-// TODO(https://crbug.com/1453477): Investigate the flakiness across all
+// TODO(crbug.com/40916455): Investigate the flakiness across all
 // platforms and re-enable.
 IN_PROC_BROWSER_TEST_P(ExtensionWebRequestApiTestWithContextType,
                        DISABLED_WebRequestBlockingSlow) {
@@ -1035,8 +1037,8 @@ IN_PROC_BROWSER_TEST_P(ExtensionWebRequestApiTestWithContextType,
       << message_;
 }
 
-// TODO: crbug.com/1450976 - Re-enable tests on Mac and Lacros.
-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_CHROMEOS_LACROS)
+// TODO: crbug.com/1450976 - Re-enable tests on Mac and CrOS.
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_CHROMEOS)
 #define MAYBE_WebRequestCORSWithExtraHeaders \
   DISABLED_WebRequestCORSWithExtraHeaders
 #else
@@ -1121,7 +1123,7 @@ IN_PROC_BROWSER_TEST_P(ExtensionWebRequestApiTestWithContextType,
       << message_;
 }
 
-// TODO(crbug.com/1453477): test is flaky on multiple platforms.
+// TODO(crbug.com/40916455): test is flaky on multiple platforms.
 IN_PROC_BROWSER_TEST_P(ExtensionWebRequestApiTestWithContextType,
                        DISABLED_WebRequestSubresourceRedirects) {
   ASSERT_TRUE(StartEmbeddedTestServer());
@@ -1129,7 +1131,7 @@ IN_PROC_BROWSER_TEST_P(ExtensionWebRequestApiTestWithContextType,
       << message_;
 }
 
-// TODO(crbug.com/1453477): test is flaky on multiple platforms.
+// TODO(crbug.com/40916455): test is flaky on multiple platforms.
 IN_PROC_BROWSER_TEST_P(ExtensionWebRequestApiTestWithContextType,
                        DISABLED_WebRequestSubresourceRedirectsWithExtraHeaders) {
   ASSERT_TRUE(StartEmbeddedTestServer());
@@ -1949,7 +1951,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebRequestApiTest, DISABLED_WebSocketRequest) {
 
 // Test that the webRequest events are dispatched for the WebSocket handshake
 // requests when authenrication is requested by server.
-// TODO(crbug.com/1177120) Re-enable test
+// TODO(crbug.com/40168662) Re-enable test
 IN_PROC_BROWSER_TEST_F(ExtensionWebRequestApiTest,
                        DISABLED_WebSocketRequestAuthRequired) {
   ASSERT_TRUE(StartEmbeddedTestServer());
@@ -2253,9 +2255,9 @@ IN_PROC_BROWSER_TEST_P(ExtensionWebRequestApiTestWithContextType,
       EXPECT_FALSE(initiator_listener.was_satisfied());
     } else {
       ASSERT_TRUE(initiator_listener.was_satisfied());
-      EXPECT_EQ(
-          "http://" + testcase.expected_initiator + ":" + std::to_string(port),
-          initiator_listener.message());
+      EXPECT_EQ("http://" + testcase.expected_initiator + ":" +
+                    base::NumberToString(port),
+                initiator_listener.message());
     }
   }
 }
@@ -2303,7 +2305,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebRequestApiTest,
   ProfileManager* profile_manager = g_browser_process->profile_manager();
   std::unique_ptr<Profile> temp_profile = Profile::CreateProfile(
       profile_manager->user_data_dir().AppendASCII("profile"), nullptr,
-      Profile::CreateMode::CREATE_MODE_SYNCHRONOUS);
+      Profile::CreateMode::kSynchronous);
   // Create a WebRequestAPI instance that we can control the lifetime of.
   auto api = std::make_unique<WebRequestAPI>(temp_profile.get());
   // Make sure we are proxying for |temp_profile|.
@@ -5190,7 +5192,7 @@ class RedirectInfoWebRequestApiTest
       public ExtensionApiTest {
  public:
   RedirectInfoWebRequestApiTest() : ExtensionApiTest(GetParam().context_type) {
-    // TODO(crbug.com/1394910): Use HTTPS URLs in tests to avoid having to
+    // TODO(crbug.com/40248833): Use HTTPS URLs in tests to avoid having to
     // disable this feature.
     feature_list_.InitAndDisableFeature(features::kHttpsUpgrades);
   }
@@ -5772,8 +5774,8 @@ class ManifestV3WebRequestApiTest : public ExtensionWebRequestApiTest {
     ExtensionTestMessageListener listener("ready");
     // Since we may programmatically stop the worker, we also need to wait for
     // the registration to be fully stored.
-    service_worker_test_utils::TestRegistrationObserver registration_observer(
-        profile());
+    service_worker_test_utils::TestServiceWorkerContextObserver
+        registration_observer(profile());
     base::FilePath packed_path = test_dir.Pack();
     const Extension* extension = InstallExtension(
         packed_path, 1, mojom::ManifestLocation::kExternalPolicyDownload);
@@ -6976,7 +6978,7 @@ IN_PROC_BROWSER_TEST_F(ManifestV3WebRequestApiTest, RecordUkmOnNavigation) {
           ukm_entry, "DeclarativeWebRequestPermissionCount",
           ukm::GetExponentialBucketMin(1u, kBucketSpacing));
     } else {
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
     }
   }
 }

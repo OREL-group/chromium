@@ -14,8 +14,6 @@
 
 namespace features {
 
-// Keep sorted!
-
 COMPONENT_EXPORT(UI_BASE_FEATURES)
 BASE_DECLARE_FEATURE(kExperimentalFlingAnimation);
 COMPONENT_EXPORT(UI_BASE_FEATURES) BASE_DECLARE_FEATURE(kFocusFollowsCursor);
@@ -34,6 +32,11 @@ COMPONENT_EXPORT(UI_BASE_FEATURES)
 BASE_DECLARE_FEATURE(kUiCompositorScrollWithLayers);
 
 COMPONENT_EXPORT(UI_BASE_FEATURES) bool IsUiGpuRasterizationEnabled();
+
+#if BUILDFLAG(IS_ANDROID)
+COMPONENT_EXPORT(UI_BASE_FEATURES) BASE_DECLARE_FEATURE(kClipboardFiles);
+COMPONENT_EXPORT(UI_BASE_FEATURES) BASE_DECLARE_FEATURE(kDragDropFiles);
+#endif  // BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_ANDROID)
 COMPONENT_EXPORT(UI_BASE_FEATURES) BASE_DECLARE_FEATURE(kElasticOverscroll);
@@ -100,11 +103,6 @@ COMPONENT_EXPORT(UI_BASE_FEATURES)
 BASE_DECLARE_FEATURE(kKeyboardAccessibleTooltip);
 COMPONENT_EXPORT(UI_BASE_FEATURES) bool IsKeyboardAccessibleTooltipEnabled();
 
-// Used to enable gesture changes for notifications.
-COMPONENT_EXPORT(UI_BASE_FEATURES)
-BASE_DECLARE_FEATURE(kNotificationGesturesUpdate);
-COMPONENT_EXPORT(UI_BASE_FEATURES) bool IsNotificationGesturesUpdateEnabled();
-
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 COMPONENT_EXPORT(UI_BASE_FEATURES) BASE_DECLARE_FEATURE(kDeprecateAltClick);
 
@@ -135,7 +133,18 @@ COMPONENT_EXPORT(UI_BASE_FEATURES) bool AreF11AndF12ShortcutsEnabled();
 #if BUILDFLAG(IS_OZONE)
 COMPONENT_EXPORT(UI_BASE_FEATURES)
 BASE_DECLARE_FEATURE(kOzoneBubblesUsePlatformWidgets);
+
+COMPONENT_EXPORT(UI_BASE_FEATURES)
+BASE_DECLARE_FEATURE(kWaylandPerSurfaceScale);
+
+COMPONENT_EXPORT(UI_BASE_FEATURES)
+BASE_DECLARE_FEATURE(kWaylandTextInputV3);
 #endif  // BUILDFLAG(IS_OZONE)
+
+#if BUILDFLAG(IS_LINUX)
+COMPONENT_EXPORT(UI_BASE_FEATURES)
+BASE_DECLARE_FEATURE(kOverrideDefaultOzonePlatformHintToAuto);
+#endif  // BUILDFLAG(IS_LINUX)
 
 // Indicates whether DrmOverlayManager should used the synchronous API to
 // perform pageflip tests.
@@ -196,22 +205,15 @@ COMPONENT_EXPORT(UI_BASE_FEATURES) bool IsRawDrawUsingMSAA();
 
 COMPONENT_EXPORT(UI_BASE_FEATURES) BASE_DECLARE_FEATURE(kStylusSpecificTapSlop);
 
-// This feature indicates that this device is approved for utilizing variable
-// refresh rates. This flag is added by cros-config and not exposed in the
-// chrome://flags UI.
-COMPONENT_EXPORT(UI_BASE_FEATURES)
-BASE_DECLARE_FEATURE(kVariableRefreshRateAvailable);
-// Enables the variable refresh rate feature for Borealis gaming only. If this
-// flag is set by Finch, it requires the availability flag to also be true. If
-// this flag is overridden by the user, then the availability flag is ignored.
-COMPONENT_EXPORT(UI_BASE_FEATURES)
-BASE_DECLARE_FEATURE(kEnableVariableRefreshRate);
 // This feature indicates that this device should have variable refresh rates
 // enabled by default if available. This overrides the default value of
-// |kEnableVariableRefreshRate|. This flag is added by USE and not exposed in
-// the chrome://flags UI.
+// |kEnableVariableRefreshRate|. This flag is added by cros-config and not
+// exposed in the chrome://flags UI.
 COMPONENT_EXPORT(UI_BASE_FEATURES)
-BASE_DECLARE_FEATURE(kVariableRefreshRateDefaultEnabled);
+BASE_DECLARE_FEATURE(kVariableRefreshRateAvailable);
+// Enables the variable refresh rate feature for Borealis gaming only.
+COMPONENT_EXPORT(UI_BASE_FEATURES)
+BASE_DECLARE_FEATURE(kEnableVariableRefreshRate);
 COMPONENT_EXPORT(UI_BASE_FEATURES) bool IsVariableRefreshRateEnabled();
 // Enables the variable refresh rate feature at all times.
 COMPONENT_EXPORT(UI_BASE_FEATURES)
@@ -221,76 +223,6 @@ COMPONENT_EXPORT(UI_BASE_FEATURES) bool IsVariableRefreshRateAlwaysOn();
 COMPONENT_EXPORT(UI_BASE_FEATURES) BASE_DECLARE_FEATURE(kLacrosColorManagement);
 COMPONENT_EXPORT(UI_BASE_FEATURES)
 bool IsLacrosColorManagementEnabled();
-
-// If enabled, Customize Chrome will be an option in the Unified Side Panel
-// when on the New Tab Page.
-COMPONENT_EXPORT(UI_BASE_FEATURES)
-BASE_DECLARE_FEATURE(kCustomizeChromeSidePanel);
-
-// If both kCustomizeChromeSidePanelNoChromeRefresh2023 and
-// kCustomizeChromeSidePanel are enabled, Customize Chrome will be an option in
-// the Unified Side Panel when on the New Tab Page but Chrome Refresh 2023 will
-// be disabled. This state is useful in the Customize Chrome holdback
-// experiment.
-COMPONENT_EXPORT(UI_BASE_FEATURES)
-BASE_DECLARE_FEATURE(kCustomizeChromeSidePanelNoChromeRefresh2023);
-
-// Returns true if Customize Chrome is configured such that it supports Chrome
-// Refresh 2023.
-COMPONENT_EXPORT(UI_BASE_FEATURES)
-bool CustomizeChromeSupportsChromeRefresh2023();
-
-// Exposed for testing and flags integration. For actual checks please use
-// IsChromeRefresh2023().
-COMPONENT_EXPORT(UI_BASE_FEATURES) BASE_DECLARE_FEATURE(kChromeRefresh2023);
-COMPONENT_EXPORT(UI_BASE_FEATURES)
-BASE_DECLARE_FEATURE(kChromeRefreshSecondary2023);
-
-enum class ChromeRefresh2023NTBVariation {
-  kGM2Full = 0,
-  kGM3OldIconNoBackground = 1,
-  kGM3OldIconWithBackground = 2,
-  kGM3NewIconNoBackground = 3,
-  kGM3NewIconWithBackground = 4,
-  kNoChoice = 5,
-};
-COMPONENT_EXPORT(UI_BASE_FEATURES) BASE_DECLARE_FEATURE(kChromeRefresh2023NTB);
-COMPONENT_EXPORT(UI_BASE_FEATURES)
-extern const char kChromeRefresh2023NTBVariationKey[];
-COMPONENT_EXPORT(UI_BASE_FEATURES)
-ChromeRefresh2023NTBVariation GetChromeRefresh2023NTB();
-
-COMPONENT_EXPORT(UI_BASE_FEATURES)
-BASE_DECLARE_FEATURE(kChromeRefresh2023TopChromeFont);
-
-COMPONENT_EXPORT(UI_BASE_FEATURES) bool IsChromeRefresh2023();
-
-// Exposed for testing and flags integration. For actual checks please use
-// IsChromeWebuiRefresh2023().
-COMPONENT_EXPORT(UI_BASE_FEATURES) BASE_DECLARE_FEATURE(kChromeRefresh2023);
-COMPONENT_EXPORT(UI_BASE_FEATURES)
-BASE_DECLARE_FEATURE(kChromeWebuiRefresh2023);
-
-COMPONENT_EXPORT(UI_BASE_FEATURES) bool IsChromeWebuiRefresh2023();
-
-// If you are not Omnibox developer, you don't need to query CR2023 level.
-// Otherwise, please ensure that Omnibox features are guarded by an OR; enabling
-// either CR2023 Level2 or the feature-specific features should enable them
-// respectively.
-enum class ChromeRefresh2023Level {
-  // ChromeRefresh2023 is disabled.
-  kDisabled = 0,
-  // Enables ChromeRefresh2023 without Omnibox changes.
-  // Omnibox features can still be independently enabled by feature-specific
-  // Features.
-  kLevel1 = 1,
-  // Enables ChromeRefresh2023 with full Omnibox changes.
-  // Omnibox feature-specific features can be enabled on top of Level2 to gain
-  // additional control using their FeatureParams.
-  kLevel2 = 2,
-};
-COMPONENT_EXPORT(UI_BASE_FEATURES)
-ChromeRefresh2023Level GetChromeRefresh2023Level();
 
 COMPONENT_EXPORT(UI_BASE_FEATURES)
 BASE_DECLARE_FEATURE(kBubbleMetricsApi);
@@ -310,7 +242,25 @@ BASE_DECLARE_FEATURE(kCr2023MacFontSmoothing);
 // If not set, these values fall back to the pre-defined Skia defaults.
 COMPONENT_EXPORT(UI_BASE_FEATURES)
 BASE_DECLARE_FEATURE(kUseGammaContrastRegistrySettings);
+
+// Increases the contrast of text to align more closely with contemporary
+// applications.
+COMPONENT_EXPORT(UI_BASE_FEATURES)
+BASE_DECLARE_FEATURE(kIncreaseWindowsTextContrast);
 #endif  // BUILDFLAG(IS_WIN)
+
+COMPONENT_EXPORT(UI_BASE_FEATURES)
+BASE_DECLARE_FEATURE(kBubbleFrameViewTitleIsHeading);
+
+COMPONENT_EXPORT(UI_BASE_FEATURES)
+BASE_DECLARE_FEATURE(kEnableGestureBeginEndTypes);
+
+// Use the UTF-8 encoding for SVG images instead of UTF-16.
+COMPONENT_EXPORT(UI_BASE_FEATURES)
+BASE_DECLARE_FEATURE(kUseUtf8EncodingForSvgImage);
+
+COMPONENT_EXPORT(UI_BASE_FEATURES)
+BASE_DECLARE_FEATURE(kAsyncFullscreenWindowState);
 
 }  // namespace features
 

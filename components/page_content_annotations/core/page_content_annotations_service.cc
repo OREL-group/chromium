@@ -4,6 +4,7 @@
 
 #include "components/page_content_annotations/core/page_content_annotations_service.h"
 
+#include <iterator>
 #include <utility>
 
 #include "base/barrier_closure.h"
@@ -20,8 +21,7 @@
 #include "components/history/core/browser/history_service.h"
 #include "components/history/core/browser/history_types.h"
 #include "components/leveldb_proto/public/proto_database_provider.h"
-#include "components/omnibox/browser/autocomplete_input.h"
-#include "components/omnibox/browser/search_suggestion_parser.h"
+#include "components/omnibox/common/zero_suggest_cache_service_interface.h"
 #include "components/optimization_guide/core/noisy_metrics_recorder.h"
 #include "components/optimization_guide/core/optimization_guide_decider.h"
 #include "components/optimization_guide/core/optimization_guide_enums.h"
@@ -172,21 +172,19 @@ std::string GetCanonicalSearchURL(const GURL& url,
 }  // namespace
 
 PageContentAnnotationsService::PageContentAnnotationsService(
-    std::unique_ptr<AutocompleteProviderClient> autocomplete_provider_client,
     const std::string& application_locale,
     const std::string& country_code,
     optimization_guide::OptimizationGuideModelProvider*
         optimization_guide_model_provider,
     history::HistoryService* history_service,
     TemplateURLService* template_url_service,
-    ZeroSuggestCacheService* zero_suggest_cache_service,
+    ZeroSuggestCacheServiceInterface* zero_suggest_cache_service,
     leveldb_proto::ProtoDatabaseProvider* database_provider,
     const base::FilePath& database_dir,
     OptimizationGuideLogger* optimization_guide_logger,
     optimization_guide::OptimizationGuideDecider* optimization_guide_decider,
     scoped_refptr<base::SequencedTaskRunner> background_task_runner)
-    : autocomplete_provider_client_(std::move(autocomplete_provider_client)),
-      min_page_category_score_to_persist_(
+    : min_page_category_score_to_persist_(
           features::GetMinimumPageCategoryScoreToPersist()),
       history_service_(history_service),
       template_url_service_(template_url_service),
@@ -202,7 +200,7 @@ PageContentAnnotationsService::PageContentAnnotationsService(
   DCHECK(optimization_guide_model_provider);
   DCHECK(history_service_);
   history_service_observation_.Observe(history_service_);
-  if (zero_suggest_cache_service_) {
+  if (ShouldExtractRelatedSearchesFromZPSCache()) {
     zero_suggest_cache_service_observation_.Observe(
         zero_suggest_cache_service_);
   }
@@ -275,7 +273,7 @@ void PageContentAnnotationsService::Annotate(const HistoryVisit& visit) {
                << "URL: " << visit.url << "\n"
                << "Text: " << visit.text_to_annotate.value_or(std::string());
   }
-  visits_to_annotate_.emplace_back(visit);
+  visits_to_annotate_.insert(visit);
 
   base::UmaHistogramBoolean(
       "OptimizationGuide.PageContentAnnotations.AnnotateVisitResultCached",
@@ -306,19 +304,40 @@ bool PageContentAnnotationsService::MaybeStartAnnotateVisitBatch() {
   bool batch_already_running = !current_visit_annotation_batch_.empty();
 
   if (is_full_batch_available && !batch_already_running) {
-    // Used for testing.
-    LOCAL_HISTOGRAM_BOOLEAN(
-        "PageContentAnnotations.AnnotateVisit.BatchAnnotationStarted", true);
-    current_visit_annotation_batch_ = std::move(visits_to_annotate_);
     AnnotateVisitBatch();
-
     return true;
+  }
+
+  // When the batch limit is set greater than 1, and if the visits count less
+  // than the limit, these are annotated after the timeout instead of never
+  // reaching the batch size and visits left unannotated.
+  if (visits_to_annotate_.size() > 0 && !batch_already_running &&
+      batch_annotations_start_timer_.callback().is_null()) {
+    batch_annotations_start_timer_.Reset(
+        base::BindOnce(&PageContentAnnotationsService::AnnotateVisitBatch,
+                       weak_ptr_factory_.GetWeakPtr()));
+    base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
+        FROM_HERE, batch_annotations_start_timer_.callback(),
+        features::PageContentAnnotationBatchSizeTimeoutDuration());
   }
   return false;
 }
 
 void PageContentAnnotationsService::AnnotateVisitBatch() {
-  DCHECK(!current_visit_annotation_batch_.empty());
+  DCHECK(!visits_to_annotate_.empty());
+  DCHECK(current_visit_annotation_batch_.empty());
+
+  // Cancel any pending timers.
+  batch_annotations_start_timer_.Cancel();
+
+  current_visit_annotation_batch_.assign(
+      std::move_iterator(visits_to_annotate_.begin()),
+      std::make_move_iterator(visits_to_annotate_.end()));
+  visits_to_annotate_.clear();
+
+  // Used for testing.
+  LOCAL_HISTOGRAM_BOOLEAN(
+      "PageContentAnnotations.AnnotateVisit.BatchAnnotationStarted", true);
 
   std::vector<std::string> inputs;
   for (const HistoryVisit& visit : current_visit_annotation_batch_) {
@@ -512,34 +531,28 @@ void PageContentAnnotationsService::OnPageContentAnnotated(
 bool PageContentAnnotationsService::ShouldExtractRelatedSearchesFromZPSCache() {
   return base::FeatureList::IsEnabled(
              features::kExtractRelatedSearchesFromPrefetchedZPSResponse) &&
-         autocomplete_provider_client_ &&
          search::DefaultSearchProviderIsGoogle(template_url_service_) &&
          zero_suggest_cache_service_;
 }
 
 void PageContentAnnotationsService::OnZeroSuggestResponseUpdated(
     const std::string& page_url,
-    const ZeroSuggestCacheService::CacheEntry& response) {
-  if (!ShouldExtractRelatedSearchesFromZPSCache()) {
-    return;
-  }
-
+    const ZeroSuggestCacheServiceInterface::CacheEntry& response) {
   if (page_url.empty() || !google_util::IsGoogleSearchUrl(GURL(page_url))) {
     return;
   }
 
-  AutocompleteInput input(u"", metrics::OmniboxEventProto::JOURNEYS,
-                          autocomplete_provider_client_->GetSchemeClassifier());
-  const auto suggest_results =
-      response.GetSuggestResults(input, *autocomplete_provider_client_);
+  const std::vector<ZeroSuggestCacheServiceInterface::CacheEntrySuggestResult>
+      suggest_results =
+          zero_suggest_cache_service_->GetSuggestResults(response);
 
   std::vector<std::string> related_searches;
   for (const auto& result : suggest_results) {
-    const auto subtypes = result.subtypes();
     // Suggestions with HIVEMIND subtype are considered "related searches".
-    if (base::Contains(subtypes, omnibox::SuggestSubtype::SUBTYPE_HIVEMIND)) {
-      related_searches.push_back(base::UTF16ToUTF8(
-          base::CollapseWhitespace(result.suggestion(), true)));
+    if (base::Contains(result.subtypes,
+                       omnibox::SuggestSubtype::SUBTYPE_HIVEMIND)) {
+      related_searches.push_back(
+          base::UTF16ToUTF8(base::CollapseWhitespace(result.suggestion, true)));
     }
   }
 
@@ -693,6 +706,7 @@ void PageContentAnnotationsService::OnURLVisitedWithNavigationId(
 
   // By default, annotate the title.
   HistoryVisit history_visit(visit_row.visit_id);
+  history_visit.nav_entry_timestamp = visit_row.visit_time;
   history_visit.text_to_annotate = base::UTF16ToUTF8(url_row.title());
   history_visit.url = url_row.url();
   if (local_navigation_id) {
@@ -900,7 +914,7 @@ void PageContentAnnotationsService::OnOptimizationGuideResponseReceived(
       break;
     }
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 }
 

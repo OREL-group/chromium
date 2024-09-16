@@ -8,12 +8,16 @@
 
 namespace ui {
 
-AXUpdatesAndEvents::AXUpdatesAndEvents() : ax_tree_id(ui::AXTreeIDUnknown()) {}
+AXUpdatesAndEvents::AXUpdatesAndEvents() : ax_tree_id(AXTreeIDUnknown()) {}
 
-AXUpdatesAndEvents::~AXUpdatesAndEvents() {}
+AXUpdatesAndEvents::AXUpdatesAndEvents(AXUpdatesAndEvents&& other) = default;
+AXUpdatesAndEvents& AXUpdatesAndEvents::operator=(AXUpdatesAndEvents&& other) =
+    default;
+
+AXUpdatesAndEvents::~AXUpdatesAndEvents() = default;
 
 AXLocationChanges::AXLocationChanges()
-    : id(-1), ax_tree_id(ui::AXTreeIDUnknown()) {}
+    : id(-1), ax_tree_id(AXTreeIDUnknown()) {}
 
 AXLocationChanges::AXLocationChanges(const AXLocationChanges& other) = default;
 

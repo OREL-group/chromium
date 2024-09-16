@@ -45,7 +45,7 @@ class WaylandSurface;
 // dragging). Wayland Drag and Drop protocol is used, under the hood, to keep
 // track of cursor location and surface focus.
 //
-// TODO(crbug.com/896640): Use drag icon to emulate window moving.
+// TODO(crbug.com/40598679): Use drag icon to emulate window moving.
 class WaylandWindowDragController : public WaylandDataDevice::DragDelegate,
                                     public WaylandDataSource::Delegate,
                                     public PlatformEventDispatcher,
@@ -82,12 +82,14 @@ class WaylandWindowDragController : public WaylandDataDevice::DragDelegate,
   bool Drag(WaylandToplevelWindow* window, const gfx::Vector2d& offset);
   void StopDragging();
 
-  State state() const { return state_; }
-
-  void OnToplevelWindowCreated(WaylandToplevelWindow* window);
+  // Returns true if there is an in-progress drag session owned by the window
+  // drag controller.
+  bool IsDragInProgress() const;
 
   // Tells if "extended drag" extension is available.
   bool IsExtendedDragAvailable() const;
+  // Tells if "xdg toplevel drag" extension is available.
+  bool IsXdgToplevelDragAvailable() const;
 
   // Returns true if there there is currently an active drag-and-drop session.
   // This is true if the `data_source_` exists (the session ends when this is
@@ -114,9 +116,13 @@ class WaylandWindowDragController : public WaylandDataDevice::DragDelegate,
 
   const gfx::Vector2d& drag_offset_for_testing() const { return drag_offset_; }
 
+  bool has_received_enter_for_testing() const { return has_received_enter_; }
+
  private:
   class ExtendedDragSource;
+  class XdgToplevelDrag;
 
+  friend class WaylandWindowDragControllerTest;
   FRIEND_TEST_ALL_PREFIXES(WaylandWindowDragControllerTest,
                            HandleDraggedWindowDestructionAfterMoveLoop);
   FRIEND_TEST_ALL_PREFIXES(WaylandWindowDragControllerTest,
@@ -201,6 +207,7 @@ class WaylandWindowDragController : public WaylandDataDevice::DragDelegate,
   std::unique_ptr<WaylandDataOffer> data_offer_;
 
   std::unique_ptr<ExtendedDragSource> extended_drag_source_;
+  std::unique_ptr<XdgToplevelDrag> xdg_toplevel_drag_;
 
   // The current toplevel window being dragged, when in detached mode.
   raw_ptr<WaylandToplevelWindow> dragged_window_ = nullptr;
@@ -219,6 +226,9 @@ class WaylandWindowDragController : public WaylandDataDevice::DragDelegate,
   // happens, |origin_surface_| takes ownership of its surface and ensure it
   // is kept alive until the end of the session.
   std::unique_ptr<WaylandSurface> origin_surface_;
+
+  // In outgoing sessions, tracks if any drag enter has already been received.
+  bool has_received_enter_ = false;
 
   std::unique_ptr<ScopedEventDispatcher> nested_dispatcher_;
   base::OnceClosure quit_loop_closure_;

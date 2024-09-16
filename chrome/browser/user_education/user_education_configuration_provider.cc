@@ -96,12 +96,13 @@ bool UserEducationConfigurationProvider::MaybeProvideFeatureConfiguration(
 
     case user_education::FeaturePromoSpecification::PromoType::kToast:
     case user_education::FeaturePromoSpecification::PromoType::kLegacy:
-      // Toasts can always show and do not impact other IPH.
+    case user_education::FeaturePromoSpecification::PromoType::kRotating:
+      // Toasts and rotating promos can always show and do not impact other IPH.
       break;
 
     case user_education::FeaturePromoSpecification::PromoType::kUnspecified:
       // Should never get here.
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 
   // All IPH block all other IPH.

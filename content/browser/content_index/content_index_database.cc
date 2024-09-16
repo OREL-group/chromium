@@ -21,7 +21,7 @@
 #include "url/gurl.h"
 #include "url/origin.h"
 
-// TODO(crbug.com/973844): Move image utility functions to common library.
+// TODO(crbug.com/40631965): Move image utility functions to common library.
 using content::background_fetch::DeserializeIcon;
 using content::background_fetch::SerializeIcon;
 
@@ -148,7 +148,7 @@ void ContentIndexDatabase::AddEntry(
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (blocked_origins_.count(origin)) {
-    // TODO(crbug.com/973844): Does this need a more specific error?
+    // TODO(crbug.com/40631965): Does this need a more specific error?
     std::move(callback).Run(blink::mojom::ContentIndexError::STORAGE_ERROR);
     return;
   }
@@ -613,12 +613,13 @@ void ContentIndexDatabase::BlockOrigin(const url::Origin& origin) {
 
 void ContentIndexDatabase::UnblockOrigin(const url::Origin& origin) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK(blocked_origins_.count(origin));
   auto it = blocked_origins_.find(origin);
-  if (it->second == 1)
+  CHECK(it != blocked_origins_.end());
+  if (it->second == 1) {
     blocked_origins_.erase(it);
-  else
+  } else {
     it->second--;
+  }
 }
 
 void ContentIndexDatabase::Shutdown() {

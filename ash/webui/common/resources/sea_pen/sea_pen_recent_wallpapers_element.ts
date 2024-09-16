@@ -22,13 +22,15 @@ import {Url} from 'chrome://resources/mojo/url/mojom/url.mojom-webui.js';
 import {afterNextRender} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {SeaPenImageId} from './constants.js';
+import {isSeaPenTextInputEnabled} from './load_time_booleans.js';
 import {RecentSeaPenThumbnailData, SeaPenThumbnail} from './sea_pen.mojom-webui.js';
-import {deleteRecentSeaPenImage, fetchRecentSeaPenData, selectRecentSeaPenImage} from './sea_pen_controller.js';
+import {deleteRecentSeaPenImage, fetchRecentSeaPenData, getSeaPenThumbnails, selectRecentSeaPenImage} from './sea_pen_controller.js';
 import {getSeaPenProvider} from './sea_pen_interface_provider.js';
 import {logRecentImageActionMenuItemClick, RecentImageActionMenuItem} from './sea_pen_metrics_logger.js';
 import {getTemplate} from './sea_pen_recent_wallpapers_element.html.js';
+import {SeaPenRouterElement} from './sea_pen_router_element.js';
 import {WithSeaPenStore} from './sea_pen_store.js';
-import {isImageDataUrl, isNonEmptyArray, isPersonalizationApp, isSeaPenImageId} from './sea_pen_utils.js';
+import {getUserVisibleQuery, isActiveSeaPenQuery, isImageDataUrl, isNonEmptyArray, isPersonalizationApp, isSeaPenImageId} from './sea_pen_utils.js';
 
 export class SeaPenRecentImageDeleteEvent extends CustomEvent<null> {
   static readonly EVENT_NAME = 'sea-pen-recent-image-delete';
@@ -82,6 +84,13 @@ export class SeaPenRecentWallpapersElement extends WithSeaPenStore {
       currentSelected_: Number,
 
       pendingSelected_: Object,
+
+      isSeaPenTextInputEnabled_: {
+        type: Boolean,
+        value() {
+          return isSeaPenTextInputEnabled();
+        },
+      },
     };
   }
 
@@ -93,6 +102,7 @@ export class SeaPenRecentWallpapersElement extends WithSeaPenStore {
   private currentShowWallpaperInfoDialog_: number|null;
   private currentSelected_: SeaPenImageId|null;
   private pendingSelected_: SeaPenImageId|SeaPenThumbnail|null;
+  private isSeaPenTextInputEnabled_: boolean;
 
   static get observers() {
     return ['onRecentImageLoaded_(recentImageData_, recentImageDataLoading_)'];
@@ -188,13 +198,13 @@ export class SeaPenRecentWallpapersElement extends WithSeaPenStore {
     }
 
     const data = recentImageData[recentImage];
-    if (!data || !data.imageInfo || !data.imageInfo.userVisibleQuery) {
+    if (!data || !data.imageInfo || !data.imageInfo.query) {
       return null;
     }
 
     const title = isPersonalizationApp() ? 'seaPenAboutDialogPrompt' :
                                            'vcBackgroundAboutDialogPrompt';
-    return this.i18n(title, data.imageInfo.userVisibleQuery.text);
+    return this.i18n(title, getUserVisibleQuery(data.imageInfo.query));
   }
 
   private getWallpaperInfoDateMessage_(
@@ -236,11 +246,11 @@ export class SeaPenRecentWallpapersElement extends WithSeaPenStore {
     }
 
     const data = recentImageData[image];
-    if (!data || !data.imageInfo || !data.imageInfo.userVisibleQuery) {
+    if (!data || !data.imageInfo || !data.imageInfo.query) {
       return '';
     }
 
-    return data.imageInfo.userVisibleQuery.text;
+    return getUserVisibleQuery(data.imageInfo.query);
   }
 
   private getAriaIndex_(i: number): number {
@@ -261,7 +271,12 @@ export class SeaPenRecentWallpapersElement extends WithSeaPenStore {
 
     if (pendingSelected !== null) {
       // User just clicked on a recent image.
-      return id === pendingSelected;
+      if (isSeaPenImageId(pendingSelected)) {
+        return id === pendingSelected;
+      } else {
+        // |pendingSelected| is a SeaPenThumbnail.
+        return id === pendingSelected.id;
+      }
     }
 
     return id === currentSelected;
@@ -301,9 +316,31 @@ export class SeaPenRecentWallpapersElement extends WithSeaPenStore {
     }
   }
 
-  private onClickMoreLikeThis_() {
-    logRecentImageActionMenuItemClick(RecentImageActionMenuItem.CREATE_MORE);
-    // TODO(b/304581483): make "More like this" button functional.
+  private onClickCreateMore_(event: Event&{
+    model: {index: number, image: SeaPenImageId},
+  }) {
+    assert(
+        isSeaPenImageId(event.model.image),
+        'selected Sea Pen image is a positive number');
+    const image = event.model.image;
+    if (!image ||
+        this.isRecentImageLoading_(image, this.recentImageDataLoading_)) {
+      return;
+    }
+
+    const seaPenQuery = this.recentImageData_[image]?.imageInfo?.query;
+    if (!seaPenQuery) {
+      return;
+    }
+
+    const templateId =
+        seaPenQuery.textQuery ? 'Query' : seaPenQuery.templateQuery?.id;
+    // Log metrics for 'Create More' button click.
+    logRecentImageActionMenuItemClick(
+        !!seaPenQuery.textQuery, RecentImageActionMenuItem.CREATE_MORE);
+    // Route to the results page and search thumbnails for the Sea Pen query.
+    SeaPenRouterElement.instance().selectSeaPenTemplate(templateId);
+    getSeaPenThumbnails(seaPenQuery, getSeaPenProvider(), this.getStore());
   }
 
   private async onClickDeleteWallpaper_(event: Event&{
@@ -320,7 +357,12 @@ export class SeaPenRecentWallpapersElement extends WithSeaPenStore {
 
     await deleteRecentSeaPenImage(
         event.model.image, getSeaPenProvider(), this.getStore());
-    logRecentImageActionMenuItemClick(RecentImageActionMenuItem.DELETE);
+
+    // Log metrics for 'Delete' button click.
+    const isTextQuery =
+        !!this.recentImageData_[event.model.image]?.imageInfo?.query?.textQuery;
+    logRecentImageActionMenuItemClick(
+        isTextQuery, RecentImageActionMenuItem.DELETE);
     this.closeAllActionMenus_();
 
     // If the deleted image is the last image or the only image in recent
@@ -347,13 +389,15 @@ export class SeaPenRecentWallpapersElement extends WithSeaPenStore {
     });
   }
 
-  private onClickWallpaperInfo_(e: Event) {
-    const eventTarget = e.currentTarget as HTMLElement;
-    const id = eventTarget.dataset['id'];
-    if (id !== undefined) {
-      this.currentShowWallpaperInfoDialog_ = parseInt(id, 10);
-    }
-    logRecentImageActionMenuItemClick(RecentImageActionMenuItem.ABOUT);
+  private onClickWallpaperInfo_(event: Event&{
+    model: {index: number, image: SeaPenImageId},
+  }) {
+    this.currentShowWallpaperInfoDialog_ = event.model.index;
+    // Log metrics for 'About' button click.
+    const isTextQuery =
+        !!this.recentImageData_[event.model.image]?.imageInfo?.query?.textQuery;
+    logRecentImageActionMenuItemClick(
+        isTextQuery, RecentImageActionMenuItem.ABOUT);
     this.closeAllActionMenus_();
   }
 
@@ -362,6 +406,19 @@ export class SeaPenRecentWallpapersElement extends WithSeaPenStore {
     menuElements.forEach(menuElement => {
       menuElement.close();
     });
+  }
+
+  private shouldShowCreateMoreButton_(
+      recentImage: SeaPenImageId,
+      recentImageData: Record<SeaPenImageId, RecentSeaPenThumbnailData|null>,
+      recentImageDataLoading: Record<SeaPenImageId, boolean>): boolean {
+    if (!this.isSeaPenTextInputEnabled_ || !recentImage ||
+        this.isRecentImageLoading_(recentImage, recentImageDataLoading)) {
+      return false;
+    }
+
+    const data = recentImageData[recentImage];
+    return isActiveSeaPenQuery(data?.imageInfo?.query);
   }
 
   private shouldShowWallpaperInfoButton_(
@@ -375,7 +432,7 @@ export class SeaPenRecentWallpapersElement extends WithSeaPenStore {
 
     const data = recentImageData[recentImage];
     return !!data && !!data.imageInfo && !!data.imageInfo.creationTime &&
-        !!data.imageInfo.userVisibleQuery;
+        !!data.imageInfo.query;
   }
 
   private shouldShowWallpaperInfoDialog_(

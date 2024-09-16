@@ -2,23 +2,26 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import '../strings.m.js';
+import '/lens/shared/searchbox_shared_style.css.js';
 import 'chrome://resources/cr_elements/cr_icons.css.js';
 import 'chrome://resources/cr_elements/cr_shared_style.css.js';
 import 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
+import '//resources/cr_components/searchbox/searchbox.js';
 
+import {ColorChangeUpdater} from '//resources/cr_components/color_change_listener/colors_css_updater.js';
+import {loadTimeData} from '//resources/js/load_time_data.js';
 import {PolymerElement} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 import {skColorToRgba} from 'chrome://resources/js/color_utils.js';
 
-import type {Theme} from './search_bubble.mojom-webui.js';
+import type {SearchboxTheme} from './search_bubble.mojom-webui.js';
 import {getTemplate} from './search_bubble_app.html.js';
 import {SearchBubbleProxyImpl} from './search_bubble_proxy.js';
 import type {SearchBubbleProxy} from './search_bubble_proxy.js';
 
 export class SearchBubbleAppElement extends PolymerElement {
-  singleColored: boolean;
   private setThemeListenerId_: number|null = null;
-  private logoColor_: string;
-  private theme_: Theme;
+  private theme_: SearchboxTheme;
 
   static get is() {
     return 'search-bubble-app';
@@ -30,31 +33,33 @@ export class SearchBubbleAppElement extends PolymerElement {
 
   static get properties() {
     return {
-      logoColor_: {
-        computed: 'computeLogoColor_(theme_)',
-        type: String,
-      },
-      singleColored: {
-        reflectToAttribute: true,
-        type: Boolean,
-        value: false,
-      },
       theme_: {
         observer: 'onThemeChange_',
         type: Object,
       },
+      darkMode: {
+        type: Boolean,
+        value: () => loadTimeData.getBoolean('darkMode'),
+        reflectToAttribute: true,
+      },
     };
   }
 
+  darkMode: boolean;
   private browserProxy_: SearchBubbleProxy =
       SearchBubbleProxyImpl.getInstance();
+
+  constructor() {
+    super();
+    ColorChangeUpdater.forDocument().start();
+  }
 
   override connectedCallback() {
     super.connectedCallback();
     this.browserProxy_.handler.showUI();
     this.setThemeListenerId_ =
         this.browserProxy_.callbackRouter.setTheme.addListener(
-            (theme: Theme) => {
+            (theme: SearchboxTheme) => {
               this.theme_ = theme;
             });
   }
@@ -69,16 +74,9 @@ export class SearchBubbleAppElement extends PolymerElement {
   }
 
   private onThemeChange_() {
-    this.singleColored =
-        this.theme_ && (!!this.theme_.logoColor || this.theme_.isDark);
     document.body.style.backgroundColor =
         skColorToRgba(this.theme_.backgroundColor);
-  }
-
-  private computeLogoColor_() {
-    return this.theme_.logoColor ? skColorToRgba(this.theme_.logoColor) :
-        this.theme_.isDark       ? '#ffffff' :
-                                   'var(--google-blue-600)';
+    this.darkMode = this.theme_.isDark;
   }
 }
 

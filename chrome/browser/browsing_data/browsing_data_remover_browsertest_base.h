@@ -6,10 +6,12 @@
 #define CHROME_BROWSER_BROWSING_DATA_BROWSING_DATA_REMOVER_BROWSERTEST_BASE_H_
 
 #include <string>
+
 #include "base/memory/raw_ptr.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "chrome/test/base/chrome_test_utils.h"
+#include "chrome/test/base/platform_browser_test.h"
 #include "components/browsing_data/content/browsing_data_model.h"
 #include "components/signin/public/base/signin_buildflags.h"
 
@@ -50,7 +52,7 @@ class BrowsingDataRemoverBrowserTestBase : public PlatformBrowserTest {
   // If `web_contents` is not specified, `GetActiveWebContents` will be used.
   int GetSiteDataCount(content::WebContents* web_contents = nullptr);
 
-// TODO(crbug/1179729): Support incognito browser tests on android.
+// TODO(crbug.com/40169678): Support incognito browser tests on android.
 #if BUILDFLAG(IS_ANDROID)
   bool IsIncognito() { return false; }
 #else

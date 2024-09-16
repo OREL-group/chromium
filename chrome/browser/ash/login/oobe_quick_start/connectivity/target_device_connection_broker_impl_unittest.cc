@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ash/login/oobe_quick_start/connectivity/target_device_connection_broker_impl.h"
 
 #include <array>
@@ -167,8 +172,7 @@ class FakeFastPairAdvertiser : public FastPairAdvertiser {
 
   void StartAdvertising(base::OnceCallback<void()> callback,
                         base::OnceCallback<void()> error_callback,
-                        const AdvertisingId& advertising_id,
-                        bool use_pin_authentication) override {
+                        const AdvertisingId& advertising_id) override {
     ++start_advertising_call_count_;
     if (should_succeed_on_start_) {
       std::move(callback).Run();
@@ -763,12 +767,12 @@ TEST_F(TargetDeviceConnectionBrokerImplTest,
   ASSERT_TRUE(connection());
 
   connection()->Close(
-      TargetDeviceConnectionBroker::ConnectionClosedReason::kConnectionLost);
+      TargetDeviceConnectionBroker::ConnectionClosedReason::kUnknownError);
 
   ASSERT_TRUE(connection_lifecycle_listener_.connection_closed_);
   ASSERT_EQ(
       connection_lifecycle_listener_.connection_closed_reason_,
-      TargetDeviceConnectionBroker::ConnectionClosedReason::kConnectionLost);
+      TargetDeviceConnectionBroker::ConnectionClosedReason::kUnknownError);
 }
 
 TEST_F(TargetDeviceConnectionBrokerImplTest,

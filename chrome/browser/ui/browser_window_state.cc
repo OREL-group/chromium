@@ -2,15 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ui/browser_window_state.h"
 
 #include <stddef.h>
 
+#include <string_view>
 #include <utility>
 
 #include "base/command_line.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/buildflags.h"
 #include "chrome/browser/defaults.h"
@@ -32,11 +37,12 @@ bool ParseCommaSeparatedIntegers(const std::string& str,
                                  int* ret_num1,
                                  int* ret_num2) {
   const size_t comma = str.find(',');
-  return (comma != std::string::npos) &&
-         base::StringToInt(base::StringPiece(str.data(), comma), ret_num1) &&
-         base::StringToInt(
-             base::StringPiece(str.data() + comma + 1, str.size() - comma - 1),
-             ret_num2);
+  if (comma == std::string::npos) {
+    return false;
+  }
+  auto view = std::string_view(str);
+  return base::StringToInt(view.substr(0, comma), ret_num1) &&
+         base::StringToInt(view.substr(comma + 1), ret_num2);
 }
 
 }  // namespace

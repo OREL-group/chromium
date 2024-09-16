@@ -16,7 +16,6 @@
 #include "build/chromeos_buildflags.h"
 #include "components/live_caption/pref_names.h"
 #include "components/prefs/pref_service.h"
-#include "media/base/media_switches.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/native_theme/native_theme.h"
 
@@ -128,10 +127,6 @@ std::optional<ui::CaptionStyle> GetCaptionStyleFromUserSettings(
 }
 
 bool IsLiveCaptionFeatureSupported() {
-  if (!base::FeatureList::IsEnabled(media::kLiveCaption)) {
-    return false;
-  }
-
 #if !BUILDFLAG(IS_FUCHSIA) && !BUILDFLAG(IS_ANDROID)
   return speech::IsOnDeviceSpeechRecognitionSupported();
 #else
@@ -158,7 +153,7 @@ std::string GetCaptionSettingsUrl() {
   return "chrome://settings/accessibility";
 #endif  // BUILDFLAG(IS_MAC)
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return std::string();
 }
 

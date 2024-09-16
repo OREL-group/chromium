@@ -140,11 +140,10 @@ class MockVideoDecoder : public VideoDecoder {
         // Simulate the case where outputs are only returned when key arrives.
         waiting_cb_.Run(WaitingReason::kNoDecryptionKey);
       } else {
-        scoped_refptr<gpu::ClientSharedImage>
-            shared_images[VideoFrame::kMaxPlanes] = {
-                gpu::ClientSharedImage::CreateForTesting()};
-        scoped_refptr<VideoFrame> frame = VideoFrame::WrapSharedImages(
-            PIXEL_FORMAT_ARGB, shared_images, gpu::SyncToken(), 0,
+        scoped_refptr<gpu::ClientSharedImage> shared_image =
+            gpu::ClientSharedImage::CreateForTesting();
+        scoped_refptr<VideoFrame> frame = VideoFrame::WrapSharedImage(
+            PIXEL_FORMAT_ARGB, shared_image, gpu::SyncToken(), 0,
             GetReleaseMailboxCB(), config_.coded_size(), config_.visible_rect(),
             config_.natural_size(), buffer->timestamp());
         frame->metadata().power_efficient = true;
@@ -292,8 +291,7 @@ class MojoVideoDecoderIntegrationTest : public ::testing::Test {
     // Use 32 bytes to simulated chunked write (with capacity 10; see below).
     std::vector<uint8_t> data(32, 0);
 
-    scoped_refptr<DecoderBuffer> buffer =
-        DecoderBuffer::CopyFrom(data.data(), data.size());
+    scoped_refptr<DecoderBuffer> buffer = DecoderBuffer::CopyFrom(data);
 
     buffer->set_timestamp(base::Milliseconds(timestamp_ms));
     buffer->set_duration(base::Milliseconds(10));
@@ -305,8 +303,7 @@ class MojoVideoDecoderIntegrationTest : public ::testing::Test {
   scoped_refptr<DecoderBuffer> CreateErrorFrame(int64_t timestamp_ms) {
     std::vector<uint8_t> data(kErrorDataSize, 0);
 
-    scoped_refptr<DecoderBuffer> buffer =
-        DecoderBuffer::CopyFrom(data.data(), data.size());
+    scoped_refptr<DecoderBuffer> buffer = DecoderBuffer::CopyFrom(data);
 
     buffer->set_timestamp(base::Milliseconds(timestamp_ms));
     buffer->set_duration(base::Milliseconds(10));

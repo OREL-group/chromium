@@ -35,15 +35,15 @@ AxisEdge AxisEdgeFromItemPosition(GridTrackSizingDirection track_direction,
   const bool is_for_columns = track_direction == kForColumns;
   const auto root_grid_writing_direction =
       root_grid_style.GetWritingDirection();
+  const StyleSelfAlignmentData normal_value(ItemPosition::kNormal,
+                                            OverflowAlignment::kDefault);
 
   const auto& alignment =
       (is_for_columns ==
        IsParallelWritingMode(root_grid_writing_direction.GetWritingMode(),
                              parent_grid_style.GetWritingMode()))
-          ? item_style.ResolvedJustifySelf(ItemPosition::kNormal,
-                                           &parent_grid_style)
-          : item_style.ResolvedAlignSelf(ItemPosition::kNormal,
-                                         &parent_grid_style);
+          ? item_style.ResolvedJustifySelf(normal_value, &parent_grid_style)
+          : item_style.ResolvedAlignSelf(normal_value, &parent_grid_style);
 
   *auto_behavior = AutoSizeBehavior::kFitContent;
   *is_overflow_safe = alignment.Overflow() == OverflowAlignment::kSafe;
@@ -95,6 +95,7 @@ AxisEdge AxisEdgeFromItemPosition(GridTrackSizingDirection track_direction,
       }
       return is_for_columns ? logical.InlineEnd() : logical.BlockEnd();
     }
+    case ItemPosition::kAnchorCenter:
     case ItemPosition::kCenter:
       return AxisEdge::kCenter;
     case ItemPosition::kFlexStart:
@@ -124,11 +125,8 @@ AxisEdge AxisEdgeFromItemPosition(GridTrackSizingDirection track_direction,
       return AxisEdge::kStart;
     case ItemPosition::kLegacy:
     case ItemPosition::kAuto:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return AxisEdge::kStart;
-    case ItemPosition::kAnchorCenter:
-      NOTREACHED();
-      return AxisEdge::kCenter;
   }
 }
 

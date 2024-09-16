@@ -5,11 +5,11 @@
 #include "components/signin/public/identity_manager/identity_test_utils.h"
 
 #include <optional>
+#include <string_view>
 #include <vector>
 
 #include "base/run_loop.h"
 #include "base/strings/strcat.h"
-#include "base/strings/string_piece.h"
 #include "base/uuid.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
@@ -73,6 +73,9 @@ void UpdateRefreshTokenForAccount(
     IdentityManager* identity_manager,
     const CoreAccountId& account_id,
     const std::string& new_token,
+#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+    const std::vector<uint8_t> wrapped_binding_key,
+#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
     signin_metrics::SourceForRefreshTokenOperation source =
         signin_metrics::SourceForRefreshTokenOperation::kUnknown) {
   DCHECK_EQ(account_tracker_service->GetAccountInfo(account_id).account_id,
@@ -86,12 +89,13 @@ void UpdateRefreshTokenForAccount(
   // platforms.
   WaitForRefreshTokensLoaded(identity_manager);
 
-  base::RunLoop run_loop;
+  base::RunLoop run_loop{base::RunLoop::Type::kNestableTasksAllowed};
   TestIdentityManagerObserver token_updated_observer(identity_manager);
   token_updated_observer.SetOnRefreshTokenUpdatedCallback(
       run_loop.QuitClosure());
 
-  // TODO(crbug.com/1226041): simplify this when all Lacros Profiles use Mirror.
+  // TODO(crbug.com/40776160): simplify this when all Lacros Profiles use
+  // Mirror.
 #if BUILDFLAG(IS_CHROMEOS)
   if (ShouldUseAccountManagerFacade(identity_manager)) {
     const AccountInfo& account_info =
@@ -105,7 +109,12 @@ void UpdateRefreshTokenForAccount(
   } else
 #endif  // BUILDFLAG(IS_CHROMEOS)
   {
-    token_service->UpdateCredentials(account_id, new_token, source);
+    token_service->UpdateCredentials(account_id, new_token, source
+#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+                                     ,
+                                     wrapped_binding_key
+#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+    );
   }
 
   run_loop.Run();
@@ -129,22 +138,28 @@ void CompareErrorStatusAndCallClosure(
 
 // --- AccountAvailabilityOptions ----------------------------------------------
 
-AccountAvailabilityOptions::AccountAvailabilityOptions(base::StringPiece email)
+AccountAvailabilityOptions::AccountAvailabilityOptions(std::string_view email)
     : email(email) {
   CHECK(!email.empty());
 }
 
 AccountAvailabilityOptions::AccountAvailabilityOptions(
-    base::StringPiece email,
-    base::StringPiece gaia_id,
+    std::string_view email,
+    std::string_view gaia_id,
     std::optional<ConsentLevel> consent_level,
     std::optional<std::string> refresh_token,
+#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+    const std::vector<uint8_t>& wrapped_binding_key,
+#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
     raw_ptr<network::TestURLLoaderFactory> url_loader_factory_for_cookies,
     signin_metrics::AccessPoint access_point)
     : email(email),
       gaia_id(gaia_id),
       consent_level(consent_level),
       refresh_token(refresh_token),
+#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+      wrapped_binding_key(wrapped_binding_key),
+#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
       url_loader_factory_for_cookies(url_loader_factory_for_cookies),
       access_point(access_point) {
   CHECK(!email.empty());
@@ -180,7 +195,7 @@ AccountAvailabilityOptionsBuilder& AccountAvailabilityOptionsBuilder::AsPrimary(
 }
 
 AccountAvailabilityOptionsBuilder&
-AccountAvailabilityOptionsBuilder::WithGaiaId(base::StringPiece gaia_id) {
+AccountAvailabilityOptionsBuilder::WithGaiaId(std::string_view gaia_id) {
   CHECK(!gaia_id.empty());
   gaia_id_ = gaia_id;
   return *this;
@@ -196,13 +211,26 @@ AccountAvailabilityOptionsBuilder::WithCookie(bool with_cookie) {
 
 AccountAvailabilityOptionsBuilder&
 AccountAvailabilityOptionsBuilder::WithRefreshToken(
-    base::StringPiece refresh_token) {
+    std::string_view refresh_token) {
   refresh_token_ = refresh_token;
   return *this;
 }
 
+#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+AccountAvailabilityOptionsBuilder&
+AccountAvailabilityOptionsBuilder::WithRefreshTokenBindingKey(
+    const std::vector<uint8_t>& wrapped_binding_key) {
+  CHECK(refresh_token_.has_value()) << "Binding key requires a refresh token";
+  wrapped_binding_key_ = wrapped_binding_key;
+  return *this;
+}
+#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+
 AccountAvailabilityOptionsBuilder&
 AccountAvailabilityOptionsBuilder::WithoutRefreshToken() {
+#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+  CHECK(wrapped_binding_key_.empty()) << "Binding key requires a refresh token";
+#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
   refresh_token_ = std::nullopt;
   return *this;
 }
@@ -215,9 +243,12 @@ AccountAvailabilityOptionsBuilder::WithAccessPoint(
 }
 
 AccountAvailabilityOptions AccountAvailabilityOptionsBuilder::Build(
-    base::StringPiece email) {
+    std::string_view email) {
   return AccountAvailabilityOptions(
       email, gaia_id_, primary_account_consent_level_, refresh_token_,
+#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+      wrapped_binding_key_,
+#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
       with_cookie_ ? url_loader_factory_for_cookies_ : nullptr, access_point_);
 }
 
@@ -347,7 +378,7 @@ void ClearPrimaryAccount(IdentityManager* identity_manager) {
   // TODO(blundell): If we ever need this functionality on ChromeOS (which seems
   // unlikely), plumb this through to just clear the primary account info
   // synchronously with IdentityManager.
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 #else
   if (!identity_manager->HasPrimaryAccount(ConsentLevel::kSignin))
     return;
@@ -435,7 +466,12 @@ AccountInfo MakeAccountAvailable(IdentityManager* identity_manager,
 
   if (options.refresh_token.has_value()) {
     SetRefreshTokenForAccount(identity_manager, account_info.account_id,
-                              options.refresh_token.value());
+                              options.refresh_token.value()
+#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+                                  ,
+                              options.wrapped_binding_key
+#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+    );
   }
 
   if (options.url_loader_factory_for_cookies) {
@@ -454,7 +490,12 @@ AccountInfo MakeAccountAvailable(IdentityManager* identity_manager,
 
 void SetRefreshTokenForAccount(IdentityManager* identity_manager,
                                const CoreAccountId& account_id,
-                               const std::string& token_value) {
+                               const std::string& token_value
+#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+                               ,
+                               const std::vector<uint8_t>& wrapped_binding_key
+#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+) {
   UpdateRefreshTokenForAccount(
       identity_manager->GetTokenService(),
       identity_manager->GetAccountTrackerService(), identity_manager,
@@ -462,7 +503,12 @@ void SetRefreshTokenForAccount(IdentityManager* identity_manager,
       token_value.empty()
           ? "refresh_token_for_" + account_id.ToString() + "_" +
                 base::Uuid::GenerateRandomV4().AsLowercaseString()
-          : token_value);
+          : token_value
+#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+      ,
+      wrapped_binding_key
+#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+  );
 }
 
 void SetInvalidRefreshTokenForAccount(
@@ -472,7 +518,11 @@ void SetInvalidRefreshTokenForAccount(
   UpdateRefreshTokenForAccount(identity_manager->GetTokenService(),
                                identity_manager->GetAccountTrackerService(),
                                identity_manager, account_id,
-                               GaiaConstants::kInvalidRefreshToken, source);
+                               GaiaConstants::kInvalidRefreshToken,
+#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+                               /*wrapped_binding_key=*/{},
+#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+                               source);
 }
 
 void RemoveRefreshTokenForAccount(IdentityManager* identity_manager,
@@ -485,7 +535,8 @@ void RemoveRefreshTokenForAccount(IdentityManager* identity_manager,
   token_updated_observer.SetOnRefreshTokenRemovedCallback(
       run_loop.QuitClosure());
 
-  // TODO(crbug.com/1226041): simplify this when all Lacros Profiles use Mirror.
+  // TODO(crbug.com/40776160): simplify this when all Lacros Profiles use
+  // Mirror.
 #if BUILDFLAG(IS_CHROMEOS)
   if (ShouldUseAccountManagerFacade(identity_manager)) {
     const AccountInfo& account_info =
@@ -559,8 +610,28 @@ void SetCookieAccounts(
   run_loop.Run();
 }
 
+void TriggerListAccount(
+    IdentityManager* identity_manager,
+    network::TestURLLoaderFactory* test_url_loader_factory) {
+  const AccountsInCookieJarInfo& cookie_jar =
+      identity_manager->GetAccountsInCookieJar();
+  // Construct the cookie params with the actual cookies in the cookie jar.
+  std::vector<CookieParamsForTest> cookie_params;
+  for (auto& account : cookie_jar.signed_in_accounts) {
+    cookie_params.emplace_back(account.email, account.gaia_id,
+                               /*signed_out=*/false);
+  }
+  for (auto& account : cookie_jar.signed_out_accounts) {
+    cookie_params.emplace_back(account.email, account.gaia_id,
+                               /*signed_out=*/true);
+  }
+
+  // Trigger the /ListAccount with the current cookie information.
+  SetCookieAccounts(identity_manager, test_url_loader_factory, cookie_params);
+}
+
 AccountInfo WithGeneratedUserInfo(const AccountInfo& base_account_info,
-                                  base::StringPiece given_name) {
+                                  std::string_view given_name) {
   CHECK(!given_name.empty())
       << "A given name is needed to generate the Gaia info.";
 

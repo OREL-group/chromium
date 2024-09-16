@@ -20,6 +20,16 @@
 #import "ios/chrome/app/startup/sandbox_dump.h"  // nogncheck
 #endif  // BUILDFLAG(IOS_ENABLE_SANDBOX_DUMP)
 
+#if BUILDFLAG(USE_BLINK)
+extern "C" {
+// This function must be marked with NO_STACK_PROTECTOR or it may crash on
+// return, see the --change-stack-guard-on-fork command line flag.
+NO_STACK_PROTECTOR __attribute__((visibility("default"))) int ChromeMain(
+    int argc,
+    char* argv[]);
+}
+#endif
+
 namespace {
 
 NSString* const kUIApplicationDelegateInfoKey = @"UIApplicationDelegate";
@@ -68,7 +78,7 @@ void RegisterPathProviders() {
 
 }  // namespace
 
-int main(int argc, char* argv[]) {
+int ChromeMain(int argc, char* argv[]) {
   IOSChromeMain::InitStartTime();
 
 #if BUILDFLAG(IOS_ENABLE_SANDBOX_DUMP)
@@ -100,10 +110,16 @@ int main(int argc, char* argv[]) {
   // Register Chrome path providers.
   RegisterPathProviders();
 
-#if BUILDFLAG(USE_PARTITION_ALLOC) && !BUILDFLAG(USE_BLINK)
+#if PA_BUILDFLAG(USE_PARTITION_ALLOC) && !BUILDFLAG(USE_BLINK)
   // ContentMainRunnerImpl::Initialize calls this when USE_BLINK is true.
   base::allocator::PartitionAllocSupport::Get()->ReconfigureEarlyish("");
-#endif  // BUILDFLAG(USE_PARTITION_ALLOC) && !BUILDFLAG(USE_BLINK)
+#endif  // PA_BUILDFLAG(USE_PARTITION_ALLOC) && !BUILDFLAG(USE_BLINK)
 
   return RunUIApplicationMain(argc, argv);
 }
+
+#if !BUILDFLAG(USE_BLINK)
+int main(int argc, char* argv[]) {
+  return ChromeMain(argc, argv);
+}
+#endif

@@ -9,9 +9,7 @@
 #include <utility>
 #include <vector>
 
-#include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
-#include "base/template_util.h"
 #include "base/values.h"
 #include "chrome/test/interaction/interaction_test_util_browser.h"
 #include "chrome/test/interaction/tracked_element_webcontents.h"

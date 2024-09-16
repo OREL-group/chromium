@@ -21,6 +21,7 @@
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom-shared.h"
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom.h"
 #include "chrome/browser/web_applications/os_integration/os_integration_manager.h"
+#include "chrome/browser/web_applications/proto/web_app_install_state.pb.h"
 #include "chrome/browser/web_applications/proto/web_app_os_integration_state.pb.h"
 #include "chrome/browser/web_applications/test/fake_web_app_database_factory.h"
 #include "chrome/browser/web_applications/test/fake_web_app_provider.h"
@@ -30,7 +31,6 @@
 #include "chrome/browser/web_applications/test/web_app_test_observers.h"
 #include "chrome/browser/web_applications/test/web_app_test_utils.h"
 #include "chrome/browser/web_applications/web_app.h"
-#include "chrome/browser/web_applications/web_app_command_manager.h"
 #include "chrome/browser/web_applications/web_app_command_scheduler.h"
 #include "chrome/browser/web_applications/web_app_constants.h"
 #include "chrome/browser/web_applications/web_app_helpers.h"
@@ -41,7 +41,7 @@
 #include "components/sync/model/entity_change.h"
 #include "components/sync/protocol/entity_data.h"
 #include "components/sync/protocol/web_app_specifics.pb.h"
-#include "components/sync/test/mock_model_type_change_processor.h"
+#include "components/sync/test/mock_data_type_local_change_processor.h"
 #include "components/webapps/browser/install_result_code.h"
 #include "components/webapps/browser/installable/installable_metrics.h"
 #include "components/webapps/browser/uninstall_result_code.h"
@@ -99,13 +99,10 @@ bool IsSyncDataEqualIfApplied(const WebApp& expected_app,
   WebApp expected_app_copy = WebApp(expected_app);
   expected_app_copy.SetCurrentOsIntegrationStates(
       proto::WebAppOsIntegrationState());
-  expected_app_copy.SetRunOnOsLoginOsIntegrationState(RunOnOsLoginMode());
 
   WebApp app_applied_sync_data_copy = WebApp(*app_to_apply_sync_data);
   app_applied_sync_data_copy.SetCurrentOsIntegrationStates(
       proto::WebAppOsIntegrationState());
-  app_applied_sync_data_copy.SetRunOnOsLoginOsIntegrationState(
-      RunOnOsLoginMode());
 
   return expected_app_copy == app_applied_sync_data_copy;
 }
@@ -251,15 +248,6 @@ syncer::EntityChangeList ToEntityChageList(
 // in full w/o mocks.
 class WebAppSyncBridgeTest : public WebAppTest {
  public:
-  void SetUp() override {
-    WebAppTest::SetUp();
-  }
-
-  void TearDown() override {
-    fake_provider().Shutdown();
-    WebAppTest::TearDown();
-  }
-
   void StartWebAppProvider() {
     test::AwaitStartWebAppProviderAndSubsystems(profile());
   }
@@ -303,7 +291,7 @@ class WebAppSyncBridgeTest : public WebAppTest {
   }
 
  protected:
-  syncer::MockModelTypeChangeProcessor& processor() {
+  syncer::MockDataTypeLocalChangeProcessor& processor() {
     return fake_provider().processor();
   }
   FakeWebAppDatabaseFactory& database_factory() {
@@ -362,28 +350,12 @@ TEST_F(WebAppSyncBridgeTest, GetData) {
     for (const Registry::value_type& id_and_web_app : registry)
       storage_keys.push_back(id_and_web_app.first);
 
-    base::RunLoop run_loop;
-    sync_bridge().GetDataForCommit(
-        std::move(storage_keys),
-        base::BindLambdaForTesting(
-            [&](std::unique_ptr<syncer::DataBatch> data_batch) {
-              EXPECT_TRUE(RegistryContainsSyncDataBatchChanges(
-                  registry, std::move(data_batch)));
-              run_loop.Quit();
-            }));
-    run_loop.Run();
+    EXPECT_TRUE(RegistryContainsSyncDataBatchChanges(
+        registry, sync_bridge().GetDataForCommit(std::move(storage_keys))));
   }
 
-  {
-    base::RunLoop run_loop;
-    sync_bridge().GetAllDataForDebugging(base::BindLambdaForTesting(
-        [&](std::unique_ptr<syncer::DataBatch> data_batch) {
-          EXPECT_TRUE(RegistryContainsSyncDataBatchChanges(
-              registry, std::move(data_batch)));
-          run_loop.Quit();
-        }));
-    run_loop.Run();
-  }
+  EXPECT_TRUE(RegistryContainsSyncDataBatchChanges(
+      registry, sync_bridge().GetAllDataForDebugging()));
 }
 
 // Tests that the client & storage tags are correct for entity data.
@@ -481,8 +453,10 @@ TEST_F(WebAppSyncBridgeTest, MergeFullSyncData_LocalSetLessThanServerSet) {
   // These fields are not synced, these are just expected values.
   for (std::unique_ptr<WebApp>& expected_app_to_install :
        expected_apps_to_install) {
-    expected_app_to_install->SetIsLocallyInstalled(
-        AreAppsLocallyInstalledBySync());
+    expected_app_to_install->SetInstallState(
+        AreAppsLocallyInstalledBySync()
+            ? proto::InstallState::INSTALLED_WITH_OS_INTEGRATION
+            : proto::InstallState::SUGGESTED_FROM_ANOTHER_DEVICE);
     expected_app_to_install->SetIsFromSyncAndPendingInstallation(true);
   }
 
@@ -583,7 +557,10 @@ TEST_F(WebAppSyncBridgeTest, ApplyIncrementalSyncChanges_AddUpdateDelete) {
 
   for (std::unique_ptr<WebApp>& app_to_add :
        CreateAppsList("https://example.org/", 10)) {
-    app_to_add->SetIsLocallyInstalled(AreAppsLocallyInstalledBySync());
+    app_to_add->SetInstallState(
+        AreAppsLocallyInstalledBySync()
+            ? proto::InstallState::INSTALLED_WITH_OS_INTEGRATION
+            : proto::InstallState::SUGGESTED_FROM_ANOTHER_DEVICE);
     app_to_add->SetIsFromSyncAndPendingInstallation(true);
 
     ConvertAppToEntityChange(*app_to_add, syncer::EntityChange::ACTION_ADD,
@@ -653,7 +630,7 @@ TEST_F(WebAppSyncBridgeTest, ApplyIncrementalSyncChanges_AddUpdateDelete) {
                 update->DeleteApp(app_to_uninstall);
               }
               callback.Run(app_to_uninstall,
-                           webapps::UninstallResultCode::kSuccess);
+                           webapps::UninstallResultCode::kAppRemoved);
             }
 
             barrier_closure.Run();
@@ -1112,7 +1089,8 @@ TEST_F(WebAppSyncBridgeTest,
             std::make_unique<WebApp>(expected_app.app_id());
         entity_data_app->AddSource(WebAppManagement::kPolicy);
         entity_data_app->SetName("Name");
-        entity_data_app->SetIsLocallyInstalled(true);
+        entity_data_app->SetInstallState(
+            proto::InstallState::INSTALLED_WITHOUT_OS_INTEGRATION);
 
         EXPECT_TRUE(IsSyncDataEqualIfApplied(
             expected_app, std::move(entity_data_app), *entity_data));
@@ -1218,7 +1196,10 @@ TEST_F(WebAppSyncBridgeTest,
 TEST_F(WebAppSyncBridgeTest, InstallAppsFromSyncAndPendingInstallation) {
   AppsList apps_in_sync_install = CreateAppsList("https://example.com/", 10);
   for (std::unique_ptr<WebApp>& app : apps_in_sync_install) {
-    app->SetIsLocallyInstalled(AreAppsLocallyInstalledBySync());
+    app->SetInstallState(
+        AreAppsLocallyInstalledBySync()
+            ? proto::InstallState::INSTALLED_WITH_OS_INTEGRATION
+            : proto::InstallState::SUGGESTED_FROM_ANOTHER_DEVICE);
     app->SetIsFromSyncAndPendingInstallation(true);
   }
 
@@ -1248,6 +1229,45 @@ TEST_F(WebAppSyncBridgeTest, InstallAppsFromSyncAndPendingInstallation) {
   StartWebAppProvider();
 
   run_loop.Run();
+}
+
+// Tests that non user installable apps can also be removed by the
+// WebAppSyncBridge during system startup, if `is_uninstalling` is set to true.
+// Test for crbug.com/335253048, by using kSystem to mock that behavior. Since
+// System Web Apps are only on Ash chrome, kPolicy is used instead on Lacro
+TEST_F(WebAppSyncBridgeTest, CanDeleteNonUserInstallableApps) {
+  AppsList system_apps;
+
+  // This app should be uninstalled, since the `is_uninstalling` field is set.
+  std::unique_ptr<WebApp> app1 =
+      test::CreateWebApp(GURL("https://example.com/app1"));
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+  app1->AddSource(WebAppManagement::kPolicy);
+#else
+  app1->AddSource(WebAppManagement::kSystem);
+#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
+  app1->SetIsUninstalling(/*is_uninstalling=*/true);
+  const webapps::AppId app_id1 = app1->app_id();
+  system_apps.push_back(std::move(app1));
+
+  // This app will not be uninstalled.
+  std::unique_ptr<WebApp> app2 =
+      test::CreateWebApp(GURL("https://example.com/app2"));
+#if BUILDFLAG(IS_CHROMEOS_LACROS)
+  app2->AddSource(WebAppManagement::kPolicy);
+#else
+  app2->AddSource(WebAppManagement::kSystem);
+#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
+  const webapps::AppId app_id2 = app2->app_id();
+  system_apps.push_back(std::move(app2));
+
+  Registry registry;
+  InsertAppsListIntoRegistry(&registry, system_apps);
+  database_factory().WriteRegistry(registry);
+  StartWebAppProvider();
+
+  EXPECT_FALSE(registrar().IsInstalled(app_id1));
+  EXPECT_TRUE(registrar().IsInstalled(app_id2));
 }
 
 // Tests that OnWebAppsWillBeUpdatedFromSync observer notification is called
@@ -1438,9 +1458,24 @@ TEST_F(WebAppSyncBridgeTest, SpecificsProtoWithNewFieldPreserved) {
   EXPECT_EQ(result_proto.SerializeAsString(), serialized_proto);
 }
 
+TEST_F(WebAppSyncBridgeTest, MigratePartiallyInstalledToCorrectStatus) {
+  AppsList initial_registry_apps = CreateAppsList("https://example.com/", 10);
+  for (auto& app : initial_registry_apps) {
+    app->SetInstallState(proto::InstallState::INSTALLED_WITH_OS_INTEGRATION);
+  }
+  Registry registry;
+  InsertAppsListIntoRegistry(&registry, initial_registry_apps);
+  database_factory().WriteRegistry(registry);
+  StartWebAppProvider();
+
+  for (const webapps::AppId& app_id : registrar().GetAppIds()) {
+    EXPECT_EQ(registrar().GetAppById(app_id)->install_state(),
+              proto::InstallState::INSTALLED_WITHOUT_OS_INTEGRATION);
+  }
+}
+
 namespace {
 using UserDisplayModeSplitParam = std::tuple<
-    bool /*flag_enabled*/,
     std::optional<WebAppSpecifics_UserDisplayMode> /*sync_cros_udm*/,
     std::optional<WebAppSpecifics_UserDisplayMode> /*sync_non_cros_udm*/,
     std::optional<UserDisplayMode> /*installed_udm*/,
@@ -1468,7 +1503,7 @@ std::string ToString(std::optional<WebAppSpecifics_UserDisplayMode> udm) {
     case WebAppSpecifics_UserDisplayMode_STANDALONE:
       return "standalone";
     case WebAppSpecifics_UserDisplayMode_TABBED:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -1482,7 +1517,7 @@ std::string ToString(std::optional<UserDisplayMode> udm) {
     case UserDisplayMode::kStandalone:
       return "standalone";
     case UserDisplayMode::kTabbed:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 }  // namespace
@@ -1494,48 +1529,44 @@ class WebAppSyncBridgeTest_UserDisplayModeSplit
   static std::string ParamToString(
       testing::TestParamInfo<UserDisplayModeSplitParam> param) {
     return base::StrCat({
-        "FlagEnabled_",
-        std::get<0>(param.param) ? "1" : "0",
-        "_SyncCrosUdm_",
-        ToString(std::get<1>(param.param)),
+        "SyncCrosUdm_",
+        ToString(std::get<0>(param.param)),
         "_SyncNonCrosUdm_",
-        ToString(std::get<2>(param.param)),
+        ToString(std::get<1>(param.param)),
         "_InstalledUdm_",
-        ToString(std::get<3>(param.param)),
+        ToString(std::get<2>(param.param)),
         "_OtherPlatformUdm_",
-        ToString(std::get<4>(param.param)),
+        ToString(std::get<3>(param.param)),
     });
   }
 
   WebAppSyncBridgeTest_UserDisplayModeSplit() {
-    scoped_feature_list_.InitWithFeatureStates({
-        {kSeparateUserDisplayModeForCrOS, flag_enabled()},
 #if BUILDFLAG(IS_CHROMEOS)
+    scoped_feature_list_.InitWithFeatureStates({
         // UDM mitigations mess with the installed local state, disable them so
         // the state matches the intention of the test.
         {kUserDisplayModeSyncBrowserMitigation, false},
         {kUserDisplayModeSyncStandaloneMitigation, false},
-#endif  // BUILDFLAG(IS_CHROMEOS)
     });
+#endif  // BUILDFLAG(IS_CHROMEOS)
   }
 
   ~WebAppSyncBridgeTest_UserDisplayModeSplit() override = default;
 
-  bool flag_enabled() const { return std::get<0>(GetParam()); }
   std::optional<WebAppSpecifics_UserDisplayMode> sync_cros_udm() const {
-    return std::get<1>(GetParam());
+    return std::get<0>(GetParam());
   }
   std::optional<WebAppSpecifics_UserDisplayMode> sync_non_cros_udm() const {
-    return std::get<2>(GetParam());
+    return std::get<1>(GetParam());
   }
   // UDM for the current platform. Absent means it's not locally installed.
   std::optional<UserDisplayMode> installed_udm() const {
-    return std::get<3>(GetParam());
+    return std::get<2>(GetParam());
   }
   // UDM stored locally for the other platform.
   std::optional<WebAppSpecifics_UserDisplayMode> local_other_platform_udm()
       const {
-    return std::get<4>(GetParam());
+    return std::get<3>(GetParam());
   }
 
   bool IsChromeOs() const {
@@ -1574,11 +1605,6 @@ class WebAppSyncBridgeTest_UserDisplayModeSplit
     test::AwaitStartWebAppProviderAndSubsystems(profile());
   }
 
-  void TearDown() override {
-    fake_provider().Shutdown();
-    WebAppTest::TearDown();
-  }
-
  private:
   base::test::ScopedFeatureList scoped_feature_list_;
 };
@@ -1590,8 +1616,7 @@ TEST_P(WebAppSyncBridgeTest_UserDisplayModeSplit, SyncUpdateToUserDisplayMode) {
 
   // Install an app.
   if (installed_before_sync()) {
-    auto info = std::make_unique<WebAppInstallInfo>();
-    info->start_url = start_url;
+    auto info = WebAppInstallInfo::CreateWithStartUrlForTesting(start_url);
     info->scope = start_url;
     info->title = u"Basic web app";
     info->description = u"Test description";
@@ -1647,47 +1672,6 @@ TEST_P(WebAppSyncBridgeTest_UserDisplayModeSplit, SyncUpdateToUserDisplayMode) {
 
   const WebApp* app = provider().registrar_unsafe().GetAppById(app_id);
   ASSERT_TRUE(app);
-
-  //// kSeparateUserDisplayModeForCrOS Disabled ////
-
-  if (!flag_enabled()) {
-    EXPECT_EQ(app->user_display_mode(),
-              ToMojomUdmFallbackToStandalone(
-                  app->sync_proto().user_display_mode_default()));
-
-    // Expect to always overwrite local UDM state with non-CrOS sync data,
-    // including treating absent/unspecified as standalone.
-    EXPECT_EQ(app->user_display_mode(),
-              ToMojomUdmFallbackToStandalone(sync_non_cros_udm()));
-
-    // CrOS UDM should still be stored from sync/DB, just not used.
-    if (sync_cros_udm()) {
-      // Sync overwrites DB values.
-      EXPECT_EQ(app->sync_proto().user_display_mode_cros(),
-                sync_cros_udm().value());
-    } else {
-      if (IsChromeOs()) {
-        // Due to tests setting a local value (which sets UDM-non-CrOS because
-        // the flag is off) and an other platform value (which also sets
-        // UDM-non-CrOS), there is never a CrOS value set locally in this test
-        // case.
-        EXPECT_FALSE(app->sync_proto().has_user_display_mode_cros());
-      } else {
-        // We should still have preserved a CrOS value in the DB.
-        if (installed_before_sync()) {
-          EXPECT_EQ(app->sync_proto().user_display_mode_cros(),
-                    local_other_platform_udm().value_or(
-                        WebAppSpecifics_UserDisplayMode_UNSPECIFIED));
-        } else {
-          EXPECT_FALSE(app->sync_proto().has_user_display_mode_cros());
-        }
-      }
-    }
-
-    return;
-  }
-
-  //// kSeparateUserDisplayModeForCrOS Enabled ////
 
   if (sync_current_platform_udm()) {
     // If UDM is set for the current platform in sync, it should be used.
@@ -1747,7 +1731,6 @@ INSTANTIATE_TEST_SUITE_P(
     /*no prefix*/,
     WebAppSyncBridgeTest_UserDisplayModeSplit,
     testing::Combine(
-        /*flag_enabled=*/testing::Bool(),
         /*sync_cros_udm=*/testing::ValuesIn(kSyncUserDisplayModes),
         /*sync_non_cros_udm=*/testing::ValuesIn(kSyncUserDisplayModes),
         /*installed_udm=*/testing::ValuesIn(kInstalledUserDisplayModes),

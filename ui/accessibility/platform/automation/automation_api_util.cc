@@ -59,7 +59,7 @@ bool ShouldIgnoreAXEventForAutomation(ax::mojom::Event event_type) {
     case ax::mojom::Event::kMediaStartedPlaying:
     case ax::mojom::Event::kMediaStoppedPlaying:
     case ax::mojom::Event::kMenuEnd:
-    case ax::mojom::Event::kMenuListValueChanged:
+    case ax::mojom::Event::kMenuListValueChangedDeprecated:
     case ax::mojom::Event::kMenuPopupEnd:
     case ax::mojom::Event::kMenuPopupStart:
     case ax::mojom::Event::kMenuStart:
@@ -87,7 +87,7 @@ bool ShouldIgnoreAXEventForAutomation(ax::mojom::Event event_type) {
       return false;
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return false;
 }
 
@@ -120,14 +120,12 @@ bool ShouldIgnoreGeneratedEventForAutomation(
     case AXEventGenerator::Event::DESCRIPTION_CHANGED:
     case AXEventGenerator::Event::DOCUMENT_SELECTION_CHANGED:
     case AXEventGenerator::Event::DOCUMENT_TITLE_CHANGED:
-    case AXEventGenerator::Event::DROPEFFECT_CHANGED:
     case AXEventGenerator::Event::EDITABLE_TEXT_CHANGED:
     case AXEventGenerator::Event::ENABLED_CHANGED:
     case AXEventGenerator::Event::EXPANDED:
     case AXEventGenerator::Event::FOCUS_CHANGED:
     case AXEventGenerator::Event::FLOW_FROM_CHANGED:
     case AXEventGenerator::Event::FLOW_TO_CHANGED:
-    case AXEventGenerator::Event::GRABBED_CHANGED:
     case AXEventGenerator::Event::HASPOPUP_CHANGED:
     case AXEventGenerator::Event::HIERARCHICAL_LEVEL_CHANGED:
     case AXEventGenerator::Event::IGNORED_CHANGED:
@@ -152,7 +150,6 @@ bool ShouldIgnoreGeneratedEventForAutomation(
     case AXEventGenerator::Event::ORIENTATION_CHANGED:
     case AXEventGenerator::Event::PARENT_CHANGED:
     case AXEventGenerator::Event::PLACEHOLDER_CHANGED:
-    case AXEventGenerator::Event::PORTAL_ACTIVATED:
     case AXEventGenerator::Event::POSITION_IN_SET_CHANGED:
     case AXEventGenerator::Event::RELATED_NODE_CHANGED:
     case AXEventGenerator::Event::READONLY_CHANGED:
@@ -184,7 +181,7 @@ bool ShouldIgnoreGeneratedEventForAutomation(
       return true;
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return false;
 }
 

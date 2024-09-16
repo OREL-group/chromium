@@ -6,6 +6,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_SHARED_STORAGE_UTIL_H_
 
 #include "base/memory/scoped_refptr.h"
+#include "third_party/blink/public/mojom/shared_storage/shared_storage.mojom-blink-forward.h"
 #include "v8/include/v8-isolate.h"
 
 namespace WTF {
@@ -18,8 +19,22 @@ class ExecutionContext;
 class ExceptionState;
 class ScriptState;
 class ScriptPromiseResolverBase;
-class SecurityOrigin;
 class SharedStorageRunOperationMethodOptions;
+
+static constexpr size_t kMaximumFilteringIdMaxBytes = 8;
+
+static constexpr char kOpaqueContextOriginCheckErrorMessage[] =
+    "the method on sharedStorage is not allowed in an opaque origin context";
+
+static constexpr char kOpaqueDataOriginCheckErrorMessage[] =
+    "the method on sharedStorage is not allowed to have an opaque data origin";
+
+// This enum corresponds to the IDL enum `SharedStorageDataOrigin` in
+// shared_storage_worklet_options.idl.
+enum class SharedStorageDataOrigin {
+  kContextOrigin = 0,
+  kScriptOrigin = 1,
+};
 
 // Helper method to convert v8 string to WTF::String.
 bool StringFromV8(v8::Isolate* isolate,
@@ -40,19 +55,21 @@ bool CheckSharedStoragePermissionsPolicy(ScriptState& script_state,
 // Returns true if a valid privateAggregationConfig is provided or if no config
 // is provided. A config is invalid if an invalid (i.e. too long) context_id
 // string is provided or an invalid (i.e. not on the allowlist)
-// aggregationCoordinatorOrigin is provided. Note that the
-// aggregationCoordinatorOrigin is only evaluated if the relevant features are
-// enabled. If the config is invalid, returns false and rejects the `resolver`
-// with an error. If a valid context_id string was provided, `out_context_id` is
-// populated with it; otherwise, it's populated with a null String. If a valid
-// aggregation coordinator is provided, `out_aggregation_coodinator_origin` is
-// populated with it; otherwise, it's populated with nullptr.
+// aggregationCoordinatorOrigin is provided. If the config is invalid, returns
+// false and rejects the `resolver` with an error. Always populates
+// `out_private_aggregation_config` with a new config object. If a valid
+// context_id string was provided, `out_private_aggregation_config->context_id`
+// is populated with it; otherwise, it's left default (a null String). If a
+// valid aggregation coordinator is provided,
+// `out_private_aggregation_config->aggregation_coodinator_origin` is populated
+// with it; otherwise, it's left default (nullptr). If a valid
+// filteringIdMaxBytes is provided, `out_filtering_id_max_bytes` is populated
+// with it; otherwise, it's populated with the default of 1.
 bool CheckPrivateAggregationConfig(
     const SharedStorageRunOperationMethodOptions& options,
     ScriptState& script_state,
     ScriptPromiseResolverBase& resolver,
-    WTF::String& out_context_id,
-    scoped_refptr<SecurityOrigin>& out_aggregation_coordinator_origin);
+    mojom::blink::PrivateAggregationConfigPtr& out_private_aggregation_config);
 
 }  // namespace blink
 

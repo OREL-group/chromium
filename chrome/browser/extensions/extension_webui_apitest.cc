@@ -146,12 +146,12 @@ class ExtensionWebUIEmbeddedOptionsTest : public ExtensionWebUITest {
 
 #if !BUILDFLAG(IS_WIN)  // flaky http://crbug.com/530722
 
-IN_PROC_BROWSER_TEST_F(ExtensionWebUITest, SanityCheckAvailableAPIs) {
-  ASSERT_TRUE(RunTestOnExtensionsPage("sanity_check_available_apis.js"));
+IN_PROC_BROWSER_TEST_F(ExtensionWebUITest, ConfidenceCheckAvailableAPIs) {
+  ASSERT_TRUE(RunTestOnExtensionsPage("confidence_check_available_apis.js"));
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionWebUITest, SanityCheckUnavailableAPIs) {
-  ASSERT_TRUE(RunTestOnAboutPage("sanity_check_available_apis.js"));
+IN_PROC_BROWSER_TEST_F(ExtensionWebUITest, ConfidenceCheckUnavailableAPIs) {
+  ASSERT_TRUE(RunTestOnAboutPage("confidence_check_available_apis.js"));
 }
 
 // Tests chrome.test.sendMessage, which exercises WebUI making a
@@ -281,7 +281,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebUIEmbeddedOptionsTest,
       R"(new Promise(r => {
            chrome.tabs.create({}, (tab) => {
              let message;
-             // Sanity check that it looks and smells like a tab.
+             // Confidence check that it looks and smells like a tab.
              if (tab && tab.index) {
                message = 'success';
              } else {
@@ -409,7 +409,7 @@ class ExtensionWebUIListenersTest : public ExtensionWebUITest {
 IN_PROC_BROWSER_TEST_F(ExtensionWebUIListenersTest, MultipleURLListeners) {
   // Use the same URL both for the parent and child frames for convenience.
   // These could be different WebUI URLs.
-  GURL test_url("chrome://webui-test/whats_new/test.html");
+  GURL test_url("chrome://webui-test/extension_webui_listeners_test.html");
 
   EXPECT_TRUE(ui_test_utils::NavigateToURL(browser(), test_url));
   content::WebContents* web_contents =
@@ -423,7 +423,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebUIListenersTest, MultipleURLListeners) {
       var listener = e => {};
       chrome.test.onMessage.addListener(listener);
       const iframe = document.createElement('iframe');
-      iframe.src = 'chrome://webui-test/whats_new/test.html';
+      iframe.src = 'chrome://webui-test/extension_webui_listeners_test.html';
       document.body.appendChild(iframe);
   )"));
   EXPECT_TRUE(event_router->HasEventListener("test.onMessage"));

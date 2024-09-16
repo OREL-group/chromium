@@ -17,6 +17,7 @@
 #include "base/containers/contains.h"
 #include "base/functional/bind.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/ranges/algorithm.h"
@@ -28,6 +29,7 @@
 #include "ui/base/cursor/platform_cursor.h"
 #include "ui/base/dragdrop/mojom/drag_drop_types.mojom.h"
 #include "ui/base/dragdrop/os_exchange_data.h"
+#include "ui/display/screen.h"
 #include "ui/events/event.h"
 #include "ui/events/event_target_iterator.h"
 #include "ui/events/event_utils.h"
@@ -41,6 +43,7 @@
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/overlay_priority_hint.h"
 #include "ui/ozone/common/bitmap_cursor.h"
+#include "ui/ozone/common/features.h"
 #include "ui/ozone/platform/wayland/common/wayland_overlay_config.h"
 #include "ui/ozone/platform/wayland/host/dump_util.h"
 #include "ui/ozone/platform/wayland/host/wayland_bubble.h"
@@ -51,6 +54,7 @@
 #include "ui/ozone/platform/wayland/host/wayland_frame_manager.h"
 #include "ui/ozone/platform/wayland/host/wayland_output.h"
 #include "ui/ozone/platform/wayland/host/wayland_output_manager.h"
+#include "ui/ozone/platform/wayland/host/wayland_popup.h"
 #include "ui/ozone/platform/wayland/host/wayland_screen.h"
 #include "ui/ozone/platform/wayland/host/wayland_seat.h"
 #include "ui/ozone/platform/wayland/host/wayland_subsurface.h"
@@ -121,13 +125,13 @@ WaylandWindow::~WaylandWindow() {
   }
 
   // This might have already been hidden and another window has been shown.
-  // Thus, the parent will have another child window. Do not reset it.
-  if (parent_window_ && parent_window_->child_window() == this) {
-    parent_window_->set_child_window(nullptr);
+  // Thus, the parent will have another child popup. Do not reset it.
+  if (parent_window_ && parent_window_->child_popup() == this) {
+    parent_window_->set_child_popup(nullptr);
   }
 
-  if (child_window_) {
-    child_window_->set_parent_window(nullptr);
+  if (child_popup_) {
+    child_popup_->set_parent_window(nullptr);
   }
 
   for (auto bubble : child_bubbles_) {
@@ -140,41 +144,30 @@ void WaylandWindow::OnWindowLostCapture() {
 }
 
 void WaylandWindow::UpdateWindowScale(bool update_bounds) {
-  DCHECK(connection_->wayland_output_manager());
+  const auto scale_factor = connection_->UsePerSurfaceScaling()
+                                ? GetPreferredScaleFactor()
+                                : GetScaleFactorFromEnteredOutputs();
+  SetWindowScale(scale_factor.value_or(1.0f));
 
-  const auto* output_manager = connection_->wayland_output_manager();
-  auto preferred_outputs_id = GetPreferredEnteredOutputId();
-  if (!preferred_outputs_id.has_value()) {
-    // If no output was entered yet, use primary output. This is similar to what
-    // PlatformScreen implementation is expected to return to higher layer.
-    auto* primary_output = output_manager->GetPrimaryOutput();
-    // Primary output is unknown. i.e: WaylandScreen was not created yet.
-    if (!primary_output) {
-      return;
-    }
-    preferred_outputs_id = primary_output->output_id();
+  // Propagate update to the popups.
+  if (child_popup_) {
+    child_popup_->UpdateWindowScale(update_bounds);
   }
 
-  auto* output = output_manager->GetOutput(preferred_outputs_id.value());
-  // There can be a race between sending leave output event and destroying
-  // wl_outputs. Thus, explicitly check if the output exist.
-  if (!output || !output->IsReady()) {
-    return;
-  }
-
-  float new_scale = output->scale_factor();
-  ui_scale_ = output->GetUIScaleFactor();
-  SetWindowScale(new_scale);
-
-  // Propagate update to the child windows
-  if (child_window_) {
-    child_window_->UpdateWindowScale(update_bounds);
-  }
-
-  // Propagate update to the bubble windows
+  // Propagate update to the bubble windows.
   for (auto bubble : child_bubbles_) {
     bubble->UpdateWindowScale(update_bounds);
   }
+}
+
+void WaylandWindow::OnEnteredOutputScaleChanged() {
+  // Display scale changes should not lead to surface scale updates unless
+  // either per-surface scaling is disabled or wp-fractional-scale-v1 protocol
+  // is unavailable.
+  if (connection_->UsePerSurfaceScaling()) {
+    return;
+  }
+  UpdateWindowScale(/*update_bounds=*/true);
 }
 
 WaylandZAuraSurface* WaylandWindow::GetZAuraSurface() {
@@ -231,8 +224,32 @@ void WaylandWindow::SetWindowScale(float new_scale) {
   RequestStateFromClient(state);
 }
 
+std::optional<float> WaylandWindow::GetScaleFactorFromEnteredOutputs() {
+  DCHECK(connection_->wayland_output_manager());
+  const auto* output_manager = connection_->wayland_output_manager();
+  auto preferred_outputs_id = GetPreferredEnteredOutputId();
+  if (!preferred_outputs_id.has_value()) {
+    // If no output was entered yet, use primary output. This is similar to what
+    // PlatformScreen implementation is expected to return to higher layer.
+    auto* primary_output = output_manager->GetPrimaryOutput();
+    // Primary output is unknown. i.e: WaylandScreen was not created yet.
+    if (!primary_output) {
+      return std::nullopt;
+    }
+    preferred_outputs_id = primary_output->output_id();
+  }
+
+  auto* output = output_manager->GetOutput(preferred_outputs_id.value());
+  // There can be a race between sending leave output event and destroying
+  // wl_outputs. Thus, explicitly check if the output exist.
+  if (!output || !output->IsReady()) {
+    return std::nullopt;
+  }
+  return output->scale_factor();
+}
+
 std::optional<WaylandOutput::Id> WaylandWindow::GetPreferredEnteredOutputId() {
-  // Child windows don't store entered outputs. Instead, take the window's
+  // Child popups don't store entered outputs. Instead, take the window's
   // root parent window and use its preferred output.
   if (parent_window_) {
     return GetRootParentWindow()->GetPreferredEnteredOutputId();
@@ -290,15 +307,21 @@ std::optional<WaylandOutput::Id> WaylandWindow::GetPreferredEnteredOutputId() {
   return preferred_id;
 }
 
+std::optional<float> WaylandWindow::GetPreferredScaleFactor() const {
+  if (!root_surface_) {
+    return std::nullopt;
+  }
+  return root_surface_->preferred_scale_factor();
+}
+
 void WaylandWindow::OnPointerFocusChanged(bool focused) {
   // Whenever the window gets the pointer focus back, the cursor shape must be
   // updated. Otherwise, it is invalidated upon wl_pointer::leave and is not
   // restored by the Wayland compositor.
 #if BUILDFLAG(IS_LINUX)
   if (focused && async_cursor_) {
-    async_cursor_->AddCursorLoadedCallback(
-        base::BindOnce(&WaylandWindow::OnCursorLoaded,
-                       weak_ptr_factory_.GetWeakPtr(), async_cursor_));
+    async_cursor_->AddCursorLoadedCallback(base::BindOnce(
+        &WaylandWindow::OnCursorLoaded, AsWeakPtr(), async_cursor_));
   }
 #else
   if (focused && cursor_) {
@@ -327,6 +350,7 @@ bool WaylandWindow::StartDrag(
     mojom::DragEventSource source,
     gfx::NativeCursor cursor,
     bool can_grab_pointer,
+    base::OnceClosure drag_started_callback,
     WmDragHandler::DragFinishedCallback drag_finished_callback,
     WmDragHandler::LocationDelegate* location_delegate) {
   if (!connection_->data_drag_controller()->StartSession(data, operations,
@@ -334,13 +358,15 @@ bool WaylandWindow::StartDrag(
     return false;
   }
 
+  std::move(drag_started_callback).Run();
+
   DCHECK(drag_finished_callback_.is_null());
   drag_finished_callback_ = std::move(drag_finished_callback);
 
   base::RunLoop drag_loop(base::RunLoop::Type::kNestableTasksAllowed);
   drag_loop_quit_closure_ = drag_loop.QuitClosure();
 
-  auto alive = weak_ptr_factory_.GetWeakPtr();
+  auto alive = AsWeakPtr();
   drag_loop.Run();
   if (!alive) {
     return false;
@@ -350,13 +376,17 @@ bool WaylandWindow::StartDrag(
 
 void WaylandWindow::UpdateDragImage(const gfx::ImageSkia& image,
                                     const gfx::Vector2d& offset) {
-  if (connection_->data_drag_controller()->state() !=
-      WaylandDataDragController::State::kIdle) {
+  if (connection_->data_drag_controller()->IsDragInProgress()) {
     connection_->data_drag_controller()->UpdateDragImage(image, offset);
   }
 }
 
 void WaylandWindow::CancelDrag() {
+  // If this is an outgoing drag session, `CancelSession()` will end up calling
+  // our `OnDragSessionClose()` method, which runs `drag_loop_quit_closure_`. If
+  // this is an incoming drag session, there is no drag loop to quit (because
+  // that's only set up in `StartDrag()`, i.e. for outgoing sessions), so we
+  // don't need to do anything else here.
   connection_->data_drag_controller()->CancelSession();
 }
 
@@ -399,6 +429,11 @@ void WaylandWindow::OnChannelDestroyed() {
                                      std::move(subsurfaces_to_overlays)));
 }
 
+// TODO(crbug.com/40856031): Implement ui scaling.
+void WaylandWindow::OnFontScaleFactorChanged(float new_font_scale) {
+  NOTIMPLEMENTED_LOG_ONCE();
+}
+
 void WaylandWindow::DumpState(std::ostream& out) const {
   constexpr auto kWindowTypeToString =
       base::MakeFixedFlatMap<PlatformWindowType, const char*>(
@@ -417,7 +452,6 @@ void WaylandWindow::DumpState(std::ostream& out) const {
   if (has_touch_focus_) {
     out << ", has_touch_focus";
   }
-  out << ", ui_scale=" << ui_scale_;
   constexpr auto kOpacityToString =
       base::MakeFixedFlatMap<PlatformWindowOpacity, const char*>(
           {{PlatformWindowOpacity::kInferOpacity, "infer"},
@@ -442,7 +476,7 @@ void WaylandWindow::Close() {
 }
 
 bool WaylandWindow::IsVisible() const {
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return false;
 }
 
@@ -453,14 +487,14 @@ void WaylandWindow::PrepareForShutdown() {
 }
 
 void WaylandWindow::SetBoundsInPixels(const gfx::Rect& bounds_px) {
-  // TODO(crbug.com/1306688): This is currently used only by unit tests.
+  // TODO(crbug.com/40218466): This is currently used only by unit tests.
   // Figure out how to migrate to test only methods.
   auto bounds_dip = delegate_->ConvertRectToDIP(bounds_px);
   SetBoundsInDIP(bounds_dip);
 }
 
 gfx::Rect WaylandWindow::GetBoundsInPixels() const {
-  // TODO(crbug.com/1306688): This is currently used only by unit tests.
+  // TODO(crbug.com/40218466): This is currently used only by unit tests.
   // Figure out how to migrate to test only methods. For now, only the size
   // should be used outside of tests. Make up some reasonable value for origin.
   auto origin =
@@ -558,9 +592,8 @@ void WaylandWindow::SetCursor(scoped_refptr<PlatformCursor> platform_cursor) {
   }
 
   async_cursor_ = async_cursor;
-  async_cursor->AddCursorLoadedCallback(
-      base::BindOnce(&WaylandWindow::OnCursorLoaded,
-                     weak_ptr_factory_.GetWeakPtr(), async_cursor));
+  async_cursor->AddCursorLoadedCallback(base::BindOnce(
+      &WaylandWindow::OnCursorLoaded, AsWeakPtr(), async_cursor));
 #else
   if (cursor_ == platform_cursor) {
     return;
@@ -686,7 +719,7 @@ EventTarget* WaylandWindow::GetParentTarget() {
 }
 
 std::unique_ptr<EventTargetIterator> WaylandWindow::GetChildIterator() const {
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return nullptr;
 }
 
@@ -707,13 +740,13 @@ void WaylandWindow::OcclusionStateChanged(
   // configures, so it would be valid for the configure ack's commit to have the
   // unsynchronised occlusion state set, if that happened after configure but
   // before the corresponding frame was produced.
-  // TODO(crbug.com/1278648): Remove this once the oldest ash we want to use
+  // TODO(crbug.com/40208263): Remove this once the oldest ash we want to use
   // supports synchronized occlusion state in configure.
   SetPendingOcclusionState(occlusion_state);
 }
 
 void WaylandWindow::HandleSurfaceConfigure(uint32_t serial) {
-  NOTREACHED()
+  NOTREACHED_IN_MIGRATION()
       << "Only shell surfaces must receive HandleSurfaceConfigure calls.";
 }
 
@@ -754,6 +787,9 @@ std::string WaylandWindow::WindowStates::ToString() const {
   if (is_floated) {
     states += "floated ";
   }
+  if (is_pip) {
+    states += "pip ";
+  }
   if (states.empty()) {
     states = "<default>";
   } else {
@@ -787,7 +823,7 @@ std::string WaylandWindow::WindowStates::ToString() const {
 void WaylandWindow::HandleToplevelConfigure(int32_t widht,
                                             int32_t height,
                                             const WindowStates& window_states) {
-  NOTREACHED()
+  NOTREACHED_IN_MIGRATION()
       << "Only shell toplevels must receive HandleToplevelConfigure calls.";
 }
 
@@ -797,12 +833,13 @@ void WaylandWindow::HandleAuraToplevelConfigure(
     int32_t width,
     int32_t height,
     const WindowStates& window_states) {
-  NOTREACHED()
+  NOTREACHED_IN_MIGRATION()
       << "Only shell toplevels must receive HandleAuraToplevelConfigure calls.";
 }
 
 void WaylandWindow::HandlePopupConfigure(const gfx::Rect& bounds_dip) {
-  NOTREACHED() << "Only shell popups must receive HandlePopupConfigure calls.";
+  NOTREACHED_IN_MIGRATION()
+      << "Only shell popups must receive HandlePopupConfigure calls.";
 }
 
 void WaylandWindow::OnCloseRequest() {
@@ -822,7 +859,7 @@ void WaylandWindow::OnDragDataAvailable(std::unique_ptr<OSExchangeData> data) {
   if (!drop_handler) {
     return;
   }
-  // TODO(crbug.com/1487784): Factor DataFetched out of Enter callback.
+  // TODO(crbug.com/40073696): Factor DataFetched out of Enter callback.
   drop_handler->OnDragDataAvailable(std::move(data));
 }
 
@@ -857,7 +894,14 @@ void WaylandWindow::OnDragSessionClose(DragOperation operation) {
     return;
   }
   std::move(drag_finished_callback_).Run(operation);
-  connection()->event_source()->ResetPointerFlags();
+  // Skip releasing any pointer buttons for the case of a window drag driven by
+  // the data drag controller.
+  // TODO: crbug.com/40238145 - Refactor this per discussion at
+  // crrev.com/c/5570335/comment/0b8811fc_818028c9/.
+  if (!connection()->data_drag_controller()->IsWindowDragSessionRunning()) {
+    connection()->event_source()->ReleasePressedPointerButtons(
+        this, EventTimeForNow());
+  }
   std::move(drag_loop_quit_closure_).Run();
 }
 
@@ -867,6 +911,8 @@ bool WaylandWindow::Initialize(PlatformWindowInitProperties properties) {
     LOG(ERROR) << "Failed to create wl_surface";
     return false;
   }
+
+  SetWaylandExtension(this, this);
 
   PlatformWindowDelegate::State state;
   state.window_state = PlatformWindowState::kUnknown;
@@ -880,7 +926,16 @@ bool WaylandWindow::Initialize(PlatformWindowInitProperties properties) {
   // This can happen when a test doesn't set `properties.bounds`, but there have
   // also been crashes in production because of this (crbug.com/1435478).
   if (state.bounds_dip.IsEmpty()) {
-    state.bounds_dip = gfx::Rect(0, 0, 1, 1);
+    // If bounds are not specified, place the window on the appropriate display,
+    // if supported.
+    auto* screen = display::Screen::GetScreen();
+    DCHECK(screen) << "A TestScreen must be instantiated for tests creating "
+                      "windows with no initial bounds.";
+    const gfx::Point origin =
+        IsScreenCoordinatesEnabled()
+            ? screen->GetDisplayForNewWindows().work_area().CenterPoint()
+            : gfx::Point(0, 0);
+    state.bounds_dip = gfx::Rect(origin, {1, 1});
   }
 
   // Properties contain DIP bounds but the buffer scale is initially 1 so it's
@@ -956,8 +1011,7 @@ void WaylandWindow::OnEnteredOutput() {
   if (AsWaylandPopup()) {
     return;
   }
-
-  UpdateWindowScale(true);
+  OnEnteredOutputScaleChanged();
 }
 
 void WaylandWindow::OnLeftOutput() {
@@ -967,12 +1021,11 @@ void WaylandWindow::OnLeftOutput() {
   if (AsWaylandPopup()) {
     return;
   }
-
-  UpdateWindowScale(true);
+  OnEnteredOutputScaleChanged();
 }
 
 WaylandWindow* WaylandWindow::GetTopMostChildWindow() {
-  return child_window_ ? child_window_->GetTopMostChildWindow() : this;
+  return child_popup_ ? child_popup_->GetTopMostChildWindow() : this;
 }
 
 WaylandWindow* WaylandWindow::GetXdgParentWindow() {
@@ -1289,6 +1342,14 @@ void WaylandWindow::ProcessPendingConfigureState(uint32_t serial) {
 
   // Reset values.
   pending_configure_state_ = PendingConfigureState();
+
+  // If we get a configure which is immediately applied and latched (meaning
+  // that the configure does nothing), we will have immediately acked it, and we
+  // can immediately commit it. See crbug.com/340500574.
+  if (state == applied_state_ && state == latched_state_ &&
+      in_flight_requests_.empty()) {
+    root_surface_->Commit(/*flush=*/true);
+  }
 }
 
 void WaylandWindow::RequestStateFromServer(PlatformWindowDelegate::State state,
@@ -1316,12 +1377,16 @@ void WaylandWindow::RequestStateFromClient(
 void WaylandWindow::RequestState(PlatformWindowDelegate::State state,
                                  int64_t serial,
                                  bool force) {
-  // State should NOT be requested during the ongoing request handling.
-  CHECK(!requesting_state_) << "Detected re-enterancy of state request.";
-  base::AutoReset<bool> setter(&requesting_state_, true);
-
   LOG_IF(WARNING, in_flight_requests_.size() > 100u)
       << "The queue of configures is longer than 100!";
+
+  // If we called re-entrantly into `RequestState` from
+  // `MaybeApplyLatestStateRequest`, save this call to execute later.
+  // TODO(crbug.com/40058672): Remove this.
+  if (applying_state_) {
+    reentrant_requests_.emplace_back(state, serial, force);
+    return;
+  }
 
   // If there are no in-flight requests, then the applied state should be the
   // latched state, because in flight configure requests are only removed on
@@ -1408,7 +1473,8 @@ void WaylandWindow::ProcessSequencePoint(int64_t viz_seq) {
   }
 
   if (UseTestConfigForPlatformWindows()) {
-    for (auto i = in_flight_requests_.begin(); i != iter; ++i) {
+    const auto end = std::next(iter);
+    for (auto i = in_flight_requests_.begin(); i != end; ++i) {
       // We need to set `latest_latched_viz_seq_for_testing_` to the highest viz
       // seq for all requests at or before the last request we latch.
       latest_latched_viz_seq_for_testing_ =
@@ -1487,17 +1553,9 @@ void WaylandWindow::LatchStateRequest(const StateRequest& req) {
   auto old_state = latched_state_;
   latched_state_ = req.state;
 
-  // Update the geometry if the bounds are different or the window scale has
-  // been changed or if the insets have changed since the last latched request.
-  // If geometry is not updated on window scale update, the insets are set in a
-  // wrong way. That is, aura provides insets in pixels, which are converted by
-  // the device scale factor known from the display. It can be different from
-  // the one that the |latch_state_.window_scale| has. As a result, the geometry
-  // is set with wrong values as Wayland requires them to be in DIP.
-  // TODO(crbug.com/328011220): Investigate whether we can remove
-  // `window_scale` check from here.
+  // Update the geometry if the bounds or the insets are changed since the last
+  // latched request.
   if (req.state.bounds_dip.size() != old_state.bounds_dip.size() ||
-      req.state.window_scale != old_state.window_scale ||
       delegate()->CalculateInsetsInDIP(req.state.window_state) !=
           delegate()->CalculateInsetsInDIP(old_state.window_state)) {
     SetWindowGeometry(req.state);
@@ -1509,6 +1567,14 @@ void WaylandWindow::LatchStateRequest(const StateRequest& req) {
 }
 
 void WaylandWindow::MaybeApplyLatestStateRequest(bool force) {
+  // Calling `MaybeApplyLatestStateRequest` re-entrantly is hard to reason about
+  // and also can lead to memory corruption during accesses to
+  // `in_flight_requests_`.
+  CHECK(!applying_state_)
+      << "MaybeApplyLatestStateRequest called re-entrantly.";
+  auto setter =
+      std::make_optional<base::AutoReset<bool>>(&applying_state_, true);
+
   if (in_flight_requests_.empty()) {
     return;
   }
@@ -1531,14 +1597,6 @@ void WaylandWindow::MaybeApplyLatestStateRequest(bool force) {
   }
   latest.applied = true;
 
-  if (UseTestConfigForPlatformWindows()) {
-    latest_applied_viz_seq_for_testing_ = std::max(
-        latest_applied_viz_seq_for_testing_,
-        base::ranges::max(in_flight_requests_, {}, [](const StateRequest& req) {
-          return req.viz_seq;
-        }).viz_seq);
-  }
-
   // Set the applied state here so it can be used by e.g. OnBoundsChanged to
   // pick up the new bounds.
   auto old = applied_state_;
@@ -1549,6 +1607,36 @@ void WaylandWindow::MaybeApplyLatestStateRequest(bool force) {
   // old and new states are the same, or it only changes the origin of the
   // bounds.
   latest.viz_seq = delegate()->OnStateUpdate(old, latest.state);
+
+  if (UseTestConfigForPlatformWindows()) {
+    latest_applied_viz_seq_for_testing_ = std::max(
+        latest_applied_viz_seq_for_testing_,
+        base::ranges::max(in_flight_requests_, {}, [](const StateRequest& req) {
+          return req.viz_seq;
+        }).viz_seq);
+  }
+
+  // `ProcessSequencePoint` may re-entrantly call
+  // `MaybeApplyLatestStateRequest`. This is safe as long as we do not hold
+  // references to `in_flight_requests_` after here.
+  setter.reset();
+
+  // Process any requests added re-entrantly. We need to move the requests out
+  // of `reentrant_requests_` here because each re-entrant request may also add
+  // its own re-entrant requests. This implementation preserves ordering of
+  // requests as if they were added one by one by essentially performing a
+  // pre-order traversal when re-entrant requests add their own re-entrant
+  // requests (and so on). We only need to process re-entrant requests here,
+  // because re-entrant requests can only be added during the re-entrant
+  // critical section above. So, if we ensure `reentrant_requests_` is empty
+  // directly after the critical section above finishes, we maintain the
+  // invariant that `reentrant_requests_` is always empty outside of the
+  // critical section.
+  auto reentrant_requests = std::move(reentrant_requests_);
+  reentrant_requests_.clear();
+  for (const auto& [req_state, req_serial, req_force] : reentrant_requests) {
+    RequestState(req_state, req_serial, req_force);
+  }
 
   // If we have state requests which don't require synchronization to latch, or
   // if no frames will be produced, ack them immediately. Using -2 (or any
@@ -1568,6 +1656,29 @@ void WaylandWindow::MaybeApplyLatestStateRequest(bool force) {
 PlatformWindowDelegate::State WaylandWindow::GetLatestRequestedState() const {
   return in_flight_requests_.empty() ? applied_state_
                                      : in_flight_requests_.back().state;
+}
+
+void WaylandWindow::RoundTripQueue() {
+  connection()->RoundTripQueue();
+}
+
+bool WaylandWindow::HasInFlightRequestsForState() const {
+  CHECK(UseTestConfigForPlatformWindows());
+  return WaylandWindow::HasInFlightRequestsForStateForTesting();
+}
+
+int64_t WaylandWindow::GetVizSequenceIdForAppliedState() const {
+  CHECK(UseTestConfigForPlatformWindows());
+  return latest_applied_viz_seq_for_testing_;
+}
+
+int64_t WaylandWindow::GetVizSequenceIdForLatchedState() const {
+  CHECK(UseTestConfigForPlatformWindows());
+  return latest_latched_viz_seq_for_testing_;
+}
+
+void WaylandWindow::SetLatchImmediately(bool latch_immediately) {
+  latch_immediately_for_testing_ = latch_immediately;
 }
 
 void WaylandWindow::ForceApplyWindowStateDoNotUse(

@@ -4,6 +4,8 @@
 
 #include "ash/constants/ash_features.h"
 #include "ash/constants/ash_pref_names.h"
+#include "chrome/browser/ash/input_method/editor_geolocation_mock_provider.h"
+#include "chrome/browser/ash/input_method/editor_geolocation_provider.h"
 #include "chrome/browser/ash/input_method/editor_mediator.h"
 #include "chrome/browser/ash/policy/handlers/configuration_policy_handler_ash.h"
 #include "chrome/browser/policy/policy_test_utils.h"
@@ -24,7 +26,7 @@ class OrcaPolicyTest : public PolicyTest {
     feature_list_.InitWithFeatures(
         /*enabled_features=*/{chromeos::features::kOrca,
                               chromeos::features::kFeatureManagementOrca,
-                              ash::features::kOrcaControlledByPolicy},
+                              ash::features::kOrcaForManagedUsers},
         // TODO: b:329215512: Remove the OrcaUseAccountCapabilities from the
         // disable list.
         /*disabled_features=*/{chromeos::features::kOrcaDogfood,
@@ -36,50 +38,54 @@ class OrcaPolicyTest : public PolicyTest {
 };
 
 IN_PROC_BROWSER_TEST_F(OrcaPolicyTest,
-                       DisableOrcaOnManagedProfilesIfOrcaPolicyUnset) {
+                       EnablesOrcaOnManagedProfilesIfOrcaPolicyUnset) {
   Profile* profile = browser()->profile();
-  ash::input_method::EditorMediator editor_mediator(profile, "au");
+  auto geolocation_provider =
+      std::make_unique<ash::input_method::EditorGeolocationMockProvider>("au");
+  ash::input_method::EditorMediator editor_mediator(
+      profile, std::move(geolocation_provider));
 
-  profile->GetProfilePolicyConnector()->OverrideIsManagedForTesting(true);
-
-  EXPECT_FALSE(profile->GetPrefs()->IsManagedPreference(
-      ash::prefs::kManagedOrcaEnabled));
-  EXPECT_FALSE(editor_mediator.IsAllowedForUse());
+  EXPECT_FALSE(
+      profile->GetPrefs()->IsManagedPreference(ash::prefs::kOrcaEnabled));
+  EXPECT_TRUE(editor_mediator.IsAllowedForUse());
 }
 
 IN_PROC_BROWSER_TEST_F(OrcaPolicyTest,
                        EnableOrcaOnManagedProfilesIfOrcaPolicyEnabled) {
   Profile* profile = browser()->profile();
-  ash::input_method::EditorMediator editor_mediator(profile, "au");
+  auto geolocation_provider =
+      std::make_unique<ash::input_method::EditorGeolocationMockProvider>("au");
+  ash::input_method::EditorMediator editor_mediator(
+      profile, std::move(geolocation_provider));
   PolicyMap policies;
 
-  profile->GetProfilePolicyConnector()->OverrideIsManagedForTesting(true);
-  policies.Set(key::kOrcaEnabled, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-               POLICY_SOURCE_CLOUD, base::Value(true), nullptr);
+  policies.Set(key::kHelpMeWriteSettings, POLICY_LEVEL_MANDATORY,
+               POLICY_SCOPE_USER, POLICY_SOURCE_CLOUD, base::Value(0), nullptr);
   UpdateProviderPolicy(policies);
 
-  EXPECT_TRUE(profile->GetPrefs()->IsManagedPreference(
-      ash::prefs::kManagedOrcaEnabled));
-  EXPECT_TRUE(profile->GetPrefs()->GetBoolean(ash::prefs::kManagedOrcaEnabled));
+  EXPECT_TRUE(
+      profile->GetPrefs()->IsManagedPreference(ash::prefs::kOrcaEnabled));
+  EXPECT_TRUE(profile->GetPrefs()->GetBoolean(ash::prefs::kOrcaEnabled));
   EXPECT_TRUE(editor_mediator.IsAllowedForUse());
 }
 
 IN_PROC_BROWSER_TEST_F(OrcaPolicyTest,
-                       DisableOrcaOnManagedProfilesIfOrcaPolicyDisabled) {
+                       EnableOrcaOnManagedProfilesIfOrcaPolicyDisabled) {
   Profile* profile = browser()->profile();
-  ash::input_method::EditorMediator editor_mediator(profile, "au");
+  auto geolocation_provider =
+      std::make_unique<ash::input_method::EditorGeolocationMockProvider>("au");
+  ash::input_method::EditorMediator editor_mediator(
+      profile, std::move(geolocation_provider));
   PolicyMap policies;
 
-  profile->GetProfilePolicyConnector()->OverrideIsManagedForTesting(true);
-  policies.Set(key::kOrcaEnabled, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-               POLICY_SOURCE_CLOUD, base::Value(false), nullptr);
+  policies.Set(key::kHelpMeWriteSettings, POLICY_LEVEL_MANDATORY,
+               POLICY_SCOPE_USER, POLICY_SOURCE_CLOUD, base::Value(2), nullptr);
   UpdateProviderPolicy(policies);
 
-  EXPECT_TRUE(profile->GetPrefs()->IsManagedPreference(
-      ash::prefs::kManagedOrcaEnabled));
-  EXPECT_FALSE(
-      profile->GetPrefs()->GetBoolean(ash::prefs::kManagedOrcaEnabled));
-  EXPECT_FALSE(editor_mediator.IsAllowedForUse());
+  EXPECT_TRUE(
+      profile->GetPrefs()->IsManagedPreference(ash::prefs::kOrcaEnabled));
+  EXPECT_FALSE(profile->GetPrefs()->GetBoolean(ash::prefs::kOrcaEnabled));
+  EXPECT_TRUE(editor_mediator.IsAllowedForUse());
 }
 
 }  // namespace policy

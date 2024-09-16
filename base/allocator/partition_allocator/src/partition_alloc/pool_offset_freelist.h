@@ -8,17 +8,16 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "build/build_config.h"
+#include "partition_alloc/build_config.h"
+#include "partition_alloc/buildflags.h"
 #include "partition_alloc/partition_address_space.h"
 #include "partition_alloc/partition_alloc-inl.h"
 #include "partition_alloc/partition_alloc_base/compiler_specific.h"
-#include "partition_alloc/partition_alloc_base/debug/debugging_buildflags.h"
-#include "partition_alloc/partition_alloc_buildflags.h"
 #include "partition_alloc/partition_alloc_config.h"
 #include "partition_alloc/partition_alloc_constants.h"
 #include "partition_alloc/tagging.h"
 
-#if !defined(ARCH_CPU_BIG_ENDIAN)
+#if !PA_BUILDFLAG(PA_ARCH_CPU_BIG_ENDIAN)
 #include "partition_alloc/reverse_bytes.h"
 #endif
 
@@ -31,7 +30,7 @@ using PoolInfo = PartitionAddressSpace::PoolInfo;
 class PoolOffsetFreelistEntry;
 
 class EncodedPoolOffset {
-#if defined(ARCH_CPU_BIG_ENDIAN)
+#if PA_BUILDFLAG(PA_ARCH_CPU_BIG_ENDIAN)
   static constexpr uintptr_t kEncodeedNullptr = ~uintptr_t{0};
 #else
   static constexpr uintptr_t kEncodeedNullptr = uintptr_t{0};
@@ -64,7 +63,7 @@ class EncodedPoolOffset {
     //    corrupt a freelist pointer, partial pointer overwrite attacks are
     //    thwarted.
     // For big endian, similar guarantees are arrived at with a negation.
-#if defined(ARCH_CPU_BIG_ENDIAN)
+#if PA_BUILDFLAG(PA_ARCH_CPU_BIG_ENDIAN)
     uintptr_t transformed = ~offset;
 #else
     uintptr_t transformed = ReverseBytes(offset);
@@ -78,11 +77,11 @@ class EncodedPoolOffset {
     if (!ptr) {
       return kEncodeedNullptr;
     }
-    uintptr_t address = reinterpret_cast<uintptr_t>(ptr);
+    uintptr_t address = SlotStartPtr2Addr(ptr);
     PoolInfo pool_info = PartitionAddressSpace::GetPoolInfo(address);
     // Save a MTE tag as well as an offset.
-    uintptr_t tagged_offset = address & (kPtrTagMask | ~pool_info.base_mask);
-    PA_DCHECK(tagged_offset == (pool_info.offset | (address & kPtrTagMask)));
+    uintptr_t tagged_offset =
+        reinterpret_cast<uintptr_t>(ptr) & (kPtrTagMask | ~pool_info.base_mask);
     return Transform(tagged_offset);
   }
 
@@ -210,16 +209,16 @@ class PoolOffsetFreelistEntry {
     // SetNext() is either called on the freelist head, when provisioning new
     // slots, or when GetNext() has been called before, no need to pass the
     // size.
-#if BUILDFLAG(PA_DCHECK_IS_ON)
+#if PA_BUILDFLAG(DCHECKS_ARE_ON)
     // Regular freelists always point to an entry within the same super page.
     //
     // This is most likely a PartitionAlloc bug if this triggers.
-    if (PA_UNLIKELY(entry &&
-                    (SlotStartPtr2Addr(this) & kSuperPageBaseMask) !=
-                        (SlotStartPtr2Addr(entry) & kSuperPageBaseMask))) {
+    if (entry && (SlotStartPtr2Addr(this) & kSuperPageBaseMask) !=
+                     (SlotStartPtr2Addr(entry) & kSuperPageBaseMask))
+        [[unlikely]] {
       FreelistCorruptionDetected(0);
     }
-#endif  // BUILDFLAG(PA_DCHECK_IS_ON)
+#endif  // PA_BUILDFLAG(DCHECKS_ARE_ON)
 
     encoded_next_ = EncodedPoolOffset(entry);
 #if PA_CONFIG(HAS_FREELIST_SHADOW_ENTRY)
@@ -253,12 +252,12 @@ class PoolOffsetFreelistEntry {
       return nullptr;
     }
 
-    PoolInfo pool_info = GetPoolInfo(reinterpret_cast<uintptr_t>(this));
+    PoolInfo pool_info = GetPoolInfo(SlotStartPtr2Addr(this));
     // We verify that `(next_ & pool_info.base_mask) == 0` in `IsWellFormed()`,
     // which is meant to prevent from breaking out of the pool in face of
     // a corruption (see PoolOffsetFreelistEntry class-level comment).
     auto* ret = encoded_next_.Decode(pool_info);
-    if (PA_UNLIKELY(!IsWellFormed<for_thread_cache>(pool_info, this, ret))) {
+    if (!IsWellFormed<for_thread_cache>(pool_info, this, ret)) [[unlikely]] {
       if constexpr (crash_on_corruption) {
         // Put the corrupted data on the stack, it may give us more information
         // about what kind of corruption that was.
@@ -291,10 +290,11 @@ class PoolOffsetFreelistEntry {
     // Don't allow the freelist to be blindly followed to any location.
     // Checks following constraints:
     // - `here->shadow_` must match an inversion of `here->next_` (if present).
-    // - `next` must not have bits in the pool base mask except a MTE tag.
-    // - `next` cannot point inside the metadata area.
-    // - `here` and `next` must belong to the same superpage, unless this is in
-    //   the thread cache (they even always belong to the same slot span).
+    // - `next` mustn't have bits set in the pool base mask, except MTE tag.
+    // - `next` mustn't point inside the super page metadata area.
+    // - Unless this is a thread-cache freelist, `here` and `next` must belong
+    //   to the same super page (as a matter of fact, they must belong to the
+    //   same slot span, but that'd be too expensive to check here).
     // - `next` is marked as free in the free slot bitmap (if present).
 
     const uintptr_t here_address = SlotStartPtr2Addr(here);
@@ -324,8 +324,8 @@ class PoolOffsetFreelistEntry {
     const bool same_super_page = (here_address & kSuperPageBaseMask) ==
                                  (next_address & kSuperPageBaseMask);
 
-#if BUILDFLAG(USE_FREESLOT_BITMAP)
-    // TODO(crbug.com/1461983): Add support for freeslot bitmaps.
+#if PA_BUILDFLAG(USE_FREESLOT_BITMAP)
+    // TODO(crbug.com/40274683): Add support for freeslot bitmaps.
     static_assert(false, "USE_FREESLOT_BITMAP not supported");
 #else
     constexpr bool marked_as_free_in_bitmap = true;

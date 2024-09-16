@@ -14,9 +14,9 @@
 #include "media/gpu/macros.h"
 #include "media/gpu/v4l2/v4l2_device.h"
 #include "media/gpu/v4l2/v4l2_image_processor_backend.h"
-#include "media/video/h264_parser.h"
+#include "media/parsers/h264_parser.h"
 #if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
-#include "media/video/h265_parser.h"
+#include "media/parsers/h265_parser.h"
 #endif  // BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
 
 namespace media {
@@ -266,9 +266,9 @@ bool H264InputBufferFragmentSplitter::AdvanceFrameFragment(const uint8_t* data,
         return true;
       }
     }
-    *endpos = (nalu.data + nalu.size) - data;
+    *endpos = (nalu.data + base::checked_cast<size_t>(nalu.size)) - data;
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 void H264InputBufferFragmentSplitter::Reset() {
@@ -400,9 +400,9 @@ bool HEVCInputBufferFragmentSplitter::AdvanceFrameFragment(const uint8_t* data,
         return true;
       }
     }
-    *endpos = (nalu.data + nalu.size) - data;
+    *endpos = (nalu.data + base::checked_cast<size_t>(nalu.size)) - data;
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 void HEVCInputBufferFragmentSplitter::Reset() {

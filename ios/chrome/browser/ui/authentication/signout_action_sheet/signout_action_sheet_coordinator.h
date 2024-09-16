@@ -70,6 +70,12 @@ class Browser;
 // Whether to warns feature won’t be available anymore when user is not
 // synced.
 @property(nonatomic, assign) BOOL showUnavailableFeatureDialogHeader;
+
+// Whether the sign-out action is part of an account switch or not. If YES, no
+// signout snackbar will be displayed, and signout dialog strings will indicate
+// an account switch. Default is NO.
+@property(nonatomic, assign) BOOL accountSwitch;
+
 @end
 
 #endif  // IOS_CHROME_BROWSER_UI_AUTHENTICATION_SIGNOUT_ACTION_SHEET_SIGNOUT_ACTION_SHEET_COORDINATOR_H_

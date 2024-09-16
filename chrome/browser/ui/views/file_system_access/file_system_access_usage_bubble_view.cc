@@ -17,9 +17,10 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/file_system_access/file_system_access_ui_helpers.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/chrome_typography.h"
-#include "chrome/browser/ui/views/file_system_access/file_system_access_ui_helpers.h"
+#include "chrome/browser/ui/views/file_system_access/file_system_access_views_helpers.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/toolbar_button_provider.h"
 #include "chrome/browser/ui/views/page_action/page_action_icon_view.h"
@@ -35,6 +36,7 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/color/color_id.h"
 #include "ui/color/color_provider.h"
 #include "ui/gfx/paint_vector_icon.h"
@@ -204,6 +206,11 @@ class CollapsibleListView : public views::View {
     table_view_parent_->SetVisible(false);
   }
 
+  void ClearModel() {
+    static_cast<views::TableView*>(table_view_parent_->contents())
+        ->SetModel(nullptr);
+  }
+
   // views::View
   void OnThemeChanged() override {
     views::View::OnThemeChanged();
@@ -347,16 +354,19 @@ FileSystemAccessUsageBubbleView::FileSystemAccessUsageBubbleView(
     content::WebContents* web_contents,
     const url::Origin& origin,
     Usage usage)
-    : LocationBarBubbleDelegateView(anchor_view, web_contents),
+    : LocationBarBubbleDelegateView(anchor_view,
+                                    web_contents,
+                                    /*autosize=*/true),
       origin_(origin),
       usage_(std::move(usage)),
       readable_paths_model_(std::move(usage_.readable_files),
                             std::move(usage_.readable_directories)),
       writable_paths_model_(std::move(usage_.writable_files),
                             std::move(usage_.writable_directories)) {
-  SetButtonLabel(ui::DIALOG_BUTTON_OK, l10n_util::GetStringUTF16(IDS_DONE));
+  SetButtonLabel(ui::mojom::DialogButton::kOk,
+                 l10n_util::GetStringUTF16(IDS_DONE));
   SetButtonLabel(
-      ui::DIALOG_BUTTON_CANCEL,
+      ui::mojom::DialogButton::kCancel,
       l10n_util::GetStringUTF16(IDS_FILE_SYSTEM_ACCESS_USAGE_REMOVE_ACCESS));
   SetCancelCallback(
       base::BindOnce(&FileSystemAccessUsageBubbleView::OnDialogCancelled,
@@ -365,7 +375,16 @@ FileSystemAccessUsageBubbleView::FileSystemAccessUsageBubbleView(
       views::DISTANCE_BUBBLE_PREFERRED_WIDTH));
 }
 
-FileSystemAccessUsageBubbleView::~FileSystemAccessUsageBubbleView() = default;
+FileSystemAccessUsageBubbleView::~FileSystemAccessUsageBubbleView() {
+  if (readable_collapsible_list_view_) {
+    static_cast<CollapsibleListView*>(readable_collapsible_list_view_)
+        ->ClearModel();
+  }
+  if (writable_collapsible_list_view_) {
+    static_cast<CollapsibleListView*>(writable_collapsible_list_view_)
+        ->ClearModel();
+  }
+}
 
 std::u16string FileSystemAccessUsageBubbleView::GetAccessibleWindowTitle()
     const {
@@ -426,7 +445,7 @@ void FileSystemAccessUsageBubbleView::Init() {
         label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
         AddChildView(std::move(label));
       }
-      AddChildView(
+      writable_collapsible_list_view_ = AddChildView(
           std::make_unique<CollapsibleListView>(&writable_paths_model_));
     }
 
@@ -440,7 +459,7 @@ void FileSystemAccessUsageBubbleView::Init() {
         label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
         AddChildView(std::move(label));
       }
-      AddChildView(
+      readable_collapsible_list_view_ = AddChildView(
           std::make_unique<CollapsibleListView>(&readable_paths_model_));
     }
   }
@@ -474,12 +493,6 @@ void FileSystemAccessUsageBubbleView::CloseBubble() {
   // this. Additionally web_contents() may have been destroyed.
   bubble_ = nullptr;
   LocationBarBubbleDelegateView::CloseBubble();
-}
-
-void FileSystemAccessUsageBubbleView::ChildPreferredSizeChanged(
-    views::View* child) {
-  LocationBarBubbleDelegateView::ChildPreferredSizeChanged(child);
-  SizeToContents();
 }
 
 BEGIN_METADATA(FileSystemAccessUsageBubbleView)

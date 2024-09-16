@@ -55,7 +55,11 @@ SecurePaymentConfirmationApp::SecurePaymentConfirmationApp(
     const url::Origin& merchant_origin,
     base::WeakPtr<PaymentRequestSpec> spec,
     mojom::SecurePaymentConfirmationRequestPtr request,
-    std::unique_ptr<webauthn::InternalAuthenticator> authenticator)
+    std::unique_ptr<webauthn::InternalAuthenticator> authenticator,
+    const std::u16string& network_label,
+    const SkBitmap& network_icon,
+    const std::u16string& issuer_label,
+    const SkBitmap& issuer_icon)
     : PaymentApp(/*icon_resource_id=*/0, PaymentApp::Type::INTERNAL),
       content::WebContentsObserver(web_contents_to_observe),
       authenticator_frame_routing_id_(
@@ -67,7 +71,11 @@ SecurePaymentConfirmationApp::SecurePaymentConfirmationApp(
       merchant_origin_(merchant_origin),
       spec_(spec),
       request_(std::move(request)),
-      authenticator_(std::move(authenticator)) {
+      authenticator_(std::move(authenticator)),
+      network_label_(network_label),
+      network_icon_(network_icon),
+      issuer_label_(issuer_label),
+      issuer_icon_(issuer_icon) {
   DCHECK(!credential_id_.empty());
 
   app_method_names_.insert(methods::kSecurePaymentConfirmation);
@@ -114,6 +122,9 @@ void SecurePaymentConfirmationApp::InvokePaymentApp(
   // TODO(crbug.com/40225659): The 'showOptOut' flag status must also be signed
   // in the assertion, so that the verifier can check that the caller offered
   // the experience if desired.
+  // TODO(crbug.com/333945861): The network and issuer information must also be
+  // signed in the assertion, so that the verifier can check that the caller
+  // passed the correct information.
   authenticator_->SetPaymentOptions(blink::mojom::PaymentOptions::New(
       spec_->GetTotal(/*selected_app=*/this)->amount.Clone(),
       request_->instrument.Clone(), request_->payee_name,
@@ -134,7 +145,7 @@ bool SecurePaymentConfirmationApp::CanPreselect() const {
 }
 
 std::u16string SecurePaymentConfirmationApp::GetMissingInfoLabel() const {
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return std::u16string();
 }
 
@@ -201,11 +212,11 @@ bool SecurePaymentConfirmationApp::IsWaitingForPaymentDetailsUpdate() const {
 
 void SecurePaymentConfirmationApp::UpdateWith(
     mojom::PaymentRequestDetailsUpdatePtr details_update) {
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 void SecurePaymentConfirmationApp::OnPaymentDetailsNotUpdated() {
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 void SecurePaymentConfirmationApp::AbortPaymentApp(

@@ -287,6 +287,10 @@ struct PasswordManagerActiveWidgetPromoData
   [self updateConsumerPasswordCheckState:_currentState];
 }
 
+- (void)passwordCheckManagerWillShutdown {
+  _passwordCheckObserver.reset();
+}
+
 #pragma mark - Private Methods
 
 // Provides passwords and blocked forms to the '_consumer'.
@@ -406,12 +410,16 @@ struct PasswordManagerActiveWidgetPromoData
   PasswordManagerActiveWidgetPromoData* data =
       static_cast<PasswordManagerActiveWidgetPromoData*>(
           _tracker->GetUserData(PasswordManagerActiveWidgetPromoData::key));
-  CHECK(data, base::NotFatalUntil::M127);
-  data->active_promos--;
-  if (data->active_promos <= 0) {
+  if (data) {
+    data->active_promos--;
+    if (data->active_promos <= 0) {
+      _tracker->Dismissed(
+          feature_engagement::kIPHiOSPromoPasswordManagerWidgetFeature);
+      _tracker->RemoveUserData(PasswordManagerActiveWidgetPromoData::key);
+    }
+  } else {
     _tracker->Dismissed(
         feature_engagement::kIPHiOSPromoPasswordManagerWidgetFeature);
-    _tracker->RemoveUserData(PasswordManagerActiveWidgetPromoData::key);
   }
 }
 

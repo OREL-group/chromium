@@ -69,10 +69,6 @@ def validate_property(prop, props_by_name):
                 subprop = props_by_name[subprop_name]
                 assert subprop.supports_incremental_style, \
                     '%s must be incrementally applicable when its shorthand %s is' % (subprop_name, name)
-    assert not prop.valid_for_formatted_text or prop.is_longhand, \
-        'Only longhands can be valid_for_formatted_text [%s]' % name
-    assert not prop.valid_for_formatted_text_run or prop.is_longhand, \
-        'Only longhands can be valid_for_formatted_text_run [%s]' % name
     if prop.alias_for:
         assert not prop.is_internal, \
             'Internal aliases not supported [%s]' % name
@@ -89,6 +85,8 @@ def validate_property(prop, props_by_name):
         assert prop.mutable, 'Derived flags must be mutable [%s]' % name
         assert not prop.field_group, 'Derived flags may not have field groups [%s]' % name
         assert prop.reset_on_new_style, 'Derived flags must have reset_on_new_style [%s]' % name
+    if prop.is_logical:
+        assert not prop.field_group, 'Logical properties can not have fields [%s]' % name
 
 # Determines whether or not style builders (i.e. Apply functions)
 # should be generated for the given property.

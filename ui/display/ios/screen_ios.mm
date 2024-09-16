@@ -32,19 +32,17 @@ class ScreenNotification {
 @implementation ScreenObserver
 
 - (instancetype)initWithNotifier:(display::ScreenNotification*)notifier {
-  if (self = [super init]) {
+  if ((self = [super init])) {
     _notifier = notifier;
     NSNotificationCenter* defaultCenter = [NSNotificationCenter defaultCenter];
     [defaultCenter addObserver:self
                       selector:@selector(mainScreenChanged)
                           name:UIDeviceOrientationDidChangeNotification
                         object:nil];
-    if (display::features::IsScreenIosRefactorEnabled()) {
-      [defaultCenter addObserver:self
-                        selector:@selector(mainScreenChanged)
-                            name:UIWindowDidBecomeKeyNotification
-                          object:nil];
-    }
+    [defaultCenter addObserver:self
+                      selector:@selector(mainScreenChanged)
+                          name:UIWindowDidBecomeKeyNotification
+                        object:nil];
   }
 
   return self;
@@ -78,9 +76,7 @@ class ScreenIos : public ScreenBase, public ScreenNotification {
 
   void ScreenChanged() override {
     UIScreen* screen = GetAllActiveScreens().firstObject;
-    if (!display::features::IsScreenIosRefactorEnabled()) {
-      CHECK(screen);
-    } else if (!screen) {
+    if (!screen) {
       return;
     }
 
@@ -119,20 +115,16 @@ class ScreenIos : public ScreenBase, public ScreenNotification {
 #if BUILDFLAG(IS_IOS_APP_EXTENSION)
     return [NSArray<UIScreen*> array];
 #else
-    if (display::features::IsScreenIosRefactorEnabled()) {
-      NSMutableSet<UIScreen*>* screens = [NSMutableSet set];
-      for (UIScene* scene in UIApplication.sharedApplication.connectedScenes) {
-        UIWindowScene* windowScene =
-            base::apple::ObjCCastStrict<UIWindowScene>(scene);
-        UIScreen* screen = windowScene.keyWindow.screen;
-        if (screen) {
-          [screens addObject:screen];
-        }
+    NSMutableSet<UIScreen*>* screens = [NSMutableSet set];
+    for (UIScene* scene in UIApplication.sharedApplication.connectedScenes) {
+      UIWindowScene* windowScene =
+          base::apple::ObjCCastStrict<UIWindowScene>(scene);
+      UIScreen* screen = windowScene.keyWindow.screen;
+      if (screen) {
+        [screens addObject:screen];
       }
-      return [screens allObjects];
     }
-
-    return [UIScreen screens];
+    return [screens allObjects];
 #endif
   }
 

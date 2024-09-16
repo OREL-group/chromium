@@ -117,7 +117,7 @@ struct CONTENT_EXPORT BackForwardCacheCanStoreDocumentResultWithTree {
 //
 // 1. `EnforceCacheSizeLimit()` is called to prune the cache size down on
 //    storing a new cache entry, or when the renderer process's
-//    `IsProcessBackgrounded()` state changes.
+//    `GetPriority()` state changes.
 //    A. [Android-only] The number of entries where `HasForegroundedProcess()`
 //       is true is pruned to `GetForegroundedEntriesCacheSize()`.
 //    B. Prunes to `GetCacheSize()` entries no matter what kinds of tabs
@@ -394,6 +394,7 @@ class CONTENT_EXPORT BackForwardCacheImpl
 
   // BackForwardCache overrides:
   void Flush() override;
+  void Flush(NotRestoredReason reason) override;
   void Prune(size_t limit) override;
   void DisableForTesting(DisableForTestingReason reason) override;
 
@@ -407,7 +408,7 @@ class CONTENT_EXPORT BackForwardCacheImpl
       const StoragePartition::StorageKeyMatcherFunction& storage_key_filter);
 
   // RenderProcessHostInternalObserver methods
-  void RenderProcessBackgroundedChanged(RenderProcessHostImpl* host) override;
+  void RenderProcessPriorityChanged(RenderProcessHostImpl* host) override;
 
   // Returns true if we are managing the cache size using foreground and
   // background limits (if finch parameter "foreground_cache_size" > 0).
@@ -415,7 +416,7 @@ class CONTENT_EXPORT BackForwardCacheImpl
 
   // Returns true if one of the BFCache entries has a matching
   // BrowsingInstanceId/SiteInstanceId/RenderFrameProxyHost.
-  // TODO(https://crbug.com/1243541): Remove these once the bug is fixed.
+  // TODO(crbug.com/40195481): Remove these once the bug is fixed.
   bool IsBrowsingInstanceInBackForwardCacheForDebugging(
       BrowsingInstanceId browsing_instance_id);
   bool IsSiteInstanceInBackForwardCacheForDebugging(
@@ -761,7 +762,7 @@ class CONTENT_EXPORT BackForwardCacheCanStoreTreeResult {
   // from all the reachable cross-origin iframes. We decrement this count
   // every time we call this function, and report only when |index| is 0 so
   // that reporting happens only for randomly picked one of such iframes.
-  // TODO(crbug.com/1518408): Add "masked" when UA internal reasons such as
+  // TODO(crbug.com/41491384): Add "masked" when UA internal reasons such as
   // memory pressure and browsing instance not swapped are blocking as well.
   blink::mojom::BackForwardCacheNotRestoredReasonsPtr
   GetWebExposedNotRestoredReasonsInternal(int& index);

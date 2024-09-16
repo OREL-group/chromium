@@ -27,7 +27,7 @@ using sandbox::syscall_broker::BrokerFilePermission;
 // chrome/browser/ash/arc/video/gpu_arc_video_service_host.cc depends on it and
 // that file is built for ash-chrome regardless of VA-API/V4L2. That means that
 // bots like linux-chromeos-rel end up compiling this presandbox hook (thus the
-// NOTREACHED()s in some places here).
+// NOTREACHED_IN_MIGRATION()s in some places here).
 
 namespace media {
 namespace {
@@ -88,7 +88,7 @@ bool HardwareVideoDecodingPreSandboxHookForVaapiOnIntel(
   VaapiWrapper::PreSandboxInitialization(/*allow_disabling_global_lock=*/true);
   return true;
 #else
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 #endif  // BUILDFLAG(USE_VAAPI)
 }
 
@@ -112,20 +112,32 @@ bool HardwareVideoDecodingPreSandboxHookForVaapiOnAMD(
                            /*read_write=*/true);
   permissions.push_back(BrokerFilePermission::ReadOnly("/dev/dri"));
 
+  permissions.push_back(
+      BrokerFilePermission::ReadOnly("/usr/share/vulkan/icd.d"));
+  permissions.push_back(BrokerFilePermission::ReadOnly(
+      "/usr/share/vulkan/icd.d/radeon_icd.x86_64.json"));
+
+  constexpr int kDlopenFlags = RTLD_NOW | RTLD_GLOBAL | RTLD_NODELETE;
   const char* radeonsi_lib = "/usr/lib64/dri/radeonsi_dri.so";
 #if defined(DRI_DRIVER_DIR)
   radeonsi_lib = DRI_DRIVER_DIR "/radeonsi_dri.so";
 #endif
-  if (nullptr == dlopen(radeonsi_lib, RTLD_NOW | RTLD_GLOBAL | RTLD_NODELETE)) {
+  if (nullptr == dlopen(radeonsi_lib, kDlopenFlags)) {
     LOG(ERROR) << "dlopen(radeonsi_dri.so) failed with error: " << dlerror();
     return false;
   }
+
+  // minigbm may use the DRI driver (requires Mesa 24.0 or older) or the
+  // Vulkan driver (requires VK_EXT_image_drm_format_modifier).  Preload the
+  // Vulkan driver as well but ignore failures.
+  dlopen("libvulkan.so.1", kDlopenFlags);
+  dlopen("libvulkan_radeon.so", kDlopenFlags);
 
 #if BUILDFLAG(USE_VAAPI)
   VaapiWrapper::PreSandboxInitialization(/*allow_disabling_global_lock=*/true);
   return true;
 #else
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 #endif  // BUILDFLAG(USE_VAAPI)
 }
 
@@ -168,18 +180,12 @@ bool HardwareVideoDecodingPreSandboxHookForV4L2(
   static const char kDevImageProc0Path[] = "/dev/image-proc0";
   permissions.push_back(BrokerFilePermission::ReadWrite(kDevImageProc0Path));
 
-  // Some platforms (RK3399) need libv4l2 to interact with the kernel V4L2
-  // driver, so we need to load that library prior to entering the sandbox.
-#if BUILDFLAG(USE_LIBV4L2)
-#if defined(__aarch64__)
-  dlopen("/usr/lib64/libv4l2.so", RTLD_NOW | RTLD_GLOBAL | RTLD_NODELETE);
-#else
-  dlopen("/usr/lib/libv4l2.so", RTLD_NOW | RTLD_GLOBAL | RTLD_NODELETE);
-#endif  // defined(__aarch64__)
-#endif  // BUILDFLAG(USE_LIBV4L2)
+  // Files needed for protected DMA allocations.
+  static const char kDmaHeapPath[] = "/dev/dma_heap/restricted_mtk_cma";
+  permissions.push_back(BrokerFilePermission::ReadWrite(kDmaHeapPath));
   return true;
 #else
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 #endif  // BUILDFLAG(USE_V4L2_CODEC)
 }
 

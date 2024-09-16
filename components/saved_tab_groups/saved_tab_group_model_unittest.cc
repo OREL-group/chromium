@@ -19,17 +19,31 @@
 #include "components/saved_tab_groups/features.h"
 #include "components/saved_tab_groups/saved_tab_group.h"
 #include "components/saved_tab_groups/saved_tab_group_model_observer.h"
+#include "components/saved_tab_groups/saved_tab_group_sync_bridge.h"
 #include "components/saved_tab_groups/saved_tab_group_tab.h"
 #include "components/saved_tab_groups/saved_tab_group_test_utils.h"
+#include "components/saved_tab_groups/types.h"
 #include "components/sync/protocol/saved_tab_group_specifics.pb.h"
 #include "components/tab_groups/tab_group_color.h"
 #include "components/tab_groups/tab_group_id.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/image/image.h"
 #include "url/gurl.h"
 #include "url/url_constants.h"
 
 namespace tab_groups {
+
+namespace {
+
+using testing::IsEmpty;
+using testing::Not;
+using testing::Pointee;
+using testing::UnorderedElementsAre;
+
+MATCHER_P(HasGroupId, guid, "") {
+  return arg.saved_guid() == guid;
+}
 
 // Serves to test the functions in SavedTabGroupModelObserver.
 class SavedTabGroupModelObserverTest
@@ -61,16 +75,21 @@ class SavedTabGroupModelObserverTest
   }
 
   void SavedTabGroupRemovedLocally(
-      const SavedTabGroup* removed_group) override {
-    retrieved_guid_ = removed_group->saved_guid();
+      const SavedTabGroup& removed_group) override {
+    retrieved_guid_ = removed_group.saved_guid();
   }
 
   void SavedTabGroupUpdatedLocally(
       const base::Uuid& group_guid,
-      const std::optional<base::Uuid>& tab_guid = std::nullopt) override {
+      const std::optional<base::Uuid>& tab_guid) override {
     retrieved_group_.emplace_back(*saved_tab_group_model_->Get(group_guid));
     retrieved_index_ =
         saved_tab_group_model_->GetIndexOf(group_guid).value_or(-1);
+  }
+
+  void SavedTabGroupSharedStateUpdatedLocally(
+      const base::Uuid& group_guid) override {
+    SavedTabGroupUpdatedLocally(group_guid, /*tab_guid=*/std::nullopt);
   }
 
   void SavedTabGroupAddedFromSync(const base::Uuid& guid) override {
@@ -79,21 +98,21 @@ class SavedTabGroupModelObserverTest
   }
 
   void SavedTabGroupRemovedFromSync(
-      const SavedTabGroup* removed_group) override {
-    retrieved_guid_ = removed_group->saved_guid();
+      const SavedTabGroup& removed_group) override {
+    retrieved_guid_ = removed_group.saved_guid();
   }
 
   void SavedTabGroupUpdatedFromSync(
       const base::Uuid& group_guid,
-      const std::optional<base::Uuid>& tab_guid = std::nullopt) override {
+      const std::optional<base::Uuid>& tab_guid) override {
     retrieved_group_.emplace_back(*saved_tab_group_model_->Get(group_guid));
     retrieved_index_ =
         saved_tab_group_model_->GetIndexOf(group_guid).value_or(-1);
   }
 
   void SavedTabGroupReorderedLocally() override { reordered_called_ = true; }
-  void SavedTabGroupTabsReorderedLocally(
-      const base::Uuid& group_guid) override {
+  void SavedTabGroupTabMovedLocally(const base::Uuid& group_guid,
+                                    const base::Uuid& tab_guid) override {
     tabs_reodered_called_ = true;
   }
 
@@ -189,15 +208,19 @@ class SavedTabGroupModelTest : public ::testing::Test,
       return;
     }
     // Copy ids so we do not remove elements while we are accessing the data.
+    std::vector<base::Uuid> saved_tab_group_ids = GetSavedTabGroupIds();
+    for (const auto& id : saved_tab_group_ids) {
+      saved_tab_group_model_->Remove(id);
+    }
+  }
+
+  std::vector<base::Uuid> GetSavedTabGroupIds() {
     std::vector<base::Uuid> saved_tab_group_ids;
     for (const SavedTabGroup& saved_group :
          saved_tab_group_model_->saved_tab_groups()) {
       saved_tab_group_ids.emplace_back(saved_group.saved_guid());
     }
-
-    for (const auto& id : saved_tab_group_ids) {
-      saved_tab_group_model_->Remove(id);
-    }
+    return saved_tab_group_ids;
   }
 
   std::unique_ptr<SavedTabGroupModel> saved_tab_group_model_;
@@ -296,6 +319,8 @@ TEST_P(SavedTabGroupModelTest, UpdateElement) {
   const SavedTabGroup* group = saved_tab_group_model_->Get(id_1_);
   const std::u16string original_title = group->title();
   const tab_groups::TabGroupColorId& original_color = group->color();
+  saved_tab_group_model_->OnGroupOpenedInTabStrip(
+      id_1_, test::GenerateRandomTabGroupID());
 
   // Should only update the element if title or color are different
   const std::u16string same_title = u"Group One";
@@ -303,7 +328,8 @@ TEST_P(SavedTabGroupModelTest, UpdateElement) {
       tab_groups::TabGroupColorId::kGrey;
   const tab_groups::TabGroupVisualData same_visual_data(same_title, same_color,
                                                         /*is_collapsed*/ false);
-  saved_tab_group_model_->UpdateVisualData(id_1_, &same_visual_data);
+  saved_tab_group_model_->UpdateVisualData(group->local_group_id().value(),
+                                           &same_visual_data);
   EXPECT_EQ(group->title(), original_title);
   EXPECT_EQ(group->color(), original_color);
 
@@ -313,7 +339,8 @@ TEST_P(SavedTabGroupModelTest, UpdateElement) {
       tab_groups::TabGroupColorId::kCyan;
   const tab_groups::TabGroupVisualData new_visual_data(new_title, new_color,
                                                        /*is_collapsed*/ false);
-  saved_tab_group_model_->UpdateVisualData(id_1_, &new_visual_data);
+  saved_tab_group_model_->UpdateVisualData(group->local_group_id().value(),
+                                           &new_visual_data);
   EXPECT_EQ(group->title(), new_title);
   EXPECT_EQ(group->color(), new_color);
 
@@ -321,7 +348,8 @@ TEST_P(SavedTabGroupModelTest, UpdateElement) {
   const std::u16string random_title = u"Random Title";
   const tab_groups::TabGroupVisualData change_title_visual_data(
       random_title, original_color, /*is_collapsed*/ false);
-  saved_tab_group_model_->UpdateVisualData(id_1_, &change_title_visual_data);
+  saved_tab_group_model_->UpdateVisualData(group->local_group_id().value(),
+                                           &change_title_visual_data);
   EXPECT_EQ(group->title(), random_title);
   EXPECT_EQ(group->color(), original_color);
 
@@ -330,9 +358,22 @@ TEST_P(SavedTabGroupModelTest, UpdateElement) {
       tab_groups::TabGroupColorId::kGrey;
   const tab_groups::TabGroupVisualData change_color_visual_data(
       original_title, random_color, /*is_collapsed*/ false);
-  saved_tab_group_model_->UpdateVisualData(id_1_, &change_color_visual_data);
+  saved_tab_group_model_->UpdateVisualData(group->local_group_id().value(),
+                                           &change_color_visual_data);
   EXPECT_EQ(group->title(), original_title);
   EXPECT_EQ(group->color(), random_color);
+}
+
+TEST_P(SavedTabGroupModelTest, MakeTabGroupShared) {
+  const SavedTabGroup* group = saved_tab_group_model_->Get(id_1_);
+  saved_tab_group_model_->OnGroupOpenedInTabStrip(
+      id_1_, test::GenerateRandomTabGroupID());
+  ASSERT_FALSE(group->is_shared_tab_group());
+
+  saved_tab_group_model_->MakeTabGroupShared(group->local_group_id().value(),
+                                             "collaboration");
+
+  EXPECT_TRUE(group->is_shared_tab_group());
 }
 
 // Tests that the correct tabs are added to the correct position in group 1.
@@ -477,20 +518,32 @@ TEST_P(SavedTabGroupModelTest, MoveElement) {
   }
 }
 
+TEST_P(SavedTabGroupModelTest, ShouldDistinguishSavedAndSharedGroups) {
+  const SavedTabGroup* group = saved_tab_group_model_->Get(id_1_);
+  saved_tab_group_model_->OnGroupOpenedInTabStrip(
+      id_1_, test::GenerateRandomTabGroupID());
+  saved_tab_group_model_->MakeTabGroupShared(group->local_group_id().value(),
+                                             "collaboration");
+
+  ASSERT_TRUE(saved_tab_group_model_->Get(id_1_)->is_shared_tab_group());
+  ASSERT_FALSE(saved_tab_group_model_->Get(id_2_)->is_shared_tab_group());
+  ASSERT_FALSE(saved_tab_group_model_->Get(id_3_)->is_shared_tab_group());
+
+  EXPECT_THAT(saved_tab_group_model_->GetSavedTabGroupsOnly(),
+              UnorderedElementsAre(Pointee(HasGroupId(id_2_)),
+                                   Pointee(HasGroupId(id_3_))));
+  EXPECT_THAT(saved_tab_group_model_->GetSharedTabGroupsOnly(),
+              UnorderedElementsAre(Pointee(HasGroupId(id_1_))));
+}
+
 TEST_P(SavedTabGroupModelTest, LoadStoredEntriesPopulatesModel) {
   std::unique_ptr<SavedTabGroup> group =
       std::make_unique<SavedTabGroup>(*saved_tab_group_model_->Get(id_3_));
 
-  std::vector<sync_pb::SavedTabGroupSpecifics> specifics;
-  specifics.emplace_back(*group->ToSpecifics());
-
-  for (SavedTabGroupTab tab : group->saved_tabs())
-    specifics.emplace_back(*tab.ToSpecifics());
-
-  EXPECT_EQ(specifics.size(), size_t(4));
   saved_tab_group_model_->Remove(id_3_);
+  ASSERT_FALSE(saved_tab_group_model_->Contains(id_3_));
 
-  saved_tab_group_model_->LoadStoredEntries(specifics);
+  saved_tab_group_model_->LoadStoredEntries({*group}, group->saved_tabs());
 
   EXPECT_TRUE(saved_tab_group_model_->Contains(id_3_));
   EXPECT_EQ(saved_tab_group_model_->GetIndexOf(id_3_), IsV2UIEnabled() ? 0 : 2);
@@ -510,39 +563,136 @@ TEST_P(SavedTabGroupModelTest, LoadStoredEntriesPopulatesModel) {
 // object correctly.
 TEST_P(SavedTabGroupModelTest, MergeGroupsFromModel) {
   const SavedTabGroup* group1 = saved_tab_group_model_->Get(id_1_);
-  SavedTabGroup group2 = SavedTabGroup::FromSpecifics(*group1->ToSpecifics());
+
+  SavedTabGroup group2(*group1);
   group2.SetColor(tab_groups::TabGroupColorId::kPink);
   group2.SetTitle(u"Updated title");
-  SavedTabGroup merged_group = SavedTabGroup::FromSpecifics(
-      *saved_tab_group_model_->MergeGroup(*group2.ToSpecifics()));
+  const SavedTabGroup* merged_group =
+      saved_tab_group_model_->MergeRemoteGroupMetadata(
+          group2.saved_guid(), group2.title(), group2.color(),
+          group2.position(), group2.creator_cache_guid(),
+          group2.last_updater_cache_guid(),
+          group2.update_time_windows_epoch_micros());
 
-  EXPECT_EQ(group2.title(), merged_group.title());
-  EXPECT_EQ(group2.color(), merged_group.color());
-  EXPECT_EQ(group2.saved_guid(), merged_group.saved_guid());
+  EXPECT_EQ(group2.title(), merged_group->title());
+  EXPECT_EQ(group2.color(), merged_group->color());
+  EXPECT_EQ(group2.saved_guid(), merged_group->saved_guid());
   EXPECT_EQ(group2.creation_time_windows_epoch_micros(),
-            merged_group.creation_time_windows_epoch_micros());
+            merged_group->creation_time_windows_epoch_micros());
   EXPECT_EQ(group2.update_time_windows_epoch_micros(),
-            merged_group.update_time_windows_epoch_micros());
+            merged_group->update_time_windows_epoch_micros());
+}
+
+TEST_P(SavedTabGroupModelTest, MergePinnedGroupRetainPosition) {
+  auto guid1 = base::Uuid::GenerateRandomV4();
+  auto guid2 = base::Uuid::GenerateRandomV4();
+
+  // Add group 1 at position 0.
+  saved_tab_group_model_->Add(SavedTabGroup(
+      u"Title 1", tab_groups::TabGroupColorId::kPink, {}, 0, guid1));
+
+  // Add group 2 at position 0.
+  saved_tab_group_model_->Add(SavedTabGroup(
+      u"Title", tab_groups::TabGroupColorId::kPink, {}, 0, guid2));
+  const SavedTabGroup* group2 = saved_tab_group_model_->Get(guid2);
+  EXPECT_EQ(0, group2->position());
+
+  // Verify group 2 should be the 1st one in the list.
+  if (IsV2UIEnabled()) {
+    ASSERT_THAT(GetSavedTabGroupIds(),
+                testing::ElementsAre(guid2, guid1, id_3_, id_2_, id_1_));
+  } else {
+    ASSERT_THAT(GetSavedTabGroupIds(),
+                testing::ElementsAre(guid2, guid1, id_1_, id_2_, id_3_));
+  }
+
+  // Change group 2 position from 0 to 1.
+  SavedTabGroup updated_group2(*group2);
+  EXPECT_EQ(0, updated_group2.position());
+  updated_group2.SetPosition(1);
+  EXPECT_EQ(1, updated_group2.position());
+
+  // Merge the updated group 2 and verify the position is set to 1.
+  const SavedTabGroup* merged_group =
+      saved_tab_group_model_->MergeRemoteGroupMetadata(
+          updated_group2.saved_guid(), updated_group2.title(),
+          updated_group2.color(), updated_group2.position(),
+          updated_group2.creator_cache_guid(),
+          updated_group2.last_updater_cache_guid(),
+          updated_group2.update_time_windows_epoch_micros());
+  EXPECT_EQ(1, merged_group->position());
+
+  // Verify group 2 should be the 2nd one in the list.
+  if (IsV2UIEnabled()) {
+    ASSERT_THAT(GetSavedTabGroupIds(),
+                testing::ElementsAre(guid1, guid2, id_3_, id_2_, id_1_));
+  } else {
+    ASSERT_THAT(GetSavedTabGroupIds(),
+                testing::ElementsAre(guid1, guid2, id_1_, id_2_, id_3_));
+  }
+}
+
+TEST_P(SavedTabGroupModelTest, MergeUnpinnedGroupRetainUnpinned) {
+  if (!IsV2UIEnabled()) {
+    GTEST_SKIP() << "N/A for V1";
+  }
+
+  auto guid1 = base::Uuid::GenerateRandomV4();
+  auto guid2 = base::Uuid::GenerateRandomV4();
+
+  // Add group 1 at position 0.
+  saved_tab_group_model_->Add(SavedTabGroup(
+      u"Title 1", tab_groups::TabGroupColorId::kPink, {}, 0, guid1));
+
+  // Add group 2 at position 0.
+  saved_tab_group_model_->Add(SavedTabGroup(
+      u"Title", tab_groups::TabGroupColorId::kPink, {}, 0, guid2));
+  const SavedTabGroup* group2 = saved_tab_group_model_->Get(guid2);
+  EXPECT_EQ(0, group2->position());
+
+  // Verify group 2 should be the 1st one in the list.
+  ASSERT_THAT(GetSavedTabGroupIds(),
+              testing::ElementsAre(guid2, guid1, id_3_, id_2_, id_1_));
+
+  // Unpin group 2.
+  SavedTabGroup updated_group2(*group2);
+  EXPECT_EQ(0, updated_group2.position());
+  updated_group2.SetPinned(false);
+  EXPECT_EQ(std::nullopt, updated_group2.position());
+
+  // Merge the updated group 2 and verify it's unpinned.
+  const SavedTabGroup* merged_group =
+      saved_tab_group_model_->MergeRemoteGroupMetadata(
+          updated_group2.saved_guid(), updated_group2.title(),
+          updated_group2.color(), updated_group2.position(),
+          updated_group2.creator_cache_guid(),
+          updated_group2.last_updater_cache_guid(),
+          updated_group2.update_time_windows_epoch_micros());
+  EXPECT_EQ(std::nullopt, merged_group->position());
+
+  // Verify group 2 should place behind group 1.
+  ASSERT_THAT(GetSavedTabGroupIds(),
+              testing::ElementsAre(guid1, guid2, id_3_, id_2_, id_1_));
 }
 
 // Tests that merging a tab with the same tab_id changes the state of the object
 // correctly.
 TEST_P(SavedTabGroupModelTest, MergeTabsFromModel) {
   SavedTabGroupTab tab1 = saved_tab_group_model_->Get(id_1_)->saved_tabs()[0];
-  SavedTabGroupTab tab2 = SavedTabGroupTab::FromSpecifics(*tab1.ToSpecifics());
+  SavedTabGroupTab tab2(tab1);
   tab2.SetTitle(u"Updated Title");
   tab2.SetURL(GURL("chrome://updated_url"));
 
-  SavedTabGroupTab merged_tab = SavedTabGroupTab::FromSpecifics(
-      *saved_tab_group_model_->MergeTab(*tab2.ToSpecifics()));
+  const SavedTabGroupTab* merged_tab =
+      saved_tab_group_model_->MergeRemoteTab(tab2);
 
-  EXPECT_EQ(tab2.url(), merged_tab.url());
-  EXPECT_EQ(tab2.saved_tab_guid(), merged_tab.saved_tab_guid());
-  EXPECT_EQ(tab2.saved_group_guid(), merged_tab.saved_group_guid());
+  EXPECT_EQ(tab2.url(), merged_tab->url());
+  EXPECT_EQ(tab2.saved_tab_guid(), merged_tab->saved_tab_guid());
+  EXPECT_EQ(tab2.saved_group_guid(), merged_tab->saved_group_guid());
   EXPECT_EQ(tab2.creation_time_windows_epoch_micros(),
-            merged_tab.creation_time_windows_epoch_micros());
+            merged_tab->creation_time_windows_epoch_micros());
   EXPECT_EQ(tab2.update_time_windows_epoch_micros(),
-            merged_tab.update_time_windows_epoch_micros());
+            merged_tab->update_time_windows_epoch_micros());
 }
 
 // Tests that groups inserted in the model are in order stay inserted in sorted
@@ -929,6 +1079,7 @@ TEST_P(SavedTabGroupModelObserverTest, RemovedElement) {
 // element from the model.
 TEST_P(SavedTabGroupModelObserverTest, UpdatedElement) {
   SavedTabGroup group_4(test::CreateTestSavedTabGroup());
+  group_4.SetLocalGroupId(test::GenerateRandomTabGroupID());
   saved_tab_group_model_->Add(group_4);
 
   const std::u16string new_title = u"New Title";
@@ -937,7 +1088,7 @@ TEST_P(SavedTabGroupModelObserverTest, UpdatedElement) {
 
   const tab_groups::TabGroupVisualData new_visual_data(new_title, new_color,
                                                        /*is_collapsed*/ false);
-  saved_tab_group_model_->UpdateVisualData(group_4.saved_guid(),
+  saved_tab_group_model_->UpdateVisualData(group_4.local_group_id().value(),
                                            &new_visual_data);
 
   const int index = retrieved_group_.size() - 1;
@@ -951,6 +1102,20 @@ TEST_P(SavedTabGroupModelObserverTest, UpdatedElement) {
                                  received_group.saved_tabs());
   EXPECT_EQ(saved_tab_group_model_->GetIndexOf(received_group.saved_guid()),
             retrieved_index_);
+}
+
+TEST_P(SavedTabGroupModelObserverTest, MakeTabGroupShared) {
+  SavedTabGroup group = test::CreateTestSavedTabGroup();
+  group.SetLocalGroupId(test::GenerateRandomTabGroupID());
+  saved_tab_group_model_->Add(group);
+  ClearSignals();
+
+  saved_tab_group_model_->MakeTabGroupShared(group.local_group_id().value(),
+                                             "collaboration");
+
+  ASSERT_THAT(retrieved_group_, Not(IsEmpty()));
+  EXPECT_EQ(retrieved_group_.back().saved_guid(), group.saved_guid());
+  EXPECT_EQ(retrieved_group_.back().collaboration_id(), "collaboration");
 }
 
 // Tests that SavedTabGroupModelObserver::AddedFromSync passes the correct
@@ -1176,11 +1341,111 @@ TEST_P(SavedTabGroupModelObserverTest, MigrateSavedTabGroupsFromV1) {
   ASSERT_EQ(4u, retrieved_group_.size());
 }
 
+TEST_P(SavedTabGroupModelObserverTest, UpdateLocalCacheGuid) {
+  base::Uuid group_1_id = base::Uuid::GenerateRandomV4();
+  base::Uuid group_2_id = base::Uuid::GenerateRandomV4();
+  base::Uuid group_3_id = base::Uuid::GenerateRandomV4();
+  base::Uuid group_4_id = base::Uuid::GenerateRandomV4();
+
+  const std::string edit_to_cache_guid = "edit_to_cache_guid";
+  const std::string dont_edit_cache_guid = "dont_edit_cache_guid";
+  const std::string second_edit_cache_guid = "second_edit_cache_guid";
+  SavedTabGroup group1(u"Tab Group 1", tab_groups::TabGroupColorId::kRed, {},
+                       std::nullopt /*position*/, group_1_id /*saved_guid*/,
+                       std::nullopt /*local_group_id*/,
+                       std::nullopt /*creator_cache_guid*/,
+                       std::nullopt /*last_updater_cache_guid*/);
+  saved_tab_group_model_->Add(std::move(group1));
+  SavedTabGroup group2(u"Tab Group 2", tab_groups::TabGroupColorId::kRed, {},
+                       std::nullopt /*position*/, group_2_id /*saved_guid*/,
+                       std::nullopt /*local_group_id*/,
+                       std::nullopt /*creator_cache_guid*/,
+                       std::nullopt /*last_updater_cache_guid*/);
+  saved_tab_group_model_->Add(group2);
+  SavedTabGroup group3(u"Tab Group 3", tab_groups::TabGroupColorId::kRed, {},
+                       std::nullopt /*position*/, group_3_id /*saved_guid*/,
+                       std::nullopt /*local_group_id*/,
+                       dont_edit_cache_guid /*creator_cache_guid*/,
+                       std::nullopt /*last_updater_cache_guid*/);
+  saved_tab_group_model_->Add(group3);
+  SavedTabGroup group4(u"Tab Group 4", tab_groups::TabGroupColorId::kRed, {},
+                       std::nullopt /*position*/, group_4_id /*saved_guid*/,
+                       std::nullopt /*local_group_id*/,
+                       second_edit_cache_guid /*creator_cache_guid*/,
+                       std::nullopt /*last_updater_cache_guid*/);
+  saved_tab_group_model_->Add(group4);
+
+  saved_tab_group_model_->UpdateLocalCacheGuid(std::nullopt,
+                                               edit_to_cache_guid);
+  EXPECT_EQ(saved_tab_group_model_->Get(group_1_id)->creator_cache_guid(),
+            edit_to_cache_guid);
+  EXPECT_EQ(saved_tab_group_model_->Get(group_2_id)->creator_cache_guid(),
+            edit_to_cache_guid);
+  EXPECT_EQ(saved_tab_group_model_->Get(group_3_id)->creator_cache_guid(),
+            dont_edit_cache_guid);
+  EXPECT_EQ(saved_tab_group_model_->Get(group_4_id)->creator_cache_guid(),
+            second_edit_cache_guid);
+
+  saved_tab_group_model_->UpdateLocalCacheGuid(second_edit_cache_guid,
+                                               edit_to_cache_guid);
+  EXPECT_EQ(saved_tab_group_model_->Get(group_1_id)->creator_cache_guid(),
+            edit_to_cache_guid);
+  EXPECT_EQ(saved_tab_group_model_->Get(group_2_id)->creator_cache_guid(),
+            edit_to_cache_guid);
+  EXPECT_EQ(saved_tab_group_model_->Get(group_3_id)->creator_cache_guid(),
+            dont_edit_cache_guid);
+  EXPECT_EQ(saved_tab_group_model_->Get(group_4_id)->creator_cache_guid(),
+            edit_to_cache_guid);
+}
+
+TEST_P(SavedTabGroupModelObserverTest, UpdateLocalCacheGuidForTabs) {
+  const std::string cache_guid1 = "cache_guid1";
+  const std::string cache_guid2 = "cache_guid2";
+  const std::string cache_guid_tab2 = "cache_guid_tab2";
+
+  SavedTabGroup group = test::CreateTestSavedTabGroup();
+  base::Uuid group_id = group.saved_guid();
+  SavedTabGroupTab tab1(GURL(url::kAboutBlankURL), std::u16string(u"title"),
+                        group.saved_guid(), /*position=*/std::nullopt,
+                        std::nullopt, std::nullopt);
+  SavedTabGroupTab tab2(GURL(url::kAboutBlankURL), std::u16string(u"title"),
+                        group.saved_guid(), /*position=*/std::nullopt,
+                        std::nullopt, std::nullopt);
+  tab2.SetCreatorCacheGuid(cache_guid_tab2);
+  group.AddTabLocally(tab1);
+  group.AddTabLocally(tab2);
+  saved_tab_group_model_->Add(group);
+
+  base::Uuid tab1_id = tab1.saved_tab_guid();
+  base::Uuid tab2_id = tab2.saved_tab_guid();
+  const SavedTabGroup* retrieved_group = saved_tab_group_model_->Get(group_id);
+  const SavedTabGroupTab* retrieved_tab1 = retrieved_group->GetTab(tab1_id);
+  const SavedTabGroupTab* retrieved_tab2 = retrieved_group->GetTab(tab2_id);
+
+  saved_tab_group_model_->UpdateLocalCacheGuid(std::nullopt, cache_guid1);
+
+  EXPECT_EQ(retrieved_group->creator_cache_guid(), cache_guid1);
+  EXPECT_EQ(retrieved_tab1->creator_cache_guid(), cache_guid1);
+  EXPECT_EQ(retrieved_tab2->creator_cache_guid(), cache_guid_tab2);
+
+  saved_tab_group_model_->UpdateLocalCacheGuid(cache_guid1, cache_guid2);
+  EXPECT_EQ(retrieved_group->creator_cache_guid(), cache_guid2);
+  EXPECT_EQ(retrieved_tab1->creator_cache_guid(), cache_guid2);
+  EXPECT_EQ(retrieved_tab2->creator_cache_guid(), cache_guid_tab2);
+
+  saved_tab_group_model_->UpdateLocalCacheGuid(cache_guid_tab2, std::nullopt);
+  EXPECT_EQ(retrieved_group->creator_cache_guid(), cache_guid2);
+  EXPECT_EQ(retrieved_tab1->creator_cache_guid(), cache_guid2);
+  EXPECT_EQ(retrieved_tab2->creator_cache_guid(), std::nullopt);
+}
+
 INSTANTIATE_TEST_SUITE_P(SavedTabGroupModel,
                          SavedTabGroupModelTest,
                          testing::Bool());
 INSTANTIATE_TEST_SUITE_P(SavedTabGroupModel,
                          SavedTabGroupModelObserverTest,
                          testing::Bool());
+
+}  // namespace
 
 }  // namespace tab_groups

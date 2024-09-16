@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 
+#include "base/memory/post_delayed_memory_reduction_task.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/task/common/lazy_now.h"
@@ -84,9 +85,6 @@ class PLATFORM_EXPORT PageSchedulerImpl : public PageScheduler {
   bool OptedOutFromAggressiveThrottlingForTest() const override;
   bool RequestBeginMainFrameNotExpected(bool new_state) override;
   scoped_refptr<scheduler::WidgetScheduler> CreateWidgetScheduler() override;
-
-  // Virtual for testing.
-  virtual void ReportIntervention(const String& message);
 
   bool IsFrozen() const;
   bool OptedOutFromAggressiveThrottling() const;
@@ -165,7 +163,10 @@ class PLATFORM_EXPORT PageSchedulerImpl : public PageScheduler {
 
   // Support not issuing a notification to frames when we disable freezing as
   // a part of foregrounding the page.
-  void SetPageFrozenImpl(bool frozen, PolicyUpdater& policy_updater);
+  void SetPageFrozenImpl(bool frozen,
+                         PolicyUpdater& policy_updater,
+                         base::MemoryReductionTaskContext called_from =
+                             base::MemoryReductionTaskContext::kDelayExpired);
 
   // Adds `task_queue` to `wake_up_budget_pool`.
   void AddQueueToWakeUpBudgetPool(MainThreadTaskQueue* task_queue,
@@ -219,6 +220,8 @@ class PLATFORM_EXPORT PageSchedulerImpl : public PageScheduler {
   // now, perform the state transition. Otherwise, schedules another call to
   // this method at the time when it should change.
   void UpdateFrozenState(PolicyUpdater& policy_updater);
+  void UpdateFrozenState(PolicyUpdater& policy_updater,
+                         base::MemoryReductionTaskContext called_from);
 
   // Returns all WakeUpBudgetPools owned by this PageSchedulerImpl.
   static constexpr int kNumWakeUpBudgetPools = 4;
@@ -287,7 +290,7 @@ class PLATFORM_EXPORT PageSchedulerImpl : public PageScheduler {
   CancelableClosureHolder do_intensively_throttle_wake_ups_callback_;
   CancelableClosureHolder reset_had_recent_title_or_favicon_update_;
   CancelableClosureHolder on_audio_silent_closure_;
-  CancelableClosureHolder update_frozen_state_callback_;
+  base::OneShotDelayedBackgroundTimer update_frozen_state_timer_;
   const base::TimeDelta delay_for_background_tab_freezing_;
 
   // Interval between throttled wake ups for unimportant frames (visible, small

@@ -247,7 +247,6 @@ arc::mojom::RawIconPngDataPtr FakeAppInstance::GetFakeIcon(
       break;
     default:
       NOTREACHED();
-      return nullptr;
   }
 
   base::FilePath base_path;

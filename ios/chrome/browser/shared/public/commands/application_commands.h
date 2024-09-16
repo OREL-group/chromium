@@ -5,25 +5,30 @@
 #ifndef IOS_CHROME_BROWSER_SHARED_PUBLIC_COMMANDS_APPLICATION_COMMANDS_H_
 #define IOS_CHROME_BROWSER_SHARED_PUBLIC_COMMANDS_APPLICATION_COMMANDS_H_
 
-#import <Foundation/Foundation.h>
+#import <UIKit/UIKit.h>
 
 #include "base/ios/block_types.h"
+#include "ios/chrome/browser/shared/public/commands/show_signin_command.h"
 #include "ios/public/provider/chrome/browser/user_feedback/user_feedback_sender.h"
 
 class GURL;
 @class OpenNewTabCommand;
+@class ShowSigninCommand;
+@protocol SystemIdentity;
+@class UIViewController;
 namespace password_manager {
 enum class PasswordCheckReferrer;
 enum class WarningType;
 }  // namespace password_manager
-@class ShowSigninCommand;
 namespace signin_metrics {
 enum class AccessPoint;
 }  // namespace signin_metrics
 namespace syncer {
 enum class TrustedVaultUserActionTriggerForUMA;
 }  // namespace syncer
-@class UIViewController;
+namespace trusted_vault {
+enum class SecurityDomainId;
+}  // namespace trusted_vault
 
 // The mode in which the TabGrid should be opened.
 enum class TabGridOpeningMode {
@@ -55,16 +60,27 @@ enum class TabGridOpeningMode {
                              referrer:(password_manager::PasswordCheckReferrer)
                                           referrer;
 
-// TODO(crbug.com/779791) : Do not pass baseViewController through dispatcher.
+// TODO(crbug.com/41352590) : Do not pass baseViewController through dispatcher.
 // Shows the Settings UI, presenting from `baseViewController`.
 - (void)showSettingsFromViewController:(UIViewController*)baseViewController;
 
+// TODO(crbug.com/41352590) : Do not pass baseViewController through dispatcher.
+// Shows the Settings UI, presenting from `baseViewController` and with blue dot
+// for default browser settings if specified.
+- (void)showSettingsFromViewController:(UIViewController*)baseViewController
+              hasDefaultBrowserBlueDot:(BOOL)hasDefaultBrowserBlueDot;
+
 // Presents the Trusted Vault reauth dialog.
 // `baseViewController` presents the sign-in.
+// `securityDomainID` Identifies a particular security domain.
 // `trigger` UI elements where the trusted vault reauth has been triggered.
+// `accessPoint` Identifies where the dialog is initiated from.
 - (void)
     showTrustedVaultReauthForFetchKeysFromViewController:
         (UIViewController*)baseViewController
+                                        securityDomainID:
+                                            (trusted_vault::SecurityDomainId)
+                                                securityDomainID
                                                  trigger:
                                                      (syncer::
                                                           TrustedVaultUserActionTriggerForUMA)
@@ -76,10 +92,16 @@ enum class TabGridOpeningMode {
 // Presents the Trusted Vault degraded recoverability (to enroll additional
 // recovery factors).
 // `baseViewController` presents the sign-in.
+// `securityDomainID` Identifies a particular security domain.
 // `trigger` UI elements where the trusted vault reauth has been triggered.
+// `accessPoint` Identifies where the dialog is initiated from.
 - (void)
     showTrustedVaultReauthForDegradedRecoverabilityFromViewController:
         (UIViewController*)baseViewController
+                                                     securityDomainID:
+                                                         (trusted_vault::
+                                                              SecurityDomainId)
+                                                             securityDomainID
                                                               trigger:
                                                                   (syncer::
                                                                        TrustedVaultUserActionTriggerForUMA)
@@ -111,7 +133,7 @@ enum class TabGridOpeningMode {
 // Shows the TabGrid, in the chosen `mode`.
 - (void)displayTabGridInMode:(TabGridOpeningMode)mode;
 
-// TODO(crbug.com/779791) : Do not pass baseViewController through dispatcher.
+// TODO(crbug.com/41352590) : Do not pass baseViewController through dispatcher.
 // Shows the settings Privacy UI.
 - (void)showPrivacySettingsFromViewController:
     (UIViewController*)baseViewController;
@@ -130,16 +152,26 @@ enum class TabGridOpeningMode {
                                             specificProductData;
 
 // Opens the `command` URL in a new tab.
-// TODO(crbug.com/907527): Check if it is possible to merge it with the
+// TODO(crbug.com/41427539): Check if it is possible to merge it with the
 // URLLoader methods.
 - (void)openURLInNewTab:(OpenNewTabCommand*)command;
 
-// TODO(crbug.com/779791) : Do not pass baseViewController through dispatcher.
+// TODO(crbug.com/41352590) : Do not pass baseViewController through dispatcher.
 // Shows the signin UI, presenting from `baseViewController`.
 - (void)showSignin:(ShowSigninCommand*)command
     baseViewController:(UIViewController*)baseViewController;
 
-// TODO(crbug.com/779791) : Do not pass baseViewController through dispatcher.
+// Switch from managed account.
+- (void)
+    switchAccountWithBaseViewController:(UIViewController*)baseViewController
+                            newIdentity:(id<SystemIdentity>)newIdentity
+                                   rect:(CGRect)rect
+                         rectAnchorView:(UIView*)rectAnchorView
+        viewWillBeDismissedAfterSignout:(BOOL)viewWillBeDismissedAfterSignout
+                       signInCompletion:(ShowSigninCommandCompletionCallback)
+                                            signInCompletion;
+
+// TODO(crbug.com/41352590) : Do not pass baseViewController through dispatcher.
 // Shows the consistency promo UI that allows users to sign in to Chrome using
 // the default accounts on the device.
 // Redirects to `url` when the sign-in flow is complete.
@@ -157,8 +189,8 @@ enum class TabGridOpeningMode {
 // Open a new window with `userActivity`
 - (void)openNewWindowWithActivity:(NSUserActivity*)userActivity;
 
-// Closes all open modals and ensures that a non-incognito tab is open. If
-// incognito is forced, then it will ensure an incognito tab is open.
+// Closes all open modals and ensures that a non-incognito NTP tab is open. If
+// incognito is forced, then it will ensure an incognito NTP tab is open.
 - (void)prepareToPresentModal:(ProceduralBlock)completion;
 
 @end

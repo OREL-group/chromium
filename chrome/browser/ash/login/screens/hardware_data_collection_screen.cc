@@ -6,7 +6,6 @@
 
 #include <string>
 
-#include "ash/constants/ash_features.h"
 #include "ash/constants/ash_switches.h"
 #include "base/check_op.h"
 #include "chrome/browser/ash/login/wizard_context.h"
@@ -28,6 +27,7 @@ constexpr const char kUserActionSelectHWDataUsage[] = "select-hw-data-usage";
 
 // static
 std::string HWDataCollectionScreen::GetResultString(Result result) {
+  // LINT.IfChange(UsageMetrics)
   switch (result) {
     case Result::ACCEPTED_WITH_HW_DATA_USAGE:
       return "AcceptedWithHWDataUsage";
@@ -36,6 +36,7 @@ std::string HWDataCollectionScreen::GetResultString(Result result) {
     case Result::NOT_APPLICABLE:
       return BaseScreen::kNotApplicable;
   }
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/oobe/histograms.xml)
 }
 
 HWDataCollectionScreen::HWDataCollectionScreen(
@@ -92,11 +93,9 @@ void HWDataCollectionScreen::ShowImpl() {
   if (view_) {
     view_->Show(hw_data_usage_enabled_);
   }
-  if (ash::features::AreLocalPasswordsEnabledForConsumers()) {
-    if (context()->extra_factors_token) {
-      session_refresher_ = AuthSessionStorage::Get()->KeepAlive(
-          context()->extra_factors_token.value());
-    }
+  if (context()->extra_factors_token) {
+    session_refresher_ = AuthSessionStorage::Get()->KeepAlive(
+        context()->extra_factors_token.value());
   }
 }
 

@@ -264,7 +264,7 @@ void BookmarkContextMenuController::ExecuteCommand(int id, int event_flags) {
       RecordBookmarkEdited(opened_from_);
 
       if (selection_.size() != 1) {
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
         break;
       }
 
@@ -373,6 +373,8 @@ void BookmarkContextMenuController::ExecuteCommand(int id, int event_flags) {
     }
 
     case IDC_BOOKMARK_BAR_TOGGLE_SHOW_TAB_GROUPS: {
+      base::RecordAction(base::UserMetricsAction(
+          "BookmarkBar_ContextMenu_ToggleShowSavedTabGroups"));
       PrefService* prefs = profile_->GetPrefs();
       prefs->SetBoolean(
           bookmarks::prefs::kShowTabGroupsInBookmarkBar,
@@ -425,7 +427,7 @@ void BookmarkContextMenuController::ExecuteCommand(int id, int event_flags) {
     }
 
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 
   // It's possible executing the command resulted in deleting |this|.
@@ -460,7 +462,7 @@ std::u16string BookmarkContextMenuController::GetLabelForCommandId(
                                       managed->managed_node()->GetTitle());
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return std::u16string();
 }
 

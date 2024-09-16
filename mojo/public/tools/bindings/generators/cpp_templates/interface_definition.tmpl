@@ -33,7 +33,11 @@
 
 {%- macro pass_params(parameters) %}
 {%-   for param in parameters %}
+{%- if param.kind|is_non_const_ref_kind %}
+p_{{param.name}}
+{%- else %}
 std::move(p_{{param.name}})
+{%- endif %}
 {%-     if not loop.last %}, {% endif %}
 {%-   endfor %}
 {%- endmacro %}
@@ -168,7 +172,6 @@ uint32_t {{interface.name}}::{{method.name}}_Sym::IPCStableHash() {
 {%-   if method.sync %}
 bool {{class_name}}::{{method.name}}({{interface_macros.declare_sync_method_params("", method)}}) {
   NOTREACHED();
-  return false;
 }
 {%-   endif %}
 {%- endfor %}

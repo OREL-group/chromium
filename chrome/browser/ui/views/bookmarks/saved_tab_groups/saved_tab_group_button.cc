@@ -53,6 +53,7 @@
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/point_f.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/background.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/button/label_button_border.h"
@@ -99,11 +100,10 @@ SavedTabGroupButton::SavedTabGroupButton(const SavedTabGroup& group,
               browser,
               group.saved_guid()),
           views::MenuRunner::CONTEXT_MENU | views::MenuRunner::IS_NESTED) {
-  SetAccessibilityProperties(
-      ax::mojom::Role::kButton, /*name=*/GetAccessibleNameForButton(),
-      /*description=*/std::nullopt,
-      l10n_util::GetStringUTF16(
-          IDS_ACCNAME_SAVED_TAB_GROUP_BUTTON_ROLE_DESCRIPTION));
+  GetViewAccessibility().SetRole(ax::mojom::Role::kButton);
+  GetViewAccessibility().SetName(GetAccessibleNameForButton());
+  GetViewAccessibility().SetRoleDescription(l10n_util::GetStringUTF16(
+      IDS_ACCNAME_SAVED_TAB_GROUP_BUTTON_ROLE_DESCRIPTION));
   SetTextProperties(group);
   SetID(VIEW_ID_BOOKMARK_BAR_ELEMENT);
   SetProperty(views::kElementIdentifierKey, kSavedTabGroupButtonElementId);
@@ -141,6 +141,7 @@ void SavedTabGroupButton::UpdateButtonData(const SavedTabGroup& group) {
   tabs_ = group.saved_tabs();
 
   UpdateButtonLayout();
+  UpdateAccessibleName();
 }
 
 std::u16string SavedTabGroupButton::GetTooltipText(const gfx::Point& p) const {
@@ -161,15 +162,9 @@ bool SavedTabGroupButton::OnKeyPressed(const ui::KeyEvent& event) {
 }
 
 bool SavedTabGroupButton::IsTriggerableEvent(const ui::Event& e) {
-  return e.type() == ui::ET_GESTURE_TAP ||
-         e.type() == ui::ET_GESTURE_TAP_DOWN ||
+  return e.type() == ui::EventType::kGestureTap ||
+         e.type() == ui::EventType::kGestureTapDown ||
          event_utils::IsPossibleDispositionEvent(e);
-}
-
-void SavedTabGroupButton::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  views::MenuButton::GetAccessibleNodeData(node_data);
-  node_data->SetNameChecked(GetAccessibleNameForButton());
-  node_data->role = ax::mojom::Role::kButton;
 }
 
 void SavedTabGroupButton::PaintButtonContents(gfx::Canvas* canvas) {
@@ -210,8 +205,17 @@ std::u16string SavedTabGroupButton::GetAccessibleNameForButton() const {
   return saved_group_acessible_name;
 }
 
+void SavedTabGroupButton::UpdateAccessibleName() {
+  GetViewAccessibility().SetName(GetAccessibleNameForButton());
+}
+
+void SavedTabGroupButton::SetText(const std::u16string& text) {
+  LabelButton::SetText(text);
+  UpdateAccessibleName();
+}
+
 void SavedTabGroupButton::SetTextProperties(const SavedTabGroup& group) {
-  SetAccessibleName(GetAccessibleNameForButton());
+  GetViewAccessibility().SetName(GetAccessibleNameForButton());
   SetTooltipText(group.title());
   SetText(group.title());
 }
@@ -244,7 +248,7 @@ void SavedTabGroupButton::UpdateButtonLayout() {
     // When the text is empty force the button to have square dimensions.
     SetPreferredSize(gfx::Size(kButtonSize, kButtonSize));
   } else {
-    SetPreferredSize(CalculatePreferredSize());
+    SetPreferredSize(CalculatePreferredSize({}));
   }
 }
 

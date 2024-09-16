@@ -20,6 +20,7 @@
 #include "ui/events/event.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/strings/grit/ui_strings.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/background.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/image_view.h"
@@ -249,6 +250,7 @@ SystemDialogDelegateView::SystemDialogDelegateView() {
   title_->SetAutoColorReadabilityEnabled(false);
   title_->SetEnabledColorId(kTitleColorId);
   title_->SetVisible(false);
+  title_->GetViewAccessibility().SetRole(ax::mojom::Role::kHeading);
   title_->SetProperty(views::kElementIdentifierKey, kTitleTextIdForTesting);
 
   description_ = AddChildView(std::make_unique<views::Label>());
@@ -306,7 +308,7 @@ void SystemDialogDelegateView::SetDescription(
 
 void SystemDialogDelegateView::SetDescriptionAccessibleName(
     const std::u16string& accessible_name) {
-  description_->SetAccessibleName(accessible_name);
+  description_->GetViewAccessibility().SetName(accessible_name);
 }
 
 void SystemDialogDelegateView::SetAcceptButtonVisible(bool visible) {
@@ -346,12 +348,13 @@ void SystemDialogDelegateView::SetTitleMargins(const gfx::Insets& margins) {
   SetViewLayoutSpecs(title_, margins);
 }
 
-gfx::Size SystemDialogDelegateView::CalculatePreferredSize() const {
+gfx::Size SystemDialogDelegateView::CalculatePreferredSize(
+    const views::SizeBounds& available_size) const {
   auto* host_window = GetDialogHostWindow(GetWidget());
   // If the delegate view is not added to a widget or parented to a host window,
   // return the default preferred size.
   if (!host_window) {
-    return views::WidgetDelegateView::CalculatePreferredSize();
+    return views::WidgetDelegateView::CalculatePreferredSize(available_size);
   }
 
   // Otherwise, calculate the preferred size according to its host window size.
@@ -379,7 +382,8 @@ gfx::Size SystemDialogDelegateView::CalculatePreferredSize() const {
     dialog_width = host_width - kDialogHostPaddingSmall * 2;
   }
 
-  return gfx::Size(dialog_width, GetHeightForWidth(dialog_width));
+  return gfx::Size(dialog_width, GetLayoutManager()->GetPreferredHeightForWidth(
+                                     this, dialog_width));
 }
 
 gfx::Size SystemDialogDelegateView::GetMinimumSize() const {

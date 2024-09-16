@@ -26,7 +26,7 @@
 // for the given prefix.
 // At each search step, the executor feeds the token and cell states from the
 // previous step into the model to generate the predictions for the next token.
-// TODO(crbug.com/1372112): migrate to optimization_guide::TFLiteModelExecutor
+// TODO(crbug.com/40241602): migrate to optimization_guide::TFLiteModelExecutor
 // once it supports multi-subgraph model.
 class OnDeviceTailModelExecutor {
  public:
@@ -42,16 +42,12 @@ class OnDeviceTailModelExecutor {
     ModelInput();
     ModelInput(std::string prefix,
                std::string previous_query,
-               size_t max_num_suggestions,
-               size_t max_rnn_steps,
-               float probability_threshold);
+               size_t max_num_suggestions);
     ~ModelInput();
 
     std::string prefix;
     std::string previous_query;
     size_t max_num_suggestions;
-    size_t max_rnn_steps;
-    float probability_threshold;
   };
 
   using ModelMetadata =
@@ -245,6 +241,8 @@ class OnDeviceTailModelExecutor {
   size_t num_layer_;
   size_t embedding_dimension_;
   size_t vocab_size_;
+  size_t max_num_steps_;
+  float log_probability_threshold_;
 
   // The time when the executor is last called.
   base::TimeTicks executor_last_called_time_;

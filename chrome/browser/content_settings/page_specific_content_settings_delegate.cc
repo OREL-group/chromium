@@ -4,7 +4,7 @@
 
 #include "chrome/browser/content_settings/page_specific_content_settings_delegate.h"
 
-#include "build/build_config.h"
+#include "base/feature_list.h"
 #include "chrome/browser/browsing_data/browsing_data_file_system_util.h"
 #include "chrome/browser/browsing_data/chrome_browsing_data_model_delegate.h"
 #include "chrome/browser/content_settings/chrome_content_settings_utils.h"
@@ -12,11 +12,13 @@
 #include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
 #include "chrome/browser/media/webrtc/media_stream_capture_indicator.h"
 #include "chrome/browser/permissions/permission_decision_auto_blocker_factory.h"
+#include "chrome/browser/permissions/system/system_permission_settings.h"
 #include "chrome/browser/picture_in_picture/picture_in_picture_window_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/renderer_configuration.mojom.h"
 #include "components/content_settings/browser/page_specific_content_settings.h"
+#include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_utils.h"
 #include "components/content_settings/core/common/features.h"
 #include "components/permissions/permission_decision_auto_blocker.h"
@@ -35,14 +37,11 @@
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 #if BUILDFLAG(ENABLE_PDF)
-#include "base/features.h"
 #include "chrome/browser/pdf/pdf_viewer_stream_manager.h"
 #include "pdf/pdf_features.h"
 #endif  // BUILDFLAG(ENABLE_PDF)
 
 using content_settings::PageSpecificContentSettings;
-
-namespace chrome {
 
 PageSpecificContentSettingsDelegate::PageSpecificContentSettingsDelegate(
     content::WebContents* web_contents)
@@ -167,7 +166,7 @@ void GetGuestViewDefaultContentSettingRules(
   rules->mixed_content_rules.push_back(ContentSettingPatternSource(
       ContentSettingsPattern::Wildcard(), ContentSettingsPattern::Wildcard(),
       content_settings::ContentSettingToValue(CONTENT_SETTING_BLOCK),
-      std::string(), incognito));
+      content_settings::ProviderType::kNone, incognito));
 }
 #endif
 }  // namespace
@@ -255,11 +254,19 @@ void PageSpecificContentSettingsDelegate::OnContentBlocked(
   }
 }
 
+bool PageSpecificContentSettingsDelegate::IsBlockedOnSystemLevel(
+    ContentSettingsType type) {
+  DCHECK(type == ContentSettingsType::MEDIASTREAM_MIC ||
+         type == ContentSettingsType::MEDIASTREAM_CAMERA);
+
+  return system_permission_settings::IsDenied(type);
+}
+
 bool PageSpecificContentSettingsDelegate::IsFrameAllowlistedForJavaScript(
     content::RenderFrameHost* render_frame_host) {
 #if BUILDFLAG(ENABLE_PDF)
   // OOPIF PDF viewer only.
-  if (!base::FeatureList::IsEnabled(chrome_pdf::features::kPdfOopif)) {
+  if (!chrome_pdf::features::IsOopifPdfEnabled()) {
     return false;
   }
 
@@ -285,5 +292,3 @@ void PageSpecificContentSettingsDelegate::PrimaryPageChanged(
     content::Page& page) {
   ClearPendingProtocolHandler();
 }
-
-}  // namespace chrome

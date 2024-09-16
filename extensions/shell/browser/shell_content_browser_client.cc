@@ -44,6 +44,7 @@
 #include "extensions/browser/url_loader_factory_manager.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
+#include "extensions/common/manifest_handlers/sandboxed_page_info.h"
 #include "extensions/common/mojom/event_router.mojom.h"
 #include "extensions/common/mojom/guest_view.mojom.h"
 #include "extensions/common/mojom/renderer_host.mojom.h"
@@ -162,6 +163,10 @@ void ShellContentBrowserClient::SiteInstanceGotProcessAndSite(
   if (!extension)
     return;
 
+  if (site_instance->IsSandboxed()) {
+    return;
+  }
+
   ProcessMap::Get(browser_main_parts_->browser_context())
       ->Insert(extension->id(), site_instance->GetProcess()->GetID());
 }
@@ -267,7 +272,7 @@ ShellContentBrowserClient::GetNavigationUIData(
 mojo::PendingRemote<network::mojom::URLLoaderFactory>
 ShellContentBrowserClient::CreateNonNetworkNavigationURLLoaderFactory(
     const std::string& scheme,
-    int frame_tree_node_id) {
+    content::FrameTreeNodeId frame_tree_node_id) {
   if (scheme == extensions::kExtensionScheme) {
     content::WebContents* web_contents =
         content::WebContents::FromFrameTreeNodeId(frame_tree_node_id);
@@ -346,7 +351,7 @@ void ShellContentBrowserClient::WillCreateURLLoaderFactory(
 bool ShellContentBrowserClient::HandleExternalProtocol(
     const GURL& url,
     content::WebContents::Getter web_contents_getter,
-    int frame_tree_node_id,
+    content::FrameTreeNodeId frame_tree_node_id,
     content::NavigationUIData* navigation_data,
     bool is_primary_main_frame,
     bool is_in_fenced_frame_tree,

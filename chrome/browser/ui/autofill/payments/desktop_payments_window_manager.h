@@ -6,9 +6,10 @@
 #define CHROME_BROWSER_UI_AUTOFILL_PAYMENTS_DESKTOP_PAYMENTS_WINDOW_MANAGER_H_
 
 #include <memory>
+#include <optional>
 
 #include "base/memory/raw_ref.h"
-#include "components/autofill/core/browser/autofill_client.h"
+#include "components/autofill/core/browser/payments/payments_autofill_client.h"
 #include "components/autofill/core/browser/payments/payments_network_interface.h"
 #include "components/autofill/core/browser/payments/payments_window_manager.h"
 #include "content/public/browser/web_contents_observer.h"
@@ -20,6 +21,10 @@
 #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
 
 class GURL;
+
+namespace content {
+class NavigationHandle;
+}  // namespace content
 
 namespace autofill {
 
@@ -49,6 +54,8 @@ class DesktopPaymentsWindowManager : public PaymentsWindowManager,
   void InitVcn3dsAuthentication(Vcn3dsContext context) override;
 
   // content::WebContentsObserver:
+  void DidFinishNavigation(
+      content::NavigationHandle* navigation_handle) override;
   void WebContentsDestroyed() override;
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
@@ -71,6 +78,10 @@ class DesktopPaymentsWindowManager : public PaymentsWindowManager,
   // specific to the flow that it is created for.
   void CreatePopup(const GURL& url, gfx::Rect popup_size);
 
+  // Triggered when a pop-up navigation has finished, and the `flow_type_` is
+  // kVcn3ds.
+  void OnDidFinishNavigationForVcn3ds();
+
   // Triggered when a pop-up is destroyed, and the `flow_type_` is kVcn3ds.
   void OnWebContentsDestroyedForVcn3ds();
 
@@ -78,14 +89,14 @@ class DesktopPaymentsWindowManager : public PaymentsWindowManager,
   // retrieve the virtual card. This method is run once risk data is loaded for
   // VCN 3DS.
   void OnDidLoadRiskDataForVcn3ds(
-      RedirectCompletionProof redirect_completion_proof,
+      RedirectCompletionResult redirect_completion_result,
       const std::string& risk_data);
 
   // Closes the progress dialog and runs the completion callback
   // `vcn_3ds_context_`. Run once a response is received from the second
   // UnmaskCardRequest, triggered after the authentication has completed.
   void OnVcn3dsAuthenticationResponseReceived(
-      AutofillClient::PaymentsRpcResult result,
+      payments::PaymentsAutofillClient::PaymentsRpcResult result,
       const PaymentsNetworkInterface::UnmaskResponseDetails& response_details);
 
   // Resets the state of `this` in relation to the ongoing UnmaskCardRequest.
@@ -98,6 +109,9 @@ class DesktopPaymentsWindowManager : public PaymentsWindowManager,
   // window to trigger. If the user cancels the dialog the flow will end.
   void ShowVcn3dsConsentDialog();
 
+  // Handles the user accepting the VCN 3DS consent dialog.
+  void OnVcn3dsConsentDialogAccepted();
+
   // Handles the user cancelling the VCN 3DS consent dialog.
   void OnVcn3dsConsentDialogCancelled();
 
@@ -106,6 +120,10 @@ class DesktopPaymentsWindowManager : public PaymentsWindowManager,
 
   // Only present if `flow_type_` is `kVcn3ds`.
   std::optional<Vcn3dsContext> vcn_3ds_context_;
+
+  // The timestamp for when the VCN 3DS pop-up was shown to the user. Used for
+  // logging purposes.
+  std::optional<base::TimeTicks> vcn_3ds_popup_shown_timestamp_;
 
   // The type of flow that is currently ongoing. Set when a flow is initiated.
   FlowType flow_type_ = FlowType::kNoFlow;

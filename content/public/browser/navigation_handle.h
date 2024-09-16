@@ -13,7 +13,9 @@
 #include "base/memory/safe_ref.h"
 #include "base/supports_user_data.h"
 #include "content/common/content_export.h"
+#include "content/public/browser/frame_tree_node_id.h"
 #include "content/public/browser/frame_type.h"
+#include "content/public/browser/navigation_discard_reason.h"
 #include "content/public/browser/navigation_handle_timing.h"
 #include "content/public/browser/navigation_throttle.h"
 #include "content/public/browser/preloading_trigger_type.h"
@@ -198,7 +200,7 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // navigation is committed into may later transfer to another FrameTreeNode.
   // See documentation for RenderFrameHost::GetFrameTreeNodeId() for more
   // details.
-  virtual int GetFrameTreeNodeId() = 0;
+  virtual FrameTreeNodeId GetFrameTreeNodeId() = 0;
 
   // Returns the RenderFrameHost for the parent frame, or nullptr if this
   // navigation is taking place in the main frame. This value will not change
@@ -207,7 +209,7 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
 
   // Returns the document owning the frame this NavigationHandle is located
   // in, which will either be a parent (for <iframe>s) or outer document (for
-  // <fencedframe> and <portal>). See documentation for
+  // <fencedframe>). See documentation for
   // `RenderFrameHost::GetParentOrOuterDocument()` for more details.
   virtual RenderFrameHost* GetParentFrameOrOuterDocument() = 0;
 
@@ -251,6 +253,11 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // schemes like data: or file:).  Therefore //content public API exposes only
   // |bool IsPost()| as opposed to |const std::string& GetMethod()| method.
   virtual bool IsPost() = 0;
+
+  // Gets the request method for the initial network request. Unlike `IsPost()`,
+  // This will not change during the navigation (e.g. after encountering a
+  // server redirect).
+  virtual std::string GetRequestMethod() = 0;
 
   // Returns a sanitized version of the referrer for this request.
   virtual const blink::mojom::Referrer& GetReferrer() = 0;
@@ -334,6 +341,11 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // * same page history navigation
   virtual bool IsSameDocument() const = 0;
 
+  // Whether the navigation is a history traversal navigation, which navigates
+  // to a pre-existing NavigationEntry. Note that this will return false for
+  // reloads, and return true for session restore navigations.
+  virtual bool IsHistory() const = 0;
+
   // Whether the navigation has encountered a server redirect or not.
   virtual bool WasServerRedirect() = 0;
 
@@ -375,7 +387,7 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // the session history will be updated. E.g., on unreachable urls or other
   // navigations that the users may not think of as navigations (such as
   // happens with 'history.replaceState()'), or navigations in non-primary frame
-  // trees or portals that should not appear in history.
+  // trees that should not appear in history.
   virtual bool ShouldUpdateHistory() = 0;
 
   // The previous main frame URL that the user was on. This may be empty if
@@ -627,6 +639,10 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // `true` if the timeout is being started for the first time. Repeated calls
   // will be ignored (they won't reset the timeout) and will return `false`.
   virtual bool SetNavigationTimeout(base::TimeDelta timeout) = 0;
+  // Cancels the request timeout for this navigation. If the navigation is still
+  // happening, it will continue as if the timer wasn't set. Otherwise, this is
+  // a no-op.
+  virtual void CancelNavigationTimeout() = 0;
 
   // Configures whether a Cookie header added to this request should not be
   // overwritten by the network service.
@@ -738,6 +754,11 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // `GetNavigationInitiatorActivationAndAdStatus()` as it can include other
   // signals outside of the initiator.
   virtual void SetIsAdTagged() = 0;
+
+  // If the navigation is discarded without committing, returns the reason for
+  // the discarding. See `NavigationDiscardReason` for the various cases.
+  virtual std::optional<NavigationDiscardReason>
+  GetNavigationDiscardReason() = 0;
 };
 
 }  // namespace content

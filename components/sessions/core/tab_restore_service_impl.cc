@@ -7,7 +7,10 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+
 #include <map>
+#include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -22,6 +25,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/notreached.h"
 #include "base/time/time.h"
+#include "base/uuid.h"
 #include "components/history/core/common/pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/sessions/core/base_session_service_commands.h"
@@ -30,9 +34,11 @@
 #include "components/sessions/core/session_command.h"
 #include "components/sessions/core/session_constants.h"
 #include "components/sessions/core/session_id.h"
+#include "components/sessions/core/tab_restore_types.h"
 #include "components/tab_groups/tab_group_color.h"
 #include "components/tab_groups/tab_group_id.h"
 #include "components/tab_groups/tab_group_visual_data.h"
+#include "ui/base/mojom/window_show_state.mojom.h"
 
 #undef LoadBitmap
 
@@ -185,23 +191,23 @@ enum SerializedWindowShowState : int {
 
 // Converts a window show state to an integer. This function needs to be kept
 // up to date with the SerializedWindowShowState enum.
-int SerializeWindowShowState(ui::WindowShowState show_state) {
+int SerializeWindowShowState(ui::mojom::WindowShowState show_state) {
   switch (show_state) {
-    case ui::SHOW_STATE_DEFAULT:
+    case ui::mojom::WindowShowState::kDefault:
       return kSerializedShowStateDefault;
-    case ui::SHOW_STATE_NORMAL:
+    case ui::mojom::WindowShowState::kNormal:
       return kSerializedShowStateNormal;
-    case ui::SHOW_STATE_MINIMIZED:
+    case ui::mojom::WindowShowState::kMinimized:
       return kSerializedShowStateMinimized;
-    case ui::SHOW_STATE_MAXIMIZED:
+    case ui::mojom::WindowShowState::kMaximized:
       return kSerializedShowStateMaximized;
-    case ui::SHOW_STATE_INACTIVE:
+    case ui::mojom::WindowShowState::kInactive:
       return kSerializedShowStateInactive;
-    case ui::SHOW_STATE_FULLSCREEN:
+    case ui::mojom::WindowShowState::kFullscreen:
       return kSerializedShowStateFullscreen;
-    case ui::SHOW_STATE_END:
+    case ui::mojom::WindowShowState::kEnd:
       // This should never happen.
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
   return kSerializedShowStateInvalid;
 }
@@ -210,25 +216,25 @@ int SerializeWindowShowState(ui::WindowShowState show_state) {
 // otherwise. This function needs to be kept up to date with the
 // SerializedWindowShowState enum.
 bool DeserializeWindowShowState(int show_state_int,
-                                ui::WindowShowState* show_state) {
+                                ui::mojom::WindowShowState* show_state) {
   switch (static_cast<SerializedWindowShowState>(show_state_int)) {
     case kSerializedShowStateDefault:
-      *show_state = ui::SHOW_STATE_DEFAULT;
+      *show_state = ui::mojom::WindowShowState::kDefault;
       return true;
     case kSerializedShowStateNormal:
-      *show_state = ui::SHOW_STATE_NORMAL;
+      *show_state = ui::mojom::WindowShowState::kNormal;
       return true;
     case kSerializedShowStateMinimized:
-      *show_state = ui::SHOW_STATE_MINIMIZED;
+      *show_state = ui::mojom::WindowShowState::kMinimized;
       return true;
     case kSerializedShowStateMaximized:
-      *show_state = ui::SHOW_STATE_MAXIMIZED;
+      *show_state = ui::mojom::WindowShowState::kMaximized;
       return true;
     case kSerializedShowStateInactive:
-      *show_state = ui::SHOW_STATE_INACTIVE;
+      *show_state = ui::mojom::WindowShowState::kInactive;
       return true;
     case kSerializedShowStateFullscreen:
-      *show_state = ui::SHOW_STATE_FULLSCREEN;
+      *show_state = ui::mojom::WindowShowState::kFullscreen;
       return true;
     case kSerializedShowStateInvalid:
     default:
@@ -286,7 +292,7 @@ std::unique_ptr<sessions::tab_restore::Window> CreateWindowEntryFromCommand(
     SessionID* window_id,
     int32_t* num_tabs) {
   WindowCommandFields fields;
-  ui::WindowShowState show_state = ui::SHOW_STATE_DEFAULT;
+  ui::mojom::WindowShowState show_state = ui::mojom::WindowShowState::kDefault;
   auto type = sessions::SessionWindow::TYPE_NORMAL;
 
   if (command->id() == kCommandWindow) {
@@ -371,7 +377,7 @@ std::unique_ptr<sessions::tab_restore::Window> CreateWindowEntryFromCommand(
   } else {
     // This should never be called with anything other than a known window
     // command ID.
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
   }
 
   // Create the Window entry.
@@ -408,6 +414,8 @@ struct GroupCommandFields {
   int browser_id = 0;
   std::u16string title;
   uint32_t color = 0;
+  bool is_saved;
+  std::string saved_id;
 };
 
 std::unique_ptr<sessions::tab_restore::Group> CreateGroupEntryFromCommand(
@@ -432,6 +440,14 @@ std::unique_ptr<sessions::tab_restore::Group> CreateGroupEntryFromCommand(
     return nullptr;
   }
 
+  if (it.ReadBool(&parsed_fields.is_saved) && parsed_fields.is_saved) {
+    if (!it.ReadString(&parsed_fields.saved_id) ||
+        parsed_fields.saved_id.empty()) {
+      // A saved group must have a saved id.
+      return nullptr;
+    }
+  }
+
   // Copy the parsed data.
   GroupCommandFields fields = parsed_fields;
 
@@ -440,6 +456,10 @@ std::unique_ptr<sessions::tab_restore::Group> CreateGroupEntryFromCommand(
       std::make_unique<sessions::tab_restore::Group>();
   group->group_id =
       tab_groups::TabGroupId::FromRawToken(fields.tab_group_token.value());
+  if (fields.is_saved) {
+    group->saved_group_id = base::Uuid::ParseLowercase(fields.saved_id);
+  }
+
   group->browser_id = fields.browser_id;
   group->visual_data =
       tab_groups::TabGroupVisualData(fields.title, fields.color);
@@ -522,7 +542,7 @@ class TabRestoreServiceImpl::PersistenceDelegate
       int selected_tab_index,
       int num_tabs,
       const gfx::Rect& bounds,
-      ui::WindowShowState show_state,
+      ui::mojom::WindowShowState show_state,
       const std::string& workspace,
       base::Time timestamp);
 
@@ -531,6 +551,7 @@ class TabRestoreServiceImpl::PersistenceDelegate
       SessionID session_id,
       size_t num_tabs,
       tab_groups::TabGroupId group_id,
+      std::optional<base::Uuid> saved_group_id,
       SessionID::id_type browser_id,
       tab_groups::TabGroupVisualData visual_data);
 
@@ -820,9 +841,9 @@ void TabRestoreServiceImpl::PersistenceDelegate::ScheduleCommandsForGroup(
     const tab_restore::Group& group) {
   DCHECK(!group.tabs.empty());
 
-  command_storage_manager_->ScheduleCommand(
-      CreateGroupCommand(group.id, group.tabs.size(), group.group_id,
-                         group.browser_id, group.visual_data));
+  command_storage_manager_->ScheduleCommand(CreateGroupCommand(
+      group.id, group.tabs.size(), group.group_id, group.saved_group_id,
+      group.browser_id, group.visual_data));
   ScheduleCommandsForTabs(group.tabs);
 }
 
@@ -874,6 +895,13 @@ void TabRestoreServiceImpl::PersistenceDelegate::ScheduleCommandsForTab(
         &tab.group_visual_data.value();
     pickle.WriteString16(visual_data->title());
     pickle.WriteUInt32(static_cast<int>(visual_data->color()));
+
+    // Added in M126. Write the saved group id to the pickle if there is one.
+    pickle.WriteBool(tab.saved_group_id.has_value());
+    if (tab.saved_group_id.has_value()) {
+      pickle.WriteString(tab.saved_group_id.value().AsLowercaseString());
+    }
+
     std::unique_ptr<SessionCommand> command(
         new SessionCommand(kCommandSetTabGroupData, pickle));
     command_storage_manager_->ScheduleCommand(std::move(command));
@@ -914,7 +942,7 @@ TabRestoreServiceImpl::PersistenceDelegate::CreateWindowCommand(
     int selected_tab_index,
     int num_tabs,
     const gfx::Rect& bounds,
-    ui::WindowShowState show_state,
+    ui::mojom::WindowShowState show_state,
     const std::string& workspace,
     base::Time timestamp) {
   static_assert(sizeof(SessionID::id_type) == sizeof(int),
@@ -953,6 +981,7 @@ TabRestoreServiceImpl::PersistenceDelegate::CreateGroupCommand(
     SessionID session_id,
     size_t num_tabs,
     tab_groups::TabGroupId tab_group_id,
+    std::optional<base::Uuid> saved_group_id,
     SessionID::id_type browser_id,
     tab_groups::TabGroupVisualData visual_data) {
   static_assert(sizeof(SessionID::id_type) == sizeof(int),
@@ -965,6 +994,12 @@ TabRestoreServiceImpl::PersistenceDelegate::CreateGroupCommand(
   pickle.WriteInt(static_cast<int>(browser_id));
   pickle.WriteString16(visual_data.title());
   pickle.WriteUInt32(static_cast<int>(visual_data.color()));
+
+  // Added in M126. Write the saved group id to the pickle if there is one.
+  pickle.WriteBool(saved_group_id.has_value());
+  if (saved_group_id.has_value()) {
+    pickle.WriteString(saved_group_id.value().AsLowercaseString());
+  }
 
   std::unique_ptr<SessionCommand> command(
       new SessionCommand(kCommandCreateGroup, pickle));
@@ -1149,7 +1184,7 @@ void TabRestoreServiceImpl::PersistenceDelegate::CreateEntriesFromCommands(
           DCHECK_EQ(current_group.has_value(), false);
           if (!current_window->first) {
             // We should have created a window already.
-            NOTREACHED();
+            NOTREACHED_IN_MIGRATION();
             return;
           }
           current_window->first->tabs.push_back(
@@ -1161,7 +1196,7 @@ void TabRestoreServiceImpl::PersistenceDelegate::CreateEntriesFromCommands(
         } else if (current_group.has_value()) {
           if (!current_group->first) {
             // We should have created a group already.
-            NOTREACHED();
+            NOTREACHED_IN_MIGRATION();
             return;
           }
           current_group->first->tabs.push_back(
@@ -1221,11 +1256,21 @@ void TabRestoreServiceImpl::PersistenceDelegate::CreateEntriesFromCommands(
         std::optional<base::Token> group_token = ReadTokenFromPickle(&iter);
         std::u16string title;
         uint32_t color_int;
-        if (!iter.ReadString16(&title)) {
+        bool is_saved;
+        std::string saved_id;
+        if (!iter.ReadString16(&title) || !iter.ReadUInt32(&color_int)) {
           break;
         }
-        if (!iter.ReadUInt32(&color_int)) {
-          break;
+        if (iter.ReadBool(&is_saved) && is_saved) {
+          if (!iter.ReadString(&saved_id) || saved_id.empty()) {
+            break;
+          }
+          current_tab->saved_group_id = base::Uuid::ParseLowercase(saved_id);
+        } else {
+          // Explicitly update the nullopt if the group isn't saved. This is to
+          // ensure the right value is set when there are multiple entries in
+          // the append log file.
+          current_tab->saved_group_id = std::nullopt;
         }
 
         current_tab->group =
@@ -1239,7 +1284,7 @@ void TabRestoreServiceImpl::PersistenceDelegate::CreateEntriesFromCommands(
       case kCommandSetWindowAppName: {
         if (!current_window->first) {
           // We should have created a window already.
-          NOTREACHED();
+          NOTREACHED_IN_MIGRATION();
           return;
         }
 
@@ -1308,7 +1353,7 @@ void TabRestoreServiceImpl::PersistenceDelegate::CreateEntriesFromCommands(
       case kCommandSetWindowUserTitle: {
         if (!current_window->first) {
           // We should have created a window already.
-          NOTREACHED();
+          NOTREACHED_IN_MIGRATION();
           return;
         }
 
@@ -1382,13 +1427,22 @@ bool TabRestoreServiceImpl::PersistenceDelegate::ConvertSessionWindowToWindow(
     tab_restore::Window* window) {
   window->type = session_window->type;
 
-  // The group visual datas must be stored in both |window| and each
-  // grouped tab.
-  std::map<tab_groups::TabGroupId, tab_groups::TabGroupVisualData>
-      group_visual_datas;
+  // The groups in ` window`. The group visual data must also be explicitly set
+  // on grouped tabs.
+  std::map<tab_groups::TabGroupId, std::unique_ptr<tab_restore::Group>> groups;
   for (auto& tab_group : session_window->tab_groups) {
     auto group_id = tab_group->id;
-    group_visual_datas[group_id] = tab_group->visual_data;
+    auto group = std::make_unique<sessions::tab_restore::Group>();
+
+    group->group_id = tab_group->id;
+    if (tab_group->saved_guid.has_value()) {
+      group->saved_group_id =
+          base::Uuid::ParseLowercase(tab_group->saved_guid.value());
+    }
+    group->visual_data = tab_group->visual_data;
+    group->browser_id = session_window->window_id.id();
+    group->timestamp = base::Time::Now();
+    groups[group_id] = std::move(group);
   }
 
   for (auto& i : session_window->tabs) {
@@ -1401,7 +1455,7 @@ bool TabRestoreServiceImpl::PersistenceDelegate::ConvertSessionWindowToWindow(
     auto group_id = i->group;
     if (group_id.has_value()) {
       tab.group = group_id;
-      tab.group_visual_data = group_visual_datas[group_id.value()];
+      tab.group_visual_data = groups[group_id.value()]->visual_data;
     }
 
     tab.pinned = i->pinned;
@@ -1415,7 +1469,7 @@ bool TabRestoreServiceImpl::PersistenceDelegate::ConvertSessionWindowToWindow(
   if (window->tabs.empty()) {
     return false;
   }
-  window->tab_groups = std::move(group_visual_datas);
+  window->tab_groups = std::move(groups);
   window->selected_tab_index =
       std::min(session_window->selected_tab_index,
                static_cast<int>(window->tabs.size() - 1));

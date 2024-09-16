@@ -16,6 +16,7 @@
 #include "base/functional/callback.h"
 #include "base/functional/overloaded.h"
 #include "base/memory/weak_ptr.h"
+#include "base/not_fatal_until.h"
 #include "components/attribution_reporting/features.h"
 #include "components/browsing_data/content/browsing_data_quota_helper.h"
 #include "components/browsing_data/content/shared_worker_info.h"
@@ -101,7 +102,8 @@ BrowsingDataModel::DataOwner GetDataOwner::GetOwningOriginOrHost<url::Origin>(
     return GetOwnerBasedOnScheme(data_key);
   }
 
-  NOTREACHED() << "Unexpected StorageType: " << static_cast<int>(storage_type_);
+  NOTREACHED_IN_MIGRATION()
+      << "Unexpected StorageType: " << static_cast<int>(storage_type_);
   return "";
 }
 
@@ -109,7 +111,7 @@ template <>
 BrowsingDataModel::DataOwner
 GetDataOwner::GetOwningOriginOrHost<blink::StorageKey>(
     const blink::StorageKey& data_key) const {
-  // TODO(crbug.com/1271155): This logic is useful for testing during the
+  // TODO(crbug.com/40205603): This logic is useful for testing during the
   // implementation of the model, but ultimately these storage types may not
   // coexist.
   switch (storage_type_) {
@@ -119,8 +121,8 @@ GetDataOwner::GetOwningOriginOrHost<blink::StorageKey>(
     case BrowsingDataModel::StorageType::kCdmStorage:
       return GetOwnerBasedOnScheme(data_key.origin());
     default:
-      NOTREACHED() << "Unexpected StorageType: "
-                   << static_cast<int>(storage_type_);
+      NOTREACHED_IN_MIGRATION()
+          << "Unexpected StorageType: " << static_cast<int>(storage_type_);
       return "";
   }
 }
@@ -198,7 +200,7 @@ struct StorageRemoverHelper {
       content::StoragePartition* storage_partition,
       scoped_refptr<BrowsingDataQuotaHelper> quota_helper,
       BrowsingDataModel::Delegate* delegate
-      // TODO(crbug.com/1271155): Inject other dependencies.
+      // TODO(crbug.com/40205603): Inject other dependencies.
       )
       : storage_partition_(storage_partition),
         quota_helper_(quota_helper),
@@ -350,7 +352,7 @@ void StorageRemoverHelper::Visitor::operator()<
         ->ClearSharedDictionaryCacheForIsolationKey(
             isolation_key, helper->GetCompleteCallback());
   } else {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
   }
 }
 
@@ -372,7 +374,7 @@ void StorageRemoverHelper::Visitor::operator()<net::CanonicalCookie>(
                               bool deleted) { std::move(callback).Run(); },
                            helper->GetCompleteCallback()));
   } else {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
   }
 }
 
@@ -734,7 +736,8 @@ bool BrowsingDataModel::Iterator::operator!=(const Iterator& other) const {
 BrowsingDataModel::BrowsingDataEntryView
 BrowsingDataModel::Iterator::operator*() const {
   DCHECK(outer_iterator_ != outer_end_iterator_);
-  DCHECK(inner_iterator_ != outer_iterator_->second.end());
+  CHECK(inner_iterator_ != outer_iterator_->second.end(),
+        base::NotFatalUntil::M130);
   return BrowsingDataEntryView(outer_iterator_->first, inner_iterator_->first,
                                inner_iterator_->second);
 }
@@ -839,7 +842,8 @@ std::unique_ptr<BrowsingDataModel> BrowsingDataModel::BuildEmpty(
 void BrowsingDataModel::AddBrowsingData(const DataKey& data_key,
                                         StorageType storage_type,
                                         uint64_t storage_size,
-                                        uint64_t cookie_count) {
+                                        uint64_t cookie_count,
+                                        bool blocked_third_party) {
   DataOwner data_owner =
       absl::visit(GetDataOwner(delegate_.get(), storage_type), data_key);
 
@@ -850,6 +854,7 @@ void BrowsingDataModel::AddBrowsingData(const DataKey& data_key,
   // Per canonical cookie the count should always be 1, otherwise this count is
   // irrelevant.
   entry.cookie_count = cookie_count;
+  entry.blocked_third_party = blocked_third_party;
   entry.storage_types.Put(storage_type);
 }
 
@@ -941,7 +946,7 @@ bool BrowsingDataModel::IsStorageTypeCookieLike(
     case BrowsingDataModel::StorageType::kCdmStorage:
       return true;
     case BrowsingDataModel::StorageType::kExtendedDelegateRange:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -970,7 +975,7 @@ void BrowsingDataModel::PopulateFromDisk(base::OnceClosure finished_callback) {
   bool is_shared_dictionary_enabled = base::FeatureList::IsEnabled(
       network::features::kCompressionDictionaryTransportBackend);
   bool is_interest_group_enabled =
-      base::FeatureList::IsEnabled(blink::features::kAdInterestGroupAPI);
+      base::FeatureList::IsEnabled(blink::features::kInterestGroupStorage);
   bool is_attribution_reporting_enabled = base::FeatureList::IsEnabled(
       attribution_reporting::features::kConversionMeasurement);
   bool is_private_aggregation_enabled =
@@ -1019,8 +1024,12 @@ void BrowsingDataModel::PopulateFromDisk(base::OnceClosure finished_callback) {
 
   // Interest Groups
   if (is_interest_group_enabled) {
-    storage_partition_->GetInterestGroupManager()->GetAllInterestGroupDataKeys(
-        base::BindOnce(&OnInterestGroupsLoaded, this, completion));
+    content::InterestGroupManager* manager =
+        storage_partition_->GetInterestGroupManager();
+    if (manager) {
+      manager->GetAllInterestGroupDataKeys(
+          base::BindOnce(&OnInterestGroupsLoaded, this, completion));
+    }
   }
 
   // Attribution Reporting

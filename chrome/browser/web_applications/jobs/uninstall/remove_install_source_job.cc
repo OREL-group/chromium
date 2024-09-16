@@ -4,6 +4,7 @@
 
 #include "chrome/browser/web_applications/jobs/uninstall/remove_install_source_job.h"
 
+#include "base/containers/contains.h"
 #include "base/strings/to_string.h"
 #include "chrome/browser/web_applications/jobs/uninstall/remove_web_app_job.h"
 #include "chrome/browser/web_applications/locks/all_apps_lock.h"
@@ -27,7 +28,7 @@ enum class Action {
 Action GetAction(const WebAppManagementTypes& sources,
                  const WebAppManagementTypes& sources_to_remove) {
   if (sources.empty()) {
-    // TODO(crbug.com/1427340): Return a different UninstallResultCode
+    // TODO(crbug.com/40261748): Return a different UninstallResultCode
     // for this case and log it in metrics.
     return Action::kRemoveApp;
   }
@@ -78,7 +79,7 @@ void RemoveInstallSourceJob::Start(AllAppsLock& lock, Callback callback) {
 
   switch (GetAction(app->GetSources(), install_managements_to_remove_)) {
     case Action::kNone:
-      // TODO(crbug.com/1427340): Return a different UninstallResultCode
+      // TODO(crbug.com/40261748): Return a different UninstallResultCode
       // for when no action is taken instead of being overly specific to the "no
       // app" case.
       CompleteAndSelfDestruct(webapps::UninstallResultCode::kNoAppToUninstall);
@@ -122,6 +123,14 @@ void RemoveInstallSourceJob::
         app->SetParentAppId(std::nullopt);
       }
     }
+    WebApp::ExternalConfigMap modified_config_map;
+    for (const auto& [type, config_data] :
+         app->management_to_external_config_map()) {
+      if (!base::Contains(install_managements_to_remove_, type)) {
+        modified_config_map.insert_or_assign(type, config_data);
+      }
+    }
+    app->SetWebAppManagementExternalConfigMap(std::move(modified_config_map));
     // TODO(crbug.com/40913556): Make sync uninstall not synchronously
     // remove its sync install source even while a command has an app lock so
     // that we can CHECK(app->HasAnySources()) here.
@@ -129,9 +138,10 @@ void RemoveInstallSourceJob::
 
   lock_->install_manager().NotifyWebAppSourceRemoved(app_id_);
   lock_->os_integration_manager().Synchronize(
-      app_id_, base::BindOnce(&RemoveInstallSourceJob::CompleteAndSelfDestruct,
-                              weak_ptr_factory_.GetWeakPtr(),
-                              webapps::UninstallResultCode::kSuccess));
+      app_id_,
+      base::BindOnce(&RemoveInstallSourceJob::CompleteAndSelfDestruct,
+                     weak_ptr_factory_.GetWeakPtr(),
+                     webapps::UninstallResultCode::kInstallSourceRemoved));
 }
 
 void RemoveInstallSourceJob::CompleteAndSelfDestruct(

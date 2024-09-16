@@ -13,12 +13,12 @@
 #include <utility>
 
 #include "base/time/time.h"
+#include "components/autofill/core/browser/address_data_manager.h"
 #include "components/autofill/core/browser/autofill_profile_import_process.h"
 #include "components/autofill/core/browser/country_type.h"
 #include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/autofill/core/browser/data_model/autofill_profile_comparator.h"
 #include "components/autofill/core/browser/form_structure.h"
-#include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/autofill/core/common/autofill_clock.h"
 #include "components/autofill/core/common/logging/log_buffer.h"
 #include "components/autofill/core/common/signatures.h"
@@ -63,8 +63,7 @@ class TimestampedSameOriginQueue {
   // This is not done as part of `Push()`, as outdated items (for example in the
   // multi-step import use-case) should be deleted as soon as possible for
   // privacy reasons, even when no `Push()` happens.
-  void RemoveOutdatedItems(const base::TimeDelta& ttl,
-                           const url::Origin& new_origin) {
+  void RemoveOutdatedItems(base::TimeDelta ttl, const url::Origin& new_origin) {
     if (origin_ && *origin_ != new_origin) {
       Clear();
     } else {
@@ -135,11 +134,11 @@ class MultiStepImportMerger {
   // Stored profiles can be deleted/modified by the user/through sync, etc. This
   // potentially invalidates `multistep_candidates_`.
   // This function verifies all already imported `multistep_candidates_`
-  // against the corresponding profile stored in the `personal_data_manager`.
-  // Profiles that no longer exist in the personal data manager are removed from
+  // against the corresponding profile stored in the `address_data_manager`.
+  // Profiles that no longer exist in the address data manager are removed from
   // `multistep_candidates`. Similarly, profiles that were in modified in the
-  // personal data manager are updated in `multistep_candidates`.
-  void OnPersonalDataChanged(PersonalDataManager& personal_data_manager);
+  // address data manager are updated in `multistep_candidates`.
+  void OnAddressDataChanged(AddressDataManager& address_data_manager);
 
   void OnBrowsingHistoryCleared(const history::DeletionInfo& deletion_info);
 

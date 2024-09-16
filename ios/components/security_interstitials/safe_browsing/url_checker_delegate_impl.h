@@ -37,11 +37,9 @@ class UrlCheckerDelegateImpl : public safe_browsing::UrlCheckerDelegate {
       const security_interstitials::UnsafeResource& resource,
       const std::string& method,
       const net::HttpRequestHeaders& headers,
-      bool is_main_frame,
       bool has_user_gesture) override;
   void StartObservingInteractionsForDelayedBlockingPageHelper(
-      const security_interstitials::UnsafeResource& resource,
-      bool is_main_frame) override;
+      const security_interstitials::UnsafeResource& resource) override;
   bool IsUrlAllowlisted(const GURL& url) override;
   void SetPolicyAllowlistDomains(
       const std::vector<std::string>& allowlist_domains) override;
@@ -53,7 +51,7 @@ class UrlCheckerDelegateImpl : public safe_browsing::UrlCheckerDelegate {
       bool originated_from_service_worker) override;
 
   // This function is unused on iOS, since iOS cannot use content/.
-  // TODO(crbug.com/1069047): Refactor SafeBrowsingUrlCheckerImpl and
+  // TODO(crbug.com/40683815): Refactor SafeBrowsingUrlCheckerImpl and
   // UrlCheckerDelegate to extract the functionality that can be shared across
   // platforms, and move methods used only by content/ to classes used only by
   // content/.

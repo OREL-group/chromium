@@ -2,19 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/supervised_user/core/browser/supervised_user_pref_store.h"
+
 #include <set>
 #include <string>
 
 #include "base/memory/ref_counted.h"
-#include "base/test/metrics/histogram_tester.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/values.h"
 #include "components/policy/core/common/policy_pref_names.h"
 #include "components/prefs/testing_pref_store.h"
 #include "components/safe_search_api/safe_search_util.h"
-#include "components/supervised_user/core/browser/supervised_user_pref_store.h"
 #include "components/supervised_user/core/browser/supervised_user_settings_service.h"
-#include "components/supervised_user/core/common/features.h"
 #include "components/supervised_user/core/common/pref_names.h"
 #include "components/supervised_user/core/common/supervised_user_constants.h"
 #include "components/sync/base/pref_names.h"
@@ -25,11 +23,6 @@
 namespace {
 
 using ::testing::Optional;
-
-enum class RemoveForceAppliedYoutubeRestrictPolicyState : int {
-  kEnabled = 0,
-  kDisabled = 1,
-};
 
 class SupervisedUserPrefStoreFixture : public PrefStore::Observer {
  public:
@@ -42,7 +35,7 @@ class SupervisedUserPrefStoreFixture : public PrefStore::Observer {
   bool initialization_completed() const { return initialization_completed_; }
 
   // PrefStore::Observer implementation:
-  void OnPrefValueChanged(const std::string& key) override;
+  void OnPrefValueChanged(std::string_view key) override;
   void OnInitializationCompleted(bool succeeded) override;
 
  private:
@@ -62,8 +55,7 @@ SupervisedUserPrefStoreFixture::~SupervisedUserPrefStoreFixture() {
   pref_store_->RemoveObserver(this);
 }
 
-void SupervisedUserPrefStoreFixture::OnPrefValueChanged(
-    const std::string& key) {
+void SupervisedUserPrefStoreFixture::OnPrefValueChanged(std::string_view key) {
   const base::Value* value = nullptr;
   ASSERT_TRUE(pref_store_->GetValue(key, &value));
   changed_prefs_.SetByDottedPath(key, value->Clone());
@@ -78,15 +70,11 @@ void SupervisedUserPrefStoreFixture::OnInitializationCompleted(bool succeeded) {
 
 }  // namespace
 
-class SupervisedUserPrefStoreTest
-    : public ::testing::Test,
-      public testing::WithParamInterface<
-          RemoveForceAppliedYoutubeRestrictPolicyState> {
+class SupervisedUserPrefStoreTest : public ::testing::Test {
  public:
   SupervisedUserPrefStoreTest() = default;
   void SetUp() override;
   void TearDown() override;
-  bool RemoveForceAppliedYoutubeRestrictPolicyEnabled();
 
  protected:
   supervised_user::SupervisedUserSettingsService service_;
@@ -102,21 +90,7 @@ void SupervisedUserPrefStoreTest::TearDown() {
   service_.Shutdown();
 }
 
-bool SupervisedUserPrefStoreTest::
-    RemoveForceAppliedYoutubeRestrictPolicyEnabled() {
-  return GetParam() == RemoveForceAppliedYoutubeRestrictPolicyState::kEnabled;
-}
-
-TEST_P(SupervisedUserPrefStoreTest, ConfigureSettings) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  if (RemoveForceAppliedYoutubeRestrictPolicyEnabled()) {
-    scoped_feature_list.InitAndEnableFeature(
-        supervised_user::kRemoveForceAppliedYoutubeRestrictPolicy);
-  } else {
-    scoped_feature_list.InitAndDisableFeature(
-        supervised_user::kRemoveForceAppliedYoutubeRestrictPolicy);
-  }
-
+TEST_F(SupervisedUserPrefStoreTest, ConfigureSettings) {
   SupervisedUserPrefStoreFixture fixture(&service_);
   EXPECT_FALSE(fixture.initialization_completed());
 
@@ -145,26 +119,10 @@ TEST_P(SupervisedUserPrefStoreTest, ConfigureSettings) {
 
   // kForceYouTubeRestrict defaults to 'moderate' for supervised users on
   // Android and ChromeOS only.
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_CHROMEOS)
-  if (RemoveForceAppliedYoutubeRestrictPolicyEnabled()) {
-    EXPECT_FALSE(
-        fixture.changed_prefs()
-            ->FindIntByDottedPath(policy::policy_prefs::kForceYouTubeRestrict)
-            .has_value());
-  } else {
-    EXPECT_EQ(
-        fixture.changed_prefs()
-            ->FindIntByDottedPath(policy::policy_prefs::kForceYouTubeRestrict)
-            .value(),
-        safe_search_api::YOUTUBE_RESTRICT_MODERATE);
-  }
-
-#else
   EXPECT_FALSE(
       fixture.changed_prefs()
           ->FindIntByDottedPath(policy::policy_prefs::kForceYouTubeRestrict)
           .has_value());
-#endif
 
 #if BUILDFLAG(IS_ANDROID)
   EXPECT_THAT(fixture.changed_prefs()->FindBoolByDottedPath(
@@ -201,19 +159,10 @@ TEST_P(SupervisedUserPrefStoreTest, ConfigureSettings) {
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   // The custodian can allow sites and apps to request permissions.
   // Currently tested indirectly by enabling geolocation requests.
-  base::HistogramTester histogram_tester;
-  histogram_tester.ExpectTotalCount(
-      "SupervisedUsers.ExtensionsMayRequestPermissions", 0);
-
   fixture.changed_prefs()->clear();
   service_.SetLocalSetting(supervised_user::kGeolocationDisabled,
                            base::Value(false));
   EXPECT_EQ(0u, fixture.changed_prefs()->size());
-
-  histogram_tester.ExpectUniqueSample(
-      "SupervisedUsers.ExtensionsMayRequestPermissions", /*enabled=*/true, 1);
-  histogram_tester.ExpectTotalCount(
-      "SupervisedUsers.ExtensionsMayRequestPermissions", 1);
 
   fixture.changed_prefs()->clear();
   service_.SetLocalSetting(supervised_user::kGeolocationDisabled,
@@ -222,11 +171,6 @@ TEST_P(SupervisedUserPrefStoreTest, ConfigureSettings) {
   EXPECT_THAT(fixture.changed_prefs()->FindBoolByDottedPath(
                   prefs::kSupervisedUserExtensionsMayRequestPermissions),
               Optional(false));
-
-  histogram_tester.ExpectBucketCount(
-      "SupervisedUsers.ExtensionsMayRequestPermissions", /*enabled=*/false, 1);
-  histogram_tester.ExpectTotalCount(
-      "SupervisedUsers.ExtensionsMayRequestPermissions", 2);
 
   // The custodian allows extension installation without parental approval.
   // TODO(b/321240396): test suitable metrics.
@@ -243,7 +187,7 @@ TEST_P(SupervisedUserPrefStoreTest, ConfigureSettings) {
 #endif
 }
 
-TEST_P(SupervisedUserPrefStoreTest, ActivateSettingsBeforeInitialization) {
+TEST_F(SupervisedUserPrefStoreTest, ActivateSettingsBeforeInitialization) {
   SupervisedUserPrefStoreFixture fixture(&service_);
   EXPECT_FALSE(fixture.initialization_completed());
 
@@ -256,7 +200,7 @@ TEST_P(SupervisedUserPrefStoreTest, ActivateSettingsBeforeInitialization) {
   EXPECT_EQ(0u, fixture.changed_prefs()->size());
 }
 
-TEST_P(SupervisedUserPrefStoreTest, CreatePrefStoreAfterInitialization) {
+TEST_F(SupervisedUserPrefStoreTest, CreatePrefStoreAfterInitialization) {
   pref_store_->SetInitializationCompleted();
   service_.SetActive(true);
 
@@ -264,15 +208,3 @@ TEST_P(SupervisedUserPrefStoreTest, CreatePrefStoreAfterInitialization) {
   EXPECT_TRUE(fixture.initialization_completed());
   EXPECT_EQ(0u, fixture.changed_prefs()->size());
 }
-
-INSTANTIATE_TEST_SUITE_P(
-    All,
-    SupervisedUserPrefStoreTest,
-    testing::Values(RemoveForceAppliedYoutubeRestrictPolicyState::kEnabled,
-                    RemoveForceAppliedYoutubeRestrictPolicyState::kDisabled),
-    [](const auto& info) {
-      return std::string(
-          info.param == RemoveForceAppliedYoutubeRestrictPolicyState::kEnabled
-              ? "Enabled"
-              : "Disabled");
-    });

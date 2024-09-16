@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/core/frame/pausable_script_executor.h"
 
 #include <memory>
@@ -238,7 +243,8 @@ void PausableScriptExecutor::CreateAndRun(
     v8::Local<v8::Value> argv[],
     mojom::blink::WantResultOption want_result_option,
     WebScriptExecutionCallback callback) {
-  ScriptState* script_state = ScriptState::From(context);
+  v8::Isolate* isolate = context->GetIsolate();
+  ScriptState* script_state = ScriptState::From(isolate, context);
   if (!script_state->ContextIsValid()) {
     if (callback)
       std::move(callback).Run({}, {});
@@ -432,7 +438,7 @@ void PausableScriptExecutor::HandleResults(
 void PausableScriptExecutor::Dispose() {
   // Remove object as a ExecutionContextLifecycleObserver.
   // TODO(keishi): Remove IsIteratingOverObservers() check when
-  // HeapObserverSet() supports removal while iterating.
+  // HeapObserverList() supports removal while iterating.
   if (!GetExecutionContext()
            ->ContextLifecycleObserverSet()
            .IsIteratingOverObservers()) {

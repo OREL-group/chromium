@@ -20,6 +20,7 @@
 #include "ui/base/models/dialog_model_field.h"
 #include "ui/base/models/dialog_model_host.h"
 #include "ui/base/models/image_model.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/base/ui_base_types.h"
 
 namespace ui {
@@ -51,6 +52,9 @@ class COMPONENT_EXPORT(UI_BASE) DialogModelDelegate {
 // responsible for interfacing with toolkits to display them. This provides a
 // separation of concerns where a DialogModel only needs to be concerned with
 // what goes into a dialog, not how it shows.
+//
+// DialogModel is supported in views, and android. See
+// //ui/android/modal_dialog_wrapper.h for limitations of android support.
 //
 // Example usage (with views as an example DialogModelHost implementation). Note
 // that visual presentation (except order of elements) is entirely up to
@@ -332,6 +336,16 @@ class COMPONENT_EXPORT(UI_BASE) DialogModel final {
       return *this;
     }
 
+    // Adds a title item. See DialogModel::AddTitleItem().
+    // TODO(pengchaocai): Refactor this method once dialog_model supports
+    // multiple DialogModelSection, when the title would be an optional member
+    // of DialogModelSection.
+    Builder& AddTitleItem(std::u16string label,
+                          ElementIdentifier id = ElementIdentifier()) {
+      model_->AddTitleItem(std::move(label), id);
+      return *this;
+    }
+
     // Adds a separator. See DialogModel::AddSeparator().
     Builder& AddSeparator() {
       model_->AddSeparator();
@@ -358,7 +372,7 @@ class COMPONENT_EXPORT(UI_BASE) DialogModel final {
 
     // Overrides default button. Can only be called once. The new default button
     // must exist.
-    Builder& OverrideDefaultButton(DialogButton button);
+    Builder& OverrideDefaultButton(mojom::DialogButton button);
 
     // Sets which field should be initially focused in the dialog model. Must be
     // called after that field has been added. Can only be called once.
@@ -419,6 +433,15 @@ class COMPONENT_EXPORT(UI_BASE) DialogModel final {
                        DialogModelMenuItem::Params()) {
     contents_.AddMenuItem(std::move(icon), std::move(label),
                           std::move(callback), params);
+  }
+
+  // Adds a title item at the end of the dialog model.
+  // TODO(pengchaocai): Refactor this method once dialog_model supports multiple
+  // DialogModelSection, when the title would be an optional member of
+  // DialogModelSection and explicitly adding it might not be needed.
+  void AddTitleItem(std::u16string label,
+                    ElementIdentifier id = ElementIdentifier()) {
+    contents_.AddTitleItem(std::move(label), id);
   }
 
   // Adds a separator at the end of the dialog model.
@@ -521,7 +544,7 @@ class COMPONENT_EXPORT(UI_BASE) DialogModel final {
     return dark_mode_banner_;
   }
 
-  const std::optional<DialogButton>& override_default_button(
+  const std::optional<mojom::DialogButton>& override_default_button(
       base::PassKey<DialogModelHost>) const {
     return override_default_button_;
   }
@@ -588,7 +611,7 @@ class COMPONENT_EXPORT(UI_BASE) DialogModel final {
   ImageModel banner_;
   ImageModel dark_mode_banner_;
 
-  std::optional<DialogButton> override_default_button_;
+  std::optional<mojom::DialogButton> override_default_button_;
   DialogModelSection contents_;
   ElementIdentifier initially_focused_field_;
   bool is_alert_dialog_ = false;

@@ -4,15 +4,18 @@
 
 #include "components/safe_browsing/core/browser/realtime/url_lookup_service_base.h"
 
+#include <memory>
+
 #include "base/base64url.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/not_fatal_until.h"
 #include "base/rand_util.h"
 #include "base/strings/strcat.h"
-#include "base/strings/string_piece.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "components/enterprise/common/proto/connectors.pb.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/core/browser/referrer_chain_provider.h"
 #include "components/safe_browsing/core/browser/verdict_cache_manager.h"
@@ -105,8 +108,6 @@ RTLookupRequest::OSType GetRTLookupRequestOSType() {
   return RTLookupRequest::OS_TYPE_ANDROID;
 #elif BUILDFLAG(IS_CHROMEOS)
   return RTLookupRequest::OS_TYPE_CHROME_OS;
-#elif BUILDFLAG(IS_FUCHSIA)
-  return RTLookupRequest::OS_TYPE_FUCHSIA;
 #elif BUILDFLAG(IS_IOS)
   return RTLookupRequest::OS_TYPE_IOS;
 #elif BUILDFLAG(IS_LINUX)
@@ -198,7 +199,7 @@ SBThreatType RealTimeUrlLookupServiceBase::GetSBThreatTypeForRTThreatType(
       case RTLookupResponse::ThreatInfo::SAFE:
         return SB_THREAT_TYPE_SAFE;
       default:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
         return SB_THREAT_TYPE_SAFE;
     }
   }
@@ -218,7 +219,8 @@ SBThreatType RealTimeUrlLookupServiceBase::GetSBThreatTypeForRTThreatType(
       return SB_THREAT_TYPE_BILLING;
     case RTLookupResponse::ThreatInfo::MANAGED_POLICY:
     case RTLookupResponse::ThreatInfo::THREAT_TYPE_UNSPECIFIED:
-      NOTREACHED() << "Unexpected RTLookupResponse::ThreatType encountered";
+      NOTREACHED_IN_MIGRATION()
+          << "Unexpected RTLookupResponse::ThreatType encountered";
       return SB_THREAT_TYPE_SAFE;
   }
 }
@@ -491,7 +493,8 @@ void RealTimeUrlLookupServiceBase::OnURLLoaderComplete(
   CHECK(first_request_start_time_);
 
   auto it = pending_requests_.find(url);
-  DCHECK(it != pending_requests_.end()) << "Request not found";
+  CHECK(it != pending_requests_.end(), base::NotFatalUntil::M130)
+      << "Request not found";
 
   RecordTimesWithAndWithoutSuffix("SafeBrowsing.RT.Network.Time",
                                   GetMetricSuffix(),
@@ -518,6 +521,11 @@ void RealTimeUrlLookupServiceBase::OnURLLoaderComplete(
   bool sent_with_token = access_token_string && !access_token_string->empty();
   MaybeLogProtegoPingCookieHistograms(request_had_cookie, was_first_request,
                                       sent_with_token);
+
+  if (sent_with_token) {
+    MaybeLogCookieReset(*url_loader,
+                        SafeBrowsingAuthenticatedEndpoint::kRealtimeUrlLookup);
+  }
 
   if (response_code == net::HTTP_UNAUTHORIZED &&
       access_token_string.has_value()) {
@@ -606,6 +614,30 @@ std::unique_ptr<RTLookupRequest> RealTimeUrlLookupServiceBase::FillRequestProto(
   std::optional<std::string> dm_token_string = GetDMTokenString();
   if (dm_token_string.has_value()) {
     request->set_dm_token(dm_token_string.value());
+
+    std::string email = GetUserEmail();
+    if (!email.empty()) {
+      request->set_email(std::move(email));
+    }
+
+    // Check for the profile token here because we want to avoid cases where the
+    // value is populated in the non-enterprise case.
+    std::string profile_dm_token = GetProfileDMTokenString();
+    if (!profile_dm_token.empty()) {
+      request->set_profile_dm_token(std::move(profile_dm_token));
+    }
+  }
+
+  std::string browser_dm_token = GetBrowserDMTokenString();
+  if (!browser_dm_token.empty()) {
+    request->set_browser_dm_token(std::move(browser_dm_token));
+  }
+
+  std::unique_ptr<enterprise_connectors::ClientMetadata> client_metadata =
+      GetClientMetadata();
+
+  if (client_metadata) {
+    *request->mutable_client_reporting_metadata() = std::move(*client_metadata);
   }
 
   *request->mutable_population() = get_user_population_callback_.Run();

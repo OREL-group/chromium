@@ -137,7 +137,7 @@ class FakeCertificateImporter : public ash::onc::CertificateImporter {
     // imported, only ImportClientCertificaates should be called.
     // ImportAllCertificatesUserInitiated should never be called from
     // UserNetworkConfigurationUpdater.
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
   }
 
   void ImportClientCertificates(
@@ -312,8 +312,8 @@ class NetworkConfigurationUpdaterAshTest : public testing::Test {
     ash::UserSessionManager::GetInstance()->set_start_session_type_for_testing(
         ash::UserSessionManager::StartSessionType::kPrimary);
 
-    fake_statistics_provider_.SetMachineStatistic(
-        ash::system::kSerialNumberKeyForTest, kFakeSerialNumber);
+    fake_statistics_provider_.SetMachineStatistic(ash::system::kSerialNumberKey,
+                                                  kFakeSerialNumber);
 
     EXPECT_CALL(provider_, IsInitializationComplete(_))
         .WillRepeatedly(Return(false));

@@ -15,8 +15,8 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/extensions/api/commands/command_service.h"
 #include "chrome/browser/extensions/api/side_panel/side_panel_service.h"
+#include "chrome/browser/extensions/commands/command_service.h"
 #include "chrome/browser/extensions/extension_action_runner.h"
 #include "chrome/browser/extensions/extension_context_menu_model.h"
 #include "chrome/browser/extensions/extension_view.h"
@@ -176,10 +176,7 @@ ExtensionActionViewController::ExtensionActionViewController(
       popup_host_(nullptr),
       view_delegate_(nullptr),
       platform_delegate_(ExtensionActionPlatformDelegate::Create(this)),
-      icon_factory_(browser->profile(),
-                    extension_.get(),
-                    extension_action,
-                    this),
+      icon_factory_(extension_.get(), extension_action, this),
       extension_registry_(extension_registry) {}
 
 ExtensionActionViewController::~ExtensionActionViewController() {
@@ -346,17 +343,6 @@ bool ExtensionActionViewController::IsShowingPopup() const {
   return popup_host_ != nullptr;
 }
 
-bool ExtensionActionViewController::ShouldShowSiteAccessRequestInToolbar(
-    content::WebContents* web_contents) const {
-  bool requests_access =
-      GetSiteInteraction(web_contents) ==
-      extensions::SitePermissionsHelper::SiteInteraction::kWithheld;
-  bool can_show_access_requests_in_toolbar =
-      extensions::SitePermissionsHelper(browser_->profile())
-          .ShowAccessRequestsInToolbar(GetId());
-  return requests_access && can_show_access_requests_in_toolbar;
-}
-
 void ExtensionActionViewController::HidePopup() {
   if (IsShowingPopup()) {
     // Only call Close() on the popup if it's been shown; otherwise, the popup
@@ -436,11 +422,12 @@ void ExtensionActionViewController::ExecuteUserAction(InvocationSource source) {
   extensions::ExtensionAction::ShowAction action =
       action_runner->RunAction(extension(), kGrantTabPermissions);
 
-  if (action == extensions::ExtensionAction::ACTION_SHOW_POPUP) {
+  if (action == extensions::ExtensionAction::ShowAction::kShowPopup) {
     constexpr bool kByUser = true;
     GetPreferredPopupViewController()->TriggerPopup(
         PopupShowAction::kShow, kByUser, ShowPopupCallback());
-  } else if (action == extensions::ExtensionAction::ACTION_TOGGLE_SIDE_PANEL) {
+  } else if (action ==
+             extensions::ExtensionAction::ShowAction::kToggleSidePanel) {
     extensions::side_panel_util::ToggleExtensionSidePanel(browser_,
                                                           extension()->id());
   }
@@ -485,9 +472,13 @@ void ExtensionActionViewController::UnregisterCommand() {
 void ExtensionActionViewController::InspectPopup() {
   // This method is only triggered through user action (clicking on the context
   // menu entry).
-  constexpr bool kByUser = true;
   GetPreferredPopupViewController()->TriggerPopup(
-      PopupShowAction::kShowAndInspect, kByUser, ShowPopupCallback());
+      PopupShowAction::kShowAndInspect, /*by_user*/ true, ShowPopupCallback());
+}
+
+void ExtensionActionViewController::TriggerPopupForAPI() {
+  GetPreferredPopupViewController()->TriggerPopup(
+      PopupShowAction::kShowAndInspect, /*by_user*/ false, ShowPopupCallback());
 }
 
 void ExtensionActionViewController::OnIconUpdated() {
@@ -564,8 +555,9 @@ bool ExtensionActionViewController::CanHandleAccelerators() const {
   // always checking IsEnabled(). It's weird to use a keyboard shortcut on a
   // disabled action (in most cases, this will result in opening the context
   // menu).
-  if (extension_action_->action_type() == extensions::ActionInfo::TYPE_PAGE)
+  if (extension_action_->action_type() == extensions::ActionInfo::Type::kPage) {
     return IsEnabled(view_delegate_->GetCurrentWebContents());
+  }
   return true;
 }
 
@@ -596,12 +588,6 @@ void ExtensionActionViewController::TriggerPopup(PopupShowAction show_action,
 
   const GURL popup_url = extension_action_->GetPopupUrl(tab_id);
 
-  // Skip popup if there is an open security UI that would be covered by it,
-  // mitigation occlusion/spoofing risks.
-  if (extensions_container_->HasBlockingSecurityUI()) {
-    return;
-  }
-
   std::unique_ptr<extensions::ExtensionViewHost> host =
       extensions::ExtensionViewHostFactory::CreatePopupHost(popup_url,
                                                             browser_);
@@ -627,7 +613,7 @@ void ExtensionActionViewController::TriggerPopup(PopupShowAction show_action,
 
 void ExtensionActionViewController::ShowPopup(
     std::unique_ptr<extensions::ExtensionViewHost> popup_host,
-    bool grant_tab_permissions,
+    bool by_user,
     PopupShowAction show_action,
     ShowPopupCallback callback) {
   // It's possible that the popup should be closed before it finishes opening
@@ -645,7 +631,7 @@ void ExtensionActionViewController::ShowPopup(
   has_opened_popup_ = true;
   platform_delegate_->ShowPopup(std::move(popup_host), show_action,
                                 std::move(callback));
-  view_delegate_->OnPopupShown(grant_tab_permissions);
+  view_delegate_->OnPopupShown(by_user);
 }
 
 void ExtensionActionViewController::OnPopupClosed() {

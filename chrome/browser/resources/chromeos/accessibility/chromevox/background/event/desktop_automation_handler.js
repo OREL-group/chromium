@@ -670,7 +670,8 @@ export class DesktopAutomationHandler extends DesktopAutomationInterface {
 
       // TableView fires selection events on rows/cells
       // and we want to ignore those because it also fires focus events.
-      const skip = AutomationPredicate.roles([RoleType.CELL, RoleType.ROW]);
+      const skip = AutomationPredicate.roles(
+          [RoleType.CELL, RoleType.GRID_CELL, RoleType.ROW]);
       if (isDesktop && skip(target)) {
         return;
       }
@@ -711,6 +712,8 @@ export class DesktopAutomationHandler extends DesktopAutomationInterface {
           target.className === 'PopupBaseView' ||
           target.className === 'PopupRowView' ||
           target.className === 'PopupRowContentView' ||
+          target.className === 'PopupRowPredictionImprovementsFeedbackView' ||
+          target.className === 'PopupRowPredictionImprovementsDetailsView' ||
           target.className ===
               'PasswordGenerationPopupViewViews::GeneratedPasswordBox') {
         override = true;
@@ -946,12 +949,5 @@ DesktopAutomationHandler.MIN_VALUE_CHANGE_DELAY_MS = 50;
  * @const {number}
  */
 DesktopAutomationHandler.MIN_ALERT_DELAY_MS = 50;
-
-/**
- * Time to wait before announcing attribute changes that are otherwise too
- * disruptive.
- * @const {number}
- */
-DesktopAutomationHandler.ATTRIBUTE_DELAY_MS = 1500;
 
 TestImportManager.exportForTesting(DesktopAutomationHandler);

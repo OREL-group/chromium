@@ -4,6 +4,10 @@
         display: block;
       }
 
+      :host([is-empty]) {
+        padding-block: 80px;
+      }
+
       .history-cards {
         margin-block-start: var(--first-card-padding-top);
       }
@@ -21,7 +25,7 @@
         items="[[historyData_]]" as="item" id="infinite-list"
         role="grid" aria-rowcount$="[[historyData_.length]]"
         hidden$="[[!hasResults_(historyData_.length)]]" preserve-focus
-        scroll-target="[[scrollTarget]]">
+        scroll-target="[[scrollTarget]]" scroll-offset="[[scrollOffset]]">
       <template>
         <history-item tabindex$="[[tabIndex]]"
             item="[[item]]"

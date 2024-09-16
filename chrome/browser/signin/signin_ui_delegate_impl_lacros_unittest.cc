@@ -124,12 +124,12 @@ class SigninUiDelegateImplLacrosTest : public ::testing::TestWithParam<bool> {
     CHECK(profile_manager_.SetUp());
     // Need to explicitly create the `SigninManager` as it usually doesn't exist
     // in tests.
-    TestingProfile::TestingFactories factories = {
-        {SigninManagerFactory::GetInstance(),
-         base::BindRepeating(&BuildSigninManager)}};
-    IdentityTestEnvironmentProfileAdaptor::
-        AppendIdentityTestEnvironmentFactories(&factories);
-    profile_ = profile_manager_.CreateTestingProfile("Default", factories);
+    profile_ = profile_manager_.CreateTestingProfile(
+        "Default", IdentityTestEnvironmentProfileAdaptor::
+                       GetIdentityTestEnvironmentFactoriesWithAppendedFactories(
+                           {TestingProfile::TestingFactory{
+                               SigninManagerFactory::GetInstance(),
+                               base::BindRepeating(&BuildSigninManager)}}));
     identity_test_env_adaptor_ =
         std::make_unique<IdentityTestEnvironmentProfileAdaptor>(profile_);
   }
@@ -170,7 +170,7 @@ TEST_P(SigninUiDelegateImplLacrosTest, ShowSigninUI) {
   }
   EXPECT_EQ(enable_sync ? 1 : 0, user_action_tester.GetActionCount(
                                      "Signin_Signin_FromAvatarBubbleSignin"));
-  // TODO(https://crbug.com/1316608): test that the sync is shown after an
+  // TODO(crbug.com/40834209): test that the sync is shown after an
   // account is added.
 }
 
@@ -195,7 +195,7 @@ TEST_P(SigninUiDelegateImplLacrosTest, ShowReauthUI) {
   }
   EXPECT_EQ(enable_sync ? 1 : 0, user_action_tester.GetActionCount(
                                      "Signin_Signin_FromAvatarBubbleSignin"));
-  // TODO(https://crbug.com/1316608): test that the sync is shown after an
+  // TODO(crbug.com/40834209): test that the sync is shown after an
   // account is added.
 }
 

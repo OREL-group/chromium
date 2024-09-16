@@ -103,7 +103,6 @@ NSString* GetPromoLabelString(
     case signin_metrics::AccessPoint::ACCESS_POINT_UNKNOWN:
     case signin_metrics::AccessPoint::ACCESS_POINT_PASSWORD_BUBBLE:
     case signin_metrics::AccessPoint::ACCESS_POINT_AUTOFILL_DROPDOWN:
-    case signin_metrics::AccessPoint::ACCESS_POINT_NTP_CONTENT_SUGGESTIONS:
     case signin_metrics::AccessPoint::ACCESS_POINT_RESIGNIN_INFOBAR:
     case signin_metrics::AccessPoint::ACCESS_POINT_TAB_SWITCHER:
     case signin_metrics::AccessPoint::ACCESS_POINT_MACHINE_LOGON:
@@ -144,12 +143,22 @@ NSString* GetPromoLabelString(
         ACCESS_POINT_PROFILE_MENU_SIGNOUT_CONFIRMATION_PROMPT:
     case signin_metrics::AccessPoint::
         ACCESS_POINT_SETTINGS_SIGNOUT_CONFIRMATION_PROMPT:
+    case signin_metrics::AccessPoint::ACCESS_POINT_NTP_IDENTITY_DISC:
+    case signin_metrics::AccessPoint::
+        ACCESS_POINT_OIDC_REDIRECTION_INTERCEPTION:
+    case signin_metrics::AccessPoint::ACCESS_POINT_WEBAUTHN_MODAL_DIALOG:
+    case signin_metrics::AccessPoint::
+        ACCESS_POINT_AVATAR_BUBBLE_SIGN_IN_WITH_SYNC_PROMO:
+    case signin_metrics::AccessPoint::ACCESS_POINT_PRODUCT_SPECIFICATIONS:
+    case signin_metrics::AccessPoint::ACCESS_POINT_ACCOUNT_MENU:
+    case signin_metrics::AccessPoint::ACCESS_POINT_ACCOUNT_MENU_FAILED_SWITCH:
+    case signin_metrics::AccessPoint::ACCESS_POINT_ADDRESS_BUBBLE:
       // Nothing prevents instantiating ConsistencyDefaultAccountViewController
       // with an arbitrary entry point, API-wise. In doubt, no label is a good,
       // generic default that fits all entry points.
       return nil;
     case signin_metrics::AccessPoint::ACCESS_POINT_MAX:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -175,7 +184,7 @@ NSString* GetPromoLabelString(
                                   syncService:(syncer::SyncService*)syncService
                                   accessPoint:
                                       (signin_metrics::AccessPoint)accessPoint {
-  if (self = [super init]) {
+  if ((self = [super init])) {
     DCHECK(accountManagerService);
     CHECK(syncService);
 
@@ -286,7 +295,7 @@ NSString* GetPromoLabelString(
 
 - (void)onChromeAccountManagerServiceShutdown:
     (ChromeAccountManagerService*)accountManagerService {
-  // TODO(crbug.com/1489595): Remove `[self disconnect]`.
+  // TODO(crbug.com/40284086): Remove `[self disconnect]`.
   [self disconnect];
 }
 

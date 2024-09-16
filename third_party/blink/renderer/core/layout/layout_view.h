@@ -26,7 +26,7 @@
 #include "base/dcheck_is_on.h"
 #include "third_party/blink/public/mojom/scroll/scrollbar_mode.mojom-blink.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/layout/layout_ng_block_flow.h"
+#include "third_party/blink/renderer/core/layout/layout_block_flow.h"
 #include "third_party/blink/renderer/core/layout/layout_quote.h"
 #include "third_party/blink/renderer/core/scroll/scrollable_area.h"
 #include "third_party/blink/renderer/platform/graphics/overlay_scrollbar_clip_behavior.h"
@@ -65,7 +65,7 @@ struct VariableLengthTransformResult {
 // Because there is one LayoutView per rooted layout tree (or Frame), this class
 // is used to add members shared by this tree (e.g. m_layoutState or
 // m_layoutQuoteHead).
-class CORE_EXPORT LayoutView : public LayoutNGBlockFlow {
+class CORE_EXPORT LayoutView : public LayoutBlockFlow {
  public:
   explicit LayoutView(ContainerNode* document);
   ~LayoutView() override;
@@ -121,6 +121,9 @@ class CORE_EXPORT LayoutView : public LayoutNGBlockFlow {
   // - scrollbar exclusion is compatible with root layer scrolling
   gfx::Size GetLayoutSize(IncludeScrollbarsInRect = kExcludeScrollbars) const;
 
+  // Same as above, but ignore print settings.
+  gfx::Size GetNonPrintingLayoutSize(IncludeScrollbarsInRect) const;
+
   int ViewHeight(
       IncludeScrollbarsInRect scrollbar_inclusion = kExcludeScrollbars) const {
     NOT_DESTROYED();
@@ -158,8 +161,9 @@ class CORE_EXPORT LayoutView : public LayoutNGBlockFlow {
 
   void CommitPendingSelection();
 
-  void AbsoluteQuads(Vector<gfx::QuadF>&,
-                     MapCoordinatesFlags mode = 0) const override;
+  void QuadsInAncestorInternal(Vector<gfx::QuadF>&,
+                               const LayoutBoxModelObject* ancestor,
+                               MapCoordinatesFlags) const override;
 
   PhysicalRect ViewRect() const override;
   PhysicalRect OverflowClipRect(const PhysicalOffset& location,
@@ -192,28 +196,23 @@ class CORE_EXPORT LayoutView : public LayoutNGBlockFlow {
 
   bool IsFragmentationContextRoot() const override;
 
-  void SetInitialContainingBlockSizeForPagination(PhysicalSize size) {
+  void SetInitialContainingBlockSizeForPrinting(PhysicalSize size) {
     NOT_DESTROYED();
-    initial_containing_block_size_for_pagination_ = size;
+    initial_containing_block_size_for_printing_ = size;
   }
-  PhysicalSize InitialContainingBlockSizeForPagination() const {
+  PhysicalSize InitialContainingBlockSizeForPrinting() const {
     NOT_DESTROYED();
-    return initial_containing_block_size_for_pagination_;
-  }
-
-  void SetPageScaleFactor(float factor) {
-    NOT_DESTROYED();
-    page_scale_factor_ = factor;
-  }
-  float PageScaleFactor() const {
-    NOT_DESTROYED();
-    return page_scale_factor_;
+    return initial_containing_block_size_for_printing_;
   }
 
-  // Get the page area size (fragmentainer size) for a given page number and
-  // name.
-  PhysicalSize PageAreaSize(wtf_size_t page_index,
-                            const AtomicString& page_name) const;
+  void SetPaginationScaleFactor(float factor) {
+    NOT_DESTROYED();
+    pagination_scale_factor_ = factor;
+  }
+  float PaginationScaleFactor() const {
+    NOT_DESTROYED();
+    return pagination_scale_factor_;
+  }
 
   AtomicString NamedPageAtIndex(wtf_size_t page_index) const;
 
@@ -263,10 +262,9 @@ class CORE_EXPORT LayoutView : public LayoutNGBlockFlow {
   // node within the same lifecycle update will return false.
   bool AffectedByResizedInitialContainingBlock(const LayoutResult&);
 
-  // Update generated markers and counters after style and layout tree update.
+  // Update generated counters after style and layout tree update.
   // container - The container for container queries, otherwise nullptr.
-  void UpdateMarkersAndCountersAfterStyleChange(
-      LayoutObject* container = nullptr);
+  void UpdateCountersAfterStyleChange(LayoutObject* container = nullptr);
 
   bool BackgroundIsKnownToBeOpaqueInRect(
       const PhysicalRect& local_rect) const override;
@@ -327,10 +325,10 @@ class CORE_EXPORT LayoutView : public LayoutNGBlockFlow {
                           TransformState&,
                           MapCoordinatesFlags) const override;
 
-  static bool ShouldUsePrintingLayout(const Document&);
-  bool ShouldUsePrintingLayout() const {
+  static bool ShouldUsePaginatedLayout(const Document&);
+  bool ShouldUsePaginatedLayout() const {
     NOT_DESTROYED();
-    return ShouldUsePrintingLayout(GetDocument());
+    return ShouldUsePaginatedLayout(GetDocument());
   }
 
   void MapLocalToAncestor(const LayoutBoxModelObject* ancestor,
@@ -377,8 +375,10 @@ class CORE_EXPORT LayoutView : public LayoutNGBlockFlow {
     return false;
   }
 
-  // The page area (content area) size of the first page, when printing.
-  PhysicalSize initial_containing_block_size_for_pagination_;
+  // The page area (content area) size of the first page, when printing. This
+  // size should always be consulted when printing, also when not paginating
+  // (e.g. if it's a subframe).
+  PhysicalSize initial_containing_block_size_for_printing_;
 
   // The scale factor that is applied to page area sizes. This affects the
   // initial containing block size for print layout. Used to honor any scaling
@@ -389,7 +389,7 @@ class CORE_EXPORT LayoutView : public LayoutNGBlockFlow {
   // the print parameters. If this results in inline overflow, we'll increase
   // the scale factor and relayout, to fit more content, as an attempt to avoid
   // inline overflow.
-  float page_scale_factor_ = 1.0;
+  float pagination_scale_factor_ = 1.0;
 
   Member<LocalFrameView> frame_view_;
   unsigned layout_counter_count_ = 0;

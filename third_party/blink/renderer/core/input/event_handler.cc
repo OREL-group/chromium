@@ -94,7 +94,6 @@
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/style/computed_style_base_constants.h"
 #include "third_party/blink/renderer/core/style/cursor_data.h"
-#include "third_party/blink/renderer/core/svg/graphics/svg_image.h"
 #include "third_party/blink/renderer/core/svg/graphics/svg_image_for_container.h"
 #include "third_party/blink/renderer/core/svg/svg_use_element.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
@@ -674,7 +673,7 @@ std::optional<ui::Cursor> EventHandler::SelectCursor(
 
         // TODO(fs): Should pass proper URL. Use StyleImage::GetImage.
         svg_image_holder = SVGImageForContainer::Create(
-            svg_image, size, device_scale_factor, NullURL(),
+            *svg_image, size, device_scale_factor, nullptr,
             frame_->GetDocument()
                 ->GetStyleEngine()
                 .ResolveColorSchemeForEmbedding(&style));
@@ -877,22 +876,7 @@ WebInputEventResult EventHandler::HandleMousePressEvent(
   LocalFrame* subframe = event_handling_util::GetTargetSubframe(mev);
   if (subframe) {
     WebInputEventResult result = PassMousePressEventToSubframe(mev, subframe);
-    // Start capturing future events for this frame.  We only do this if we
-    // didn't clear the m_mousePressed flag, which may happen if an AppKit
-    // EmbeddedContentView entered a modal event loop.  The capturing should be
-    // done only when the result indicates it has been handled. See
-    // crbug.com/269917
-    //
-    // TODO(mustaq): The only user of `MouseEventManager::captures_dragging_` is
-    // the following `if` condition.  After shipping the feature
-    // MouseDragFromIframeOnCancelledMouseDown, remove `captures_dragging_` plus
-    // the old comment block above.
-    mouse_event_manager_->SetCapturesDragging(
-        subframe->GetEventHandler().mouse_event_manager_->CapturesDragging());
-    if (mouse_event_manager_->MousePressed() &&
-        (RuntimeEnabledFeatures::
-             MouseDragFromIframeOnCancelledMouseDownEnabled() ||
-         mouse_event_manager_->CapturesDragging())) {
+    if (mouse_event_manager_->MousePressed()) {
       capturing_mouse_events_element_ = mev.InnerElement();
       capturing_subframe_element_ = mev.InnerElement();
     }
@@ -986,13 +970,10 @@ WebInputEventResult EventHandler::HandleMousePressEvent(
   }
 
   if (event_result == WebInputEventResult::kNotHandled || mev.GetScrollbar()) {
-    mouse_event_manager_->SetCapturesDragging(true);
     // Outermost main frames don't implicitly capture mouse input on MouseDown,
     // all subframes do (regardless of whether local or remote or fenced).
     if (frame_->IsAttached() && !frame_->IsOutermostMainFrame())
       CaptureMouseEventsToWidget(true);
-  } else {
-    mouse_event_manager_->SetCapturesDragging(false);
   }
 
   if (PassMousePressEventToScrollbar(mev))
@@ -1618,7 +1599,9 @@ bool EventHandler::HasPointerCapture(PointerId pointer_id,
 }
 
 void EventHandler::ElementRemoved(Element* target) {
-  pointer_event_manager_->ElementRemoved(target);
+  if (!target->GetDocument().StatePreservingAtomicMoveInProgress()) {
+    pointer_event_manager_->ElementRemoved(target);
+  }
   if (target)
     mouse_wheel_event_manager_->ElementRemoved(target);
 }
@@ -2124,7 +2107,7 @@ void EventHandler::ApplyTouchAdjustment(WebGestureEvent* gesture_event,
           TouchAdjustmentCandidateType::kContextMenu;
       break;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 
   Node* adjusted_node = nullptr;
@@ -2644,6 +2627,14 @@ base::debug::CrashKeyString* EventHandler::CrashKeyForBug1519197() const {
       base::debug::AllocateCrashKeyString("cr1519197-area-object",
                                           base::debug::CrashKeySize::Size64);
   return scroll_corner_crash_key;
+}
+
+void EventHandler::ResetLastMousePositionForWebTest() {
+  // When starting a new web test, forget the mouse position, which may have
+  // been affected by the previous test.
+  // TODO(crbug.com/40946696): This code is temporary and can be removed once
+  // we replace the RenderFrameHost; see TODO in WebFrameTestProxy::Reset.
+  mouse_event_manager_->SetLastMousePositionAsUnknown();
 }
 
 }  // namespace blink

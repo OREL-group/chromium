@@ -44,6 +44,7 @@
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "base/threading/scoped_blocking_call.h"
+#include "base/types/cxx23_to_underlying.h"
 #include "base/values.h"
 #include "chrome/browser/accessibility/accessibility_extension_api_ash.h"
 #include "chrome/browser/ash/accessibility/accessibility_dlc_installer.h"
@@ -52,7 +53,6 @@
 #include "chrome/browser/ash/accessibility/magnification_manager.h"
 #include "chrome/browser/ash/accessibility/select_to_speak_event_handler_delegate_impl.h"
 #include "chrome/browser/ash/accessibility/service/accessibility_service_client.h"
-#include "chrome/browser/ash/crosapi/browser_manager.h"
 #include "chrome/browser/ash/policy/enrollment/enrollment_requisition_manager.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/browser_process.h"
@@ -108,6 +108,9 @@
 #include "ui/base/ime/ash/extension_ime_util.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/events/ash/keyboard_capability.h"
+#include "ui/events/devices/device_data_manager.h"
+#include "ui/events/devices/input_device_event_observer.h"
 #include "ui/events/keycodes/keyboard_codes_posix.h"
 #include "ui/strings/grit/ui_strings.h"
 #include "ui/views/widget/widget.h"
@@ -148,6 +151,18 @@ const char kTtsLiteFileName[] = "voice.zvoice";
 
 // The file name of a standard TTS voice.
 const char kTtsStandardFileName[] = "voice-standard.zvoice";
+
+// The value representing the FaceGaze left click action. See
+// ash/webui/common/resources/accessibility/macro_names.ts for the full list of
+// FaceGaze actions. This value needs to be in sync with the MOUSE_CLICK_LEFT
+// action in the above file.
+constexpr int kFaceGazeLeftClickValue = 35;
+
+// The string representing the FaceGaze mouth smile gesture. See
+// ash/webui/common/resources/accessibility/facial_gestures.ts for the full list
+// of FaceGaze gestures. This value needs to be in sync with the MOUTH_SMILE
+// gesture in the above file.
+constexpr char kFaceGazeMouthSmileGesture[] = "mouthSmile";
 
 static AccessibilityManager* g_accessibility_manager = nullptr;
 
@@ -221,7 +236,7 @@ std::string AccessibilityPrivateEnumForAction(SelectToSpeakPanelAction action) {
           extensions::api::accessibility_private::SelectToSpeakPanelAction::
               kExit);
     case SelectToSpeakPanelAction::kNone:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return "";
   }
 }
@@ -502,7 +517,7 @@ AccessibilityManager::AccessibilityManager() {
 
   base::FilePath resources_path;
   if (!base::PathService::Get(chrome::DIR_RESOURCES, &resources_path))
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
   const bool enable_v3_manifest =
       base::CommandLine::ForCurrentProcess()->HasSwitch(
           ::switches::kEnableExperimentalAccessibilityManifestV3);
@@ -578,6 +593,8 @@ AccessibilityManager::AccessibilityManager() {
 
   CrasAudioHandler::Get()->AddAudioObserver(this);
 
+  ui::DeviceDataManager::GetInstance()->AddObserver(this);
+
   dlc_installer_ = std::make_unique<AccessibilityDlcInstaller>();
 }
 
@@ -586,6 +603,7 @@ AccessibilityManager::~AccessibilityManager() {
   AccessibilityStatusEventDetails details(
       AccessibilityNotificationType::kManagerShutdown, false);
   NotifyAccessibilityStatusChanged(details);
+  ui::DeviceDataManager::GetInstance()->RemoveObserver(this);
   CrasAudioHandler::Get()->RemoveAudioObserver(this);
   user_manager::UserManager::Get()->RemoveSessionStateObserver(this);
   input_method::InputMethodManager::Get()->RemoveObserver(this);
@@ -648,6 +666,32 @@ void AccessibilityManager::EnableLargeCursor(bool enabled) {
   PrefService* pref_service = profile_->GetPrefs();
   pref_service->SetBoolean(prefs::kAccessibilityLargeCursorEnabled, enabled);
   pref_service->CommitPendingWrite();
+}
+
+void AccessibilityManager::OnFaceGazeChanged() {
+  OnAccessibilityCommonChanged(prefs::kAccessibilityFaceGazeEnabled);
+  if (!profile_) {
+    return;
+  }
+
+  PrefService* pref_service = profile_->GetPrefs();
+  if (!pref_service->GetBoolean(prefs::kAccessibilityFaceGazeEnabled)) {
+    return;
+  }
+
+  if (pref_service->GetDict(prefs::kAccessibilityFaceGazeGesturesToMacros)
+          .empty()) {
+    // If FaceGaze is enabled but there isn't a gesture to action mapping, then
+    // we should install a minimal mapping to provide a working default
+    // experience.
+    pref_service->SetDict(prefs::kAccessibilityFaceGazeGesturesToMacros,
+                          base::Value::Dict().Set(kFaceGazeMouthSmileGesture,
+                                                  kFaceGazeLeftClickValue));
+    pref_service->SetDict(
+        prefs::kAccessibilityFaceGazeGesturesToConfidence,
+        base::Value::Dict().Set(kFaceGazeMouthSmileGesture, 60));
+    pref_service->CommitPendingWrite();
+  }
 }
 
 void AccessibilityManager::OnLargeCursorChanged() {
@@ -906,6 +950,47 @@ void AccessibilityManager::EnableFaceGaze(bool enabled) {
 bool AccessibilityManager::IsFaceGazeEnabled() const {
   return ::features::IsAccessibilityFaceGazeEnabled() && profile_ &&
          profile_->GetPrefs()->GetBoolean(prefs::kAccessibilityFaceGazeEnabled);
+}
+
+void AccessibilityManager::AddFaceGazeSettingsEventHandler(
+    FaceGazeSettingsEventHandler* handler) {
+  facegaze_settings_event_handler_ = handler;
+}
+
+void AccessibilityManager::RemoveFaceGazeSettingsEventHandler() {
+  facegaze_settings_event_handler_ = nullptr;
+}
+
+void AccessibilityManager::ToggleGestureInfoForSettings(bool enabled) const {
+  if (!profile_) {
+    return;
+  }
+
+  extensions::EventRouter* event_router =
+      extensions::EventRouter::Get(profile_);
+
+  auto event_args = extensions::api::accessibility_private::
+      OnToggleGestureInfoForSettings::Create(enabled);
+
+  auto event = std::make_unique<extensions::Event>(
+      extensions::events::
+          ACCESSIBILITY_PRIVATE_ON_TOGGLE_GESTURE_INFO_FOR_SETTINGS,
+      extensions::api::accessibility_private::OnToggleGestureInfoForSettings::
+          kEventName,
+      std::move(event_args));
+
+  event_router->DispatchEventWithLazyListener(
+      extension_misc::kAccessibilityCommonExtensionId, std::move(event));
+}
+
+void AccessibilityManager::SendGestureInfoToSettings(
+    const std::vector<FaceGazeGestureInfo>& gesture_info) const {
+  if (!facegaze_settings_event_handler_) {
+    return;
+  }
+
+  facegaze_settings_event_handler_->HandleSendGestureInfoToSettings(
+      gesture_info);
 }
 
 void AccessibilityManager::OnAccessibilityCommonChanged(
@@ -1503,7 +1588,7 @@ void AccessibilityManager::InputMethodChanged(
     input_method::InputMethodManager* manager,
     Profile* /* profile */,
     bool show_message) {
-  Shell::Get()->sticky_keys_controller()->SetModifiersEnabled(
+  Shell::Get()->sticky_keys_controller()->SetMod3AndAltGrModifiersEnabled(
       manager->IsISOLevel5ShiftUsedByCurrentInputMethod(),
       manager->IsAltGrUsedByCurrentInputMethod());
   const input_method::InputMethodDescriptor descriptor =
@@ -1650,9 +1735,8 @@ void AccessibilityManager::SetProfile(Profile* profile) {
     if (::features::IsAccessibilityFaceGazeEnabled()) {
       pref_change_registrar_->Add(
           prefs::kAccessibilityFaceGazeEnabled,
-          base::BindRepeating(
-              &AccessibilityManager::OnAccessibilityCommonChanged,
-              base::Unretained(this)));
+          base::BindRepeating(&AccessibilityManager::OnFaceGazeChanged,
+                              base::Unretained(this)));
     }
 
     local_state_pref_change_registrar_ =
@@ -1787,8 +1871,8 @@ void AccessibilityManager::UpdateChromeOSAccessibilityHistograms() {
     if (large_cursor_enabled) {
       base::HistogramBase* histogram = base::LinearHistogram::FactoryGet(
           "Accessibility.CrosLargeCursorSize2", kMinLargeCursorSize,
-          kMaxExtraLargeCursorSize + 1,
-          (kMaxExtraLargeCursorSize + 1 - kMinLargeCursorSize) / 2 + 2,
+          kMaxLargeCursorSize + 1,
+          (kMaxLargeCursorSize + 1 - kMinLargeCursorSize) / 2 + 2,
           base::HistogramBase::kUmaTargetedHistogramFlag);
       histogram->Add(
           prefs->GetInteger(prefs::kAccessibilityLargeCursorDipSize));
@@ -1809,6 +1893,13 @@ void AccessibilityManager::UpdateChromeOSAccessibilityHistograms() {
                                 reduced_animations_enabled);
     }
 
+    if (::features::IsAccessibilityCaretBlinkIntervalSettingEnabled()) {
+      int caret_blink_interval_ms =
+          prefs->GetInteger(prefs::kAccessibilityCaretBlinkInterval);
+      base::UmaHistogramSparse("Accessibility.CrosCaretBlinkInterval",
+                               caret_blink_interval_ms);
+    }
+
     base::UmaHistogramBoolean(
         "Accessibility.CrosCursorColor",
         prefs->GetBoolean(prefs::kAccessibilityCursorColorEnabled));
@@ -1825,6 +1916,12 @@ void AccessibilityManager::UpdateChromeOSAccessibilityHistograms() {
             "Accessibility.CrosColorCorrection.FilterAmount",
             prefs->GetInteger(
                 prefs::kAccessibilityColorVisionCorrectionAmount));
+    }
+
+    if (::features::IsAccessibilityFlashScreenFeatureEnabled()) {
+      base::UmaHistogramBoolean(
+          "Accessibility.CrosFlashNotifications",
+          prefs->GetBoolean(prefs::kAccessibilityFlashNotificationsEnabled));
     }
   }
   base::UmaHistogramBoolean("Accessibility.CrosCaretHighlight",
@@ -1846,6 +1943,10 @@ void AccessibilityManager::UpdateChromeOSAccessibilityHistograms() {
   base::UmaHistogramBoolean(
       "Accessibility.CrosSpokenFeedback.BrailleDisplayConnected",
       IsBrailleDisplayConnected());
+  if (::features::IsAccessibilityFaceGazeEnabled()) {
+    base::UmaHistogramBoolean("Accessibility.CrosFaceGaze",
+                              IsFaceGazeEnabled());
+  }
 }
 
 void AccessibilityManager::PlayVolumeAdjustSound() {
@@ -2123,7 +2224,7 @@ void AccessibilityManager::LoadEnhancedNetworkTts() {
 
   base::FilePath resources_path;
   if (!base::PathService::Get(chrome::DIR_RESOURCES, &resources_path))
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
 
   const bool enable_v3_manifest =
       base::CommandLine::ForCurrentProcess()->HasSwitch(
@@ -2328,6 +2429,10 @@ void AccessibilityManager::SetStartupSoundEnabled(bool value) const {
                             kUserStartupSoundEnabled, value);
 }
 
+void AccessibilityManager::PreviewFlashNotification() const {
+  AccessibilityController::Get()->PreviewFlashNotification();
+}
+
 const std::string AccessibilityManager::GetBluetoothBrailleDisplayAddress()
     const {
   user_manager::UserManager* user_manager = user_manager::UserManager::Get();
@@ -2484,26 +2589,27 @@ void AccessibilityManager::SendMouseEventToSelectToSpeak(
   // Compare to ui::blink::MakeWebMouseEventFromUiEvent.
   extensions::api::accessibility_private::SyntheticMouseEventType event_type;
   switch (type) {
-    case ui::EventType::ET_MOUSE_PRESSED:
+    case ui::EventType::kMousePressed:
       event_type = extensions::api::accessibility_private::
           SyntheticMouseEventType::kPress;
       break;
-    case ui::EventType::ET_MOUSE_RELEASED:
+    case ui::EventType::kMouseReleased:
       event_type = extensions::api::accessibility_private::
           SyntheticMouseEventType::kRelease;
       break;
-    case ui::EventType::ET_MOUSE_MOVED:
-    case ui::EventType::ET_MOUSE_ENTERED:
-    case ui::EventType::ET_MOUSE_EXITED:
-    case ui::EventType::ET_MOUSE_DRAGGED:
+    case ui::EventType::kMouseMoved:
+    case ui::EventType::kMouseEntered:
+    case ui::EventType::kMouseExited:
+    case ui::EventType::kMouseDragged:
       event_type = extensions::api::accessibility_private::
           SyntheticMouseEventType::kMove;
       break;
-    case ui::EventType::ET_MOUSEWHEEL:
+    case ui::EventType::kMousewheel:
       // Mouse wheel not handled.
       return;
     default:
-      NOTIMPLEMENTED() << "Received unexpected event: " << type;
+      NOTIMPLEMENTED() << "Received unexpected event: "
+                       << base::to_underlying(type);
       break;
   }
 
@@ -2572,7 +2678,8 @@ void AccessibilityManager::ShowNetworkDictationDialog() {
   const std::u16string text =
       l10n_util::GetStringUTF16(IDS_ACCESSIBILITY_DICTATION_CONFIRMATION_TEXT);
   AccessibilityController::Get()->ShowConfirmationDialog(
-      title, text, l10n_util::GetStringUTF16(IDS_APP_CANCEL),
+      title, text, l10n_util::GetStringUTF16(IDS_APP_CONTINUE),
+      l10n_util::GetStringUTF16(IDS_APP_CANCEL),
       base::BindOnce(&AccessibilityManager::OnNetworkDictationDialogAccepted,
                      base::Unretained(this)),
       base::BindOnce(&AccessibilityManager::OnNetworkDictationDialogDismissed,
@@ -2793,8 +2900,9 @@ void AccessibilityManager::InstallFaceGazeAssets(
       AccessibilityDlcInstaller::DlcType::kFaceGazeAssets,
       base::BindOnce(&AccessibilityManager::OnFaceGazeAssetsInstalled,
                      weak_ptr_factory_.GetWeakPtr()),
-      base::BindRepeating([](double progress) {}),
-      base::BindOnce([](const std::string& error) {}));
+      /*on_progress=*/base::DoNothing(),
+      base::BindOnce(&AccessibilityManager::OnFaceGazeAssetsFailed,
+                     weak_ptr_factory_.GetWeakPtr()));
 }
 
 void AccessibilityManager::OnFaceGazeAssetsInstalled(
@@ -2813,11 +2921,23 @@ void AccessibilityManager::OnFaceGazeAssetsInstalled(
                                  ? base::FilePath(root_path)
                                  : dlc_path_for_test_;
 
+  AccessibilityController::Get()->ShowNotificationForFaceGaze(
+      FaceGazeNotificationType::kDlcSucceeded);
   base::ThreadPool::PostTaskAndReplyWithResult(
       FROM_HERE, {base::MayBlock()},
       base::BindOnce(&CreateFaceGazeAssets, base::FilePath(base_path)),
       base::BindOnce(&AccessibilityManager::OnFaceGazeAssetsCreated,
                      weak_ptr_factory_.GetWeakPtr()));
+}
+
+void AccessibilityManager::OnFaceGazeAssetsFailed(std::string_view error) {
+  AccessibilityController::Get()->ShowNotificationForFaceGaze(
+      FaceGazeNotificationType::kDlcFailed);
+  if (install_facegaze_assets_callback_.is_null()) {
+    return;
+  }
+
+  std::move(install_facegaze_assets_callback_).Run(std::nullopt);
 }
 
 void AccessibilityManager::OnFaceGazeAssetsCreated(
@@ -2881,7 +3001,7 @@ void AccessibilityManager::OnPumpkinDataCreated(
   std::move(install_pumpkin_callback_).Run(std::move(data));
 }
 
-void AccessibilityManager::OnPumpkinError(const std::string& error) {
+void AccessibilityManager::OnPumpkinError(std::string_view error) {
   if (install_pumpkin_callback_.is_null()) {
     return;
   }
@@ -2938,7 +3058,7 @@ void AccessibilityManager::GetTtsDlcContentsOnPackState(
       file_name = kTtsStandardFileName;
       break;
     case TtsVariant::kNone:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 
   base::FilePath path;
@@ -3016,6 +3136,23 @@ void AccessibilityManager::SendSyntheticMouseEvent(
   if (!is_mouse_events_enabled) {
     cursor_client->DisableMouseEvents();
   }
+}
+
+void AccessibilityManager::OnInputDeviceConfigurationChanged(
+    uint8_t input_device_type) {
+  if (input_device_type & ui::InputDeviceEventObserver::kKeyboard) {
+    Shell::Get()->sticky_keys_controller()->SetFnModifierEnabled(
+        Shell::Get()->keyboard_capability()->HasFunctionKeyOnAnyKeyboard());
+  }
+}
+void AccessibilityManager::OnDeviceListsComplete() {
+  Shell::Get()->sticky_keys_controller()->SetFnModifierEnabled(
+      Shell::Get()->keyboard_capability()->HasFunctionKeyOnAnyKeyboard());
+}
+
+std::optional<ui::KeyboardCode>
+AccessibilityManager::GetCaretBrowsingActionKey() {
+  return AccessibilityController::Get()->GetCaretBrowsingActionKey();
 }
 
 }  // namespace ash

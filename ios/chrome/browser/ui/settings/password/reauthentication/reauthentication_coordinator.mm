@@ -37,7 +37,6 @@ bool IsPasscodeSettingsAvailable() {
   // Use both kill switch and auth on entry feature flag to control the
   // dispalying of the action.
   return password_manager::features::IsPasscodeSettingsEnabled() &&
-         password_manager::features::IsAuthOnEntryV2Enabled() &&
          ios::provider::SupportsPasscodeSettings();
 }
 
@@ -101,9 +100,7 @@ bool IsPasscodeSettingsAvailable() {
 #pragma mark - ChromeCoordinator
 
 - (void)start {
-  if (password_manager::features::IsAuthOnEntryV2Enabled()) {
-    [self.browser->GetSceneState() addObserver:self];
-  }
+  [self.browser->GetSceneState() addObserver:self];
 
   if (_authOnStart) {
     [self pushReauthenticationViewControllerWithRequestAuth:YES];
@@ -127,7 +124,7 @@ bool IsPasscodeSettingsAvailable() {
 
 // Creates and displays an alert requesting the user to set a passcode.
 - (void)showSetUpPasscodeDialog {
-  // TODO(crbug.com/1462419): Open iOS Passcode Settings for phase 2 launch in
+  // TODO(crbug.com/40274927): Open iOS Passcode Settings for phase 2 launch in
   // M118. See i/p/p/c/b/password_auto_fill/password_auto_fill_api.h for
   // reference.
   NSString* title =
@@ -181,7 +178,9 @@ bool IsPasscodeSettingsAvailable() {
     [self popReauthenticationViewController];
 
     [_delegate successfulReauthenticationWithCoordinator:self];
-
+    // The user has been authenticated. No need to reauth until the scene goes
+    // back go the background.
+    _authOnForegroundActive = NO;
   } else {
     [self closeUI];
   }
@@ -234,10 +233,9 @@ bool IsPasscodeSettingsAvailable() {
       // remove the blocking view controller.
       if (_authOnForegroundActive) {
         _authOnForegroundActive = NO;
-        // Reauth vc should have been pushed on
-        // `SceneActivationLevelForegroundInactive` or
-        // SceneActivationLevelBackground`.
-        CHECK(_reauthViewController, base::NotFatalUntil::M125);
+        if (!_reauthViewController) {
+          base::debug::DumpWithoutCrashing();
+        }
         [_reauthViewController requestAuthentication];
       } else {
         [self popReauthenticationViewController];
@@ -302,7 +300,7 @@ bool IsPasscodeSettingsAvailable() {
 
 // Closes the UI and open the support page on setting up a passcode.
 - (void)openPasscodeHelpPage {
-  // TODO(crbug.com/1462419): Move to ReauthenticationCoordinatorDelegate.
+  // TODO(crbug.com/40274927): Move to ReauthenticationCoordinatorDelegate.
   OpenNewTabCommand* command =
       [OpenNewTabCommand commandWithURLFromChrome:GURL(kPasscodeArticleURL)];
   [_dispatcher closeSettingsUIAndOpenURL:command];

@@ -14,6 +14,7 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/not_fatal_until.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/task/sequenced_task_runner.h"
@@ -123,11 +124,11 @@ V4L2StatelessVideoDecoderBackend::V4L2StatelessVideoDecoderBackend(
 
 V4L2StatelessVideoDecoderBackend::~V4L2StatelessVideoDecoderBackend() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  LOG_IF(WARNING, surfaces_at_device_.empty())
+  LOG_IF(WARNING, !surfaces_at_device_.empty())
       << "There is/are " << surfaces_at_device_.size()
       << " pending CAPTURE queue buffers pending dequeuing. This might be "
-      << "fine or a problem depending on the destruction semantics (of the"
-      << "client code.";
+      << "fine or a problem depending on the destruction semantics (of the "
+      << "client code).";
 
   if (!output_request_queue_.empty() || flush_cb_ || current_decode_request_ ||
       !decode_request_queue_.empty()) {
@@ -275,9 +276,9 @@ V4L2StatelessVideoDecoderBackend::CreateSecureSurface(uint64_t secure_handle) {
     return nullptr;
   }
 
-  return new V4L2RequestDecodeSurface(std::move(*input_buf),
-                                      std::move(*output_buf), std::move(frame),
-                                      secure_handle, std::move(*request_ref));
+  return base::MakeRefCounted<V4L2RequestDecodeSurface>(
+      std::move(*input_buf), std::move(*output_buf), std::move(frame),
+      secure_handle, std::move(*request_ref));
 }
 
 scoped_refptr<V4L2DecodeSurface>
@@ -350,7 +351,7 @@ void V4L2StatelessVideoDecoderBackend::SurfaceReady(
   // produces multiple surfaces with the same |bitstream_id|, so we shouldn't
   // remove the timestamp from the cache.
   const auto it = bitstream_id_to_timestamp_.Peek(bitstream_id);
-  DCHECK(it != bitstream_id_to_timestamp_.end());
+  CHECK(it != bitstream_id_to_timestamp_.end(), base::NotFatalUntil::M130);
   base::TimeDelta timestamp = it->second;
 
   dec_surface->SetVisibleRect(visible_rect);

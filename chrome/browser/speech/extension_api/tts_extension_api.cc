@@ -16,7 +16,6 @@
 #include "base/values.h"
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/speech/extension_api/tts_engine_extension_api.h"
 #include "chrome/browser/speech/extension_api/tts_extension_api_constants.h"
 #include "content/public/browser/tts_controller.h"
@@ -34,6 +33,7 @@
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 #if BUILDFLAG(IS_CHROMEOS_LACROS)
+#include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/speech/tts_client_lacros.h"
 #endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
 
@@ -47,6 +47,7 @@ namespace {
 // These values are logged to UMA. Entries should not be renumbered and
 // numeric values should never be reused. Please keep in sync with
 // "TextToSpeechSource" in src/tools/metrics/histograms/enums.xml.
+// LINT.IfChange(UMATextToSpeechSource)
 enum class UMATextToSpeechSource {
   kOther = 0,
   kChromeVox = 1,
@@ -54,6 +55,7 @@ enum class UMATextToSpeechSource {
 
   kMaxValue = kSelectToSpeak,
 };
+// LINT.ThenChange(/tools/metrics/histograms/metadata/accessibility/enums.xml:TextToSpeechSource)
 
 }  // namespace
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
@@ -86,7 +88,7 @@ const char* TtsEventTypeToString(content::TtsEventType event_type) {
     case content::TTS_EVENT_RESUME:
       return constants::kEventTypeResume;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return constants::kEventTypeError;
   }
 }
@@ -113,7 +115,7 @@ content::TtsEventType TtsEventTypeFromString(const std::string& str) {
   if (str == constants::kEventTypeResume)
     return content::TTS_EVENT_RESUME;
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return content::TTS_EVENT_ERROR;
 }
 
@@ -366,9 +368,9 @@ ExtensionFunction::ResponseAction TtsIsSpeakingFunction::Run() {
   // browser test, we have to use a workaround to enable it for testing.
   // TtsPlatformImplLacros::PlatformImplSupported() returns true if lacros
   // tts support is enabled either by ash feature flag or by testing workaround.
-  // TODO(crbug/1422469): Remove the workaround for enable lacros tts support
-  // for testing and call tts_crosapi_util::ShouldEnableLacrosTtsSupport()
-  // instead.
+  // TODO(crbug.com/40259646): Remove the workaround for enable lacros tts
+  // support for testing and call
+  // tts_crosapi_util::ShouldEnableLacrosTtsSupport() instead.
   if (content::TtsPlatform::GetInstance()->PlatformImplSupported()) {
     content::BrowserContext* browser_context =
         ProfileManager::GetPrimaryUserProfile();

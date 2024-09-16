@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #import "components/feature_engagement/public/feature_constants.h"
+#import "components/signin/internal/identity_manager/account_capabilities_constants.h"
 #import "ios/chrome/browser/metrics/model/metrics_app_interface.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
@@ -72,16 +73,14 @@ void CleanupDestinationsHighlightFeaturesData() {
       resetDataForLocalStatePref:prefs::kOverflowMenuNewDestinations];
 
   // Clean up What's New destination promo data.
-  [ChromeEarlGrey removeUserDefaultsObjectForKey:kWhatsNewUsageEntryKey];
   [ChromeEarlGrey removeUserDefaultsObjectForKey:kWhatsNewM116UsageEntryKey];
 }
 
 // Resolves the passphrase error from the Overflow Menu.
 void ResolvePassphraseErrorFromOverflowMenu() {
   // Tap on the Settings destination that has an error badge.
-  [[EarlGrey
-      selectElementWithMatcher:GetSettingsDestinationWithErrorBadgeMatcher()]
-      performAction:grey_tap()];
+  [ChromeEarlGreyUI
+      tapToolsMenuButton:GetSettingsDestinationWithErrorBadgeMatcher()];
 
   // Enter passphrase to resolve the identity error.
   [[EarlGrey selectElementWithMatcher:chrome_test_util::SettingsAccountButton()]
@@ -144,7 +143,7 @@ void ResolvePassphraseErrorFromOverflowMenu() {
 
   // Encrypt synced data with a passphrase to enable passphrase encryption for
   // the signed in account.
-  [ChromeEarlGrey addBookmarkWithSyncPassphrase:kPassphrase];
+  [ChromeEarlGrey addSyncPassphrase:kPassphrase];
 
   // Sign in in butter mode while keeping sync disabled.
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
@@ -178,7 +177,7 @@ void ResolvePassphraseErrorFromOverflowMenu() {
 
   // Encrypt synced data with a passphrase to enable passphrase encryption for
   // the signed in account.
-  [ChromeEarlGrey addBookmarkWithSyncPassphrase:kPassphrase];
+  [ChromeEarlGrey addSyncPassphrase:kPassphrase];
 
   // Sign in and Sync account.
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
@@ -192,7 +191,7 @@ void ResolvePassphraseErrorFromOverflowMenu() {
 }
 
 // Tests non-error destination highlights.
-// TODO(crbug.com/1431012): This test is very flaky. Fails especially on
+// TODO(crbug.com/40263342): This test is very flaky. Fails especially on
 // devices.
 - (void)FLAKY_testNonErrorDestinationHighlights {
   if (![ChromeEarlGrey isNewOverflowMenuEnabled]) {
@@ -230,8 +229,11 @@ void ResolvePassphraseErrorFromOverflowMenu() {
 
   // Sign in and Sync account.
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
+  [SigninEarlGrey addFakeIdentity:fakeIdentity
+                 withCapabilities:@{
+                   @(kIsSubjectToParentalControlsCapabilityName) : @YES,
+                 }];
   [SigninEarlGrey signinWithFakeIdentity:fakeIdentity];
-  [SigninEarlGrey setIsSubjectToParentalControls:YES forIdentity:fakeIdentity];
 
   // Open tools menu to click on "Learn more" family link footer.
   [ChromeEarlGreyUI openToolsMenu];

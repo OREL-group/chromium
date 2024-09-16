@@ -18,9 +18,7 @@
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/no_destructor.h"
-#include "base/rand_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/task/sequenced_task_runner.h"
 #include "chromeos/ash/components/dbus/dlcservice/dlcservice.pb.h"
 #include "chromeos/ash/components/dbus/dlcservice/dlcservice_client.h"
 #include "third_party/cros_system_api/dbus/dlcservice/dbus-constants.h"
@@ -103,32 +101,20 @@ void InstallTimeOfDayDlc(std::string dlc_metrics_label,
 
 void GetAmbientVideoHtmlPath(std::string dlc_metrics_label,
                              base::OnceCallback<void(base::FilePath)> on_done) {
-  if (features::IsTimeOfDayDlcEnabled()) {
-    InstallTimeOfDayDlc(
-        std::move(dlc_metrics_label),
-        base::BindOnce(&BuildAmbientVideoHtmlPath, std::move(on_done)));
-  } else {
-    BuildAmbientVideoHtmlPath(std::move(on_done),
-                              base::FilePath(kTimeOfDayAssetsRootfsRootDir));
-  }
+  InstallTimeOfDayDlc(
+      std::move(dlc_metrics_label),
+      base::BindOnce(&BuildAmbientVideoHtmlPath, std::move(on_done)));
 }
 
 void InstallAmbientVideoDlcInBackground() {
-  base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
-      FROM_HERE,
-      base::BindOnce(&GetAmbientVideoHtmlPath,
-                     ambient::kAmbientVideoDlcBackgroundLabel,
-                     base::DoNothing()),
-      base::RandTimeDelta(kAmbientDlcBackgroundInstallMinDelay,
-                          kAmbientDlcBackgroundInstallMinDelay * 2));
+  GetAmbientVideoHtmlPath(ambient::kAmbientVideoDlcBackgroundLabel,
+                          base::DoNothing());
 }
 
 const base::FilePath::CharType kTimeOfDayCloudsVideo[] =
     FILE_PATH_LITERAL("clouds.webm");
 const base::FilePath::CharType kTimeOfDayNewMexicoVideo[] =
     FILE_PATH_LITERAL("new_mexico.webm");
-const base::FilePath::CharType kTimeOfDayAssetsRootfsRootDir[] =
-    FILE_PATH_LITERAL("/usr/share/chromeos-assets");
 const base::FilePath::CharType kTimeOfDayVideoHtmlSubPath[] =
     FILE_PATH_LITERAL("personalization/time_of_day/src/ambient_video.html");
 

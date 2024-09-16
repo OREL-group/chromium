@@ -30,6 +30,7 @@ import org.chromium.chrome.browser.locale.LocaleManager;
 import org.chromium.chrome.browser.merchant_viewer.MerchantTrustSignalsCoordinator;
 import org.chromium.chrome.browser.omnibox.LocationBarMediator.OmniboxUma;
 import org.chromium.chrome.browser.omnibox.LocationBarMediator.SaveOfflineButtonState;
+import org.chromium.chrome.browser.omnibox.geo.GeolocationHeader;
 import org.chromium.chrome.browser.omnibox.status.StatusCoordinator;
 import org.chromium.chrome.browser.omnibox.status.StatusCoordinator.PageInfoAction;
 import org.chromium.chrome.browser.omnibox.status.StatusView;
@@ -38,6 +39,7 @@ import org.chromium.chrome.browser.omnibox.suggestions.AutocompleteCoordinator;
 import org.chromium.chrome.browser.omnibox.suggestions.AutocompleteDelegate;
 import org.chromium.chrome.browser.omnibox.suggestions.OmniboxLoadUrlParams;
 import org.chromium.chrome.browser.omnibox.suggestions.OmniboxSuggestionsDropdownScrollListener;
+import org.chromium.chrome.browser.omnibox.suggestions.OmniboxSuggestionsVisualState;
 import org.chromium.chrome.browser.omnibox.suggestions.basic.BasicSuggestionProcessor.BookmarkState;
 import org.chromium.chrome.browser.omnibox.voice.VoiceRecognitionHandler;
 import org.chromium.chrome.browser.privacy.settings.PrivacyPreferencesManager;
@@ -50,6 +52,7 @@ import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabWindowManager;
 import org.chromium.components.browser_ui.styles.ChromeColors;
 import org.chromium.components.browser_ui.widget.gesture.BackPressHandler;
+import org.chromium.components.omnibox.AutocompleteMatch;
 import org.chromium.components.omnibox.action.OmniboxActionDelegate;
 import org.chromium.components.search_engines.TemplateUrlService;
 import org.chromium.ui.KeyboardVisibilityDelegate;
@@ -59,6 +62,7 @@ import org.chromium.ui.base.WindowDelegate;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.function.BooleanSupplier;
 
 /**
@@ -74,7 +78,7 @@ import java.util.function.BooleanSupplier;
  */
 public class LocationBarCoordinator
         implements LocationBar, NativeInitObserver, AutocompleteDelegate {
-    private final OmniboxSuggestionsDropdownEmbedderImpl mOmniboxDropdownEmbedderImpl;
+    private OmniboxSuggestionsDropdownEmbedderImpl mOmniboxDropdownEmbedderImpl;
 
     /** Identifies coordinators with methods specific to a device type. */
     public interface SubCoordinator {
@@ -138,7 +142,6 @@ public class LocationBarCoordinator
      * @param merchantTrustSignalsCoordinatorSupplier Supplier of {@link
      *     MerchantTrustSignalsCoordinator}. Can be null if a store icon shouldn't be shown, such as
      *     when called from a search activity.
-     * @param reportExceptionCallback A {@link Callback} to report exceptions.
      * @param backPressManager The {@link BackPressManager} for intercepting back press.
      * @param tabModelSelectorSupplier Supplier of the {@link TabModelSelector}.
      * @param uiOverrides embedder-specific UI overrides
@@ -174,7 +177,6 @@ public class LocationBarCoordinator
                             merchantTrustSignalsCoordinatorSupplier,
             @NonNull OmniboxActionDelegate omniboxActionDelegate,
             BrowserStateBrowserControlsVisibilityDelegate browserControlsVisibilityDelegate,
-            Callback<Throwable> reportExceptionCallback,
             @Nullable BackPressManager backPressManager,
             @Nullable
                     OmniboxSuggestionsDropdownScrollListener
@@ -190,14 +192,17 @@ public class LocationBarCoordinator
         Context context = mLocationBarLayout.getContext();
         OneshotSupplierImpl<TemplateUrlService> templateUrlServiceSupplier =
                 new OneshotSupplierImpl<>();
+        DeferredIMEWindowInsetApplicationCallback deferredIMEWindowInsetApplicationCallback =
+                new DeferredIMEWindowInsetApplicationCallback(
+                        () -> mOmniboxDropdownEmbedderImpl.recalculateOmniboxAlignment());
         mOmniboxDropdownEmbedderImpl =
                 new OmniboxSuggestionsDropdownEmbedderImpl(
                         mWindowAndroid,
-                        mWindowDelegate,
                         autocompleteAnchorView,
                         mLocationBarLayout,
                         uiOverrides.isForcedPhoneStyleOmnibox(),
-                        baseChromeLayout);
+                        baseChromeLayout,
+                        deferredIMEWindowInsetApplicationCallback::getCurrentKeyboardHeight);
 
         mUrlBar = mLocationBarLayout.findViewById(R.id.url_bar);
         // TODO(crbug.com/40733049): Inject LocaleManager instance to LocationBarCoordinator instead
@@ -225,6 +230,7 @@ public class LocationBarCoordinator
         if (backPressManager != null) {
             backPressManager.addHandler(mLocationBarMediator, BackPressHandler.Type.LOCATION_BAR);
         }
+        mActivityLifecycleDispatcher.register(mLocationBarMediator);
         final boolean isIncognito =
                 incognitoStateProvider != null && incognitoStateProvider.isIncognitoSelected();
         mUrlCoordinator =
@@ -236,8 +242,7 @@ public class LocationBarCoordinator
                         mCallbackController.makeCancelable(mLocationBarMediator::onUrlFocusChange),
                         mLocationBarMediator,
                         windowAndroid.getKeyboardDelegate(),
-                        isIncognito,
-                        reportExceptionCallback);
+                        isIncognito);
         mAutocompleteCoordinator =
                 new AutocompleteCoordinator(
                         mLocationBarLayout,
@@ -256,7 +261,8 @@ public class LocationBarCoordinator
                         omniboxSuggestionsDropdownScrollListener,
                         mActivityLifecycleDispatcher,
                         uiOverrides.isForcedPhoneStyleOmnibox(),
-                        windowAndroid);
+                        windowAndroid,
+                        deferredIMEWindowInsetApplicationCallback);
         StatusView statusView = mLocationBarLayout.findViewById(R.id.location_bar_status);
         mStatusCoordinator =
                 new StatusCoordinator(
@@ -285,8 +291,11 @@ public class LocationBarCoordinator
         mLensButton = mLocationBarLayout.findViewById(R.id.lens_camera_button);
         mLensButton.setOnClickListener(mLocationBarMediator::lensButtonClicked);
 
-        mUrlBar.setOnKeyListener(mLocationBarMediator);
-        mUrlCoordinator.addUrlTextChangeListener(mAutocompleteCoordinator);
+        mUrlCoordinator.setTextChangeListener(mAutocompleteCoordinator::onTextChanged);
+        mUrlCoordinator.setKeyDownListener(mLocationBarMediator);
+        mUrlCoordinator.setTypingStartedListener(
+                mLocationBarMediator::completeUrlFocusAnimationAndEnableSuggestions);
+
         // The LocationBar's direction is tied to the UrlBar's text direction. Icons inside the
         // location bar, e.g. lock, refresh, X, should be reversed if UrlBar's text is RTL.
         mUrlCoordinator.setUrlDirectionListener(
@@ -375,6 +384,7 @@ public class LocationBarCoordinator
 
         mLocationBarMediator.destroy();
         mLocationBarMediator = null;
+        GeolocationHeader.stopListeningForLocationUpdates();
 
         mDestroyed = true;
     }
@@ -494,8 +504,9 @@ public class LocationBarCoordinator
     }
 
     @Override
-    public void onSuggestionsChanged(String autocompleteText, boolean defaultMatchIsSearch) {
-        mLocationBarMediator.onSuggestionsChanged(autocompleteText, defaultMatchIsSearch);
+    public void onSuggestionsChanged(@Nullable AutocompleteMatch defaultMatch) {
+        assert defaultMatch == null || defaultMatch.allowedToBeDefaultMatch();
+        mLocationBarMediator.onSuggestionsChanged(defaultMatch);
     }
 
     @Override
@@ -591,17 +602,13 @@ public class LocationBarCoordinator
      *
      * @param ntpSearchBoxScrollFraction The degree to which the omnibox has expanded to full width
      *     in NTP due to the NTP search box is being scrolled up.
-     * @param startSurfaceScrollFraction The degree to which the omnibox has expanded to full width
-     *     in Start Surface due to the Start Surface search box is being scrolled up.
      * @param urlFocusChangeFraction The degree to which the omnibox has expanded due to it is
      *     getting focused.
      */
     public void setUrlFocusChangeFraction(
-            float ntpSearchBoxScrollFraction,
-            float startSurfaceScrollFraction,
-            float urlFocusChangeFraction) {
+            float ntpSearchBoxScrollFraction, float urlFocusChangeFraction) {
         mLocationBarMediator.setUrlFocusChangeFraction(
-                ntpSearchBoxScrollFraction, startSurfaceScrollFraction, urlFocusChangeFraction);
+                ntpSearchBoxScrollFraction, urlFocusChangeFraction);
     }
 
     /**
@@ -651,17 +658,9 @@ public class LocationBarCoordinator
      *     whether url bar has got focus. Most of the time this is the same as showExpandedState,
      *     but in some cases, e.g. url bar is scrolled to the top of the screen on homepage but not
      *     focused, we set it differently.
-     * @param shouldShowInOverviewMode Whether the location bar should be shown when in overview
-     *     mode.
      */
-    public void finishUrlFocusChange(
-            boolean showExpandedState,
-            boolean shouldShowKeyboard,
-            boolean shouldShowInOverviewMode) {
+    public void finishUrlFocusChange(boolean showExpandedState, boolean shouldShowKeyboard) {
         mLocationBarMediator.finishUrlFocusChange(showExpandedState, shouldShowKeyboard);
-        if (shouldShowInOverviewMode) {
-            mStatusCoordinator.onSecurityStateChanged();
-        }
     }
 
     /**
@@ -807,32 +806,10 @@ public class LocationBarCoordinator
     }
 
     /**
-     * @see LocationBarMediator#setIsSurfacePolishOmniboxColorEnabled(boolean)
-     */
-    public void setIsSurfacePolishOmniboxColorEnabled(boolean isSurfacePolishOmniboxColorEnabled) {
-        mLocationBarMediator.setIsSurfacePolishOmniboxColorEnabled(
-                isSurfacePolishOmniboxColorEnabled);
-    }
-
-    /**
-     * @see LocationBarMediator#updateButtonTints(boolean)
-     */
-    public void updateButtonTints() {
-        mLocationBarMediator.updateButtonTints();
-    }
-
-    /**
      * @see LocationBarMediator#updateUrlBarHintTextColor(boolean)
      */
     public void updateUrlBarHintTextColor(boolean useDefaultUrlBarHintTextColor) {
         mLocationBarMediator.updateUrlBarHintTextColor(useDefaultUrlBarHintTextColor);
-    }
-
-    /**
-     * @see LocationBarMediator#updateUrlBarTypeface(boolean)
-     */
-    public void updateUrlBarTypeface(boolean useDefaultUrlBarTypeface) {
-        mLocationBarMediator.updateUrlBarTypeface(useDefaultUrlBarTypeface);
     }
 
     /**
@@ -845,5 +822,13 @@ public class LocationBarCoordinator
 
     public int getUrlActionContainerEndMarginForTesting() {
         return mLocationBarLayout.getUrlActionContainerEndMarginForTesting(); // IN-TEST
+    }
+
+    /**
+     * @return The location bar's {@link OmniboxSuggestionsVisualState}.
+     */
+    @Override
+    public @NonNull Optional<OmniboxSuggestionsVisualState> getOmniboxSuggestionsVisualState() {
+        return Optional.of(mAutocompleteCoordinator);
     }
 }

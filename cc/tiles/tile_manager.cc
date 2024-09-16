@@ -99,7 +99,8 @@ class RasterTaskImpl : public TileTask {
                  TileTask::Vector* dependencies,
                  bool is_gpu_rasterization,
                  DispatchingImageProvider image_provider,
-                 GURL url)
+                 GURL url,
+                 ScrollOffsetMap raster_inducing_scroll_offsets)
       : TileTask(
             is_gpu_rasterization ? TileTask::SupportsConcurrentExecution::kNo
                                  : TileTask::SupportsConcurrentExecution::kYes,
@@ -123,9 +124,13 @@ class RasterTaskImpl : public TileTask {
         source_frame_number_(tile->source_frame_number()),
         raster_buffer_(std::move(raster_buffer)),
         image_provider_(std::move(image_provider)),
-        url_(std::move(url)) {
+        url_(std::move(url)),
+        raster_inducing_scroll_offsets_(
+            std::move(raster_inducing_scroll_offsets)) {
     DCHECK(origin_thread_checker_.CalledOnValidThread());
     playback_settings_.image_provider = &image_provider_;
+    playback_settings_.raster_inducing_scroll_offsets =
+        &raster_inducing_scroll_offsets_;
   }
   RasterTaskImpl(const RasterTaskImpl&) = delete;
   RasterTaskImpl& operator=(const RasterTaskImpl&) = delete;
@@ -173,25 +178,26 @@ class RasterTaskImpl : public TileTask {
   // The following members are needed for processing completion of this task on
   // origin thread. These are not thread-safe and should be accessed only in
   // origin thread. Ensure their access by checking CalledOnValidThread().
-  raw_ptr<TileManager> tile_manager_;
-  Tile::Id tile_id_;
+  const raw_ptr<TileManager> tile_manager_;
+  const Tile::Id tile_id_;
   ResourcePool::InUsePoolResource resource_;
 
   // The following members should be used for running the task.
   scoped_refptr<RasterSource> raster_source_;
-  gfx::Rect content_rect_;
-  gfx::Rect invalid_content_rect_;
-  gfx::AxisTransform2d raster_transform_;
+  const gfx::Rect content_rect_;
+  const gfx::Rect invalid_content_rect_;
+  const gfx::AxisTransform2d raster_transform_;
   RasterSource::PlaybackSettings playback_settings_;
-  TileResolution tile_resolution_;
-  int layer_id_;
-  uint64_t source_prepare_tiles_id_;
-  raw_ptr<void, AcrossTasksDanglingUntriaged> tile_tracing_id_;
-  uint64_t new_content_id_;
-  int source_frame_number_;
+  const TileResolution tile_resolution_;
+  const int layer_id_;
+  const uint64_t source_prepare_tiles_id_;
+  const raw_ptr<void, AcrossTasksDanglingUntriaged> tile_tracing_id_;
+  const uint64_t new_content_id_;
+  const int source_frame_number_;
   std::unique_ptr<RasterBuffer> raster_buffer_;
   DispatchingImageProvider image_provider_;
-  GURL url_;
+  const GURL url_;
+  const ScrollOffsetMap raster_inducing_scroll_offsets_;
 };
 
 TaskCategory TaskCategoryForTileTask(TileTask* task,
@@ -219,7 +225,7 @@ bool IsForegroundCategory(uint16_t category) {
       return false;
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return false;
 }
 
@@ -356,7 +362,7 @@ class DidFinishRunningAllTilesTask : public TileTask {
         completion_cb_(std::move(completion_cb)) {}
 
   void RunOnWorkerThread() override {
-    TRACE_EVENT0("cc", "TaskSetFinishedTaskImpl::RunOnWorkerThread");
+    TRACE_EVENT0("cc", "DidFinishRunningAllTilesTask::RunOnWorkerThread");
     bool has_pending_queries = false;
     if (pending_raster_queries_) {
       has_pending_queries =
@@ -382,8 +388,7 @@ gfx::ContentColorUsage GetContentColorUsageForPrioritizedTile(
     const PrioritizedTile& prioritized_tile) {
   return prioritized_tile.raster_source()
       ->GetDisplayItemList()
-      ->discardable_image_map()
-      .content_color_usage();
+      ->content_color_usage();
 }
 
 }  // namespace
@@ -841,7 +846,7 @@ bool TileManager::TilePriorityViolatesMemoryPolicy(
       return priority.distance_to_visible ==
              std::numeric_limits<float>::infinity();
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return true;
 }
 
@@ -1135,14 +1140,14 @@ void TileManager::PartitionImagesForCheckering(
     const gfx::Rect* invalidated_rect,
     base::flat_map<PaintImage::Id, size_t>* image_to_frame_index) {
   Tile* tile = prioritized_tile.tile();
-  std::vector<const DrawImage*> images_in_tile;
   gfx::Rect enclosing_rect = tile->enclosing_layer_rect();
   if (invalidated_rect) {
     enclosing_rect = ToEnclosingRect(
         tile->raster_transform().InverseMapRect(gfx::RectF(*invalidated_rect)));
   }
-  prioritized_tile.raster_source()->GetDiscardableImagesInRect(enclosing_rect,
-                                                               &images_in_tile);
+  std::vector<const DrawImage*> images_in_tile =
+      prioritized_tile.source_tiling()->client()->GetDiscardableImagesInRect(
+          enclosing_rect);
   WhichTree tree = tile->tiling()->tree();
 
   for (const auto* original_draw_image : images_in_tile) {
@@ -1166,9 +1171,9 @@ void TileManager::AddCheckeredImagesToDecodeQueue(
     CheckerImageTracker::DecodeType decode_type,
     CheckerImageTracker::ImageDecodeQueue* image_decode_queue) {
   Tile* tile = prioritized_tile.tile();
-  std::vector<const DrawImage*> images_in_tile;
-  prioritized_tile.raster_source()->GetDiscardableImagesInRect(
-      tile->enclosing_layer_rect(), &images_in_tile);
+  std::vector<const DrawImage*> images_in_tile =
+      prioritized_tile.source_tiling()->client()->GetDiscardableImagesInRect(
+          tile->enclosing_layer_rect());
   WhichTree tree = tile->tiling()->tree();
   for (const auto* original_draw_image : images_in_tile) {
     size_t frame_index = client_->GetFrameIndexForImage(
@@ -1296,9 +1301,8 @@ void TileManager::ScheduleTasks(PrioritizedWorkToSchedule work_to_schedule) {
   // TODO(vmpstr): SOON is misleading here, but these images can come from
   // several diffent tiles. Rethink what we actually want to trace here. Note
   // that I'm using SOON, since it can't be NOW (these are prepaint).
-  ImageDecodeCache::TracingInfo tracing_info(
-      prepare_tiles_count_, TilePriority::SOON,
-      ImageDecodeCache::TaskType::kInRaster);
+  ImageDecodeCache::TracingInfo tracing_info(prepare_tiles_count_,
+                                             TilePriority::SOON);
   std::vector<scoped_refptr<TileTask>> new_locked_image_tasks =
       image_controller_.SetPredecodeImages(new_locked_images, tracing_info);
   // Notify |decoded_image_tracker_| after |image_controller_| to ensure we've
@@ -1320,9 +1324,9 @@ void TileManager::ScheduleTasks(PrioritizedWorkToSchedule work_to_schedule) {
 
   // The old locked images tasks have to stay around until past the
   // ScheduleTasks call below, so we do a swap instead of a move.
-  // TODO(crbug.com/647402): Have the tile_task_manager keep a ref on the tasks,
-  // since it makes it awkward for the callers to keep refs on tasks that only
-  // exist within the task graph runner.
+  // TODO(crbug.com/40485121): Have the tile_task_manager keep a ref on the
+  // tasks, since it makes it awkward for the callers to keep refs on tasks that
+  // only exist within the task graph runner.
   locked_image_tasks_.swap(new_locked_image_tasks);
 
   // We must reduce the amount of unused resources before calling
@@ -1373,12 +1377,12 @@ scoped_refptr<TileTask> TileManager::CreateRasterTask(
                "TileManager::CreateRasterTask", "Tile", tile->id());
 
   const int msaa_sample_count = client_->GetMSAASampleCountForRaster(
-      prioritized_tile.raster_source()->GetDisplayItemList());
+      *prioritized_tile.raster_source()->GetDisplayItemList());
 
   // When possible, rasterize HDR content into F16.
   //
-  // TODO(crbug.com/1076568): Once we have access to the display's buffer format
-  // via gfx::DisplayColorSpaces, we should also do this for HBD images.
+  // TODO(crbug.com/40128725): Once we have access to the display's buffer
+  // format via gfx::DisplayColorSpaces, we should also do this for HBD images.
   auto format = DetermineFormat(tile);
   if (target_color_params.color_space.IsHDR() &&
       GetContentColorUsageForPrioritizedTile(prioritized_tile) ==
@@ -1396,6 +1400,20 @@ scoped_refptr<TileTask> TileManager::CreateRasterTask(
     resource = resource_pool_->TryAcquireResourceForPartialRaster(
         tile->id(), tile->invalidated_content_rect(), tile->invalidated_id(),
         &invalidated_rect, target_color_params.color_space, debug_name);
+
+    constexpr double kLogProbability = 0.001;
+    if (metrics_sub_sampler_.ShouldSample(kLogProbability)) {
+      // Note this minimum area needs to be above zero to avoid division by zero
+      // error.
+      constexpr uint64_t kMinAreaForReporting = 256 * 256;
+      if (auto tile_area = tile->desired_texture_size().Area64();
+          tile_area >= kMinAreaForReporting) {
+        auto percentage_invalidated =
+            (100 * invalidated_rect.size().Area64()) / tile_area;
+        UMA_HISTOGRAM_PERCENTAGE("Compositing.TileManager.TileInvalidationArea",
+                                 percentage_invalidated);
+      }
+    }
   }
 
   bool partial_tile_decode = false;
@@ -1442,8 +1460,7 @@ scoped_refptr<TileTask> TileManager::CreateRasterTask(
 
   // Get the tasks for the required images.
   ImageDecodeCache::TracingInfo tracing_info(
-      prepare_tiles_count_, prioritized_tile.priority().priority_bin,
-      ImageDecodeCache::TaskType::kInRaster);
+      prepare_tiles_count_, prioritized_tile.priority().priority_bin);
   bool has_at_raster_images = false;
   bool has_hardware_accelerated_jpeg_candidates = false;
   bool has_hardware_accelerated_webp_candidates = false;
@@ -1523,7 +1540,8 @@ scoped_refptr<TileTask> TileManager::CreateRasterTask(
       playback_settings, prioritized_tile.priority().resolution,
       invalidated_rect, prepare_tiles_count_, std::move(raster_buffer),
       &decode_tasks, use_gpu_rasterization_,
-      std::move(dispatching_image_provider), active_url_);
+      std::move(dispatching_image_provider), active_url_,
+      prioritized_tile.GetRasterInducingScrollOffsets());
 }
 
 void TileManager::ResetSignalsForTesting() {
@@ -1893,7 +1911,7 @@ TileManager::ScheduledTasksStateAsValue() const {
 bool TileManager::UsePartialRaster(int msaa_sample_count) const {
   // Partial raster doesn't support MSAA, as the MSAA resolve is unaware of clip
   // rects.
-  // TODO(crbug.com/629683): See if we can work around this limitation.
+  // TODO(crbug.com/40477214): See if we can work around this limitation.
   return tile_manager_settings_.use_partial_raster &&
          raster_buffer_provider_->CanPartialRasterIntoProvidedResource() &&
          msaa_sample_count == 0;

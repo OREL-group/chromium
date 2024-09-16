@@ -6,7 +6,6 @@
 
 #include <set>
 
-#include "base/allocator/partition_allocator/src/partition_alloc/partition_alloc_buildflags.h"
 #include "base/feature_list.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
@@ -33,6 +32,7 @@
 #include "content/public/test/test_utils.h"
 #include "extensions/buildflags/buildflags.h"
 #include "net/dns/mock_host_resolver.h"
+#include "partition_alloc/buildflags.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_source.h"
 #include "services/network/public/cpp/features.h"
@@ -190,7 +190,7 @@ void CheckExperimentalMemoryMetricsForProcessType(
                     histogram_tester, count, ValueRestriction::NONE,
                     number_of_processes);
 
-#if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+#if PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
   // It's a small metric, so should not be strictly zero in theory, but could be
   // if purge comes at the wrong time, or the thread cache is not available on
   // this platform.
@@ -218,7 +218,7 @@ void CheckExperimentalMemoryMetricsForProcessType(
                         "2.Tiny.Malloc.SyscallsPerMinute",
                     histogram_tester, count, ValueRestriction::ABOVE_ZERO,
                     number_of_processes);
-#endif  // BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+#endif  // PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 }
 
 void CheckExperimentalMemoryMetrics(
@@ -565,7 +565,7 @@ class ProcessMemoryMetricsEmitterTest
 
 // TODO(crbug.com/41324945): Re-enable on Win and Mac once not flaky.
 IN_PROC_BROWSER_TEST_F(ProcessMemoryMetricsEmitterTest,
-                       // TODO(crbug.com/1459385): Re-enable this test
+                       // TODO(crbug.com/40274291): Re-enable this test
                        DISABLED_FetchAndEmitMetrics) {
   ASSERT_TRUE(embedded_test_server()->Start());
   const GURL url = embedded_test_server()->GetURL("foo.com", "/empty.html");
@@ -709,7 +709,7 @@ IN_PROC_BROWSER_TEST_F(ProcessMemoryMetricsEmitterTest,
   ui_test_utils::NavigateToURLWithDisposition(
       browser(), url, WindowOpenDisposition::NEW_FOREGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
-  // TODO(crbug.com/1459385): Re-enable this test
+  // TODO(crbug.com/40274291): Re-enable this test
 
   base::HistogramTester histogram_tester;
 

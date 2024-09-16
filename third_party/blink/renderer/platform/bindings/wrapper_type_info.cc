@@ -37,7 +37,7 @@ v8::Local<v8::Template> WrapperTypeInfo::GetV8ClassTemplate(
           isolate, V8ObjectConstructor::IsValidConstructorMode);
       break;
     case kIdlBufferSourceType:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
     case kIdlObservableArray:
       v8_template = v8::FunctionTemplate::New(isolate);
@@ -49,7 +49,7 @@ v8::Local<v8::Template> WrapperTypeInfo::GetV8ClassTemplate(
       v8_template = v8::FunctionTemplate::New(isolate);
       break;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
   install_interface_template_func(isolate, world, v8_template);
 
@@ -57,13 +57,11 @@ v8::Local<v8::Template> WrapperTypeInfo::GetV8ClassTemplate(
   return v8_template;
 }
 
-const WrapperTypeInfo* ToWrapperTypeInfo(
-    const v8::TracedReference<v8::Object>& wrapper) {
-  return GetInternalField<WrapperTypeInfo, kV8DOMWrapperTypeIndex>(wrapper);
-}
-
 const WrapperTypeInfo* ToWrapperTypeInfo(v8::Local<v8::Object> wrapper) {
-  return GetInternalField<WrapperTypeInfo, kV8DOMWrapperTypeIndex>(wrapper);
+  const auto* wrappable = ToAnyScriptWrappable(wrapper->GetIsolate(), wrapper);
+  // It's either us or legacy embedders
+  DCHECK(!wrappable || !WrapperTypeInfo::HasLegacyInternalFieldsSet(wrapper));
+  return wrappable ? wrappable->GetWrapperTypeInfo() : nullptr;
 }
 
 }  // namespace blink

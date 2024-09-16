@@ -8,13 +8,12 @@
 #import "base/metrics/user_metrics.h"
 #import "base/strings/sys_string_conversions.h"
 #import "components/autofill/core/browser/data_model/credit_card.h"
+#import "components/autofill/core/browser/payments_data_manager.h"
 #import "components/autofill/core/browser/personal_data_manager.h"
 #import "components/autofill/core/common/autofill_payments_features.h"
+#import "ios/chrome/browser/autofill/ui_bundled/autofill_credit_card_util.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
-#import "ios/chrome/browser/ui/autofill/autofill_ui_type.h"
-#import "ios/chrome/browser/ui/autofill/autofill_ui_type_util.h"
 #import "ios/chrome/browser/ui/settings/autofill/autofill_add_credit_card_mediator_delegate.h"
-#import "ios/chrome/browser/ui/settings/autofill/autofill_credit_card_util.h"
 
 @implementation AutofillAddCreditCardMediator {
   // This property is for an interface which sends a response about saving the
@@ -77,13 +76,19 @@
   }
 
   autofill::CreditCard* savedCreditCard =
-      _personalDataManager->GetCreditCardByNumber(
+      _personalDataManager->payments_data_manager().GetCreditCardByNumber(
           base::SysNSStringToUTF8(cardNumber));
 
   // If the credit card number already exist in saved credit card
   // `savedCreditCard` then update saved credit card `savedCreditCardCopy`
   // with the new data.
-  if (savedCreditCard != nil) {
+  // Server cards information is not completely stored in the browser. We
+  // can't tell for sure if there's an existing card with the same number. Then
+  // even if we find an existing server card with the same number we still
+  // create a local card with the data entered by the user.
+  if (savedCreditCard != nil &&
+      savedCreditCard->record_type() ==
+          autofill::CreditCard::RecordType::kLocalCard) {
     autofill::CreditCard savedCreditCardCopy(*savedCreditCard);
 
     [AutofillCreditCardUtil updateCreditCard:&savedCreditCardCopy
@@ -94,14 +99,16 @@
                                 cardNickname:cardNickname
                                     appLocal:appLocal];
 
-    _personalDataManager->UpdateCreditCard(savedCreditCardCopy);
+    _personalDataManager->payments_data_manager().UpdateCreditCard(
+        savedCreditCardCopy);
   } else {
     base::RecordAction(
         base::UserMetricsAction("MobileAddCreditCard.CreditCardAdded"));
-    base::UmaHistogramCounts100("Autofill.PaymentMethods.SettingsPage."
-                                "StoredCreditCardCountBeforeCardAdded",
-                                _personalDataManager->GetCreditCards().size());
-    _personalDataManager->AddCreditCard(creditCard);
+    base::UmaHistogramCounts100(
+        "Autofill.PaymentMethods.SettingsPage."
+        "StoredCreditCardCountBeforeCardAdded",
+        _personalDataManager->payments_data_manager().GetCreditCards().size());
+    _personalDataManager->payments_data_manager().AddCreditCard(creditCard);
   }
 
   [_addCreditCardMediatorDelegate creditCardMediatorDidFinish:self];

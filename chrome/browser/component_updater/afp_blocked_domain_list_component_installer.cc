@@ -21,7 +21,8 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/common/chrome_features.h"
 #include "components/component_updater/component_updater_paths.h"
-#include "components/fingerprinting_protection_filter/browser/fingerprinting_protection_filter_constants.h"
+#include "components/fingerprinting_protection_filter/common/fingerprinting_protection_filter_constants.h"
+#include "components/fingerprinting_protection_filter/common/fingerprinting_protection_filter_features.h"
 #include "components/subresource_filter/content/shared/browser/ruleset_service.h"
 #include "components/subresource_filter/core/browser/subresource_filter_constants.h"
 
@@ -86,8 +87,8 @@ void AntiFingerprintingBlockedDomainListComponentInstallerPolicy::
       << version.GetString() << " in " << install_dir.value();
   subresource_filter::UnindexedRulesetInfo ruleset_info;
   ruleset_info.content_version = version.GetString();
-  ruleset_info.ruleset_path =
-      install_dir.Append(subresource_filter::kUnindexedRulesetDataFileName);
+  ruleset_info.ruleset_path = install_dir.Append(
+      fingerprinting_protection_filter::kUnindexedRulesetDataFileName);
   ruleset_info.license_path =
       install_dir.Append(subresource_filter::kUnindexedRulesetLicenseFileName);
   subresource_filter::RulesetService* ruleset_service =
@@ -139,8 +140,8 @@ AntiFingerprintingBlockedDomainListComponentInstallerPolicy::
 
 void RegisterAntiFingerprintingBlockedDomainListComponent(
     ComponentUpdateService* cus) {
-  if (!base::FeatureList::IsEnabled(
-          features::kEnableFingerprintingProtectionBlocklist)) {
+  if (!fingerprinting_protection_filter::features::
+          IsFingerprintingProtectionFeatureEnabled()) {
     return;
   }
 

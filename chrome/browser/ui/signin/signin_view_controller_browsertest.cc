@@ -4,14 +4,22 @@
 
 #include "chrome/browser/ui/signin/signin_view_controller.h"
 
+#include <string_view>
+
+#include "base/functional/callback_forward.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
+#include "base/test/test_future.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/dice_tab_helper.h"
 #include "chrome/browser/signin/logout_tab_helper.h"
 #include "chrome/browser/signin/signin_browser_test_base.h"
 #include "chrome/browser/sync/sync_service_factory.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/signin/chrome_signout_confirmation_prompt.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/test/base/ui_test_utils.h"
+#include "chrome_signout_confirmation_prompt.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/prefs/pref_service.h"
 #include "components/signin/public/base/consent_level.h"
@@ -21,7 +29,8 @@
 #include "components/signin/public/identity_manager/account_info.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
-#include "components/sync/base/model_type.h"
+#include "components/signin/public/identity_manager/identity_test_utils.h"
+#include "components/sync/base/data_type.h"
 #include "components/sync/test/test_sync_service.h"
 #include "content/public/test/browser_test.h"
 #include "google_apis/gaia/google_service_auth_error.h"
@@ -37,8 +46,40 @@ constexpr char kTestEmail[] = "email@gmail.com";
 constexpr signin_metrics::AccessPoint kTestAccessPoint = signin_metrics::
     AccessPoint::ACCESS_POINT_PROFILE_MENU_SIGNOUT_CONFIRMATION_PROMPT;
 
+constexpr char kConfirmationNoUnsyncedHistogramName[] =
+    "Signin.ChromeSignoutConfirmationPrompt.NoUnsynced";
+constexpr char kConfirmationUnsyncedHistogramName[] =
+    "Signin.ChromeSignoutConfirmationPrompt.Unsynced";
+constexpr char kConfirmationUnsyncedReauthHistogramName[] =
+    "Signin.ChromeSignoutConfirmationPrompt.UnsyncedReauth";
+constexpr std::string_view kTestExtensionName = "Test extension";
+
 std::unique_ptr<KeyedService> CreateTestSyncService(content::BrowserContext*) {
   return std::make_unique<syncer::TestSyncService>();
+}
+
+void VerifySignoutPromptHistogram(
+    const base::HistogramTester& histogram_tester,
+    ChromeSignoutConfirmationPromptVariant variant,
+    ChromeSignoutConfirmationChoice choice) {
+  const char* histogram_name = kConfirmationUnsyncedHistogramName;
+  switch (variant) {
+    case ChromeSignoutConfirmationPromptVariant::kNoUnsyncedData:
+      histogram_name = kConfirmationNoUnsyncedHistogramName;
+      break;
+    case ChromeSignoutConfirmationPromptVariant::kUnsyncedData:
+      break;
+    case ChromeSignoutConfirmationPromptVariant::kUnsyncedDataWithReauthButton:
+      histogram_name = kConfirmationUnsyncedReauthHistogramName;
+      break;
+  }
+
+  histogram_tester.ExpectUniqueSample(histogram_name, choice, 1);
+  base::HistogramTester::CountsMap expected_counts;
+  expected_counts[histogram_name] = 1;
+  EXPECT_THAT(histogram_tester.GetTotalCountsForPrefix(
+                  "Signin.ChromeSignoutConfirmationPrompt."),
+              testing::ContainerEq(expected_counts));
 }
 
 }  // namespace
@@ -54,7 +95,7 @@ class SigninViewControllerBrowserTestBase : public SigninBrowserTestBase {
 
   void AddUnsyncedData() {
     GetTestSyncService()->SetTypesWithUnsyncedData(
-        syncer::ModelTypeSet{syncer::ModelType::PASSWORDS});
+        syncer::DataTypeSet{syncer::DataType::PASSWORDS});
   }
 
   views::DialogDelegate* TriggerSignoutAndWaitForConfirmationPrompt() {
@@ -113,8 +154,7 @@ class SigninViewControllerBrowserImplicitSigninTest
   SigninViewControllerBrowserImplicitSigninTest() {
     feature_list_.InitWithFeatures(
         /*enabled_features=*/{},
-        /*disabled_features=*/{switches::kExplicitBrowserSigninUIOnDesktop,
-                               switches::kUnoDesktop});
+        /*disabled_features=*/{switches::kExplicitBrowserSigninUIOnDesktop});
   }
 
  private:
@@ -146,9 +186,32 @@ IN_PROC_BROWSER_TEST_F(SigninViewControllerBrowserImplicitSigninTest,
 
 class SigninViewControllerBrowserTest
     : public SigninViewControllerBrowserTestBase {
+ public:
+  SigninViewControllerBrowserTest() {
+    feature_list_.InitWithFeatures(
+        /*enabled_features=*/
+        {switches::kExplicitBrowserSigninUIOnDesktop,
+         switches::kImprovedSigninUIOnDesktop},
+        /*disabled_features=*/{});
+  }
+
+  views::DialogDelegate* TriggerChromeSigninDialogForExtensionsPrompt(
+      base::OnceClosure on_complete) {
+    views::NamedWidgetShownWaiter widget_waiter(
+        views::test::AnyWidgetTestPasskey{},
+        "ChromeSigninChoiceForExtensionsPrompt");
+    browser()
+        ->signin_view_controller()
+        ->MaybeShowChromeSigninDialogForExtensions(kTestExtensionName,
+                                                   std::move(on_complete));
+
+    // Confirmation prompt is shown.
+    views::Widget* confirmation_prompt = widget_waiter.WaitIfNeededAndGet();
+    return confirmation_prompt->widget_delegate()->AsDialogDelegate();
+  }
+
  private:
-  base::test::ScopedFeatureList feature_list_{
-      switches::kExplicitBrowserSigninUIOnDesktop};
+  base::test::ScopedFeatureList feature_list_;
 };
 
 IN_PROC_BROWSER_TEST_F(SigninViewControllerBrowserTest,
@@ -172,7 +235,12 @@ IN_PROC_BROWSER_TEST_F(SigninViewControllerBrowserTest,
   ASSERT_TRUE(dialog_delegate);
 
   // Click "Verify it's you".
+  base::HistogramTester histogram_tester;
   dialog_delegate->AcceptDialog();
+  VerifySignoutPromptHistogram(
+      histogram_tester,
+      ChromeSignoutConfirmationPromptVariant::kUnsyncedDataWithReauthButton,
+      ChromeSignoutConfirmationChoice::kCancelSignoutAndReauth);
 
   // The tab was navigated to the signin page.
   content::WebContents* tab =
@@ -197,7 +265,11 @@ IN_PROC_BROWSER_TEST_F(SigninViewControllerBrowserTest,
   ASSERT_TRUE(dialog_delegate);
 
   // Click "Cancel".
-  dialog_delegate->AcceptDialog();
+  base::HistogramTester histogram_tester;
+  dialog_delegate->CancelDialog();
+  VerifySignoutPromptHistogram(
+      histogram_tester, ChromeSignoutConfirmationPromptVariant::kUnsyncedData,
+      ChromeSignoutConfirmationChoice::kCancelSignout);
 
   // User is still signed in.
   EXPECT_EQ(
@@ -212,7 +284,7 @@ IN_PROC_BROWSER_TEST_F(SigninViewControllerBrowserTest,
 }
 
 IN_PROC_BROWSER_TEST_F(SigninViewControllerBrowserTest,
-                       SignoutOrReauthWithPrompt_SignOut) {
+                       SignoutOrReauthWithPrompt_SignOutWithUnsyncedData) {
   // Setup a primary account.
   AccountInfo primary_account_info = SetPrimaryAccount();
   ASSERT_TRUE(
@@ -227,7 +299,11 @@ IN_PROC_BROWSER_TEST_F(SigninViewControllerBrowserTest,
   ASSERT_TRUE(dialog_delegate);
 
   // Click "Sign Out Anyway".
-  dialog_delegate->CancelDialog();
+  base::HistogramTester histogram_tester;
+  dialog_delegate->AcceptDialog();
+  VerifySignoutPromptHistogram(
+      histogram_tester, ChromeSignoutConfirmationPromptVariant::kUnsyncedData,
+      ChromeSignoutConfirmationChoice::kSignout);
 
   // User was signed out.
   EXPECT_FALSE(
@@ -238,6 +314,206 @@ IN_PROC_BROWSER_TEST_F(SigninViewControllerBrowserTest,
       browser()->tab_strip_model()->GetActiveWebContents();
   ASSERT_TRUE(tab);
   EXPECT_TRUE(IsSignoutTab(tab));
+}
+
+IN_PROC_BROWSER_TEST_F(SigninViewControllerBrowserTest,
+                       SignoutOrReauthWithPrompt_SignOut) {
+  // Setup a primary account.
+  AccountInfo primary_account_info = SetPrimaryAccount();
+  ASSERT_TRUE(
+      GetProfile()->GetPrefs()->GetBoolean(prefs::kExplicitBrowserSignin));
+
+  // Trigger the Chrome signout action.
+  views::DialogDelegate* dialog_delegate =
+      TriggerSignoutAndWaitForConfirmationPrompt();
+  ASSERT_TRUE(dialog_delegate);
+
+  // Click "Sign Out Anyway".
+  base::HistogramTester histogram_tester;
+  dialog_delegate->AcceptDialog();
+  VerifySignoutPromptHistogram(
+      histogram_tester, ChromeSignoutConfirmationPromptVariant::kNoUnsyncedData,
+      ChromeSignoutConfirmationChoice::kSignout);
+
+  // User was signed out.
+  EXPECT_FALSE(
+      identity_manager()->HasPrimaryAccount(signin::ConsentLevel::kSignin));
+
+  // The tab was navigated to the signout page.
+  content::WebContents* tab =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  ASSERT_TRUE(tab);
+  EXPECT_TRUE(IsSignoutTab(tab));
+}
+
+IN_PROC_BROWSER_TEST_F(SigninViewControllerBrowserTest,
+                       SignoutOrReauthWithPrompt_NoPrompt) {
+  // Setup a primary account in auth error.
+  AccountInfo primary_account_info = SetPrimaryAccount();
+  ASSERT_TRUE(
+      GetProfile()->GetPrefs()->GetBoolean(prefs::kExplicitBrowserSignin));
+  identity_test_env()->UpdatePersistentErrorOfRefreshTokenForAccount(
+      primary_account_info.account_id,
+      GoogleServiceAuthError::FromInvalidGaiaCredentialsReason(
+          GoogleServiceAuthError::InvalidGaiaCredentialsReason::
+              CREDENTIALS_REJECTED_BY_SERVER));
+
+  // Trigger the Chrome signout action.
+  browser()->signin_view_controller()->SignoutOrReauthWithPrompt(
+      kTestAccessPoint,
+      signin_metrics::ProfileSignout::kUserClickedSignoutProfileMenu,
+      signin_metrics::SourceForRefreshTokenOperation::
+          kUserMenu_SignOutAllAccounts);
+
+  // User was signed out.
+  EXPECT_FALSE(
+      identity_manager()->HasPrimaryAccount(signin::ConsentLevel::kSignin));
+
+  // The tab was navigated to the signout page.
+  content::WebContents* tab =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  ASSERT_TRUE(tab);
+  EXPECT_TRUE(IsSignoutTab(tab));
+}
+
+IN_PROC_BROWSER_TEST_F(SigninViewControllerBrowserTest,
+                       ShowChromeSigninDialogForExtensionsPromptReuseOpenTab) {
+  ASSERT_EQ(browser()->tab_strip_model()->count(), 1);
+  ASSERT_TRUE(SigninViewController::IsNTPTab(
+      browser()->tab_strip_model()->GetActiveWebContents()));
+
+  identity_test_env()->MakeAccountAvailable(kTestEmail, {.set_cookie = true});
+  ASSERT_FALSE(identity_manager()->GetAccountsWithRefreshTokens().empty());
+  ASSERT_FALSE(
+      identity_manager()->HasPrimaryAccount(signin::ConsentLevel::kSignin));
+
+  base::test::TestFuture<void> future;
+  views::DialogDelegate* dialog_delegate =
+      TriggerChromeSigninDialogForExtensionsPrompt(future.GetCallback());
+  ASSERT_TRUE(dialog_delegate);
+
+  content::WebContents* tab =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  ASSERT_TRUE(tab);
+  EXPECT_TRUE(SigninViewController::IsNTPTab(tab));
+
+  ASSERT_FALSE(future.IsReady());
+  dialog_delegate->AcceptDialog();
+
+  EXPECT_TRUE(
+      identity_manager()->HasPrimaryAccount(signin::ConsentLevel::kSignin));
+  ASSERT_TRUE(future.Wait());
+  ASSERT_EQ(browser()->tab_strip_model()->count(), 1);
+}
+
+IN_PROC_BROWSER_TEST_F(
+    SigninViewControllerBrowserTest,
+    ShowChromeSigninDialogForExtensionsPromptReuseInactiveOpenTab) {
+  ui_test_utils::NavigateToURLWithDisposition(
+      browser(), GURL("https://www.google.com"),
+      WindowOpenDisposition::NEW_FOREGROUND_TAB,
+      ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
+  ASSERT_EQ(browser()->tab_strip_model()->count(), 2);
+  ASSERT_FALSE(SigninViewController::IsNTPTab(
+      browser()->tab_strip_model()->GetActiveWebContents()));
+
+  identity_test_env()->MakeAccountAvailable(kTestEmail, {.set_cookie = true});
+  ASSERT_FALSE(identity_manager()->GetAccountsWithRefreshTokens().empty());
+  ASSERT_FALSE(
+      identity_manager()->HasPrimaryAccount(signin::ConsentLevel::kSignin));
+
+  base::test::TestFuture<void> future;
+  views::DialogDelegate* dialog_delegate =
+      TriggerChromeSigninDialogForExtensionsPrompt(future.GetCallback());
+  ASSERT_TRUE(dialog_delegate);
+
+  content::WebContents* tab =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  ASSERT_TRUE(tab);
+  EXPECT_TRUE(SigninViewController::IsNTPTab(tab));
+
+  ASSERT_FALSE(future.IsReady());
+  dialog_delegate->AcceptDialog();
+
+  EXPECT_TRUE(
+      identity_manager()->HasPrimaryAccount(signin::ConsentLevel::kSignin));
+  ASSERT_TRUE(future.Wait());
+  ASSERT_EQ(browser()->tab_strip_model()->count(), 2);
+}
+
+IN_PROC_BROWSER_TEST_F(SigninViewControllerBrowserTest,
+                       ShowChromeSigninDialogForExtensionsPromptInNewTab) {
+  ASSERT_TRUE(
+      ui_test_utils::NavigateToURL(browser(), GURL("https://www.google.com")));
+  ASSERT_EQ(browser()->tab_strip_model()->count(), 1);
+  ASSERT_FALSE(SigninViewController::IsNTPTab(
+      browser()->tab_strip_model()->GetActiveWebContents()));
+
+  identity_test_env()->MakeAccountAvailable(kTestEmail, {.set_cookie = true});
+  ASSERT_FALSE(identity_manager()->GetAccountsWithRefreshTokens().empty());
+  ASSERT_FALSE(
+      identity_manager()->HasPrimaryAccount(signin::ConsentLevel::kSignin));
+
+  base::test::TestFuture<void> future;
+  views::DialogDelegate* dialog_delegate =
+      TriggerChromeSigninDialogForExtensionsPrompt(future.GetCallback());
+  ASSERT_TRUE(dialog_delegate);
+  ASSERT_EQ(browser()->tab_strip_model()->count(), 2);
+
+  content::WebContents* tab =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  ASSERT_TRUE(tab);
+  EXPECT_TRUE(SigninViewController::IsNTPTab(tab));
+
+  ASSERT_FALSE(future.IsReady());
+  dialog_delegate->AcceptDialog();
+
+  EXPECT_TRUE(
+      identity_manager()->HasPrimaryAccount(signin::ConsentLevel::kSignin));
+  ASSERT_TRUE(future.Wait());
+}
+
+IN_PROC_BROWSER_TEST_F(SigninViewControllerBrowserTest,
+                       ShowChromeSigninDialogForExtensionsPromptCancel) {
+  identity_test_env()->MakeAccountAvailable(kTestEmail, {.set_cookie = true});
+  ASSERT_FALSE(identity_manager()->GetAccountsWithRefreshTokens().empty());
+  ASSERT_FALSE(
+      identity_manager()->HasPrimaryAccount(signin::ConsentLevel::kSignin));
+
+  base::test::TestFuture<void> future;
+  views::DialogDelegate* dialog_delegate =
+      TriggerChromeSigninDialogForExtensionsPrompt(future.GetCallback());
+  ASSERT_TRUE(dialog_delegate);
+
+  ASSERT_FALSE(future.IsReady());
+  dialog_delegate->CancelDialog();
+
+  EXPECT_FALSE(
+      identity_manager()->HasPrimaryAccount(signin::ConsentLevel::kSignin));
+  ASSERT_TRUE(future.Wait());
+}
+
+IN_PROC_BROWSER_TEST_F(
+    SigninViewControllerBrowserTest,
+    ShowChromeSigninDialogForExtensionsPromptNotShownPrimaryAccountSet) {
+  identity_test_env()->MakePrimaryAccountAvailable(
+      kTestEmail, signin::ConsentLevel::kSignin);
+  ASSERT_TRUE(
+      identity_manager()->HasPrimaryAccount(signin::ConsentLevel::kSignin));
+
+  base::test::TestFuture<void> future;
+  browser()->signin_view_controller()->MaybeShowChromeSigninDialogForExtensions(
+      kTestExtensionName, future.GetCallback());
+  EXPECT_TRUE(future.IsReady());
+}
+
+IN_PROC_BROWSER_TEST_F(
+    SigninViewControllerBrowserTest,
+    ShowChromeSigninDialogForExtensionsPromptNotShownNoAccounts) {
+  base::test::TestFuture<void> future;
+  browser()->signin_view_controller()->MaybeShowChromeSigninDialogForExtensions(
+      kTestExtensionName, future.GetCallback());
+  EXPECT_TRUE(future.IsReady());
 }
 
 class SigninViewControllerBrowserCookieParamTest
@@ -260,12 +536,11 @@ IN_PROC_BROWSER_TEST_P(SigninViewControllerBrowserCookieParamTest, SignOut) {
   ASSERT_TRUE(
       GetProfile()->GetPrefs()->GetBoolean(prefs::kExplicitBrowserSignin));
 
-  // Trigger the Chrome signout action, there is no prompt.
-  browser()->signin_view_controller()->SignoutOrReauthWithPrompt(
-      kTestAccessPoint,
-      signin_metrics::ProfileSignout::kUserClickedSignoutProfileMenu,
-      signin_metrics::SourceForRefreshTokenOperation::
-          kUserMenu_SignOutAllAccounts);
+  // Trigger the Chrome signout action, and confirm the prompt.
+  views::DialogDelegate* dialog_delegate =
+      TriggerSignoutAndWaitForConfirmationPrompt();
+  ASSERT_TRUE(dialog_delegate);
+  dialog_delegate->AcceptDialog();
 
   // User was signed out.
   EXPECT_FALSE(

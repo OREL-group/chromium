@@ -14,7 +14,6 @@
 #include "components/viz/common/quads/texture_draw_quad.h"
 #include "components/viz/common/quads/tile_draw_quad.h"
 #include "components/viz/common/quads/video_hole_draw_quad.h"
-#include "components/viz/common/quads/yuv_video_draw_quad.h"
 #include "components/viz/common/resources/resource_id.h"
 #include "components/viz/common/viz_utils.h"
 #include "components/viz/service/debugger/viz_debugger.h"
@@ -33,11 +32,11 @@ namespace viz {
 
 namespace {
 
-const gfx::BufferFormat kOverlayFormats[] = {
-    gfx::BufferFormat::RGBX_8888, gfx::BufferFormat::RGBA_8888,
-    gfx::BufferFormat::BGRX_8888, gfx::BufferFormat::BGRA_8888,
-    gfx::BufferFormat::BGR_565,   gfx::BufferFormat::YUV_420_BIPLANAR,
-    gfx::BufferFormat::P010};
+const SharedImageFormat kOverlayFormats[] = {
+    SinglePlaneFormat::kRGBX_8888, SinglePlaneFormat::kRGBA_8888,
+    SinglePlaneFormat::kBGRX_8888, SinglePlaneFormat::kBGRA_8888,
+    SinglePlaneFormat::kBGR_565,   MultiPlaneFormat::kNV12,
+    MultiPlaneFormat::kP010};
 
 enum Axis { NONE, AXIS_POS_X, AXIS_NEG_X, AXIS_POS_Y, AXIS_NEG_Y };
 
@@ -128,6 +127,11 @@ bool ShouldApplyRoundedCorner(OverlayCandidate& candidate,
   return QuadRoundedCornersBoundsIntersects(quad, target_rect);
 }
 
+bool RequiresBlendingForReasonOtherThanRoundedCorners(const DrawQuad* quad) {
+  return quad->ShouldDrawWithBlendingForReasonOtherThanMaskFilter() ||
+         quad->shared_quad_state->mask_filter_info.HasGradientMask();
+}
+
 }  // namespace
 
 OverlayCandidateFactory::OverlayContext::OverlayContext() = default;
@@ -169,6 +173,16 @@ OverlayCandidate::CandidateStatus OverlayCandidateFactory::FromDrawQuad(
   candidate.overlay_damage_index =
       sqs->overlay_damage_index.value_or(OverlayCandidate::kInvalidDamageIndex);
 
+  if (sqs->layer_id != 0) {
+    static_assert(
+        std::is_same<decltype(SharedQuadState::layer_id), uint32_t>::value);
+    static_assert(std::is_same<decltype(SharedQuadState::layer_namespace_id),
+                               uint32_t>::value);
+    candidate.aggregated_layer_id =
+        static_cast<uint64_t>(sqs->layer_id) |
+        (static_cast<uint64_t>(sqs->layer_namespace_id) << 32);
+  }
+
   auto status = CandidateStatus::kFailQuadNotSupported;
   switch (quad->material) {
     case DrawQuad::Material::kTextureContent:
@@ -199,21 +213,6 @@ OverlayCandidate::CandidateStatus OverlayCandidateFactory::FromDrawQuad(
       break;
   }
 
-  candidate.has_mask_filter =
-      !quad->shared_quad_state->mask_filter_info.IsEmpty();
-
-  // Conditionally set the rounded corners once the candidate's |display_rect|
-  // is known.
-  // TODO(crbug.com/40274803): Consider moving this code to
-  // FromDrawQuadResource() that covers all of delegated compositing.
-  if (context_.disable_wire_size_optimization ||
-      ShouldApplyRoundedCorner(candidate, quad)) {
-    if (!context_.supports_mask_filter) {
-      return CandidateStatus::kFailMaskFilterNotSupported;
-    }
-    candidate.rounded_corners = sqs->mask_filter_info.rounded_corner_bounds();
-  }
-
   return status;
 }
 
@@ -237,7 +236,7 @@ OverlayCandidateFactory::OverlayCandidateFactory(
 
   has_custom_color_matrix_ = *output_color_matrix != SkM44();
 
-  // TODO(crbug.com/1323002): Replace this set with a simple ordered linear
+  // TODO(crbug.com/40224514): Replace this set with a simple ordered linear
   // search when this bug is resolved.
   base::flat_set<size_t> indices_with_quad_damage;
   for (auto* sqs : render_pass_->shared_quad_state_list) {
@@ -343,8 +342,7 @@ OverlayCandidate::CandidateStatus OverlayCandidateFactory::FromDrawQuadResource(
     ResourceId resource_id,
     bool y_flipped,
     OverlayCandidate& candidate) const {
-  if (!context_.allow_non_overlay_resources &&
-      resource_id != kInvalidResourceId &&
+  if (resource_id != kInvalidResourceId &&
       !resource_provider_->IsOverlayCandidate(resource_id)) {
     return CandidateStatus::kFailNotOverlay;
   }
@@ -353,7 +351,7 @@ OverlayCandidate::CandidateStatus OverlayCandidateFactory::FromDrawQuadResource(
     return CandidateStatus::kFailVisible;
 
   if (resource_id != kInvalidResourceId) {
-    candidate.format = resource_provider_->GetBufferFormat(resource_id);
+    candidate.format = resource_provider_->GetSharedImageFormat(resource_id);
     candidate.color_space = resource_provider_->GetColorSpace(resource_id);
     candidate.needs_detiling =
         resource_provider_->GetNeedsDetiling(resource_id);
@@ -406,7 +404,7 @@ OverlayCandidate::CandidateStatus OverlayCandidateFactory::FromDrawQuadResource(
       // Intentionally throwing away the high bits (assuming that hash entropy
       // is uniformly spread across all the bits).
       size_t original_hash =
-          base::FastHash(base::as_bytes(base::span_from_ref(track_data)));
+          base::FastHash(base::byte_span_from_ref(track_data));
       uint32_t narrow_hash = static_cast<uint32_t>(original_hash);
       candidate.tracking_id = narrow_hash;
     }
@@ -453,6 +451,18 @@ OverlayCandidate::CandidateStatus OverlayCandidateFactory::FromDrawQuadResource(
         return status;
       }
     }
+  }
+
+  candidate.has_mask_filter = !sqs->mask_filter_info.IsEmpty();
+
+  // Conditionally set the rounded corners once the candidate's |display_rect|
+  // is known.
+  if (context_.disable_wire_size_optimization ||
+      ShouldApplyRoundedCorner(candidate, quad)) {
+    if (!context_.supports_mask_filter) {
+      return CandidateStatus::kFailMaskFilterNotSupported;
+    }
+    candidate.rounded_corners = sqs->mask_filter_info.rounded_corner_bounds();
   }
 
   return CandidateStatus::kSuccess;
@@ -647,7 +657,7 @@ OverlayCandidate::CandidateStatus OverlayCandidateFactory::FromTextureQuad(
     candidate.color = quad->background_color;
   } else if (quad->background_color != SkColors::kTransparent &&
              (quad->background_color != SkColors::kBlack ||
-              quad->ShouldDrawWithBlending())) {
+              RequiresBlendingForReasonOtherThanRoundedCorners(quad))) {
     // The condition above is very specific to the implementation of DRM/KMS
     // scanout. An opaque plane with buffer that has buffer element component
     // alpha will default black for the blend. Basically we can simulate a black
@@ -690,10 +700,6 @@ OverlayCandidate::CandidateStatus OverlayCandidateFactory::FromTextureQuad(
     }
 #endif
 
-    // SkiaRenderer requires overlays to be backed by SharedImages.
-    if (!candidate.mailbox.IsSharedImage())
-      return CandidateStatus::kFailNotSharedImage;
-
     candidate.has_rounded_display_masks =
         !quad->rounded_display_masks_info.IsEmpty();
   }
@@ -712,8 +718,8 @@ void OverlayCandidateFactory::HandleClipAndSubsampling(
     return;
 
   // Make sure it's in a format we can deal with, we only support YUV and P010.
-  if (candidate.format != gfx::BufferFormat::YUV_420_BIPLANAR &&
-      candidate.format != gfx::BufferFormat::P010) {
+  if (candidate.format != MultiPlaneFormat::kNV12 &&
+      candidate.format != MultiPlaneFormat::kP010) {
     return;
   }
   // Clip the clip rect to the primary plane. An overlay will only be shown on
@@ -726,6 +732,33 @@ void OverlayCandidateFactory::HandleClipAndSubsampling(
   // when there is an arbitrary transform between the two because the transform
   // may not preserve axis alignment.
   DCHECK(absl::holds_alternative<gfx::OverlayTransform>(candidate.transform));
+
+  // Candidates that need detiling have a UV rect that indicates the
+  // relationship between the visible rect and the backing buffer dimensions
+  // (coded size). This rect is calculated assuming no rotation, so we need to
+  // rotate it before applying our own clipping.
+  if (candidate.needs_detiling &&
+      absl::holds_alternative<gfx::OverlayTransform>(candidate.transform)) {
+    switch (absl::get<gfx::OverlayTransform>(candidate.transform)) {
+      case gfx::OVERLAY_TRANSFORM_ROTATE_CLOCKWISE_90:
+        candidate.uv_rect =
+            gfx::RectF(1.0f - candidate.uv_rect.height(), candidate.uv_rect.x(),
+                       candidate.uv_rect.height(), candidate.uv_rect.width());
+        break;
+      case gfx::OVERLAY_TRANSFORM_ROTATE_CLOCKWISE_180:
+        candidate.uv_rect = gfx::RectF(
+            1.0f - candidate.uv_rect.width(), 1.0f - candidate.uv_rect.height(),
+            candidate.uv_rect.width(), candidate.uv_rect.height());
+        break;
+      case gfx::OVERLAY_TRANSFORM_ROTATE_CLOCKWISE_270:
+        candidate.uv_rect =
+            gfx::RectF(candidate.uv_rect.y(), 1.0f - candidate.uv_rect.width(),
+                       candidate.uv_rect.height(), candidate.uv_rect.width());
+        break;
+      default:
+        break;
+    }
+  }
 
   // Calculate |uv_rect| of |clip_rect| in |display_rect|
   // TODO(rivr): Handle candidates with an overlay transform applied.
@@ -770,7 +803,7 @@ void OverlayCandidateFactory::HandleClipAndSubsampling(
 
 void OverlayCandidateFactory::AssignDamage(const DrawQuad* quad,
                                            OverlayCandidate& candidate) const {
-  candidate.damage_rect = GetDamageRect(quad, candidate);
+  candidate.damage_rect = GetDamageRect(quad);
   // For underlays the function 'EstimateVisibleDamage()' is called to update
   // |damage_area_estimate| to more accurately reflect the actual visible
   // damage.
@@ -793,9 +826,7 @@ gfx::RectF OverlayCandidateFactory::GetDamageEstimate(
       gfx::RectF(unassigned_surface_damage_));
 }
 
-gfx::RectF OverlayCandidateFactory::GetDamageRect(
-    const DrawQuad* quad,
-    const OverlayCandidate& candidate) const {
+gfx::RectF OverlayCandidateFactory::GetDamageRect(const DrawQuad* quad) const {
   const SharedQuadState* sqs = quad->shared_quad_state;
   if (!sqs->overlay_damage_index.has_value()) {
     return gfx::RectF();

@@ -4,6 +4,7 @@
 
 import '//resources/js/util.js';
 import '//resources/cr_elements/cr_button/cr_button.js';
+import '//resources/cr_elements/cr_collapse/cr_collapse.js';
 import '//resources/cr_elements/cr_dialog/cr_dialog.js';
 import '//resources/cr_elements/cr_input/cr_input.js';
 import '//resources/cr_elements/cr_link_row/cr_link_row.js';
@@ -11,28 +12,30 @@ import '//resources/cr_elements/icons.html.js';
 import '//resources/cr_elements/cr_shared_style.css.js';
 import '//resources/cr_elements/cr_shared_vars.css.js';
 import '//resources/cr_elements/cr_expand_button/cr_expand_button.js';
-import '//resources/polymer/v3_0/iron-collapse/iron-collapse.js';
-import '//resources/polymer/v3_0/iron-icon/iron-icon.js';
+import '//resources/cr_elements/cr_icon/cr_icon.js';
 import '//resources/polymer/v3_0/iron-flex-layout/iron-flex-layout-classes.js';
-import './sync_account_control.js';
+// <if expr="not chromeos_ash">
+import '//resources/cr_elements/cr_toast/cr_toast.js';
+// </if>
+
 import './sync_encryption_options.js';
 import '../privacy_page/personalization_options.js';
 import '../settings_shared.css.js';
 import '../settings_vars.css.js';
 // <if expr="not chromeos_ash">
-import '//resources/cr_elements/cr_toast/cr_toast.js';
+import './sync_account_control.js';
 
 // </if>
 
+import type {CrCollapseElement} from '//resources/cr_elements/cr_collapse/cr_collapse.js';
 import type {CrDialogElement} from '//resources/cr_elements/cr_dialog/cr_dialog.js';
 import type {CrInputElement} from '//resources/cr_elements/cr_input/cr_input.js';
 import {WebUiListenerMixin} from '//resources/cr_elements/web_ui_listener_mixin.js';
 import {assert, assertNotReached} from '//resources/js/assert.js';
 import {focusWithoutInk} from '//resources/js/focus_without_ink.js';
-import type {IronCollapseElement} from '//resources/polymer/v3_0/iron-collapse/iron-collapse.js';
 import {flush, PolymerElement} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 import type {SyncBrowserProxy, SyncPrefs, SyncStatus} from '/shared/settings/people_page/sync_browser_proxy.js';
-import {PageStatus, StatusAction, SyncBrowserProxyImpl} from '/shared/settings/people_page/sync_browser_proxy.js';
+import {PageStatus, SignedInState, StatusAction, SyncBrowserProxyImpl} from '/shared/settings/people_page/sync_browser_proxy.js';
 import {I18nMixin} from 'chrome://resources/cr_elements/i18n_mixin.js';
 import {OpenWindowProxyImpl} from 'chrome://resources/js/open_window_proxy.js';
 
@@ -54,7 +57,7 @@ import {getTemplate} from './sync_page.html.js';
 
 export interface SettingsSyncPageElement {
   $: {
-    encryptionCollapse: IronCollapseElement,
+    encryptionCollapse: CrCollapseElement,
   };
 }
 
@@ -152,13 +155,13 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
         type: Boolean,
         value: false,
         computed: 'computeShowExistingPassphraseBelowAccount_(' +
-            'syncStatus.signedIn, syncPrefs.passphraseRequired)',
+            'syncStatus.signedInState, syncPrefs.passphraseRequired)',
       },
 
       signedIn_: {
         type: Boolean,
         value: true,
-        computed: 'computeSignedIn_(syncStatus.signedIn)',
+        computed: 'computeSignedIn_(syncStatus.signedInState)',
       },
 
       syncDisabledByAdmin_: {
@@ -171,7 +174,7 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
         type: Boolean,
         value: false,
         computed: 'computeSyncSectionDisabled_(' +
-            'syncStatus.signedIn, syncStatus.disabled, ' +
+            'syncStatus.signedInState, syncStatus.disabled, ' +
             'syncStatus.hasError, syncStatus.statusAction, ' +
             'syncPrefs.trustedVaultKeysRequired)',
       },
@@ -355,7 +358,7 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
   // </if>
 
   private computeSignedIn_(): boolean {
-    return !!this.syncStatus.signedIn;
+    return this.syncStatus.signedInState === SignedInState.SYNCING;
   }
 
   // <if expr="chromeos_lacros">
@@ -373,7 +376,8 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
 
   private computeSyncSectionDisabled_(): boolean {
     return this.syncStatus !== undefined &&
-        (!this.syncStatus.signedIn || !!this.syncStatus.disabled ||
+        (this.syncStatus.signedInState !== SignedInState.SYNCING ||
+         !!this.syncStatus.disabled ||
          (!!this.syncStatus.hasError &&
           this.syncStatus.statusAction !== StatusAction.ENTER_PASSPHRASE &&
           this.syncStatus.statusAction !==
@@ -555,7 +559,7 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
     }
 
     if (!this.syncPrefs.explicitPassphraseTime) {
-      // TODO(crbug.com/1207432): There's no reason why this dateless label
+      // TODO(crbug.com/40765539): There's no reason why this dateless label
       // shouldn't link to 'syncErrorsHelpUrl' like the other one.
       return this.i18nAdvanced('enterPassphraseLabel');
     }
@@ -677,19 +681,17 @@ export class SettingsSyncPageElement extends SettingsSyncPageElementBase {
     }
   }
 
+  // <if expr="not chromeos_ash">
   private shouldShowSyncAccountControl_(): boolean {
-    // <if expr="chromeos_ash">
-    return false;
-    // </if>
-    // <if expr="not chromeos_ash">
     return this.syncStatus !== undefined &&
         !!this.syncStatus.syncSystemEnabled &&
         loadTimeData.getBoolean('signinAllowed');
-    // </if>
   }
+  // </if>
 
   private computeShowExistingPassphraseBelowAccount_(): boolean {
-    return this.syncStatus !== undefined && !!this.syncStatus.signedIn &&
+    return this.syncStatus !== undefined &&
+        this.syncStatus.signedInState === SignedInState.SYNCING &&
         this.syncPrefs !== undefined && !!this.syncPrefs.passphraseRequired;
   }
 

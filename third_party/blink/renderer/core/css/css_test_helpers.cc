@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/core/css/css_test_helpers.h"
 
 #include "testing/gtest/include/gtest/gtest.h"
@@ -17,6 +22,7 @@
 #include "third_party/blink/renderer/core/css/parser/css_parser.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_context.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_local_context.h"
+#include "third_party/blink/renderer/core/css/parser/css_parser_token_stream.h"
 #include "third_party/blink/renderer/core/css/parser/css_property_parser.h"
 #include "third_party/blink/renderer/core/css/parser/css_selector_parser.h"
 #include "third_party/blink/renderer/core/css/parser/css_tokenizer.h"
@@ -174,7 +180,7 @@ void DeclareProperty(Document& document,
   document.GetStyleEngine().PropertyRegistryChanged();
 }
 
-scoped_refptr<CSSVariableData> CreateVariableData(String s) {
+CSSVariableData* CreateVariableData(String s) {
   bool is_animation_tainted = false;
   bool needs_variable_resolution = false;
   return CSSVariableData::Create(s, is_animation_tainted,
@@ -195,10 +201,9 @@ const CSSValue* ParseLonghand(Document& document,
 
   const auto* context = MakeGarbageCollected<CSSParserContext>(document);
   CSSParserLocalContext local_context;
-  auto tokens = CSSTokenizer(value).TokenizeToEOF();
-  CSSParserTokenRange range(tokens);
 
-  return longhand->ParseSingleValue(range, *context, local_context);
+  CSSParserTokenStream stream(value);
+  return longhand->ParseSingleValue(stream, *context, local_context);
 }
 
 const CSSPropertyValueSet* ParseDeclarationBlock(const String& block_text,
@@ -223,10 +228,7 @@ const CSSValue* ParseValue(Document& document, String syntax, String value) {
     return nullptr;
   }
   const auto* context = MakeGarbageCollected<CSSParserContext>(document);
-  CSSTokenizer tokenizer(value);
-  auto tokens = tokenizer.TokenizeToEOF();
-  CSSParserTokenRange range(tokens);
-  return syntax_definition->Parse(CSSTokenizedValue{range, value}, *context,
+  return syntax_definition->Parse(value, *context,
                                   /* is_animation_tainted */ false);
 }
 
@@ -243,63 +245,12 @@ CSSSelectorList* ParseSelectorList(const String& string,
   auto* context = MakeGarbageCollected<CSSParserContext>(
       kHTMLStandardMode, SecureContextMode::kInsecureContext);
   auto* sheet = MakeGarbageCollected<StyleSheetContents>(context);
-  CSSTokenizer tokenizer(string);
-  const auto tokens = tokenizer.TokenizeToEOF();
-  CSSParserTokenRange range(tokens);
+  CSSParserTokenStream stream(string);
   HeapVector<CSSSelector> arena;
   base::span<CSSSelector> vector = CSSSelectorParser::ParseSelector(
-      range, context, nesting_type, parent_rule_for_nesting, is_within_scope,
+      stream, context, nesting_type, parent_rule_for_nesting, is_within_scope,
       /* semicolon_aborts_nested_selector */ false, sheet, arena);
   return CSSSelectorList::AdoptSelectorVector(vector);
-}
-
-StyleRule* MakeSignalingRule(StyleRule&& style_rule,
-                             CSSSelector::Signal signal) {
-  HeapVector<CSSSelector> selectors;
-  const CSSSelector* selector = style_rule.FirstSelector();
-  CHECK(selector);
-  while (true) {
-    selectors.push_back(*selector);
-    selectors.back().SetSignal(signal);
-    if (selector->IsLastInSelectorList()) {
-      break;
-    }
-    ++selector;
-  }
-  return StyleRule::Create(selectors, std::move(style_rule));
-}
-
-StyleRule* MakeInvisibleRule(StyleRule&& style_rule) {
-  HeapVector<CSSSelector> selectors;
-  const CSSSelector* selector = style_rule.FirstSelector();
-  CHECK(selector);
-  while (true) {
-    selectors.push_back(*selector);
-    selectors.back().SetInvisible();
-    if (selector->IsLastInSelectorList()) {
-      break;
-    }
-    ++selector;
-  }
-  return StyleRule::Create(selectors, std::move(style_rule));
-}
-
-StyleRule* ParseSignalingRule(Document& document,
-                              String text,
-                              CSSSelector::Signal signal) {
-  auto* style_rule = DynamicTo<StyleRule>(ParseRule(document, text));
-  if (!style_rule) {
-    return nullptr;
-  }
-  return MakeSignalingRule(std::move(*style_rule), signal);
-}
-
-StyleRule* ParseInvisibleRule(Document& document, String text) {
-  auto* style_rule = DynamicTo<StyleRule>(ParseRule(document, text));
-  if (!style_rule) {
-    return nullptr;
-  }
-  return MakeInvisibleRule(std::move(*style_rule));
 }
 
 }  // namespace css_test_helpers

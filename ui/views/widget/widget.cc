@@ -17,6 +17,7 @@
 #include "base/observer_list.h"
 #include "base/ranges/algorithm.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/current_thread.h"
 #include "base/trace_event/base_tracing.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
@@ -27,6 +28,7 @@
 #include "ui/base/l10n/l10n_font_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/models/image_model.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/color/color_provider_manager.h"
 #include "ui/compositor/compositor.h"
@@ -161,9 +163,11 @@ class Widget::PaintAsActiveLockImpl : public Widget::PaintAsActiveLock {
 ////////////////////////////////////////////////////////////////////////////////
 // Widget, InitParams:
 
-Widget::InitParams::InitParams() = default;
+Widget::InitParams::InitParams(Type type)
+    : InitParams(NATIVE_WIDGET_OWNS_WIDGET, type) {}
 
-Widget::InitParams::InitParams(Type type) : type(type) {}
+Widget::InitParams::InitParams(Ownership ownership, Type type)
+    : type(type), ownership(ownership) {}
 
 Widget::InitParams::InitParams(InitParams&& other) = default;
 
@@ -217,7 +221,15 @@ Widget::~Widget() {
   // is unnecessary.
   widget_closed_ = true;
 
-  if (widget_delegate_) {
+  // The following Notification order is preserved here:
+  //   1. WidgetObserver::OnWidgetDestroying
+  //   2. WidgetObserver::OnWidgetDestroyed
+  //   3. WidgetDelegate::WidgetDestroying
+  // Under WIDGET_OWNS_NATIVE_WIDGET and NATIVE_WIDGET_OWNS_WIDGET, the observer
+  // notifications are initiated by native widget prior to ~Widget. In
+  // CLIENT_OWNS_WIDGET, all events are emitted in ~Widget.
+
+  if (widget_delegate_ && ownership_ != InitParams::CLIENT_OWNS_WIDGET) {
     widget_delegate_->WidgetDestroying();
   }
   if (ownership_ == InitParams::WIDGET_OWNS_NATIVE_WIDGET) {
@@ -233,7 +245,14 @@ Widget::~Widget() {
     if (native_widget_) {
       native_widget_->Close();
     }
+    HandleWidgetDestroying();
+    HandleWidgetDestroyed();
+    if (widget_delegate_) {
+      widget_delegate_->WidgetDestroying();
+    }
   }
+
+  RemoveObserver(&root_view_->GetViewAccessibility());
   // Destroy RootView after the native widget, so in case the WidgetDelegate is
   // a View in the RootView hierarchy it gets destroyed as a WidgetDelegate
   // first.
@@ -248,7 +267,7 @@ Widget::~Widget() {
 Widget* Widget::CreateWindowWithParent(WidgetDelegate* delegate,
                                        gfx::NativeView parent,
                                        const gfx::Rect& bounds) {
-  Widget::InitParams params;
+  Widget::InitParams params(Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET);
   params.delegate = delegate;
   params.parent = parent;
   params.bounds = bounds;
@@ -258,7 +277,6 @@ Widget* Widget::CreateWindowWithParent(WidgetDelegate* delegate,
 Widget* Widget::CreateWindowWithParent(std::unique_ptr<WidgetDelegate> delegate,
                                        gfx::NativeView parent,
                                        const gfx::Rect& bounds) {
-  DCHECK(delegate->owned_by_widget());
   return CreateWindowWithParent(delegate.release(), parent, bounds);
 }
 
@@ -266,7 +284,7 @@ Widget* Widget::CreateWindowWithParent(std::unique_ptr<WidgetDelegate> delegate,
 Widget* Widget::CreateWindowWithContext(WidgetDelegate* delegate,
                                         gfx::NativeWindow context,
                                         const gfx::Rect& bounds) {
-  Widget::InitParams params;
+  Widget::InitParams params(Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET);
   params.delegate = delegate;
   params.context = context;
   params.bounds = bounds;
@@ -278,7 +296,6 @@ Widget* Widget::CreateWindowWithContext(
     std::unique_ptr<WidgetDelegate> delegate,
     gfx::NativeWindow context,
     const gfx::Rect& bounds) {
-  DCHECK(delegate->owned_by_widget());
   return CreateWindowWithContext(delegate.release(), context, bounds);
 }
 
@@ -372,12 +389,10 @@ bool Widget::RequiresNonClientView(InitParams::Type type) {
 
 // static
 bool Widget::IsWindowCompositingSupported() {
-#if BUILDFLAG(IS_WIN)
-  return true;
-#elif BUILDFLAG(IS_OZONE)
+#if BUILDFLAG(IS_OZONE)
   return ui::OzonePlatform::GetInstance()->IsWindowCompositingSupported();
 #else
-  return false;
+  return true;
 #endif
 }
 
@@ -422,11 +437,13 @@ void Widget::Init(InitParams params) {
   ViewsDelegate::GetInstance()->OnBeforeWidgetInit(&params, this);
 
   if (params.delegate) {
-    widget_delegate_ = params.delegate->AsWeakPtr();
+    widget_delegate_ = params.delegate->AttachWidgetAndGetHandle(this);
   } else {
     auto default_delegate = std::make_unique<DefaultWidgetDelegate>();
-    widget_delegate_ = default_delegate.release()->AsWeakPtr();
+    widget_delegate_ =
+        default_delegate.release()->AttachWidgetAndGetHandle(this);
   }
+
   DCHECK(widget_delegate_);
 
   if (params.opacity == views::Widget::InitParams::WindowOpacity::kInferred)
@@ -437,8 +454,6 @@ void Widget::Init(InitParams params) {
                                     : InitParams::Activatable::kNo;
 
   widget_delegate_->SetCanActivate(can_activate);
-
-  widget_delegate_->WidgetInitializing(this);
 
   ownership_ = params.ownership;
 
@@ -455,6 +470,21 @@ void Widget::Init(InitParams params) {
     owned_native_widget_ = base::WrapUnique(native_widget_raw_ptr);
   }
   root_view_.reset(CreateRootView());
+
+  // The root view must always be fully initialized so we at least expose one
+  // accessible element to the platform APIs. This is necessary for us to detect
+  // accessibility API usage and fully enable accessibility support for all
+  // views.
+  root_view_->GetViewAccessibility().CompleteCacheInitialization();
+
+  // Once the root view is added to the widget, it should be marked as ready to
+  // send accessible event notifications. From that point on, any view that is
+  // connected to the RootView will be able to send accessible events.
+  root_view_->GetViewAccessibility().SetRootViewIsReadyToNotifyEvents();
+  // We need to add the RootView's ViewAccessibility as an observer of the
+  // widget, so that when the widget is closed, the accessible data is set
+  // accordingly.
+  AddObserver(&root_view_->GetViewAccessibility());
 
   // Copy the elements of params that will be used after it is moved.
   const InitParams::Type type = params.type;
@@ -833,8 +863,9 @@ void Widget::CloseNow() {
 
   DCHECK(native_widget_initialized_) << "Native widget is never initialized.";
 
-  if (native_widget_)
+  if (native_widget_) {
     native_widget_->CloseNow();
+  }
 }
 
 bool Widget::IsClosed() const {
@@ -1094,6 +1125,10 @@ void Widget::RunShellDrag(View* view,
                           const gfx::Point& location,
                           int operation,
                           ui::mojom::DragEventSource source) {
+  if (view) {
+    CHECK_EQ(view->GetWidget(), this);
+  }
+
   if (!native_widget_)
     return;
   dragged_view_ = view;
@@ -1107,8 +1142,14 @@ void Widget::RunShellDrag(View* view,
   }
 
   WidgetDeletionObserver widget_deletion_observer(this);
-  native_widget_->RunShellDrag(view, std::move(data), location, operation,
-                               source);
+  {
+    // Since application tasks are needed in drag-induced nested message loops
+    // which occur here, (notably bookmark and download dragging), application
+    // tasks need to run. Only views:: and ui::EventDispatcher stacks are
+    // present, which expect this re-entrancy.
+    base::CurrentThread::ScopedAllowApplicationTasksInNativeNestedLoop allow;
+    native_widget_->RunShellDrag(std::move(data), location, operation, source);
+  }
 
   // The widget may be destroyed during the drag operation.
   if (!widget_deletion_observer.IsWidgetAlive())
@@ -1384,8 +1425,9 @@ void Widget::SynthesizeMouseMoveEvent() {
   // Convert: screen coordinate -> widget coordinate.
   View::ConvertPointFromScreen(root_view_.get(), &mouse_location);
   last_mouse_event_was_move_ = false;
-  ui::MouseEvent mouse_event(ui::ET_MOUSE_MOVED, mouse_location, mouse_location,
-                             ui::EventTimeForNow(), ui::EF_IS_SYNTHESIZED, 0);
+  ui::MouseEvent mouse_event(ui::EventType::kMouseMoved, mouse_location,
+                             mouse_location, ui::EventTimeForNow(),
+                             ui::EF_IS_SYNTHESIZED, 0);
   root_view_->OnMouseMoved(mouse_event);
 }
 
@@ -1561,7 +1603,7 @@ bool Widget::IsModal() const {
   if (!widget_delegate_)
     return false;
 
-  return widget_delegate_->GetModalType() != ui::MODAL_TYPE_NONE;
+  return widget_delegate_->GetModalType() != ui::mojom::ModalType::kNone;
 }
 
 bool Widget::IsDialogBox() const {
@@ -1593,6 +1635,25 @@ bool Widget::OnNativeWidgetActivationChanged(bool active) {
 
   for (WidgetObserver& observer : observers_)
     observer.OnWidgetActivationChanged(this, active);
+
+  if (active) {
+    base::AutoReset<bool> is_traversing_widget_tree(&is_traversing_widget_tree_,
+                                                    true);
+    Widget* root = nullptr;
+    for (Widget* widget = this; widget; widget = widget->parent()) {
+      for (WidgetObserver& observer : widget->observers_) {
+        observer.OnWidgetTreeActivated(widget, this);
+      }
+      root = widget;
+    }
+#if BUILDFLAG(IS_WIN)
+    // Windows shuffles child widgets when the application re-gains
+    // activation, so re-order to ensure z-order sublevels.
+    root->GetSublevelManager()->EnsureOwnerTreeSublevel();
+#else
+    std::ignore = root;
+#endif
+  }
 
   const bool was_paint_as_active = ShouldPaintAsActive();
 
@@ -1667,29 +1728,14 @@ void Widget::OnNativeWidgetDestroying() {
   // Tell the focus manager (if any) that root_view is being removed
   // in case that the focused view is under this root view.
   DCHECK(native_widget_);
-  if (GetFocusManager() && root_view_)
-    GetFocusManager()->ViewRemoved(root_view_.get());
-  for (WidgetObserver& observer : observers_)
-    observer.OnWidgetDestroying(this);
-  if (non_client_view_)
-    non_client_view_->WindowClosing();
-  widget_delegate_->WindowClosing();
+  HandleWidgetDestroying();
 }
 
 void Widget::OnNativeWidgetDestroyed() {
-  for (WidgetObserver& observer : observers_)
-    observer.OnWidgetDestroyed(this);
-
-  if (widget_delegate_) {
-    widget_delegate_->DeleteDelegate();
-  }
-  // Immediately reset the weak ptr. If NATIVE_WIDGET_OWNS_WIDGET destruction of
-  // the NativeWidget can destroy the Widget. We don't want to touch the
-  // NativeWidget during the destruction of the Widget either since some member
-  // variables on the NativeWidget may already be destroyed. In
-  // WIDGET_OWNS_NATIVE_WIDGET the NativeWidget will be cleaned up through
-  // |owned_native_widget_|
-  native_widget_.reset();
+  // Mark the widget as closed so that DeleteDelegate() won't call
+  // InvalidateLayout().
+  widget_closed_ = true;
+  HandleWidgetDestroyed();
 }
 
 void Widget::OnNativeWidgetParentChanged(gfx::NativeView parent) {
@@ -1795,7 +1841,7 @@ void Widget::OnMouseEvent(ui::MouseEvent* event) {
 
   View* root_view = GetRootView();
   switch (event->type()) {
-    case ui::ET_MOUSE_PRESSED: {
+    case ui::EventType::kMousePressed: {
       last_mouse_event_was_move_ = false;
 
       // We may get deleted by the time we return from OnMousePressed. So we
@@ -1827,7 +1873,7 @@ void Widget::OnMouseEvent(ui::MouseEvent* event) {
       return;
     }
 
-    case ui::ET_MOUSE_RELEASED:
+    case ui::EventType::kMouseReleased:
       last_mouse_event_was_move_ = false;
       is_mouse_button_pressed_ = false;
       // Release capture first, to avoid confusion if OnMouseReleased blocks.
@@ -1849,8 +1895,8 @@ void Widget::OnMouseEvent(ui::MouseEvent* event) {
       }
       return;
 
-    case ui::ET_MOUSE_MOVED:
-    case ui::ET_MOUSE_DRAGGED:
+    case ui::EventType::kMouseMoved:
+    case ui::EventType::kMouseDragged:
       if (native_widget_->HasCapture() && is_mouse_button_pressed_) {
         last_mouse_event_was_move_ = false;
         if (root_view)
@@ -1864,20 +1910,20 @@ void Widget::OnMouseEvent(ui::MouseEvent* event) {
       }
       return;
 
-    case ui::ET_MOUSE_ENTERED:
+    case ui::EventType::kMouseEntered:
       last_mouse_event_was_move_ = false;
       if (root_view) {
         root_view->OnMouseEntered(*event);
       }
       return;
 
-    case ui::ET_MOUSE_EXITED:
+    case ui::EventType::kMouseExited:
       last_mouse_event_was_move_ = false;
       if (root_view)
         root_view->OnMouseExited(*event);
       return;
 
-    case ui::ET_MOUSEWHEEL:
+    case ui::EventType::kMousewheel:
       if (root_view && root_view->OnMouseWheel(
                            static_cast<const ui::MouseWheelEvent&>(*event)))
         event->SetHandled();
@@ -1902,8 +1948,9 @@ void Widget::OnScrollEvent(ui::ScrollEvent* event) {
   ui::ScrollEvent event_copy(*event);
   SendEventToSink(&event_copy);
 
-  // Convert unhandled ui::ET_SCROLL events into ui::ET_MOUSEWHEEL events.
-  if (!event_copy.handled() && event_copy.type() == ui::ET_SCROLL) {
+  // Convert unhandled ui::EventType::kScroll events into
+  // ui::EventType::kMousewheel events.
+  if (!event_copy.handled() && event_copy.type() == ui::EventType::kScroll) {
     ui::MouseWheelEvent wheel(*event);
     OnMouseEvent(&wheel);
   }
@@ -2048,13 +2095,13 @@ FocusSearch* Widget::GetFocusSearch() {
 FocusTraversable* Widget::GetFocusTraversableParent() {
   // We are a proxy to the root view, so we should be bypassed when traversing
   // up and as a result this should not be called.
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 View* Widget::GetFocusTraversableParentView() {
   // We are a proxy to the root view, so we should be bypassed when traversing
   // up and as a result this should not be called.
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -2115,6 +2162,16 @@ ui::ColorProviderKey Widget::GetColorProviderKeyForTesting() const {
 
 void Widget::SetCheckParentForFullscreen() {
   check_parent_for_fullscreen_ = true;
+}
+
+void Widget::SetAllowScreenshots(bool allow) {
+  if (native_widget_) {
+    native_widget_->SetAllowScreenshots(allow);
+  }
+}
+
+bool Widget::AreScreenshotsAllowed() {
+  return native_widget_ ? native_widget_->AreScreenshotsAllowed() : true;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -2229,6 +2286,7 @@ void Widget::SetParent(Widget* parent) {
     return;
 
   Widget* old_parent = parent_.get();
+  CHECK(!is_traversing_widget_tree_);
   parent_ = parent ? parent->GetWeakPtr() : nullptr;
 
   // Release the paint-as-active lock on the old parent.
@@ -2308,6 +2366,55 @@ void Widget::ClearFocusFromWidget() {
 void Widget::HandleShowRequested() {
   sublevel_manager_->EnsureOwnerSublevel();
   internal::AnyWidgetObserverSingleton::GetInstance()->OnAnyWidgetShown(this);
+}
+
+void Widget::HandleWidgetDestroying() {
+  if (native_widget_destroyed_) {
+    return;
+  }
+  if (GetFocusManager() && root_view_) {
+    GetFocusManager()->ViewRemoved(root_view_.get());
+  }
+  for (WidgetObserver& observer : observers_) {
+    observer.OnWidgetDestroying(this);
+  }
+  if (non_client_view_) {
+    non_client_view_->WindowClosing();
+  }
+  if (widget_delegate_) {
+    widget_delegate_->WindowClosing();
+  }
+}
+
+void Widget::HandleWidgetDestroyed() {
+  if (native_widget_destroyed_) {
+    return;
+  }
+  for (WidgetObserver& observer : observers_)
+    observer.OnWidgetDestroyed(this);
+
+  native_widget_destroyed_ = true;
+  auto weak_ptr = GetWeakPtr();
+  if (widget_delegate_) {
+    widget_delegate_->DeleteDelegate();
+  }
+  // When the ownership_ is CLIENT_OWNS_WIDGET, the DeleteDelegate() call above
+  // *might* also cause the Widget to be destroyed. The following statement
+  // checks for this. If this function is called from within the Widget
+  // destructor, the delegate has already been notified (WidgetDestroyed() is
+  // called from the destructor) that the Widget is being destroyed, so the call
+  // to inform the client that the Widget is a "zombie"
+  // (WidgetDelegate::WidgetIsZombie()) isn't performed.
+  if (!weak_ptr) {
+    return;
+  }
+  // Immediately reset the weak ptr. If NATIVE_WIDGET_OWNS_WIDGET destruction of
+  // the NativeWidget can destroy the Widget. We don't want to touch the
+  // NativeWidget during the destruction of the Widget either since some member
+  // variables on the NativeWidget may already be destroyed. In
+  // WIDGET_OWNS_NATIVE_WIDGET the NativeWidget will be cleaned up through
+  // |owned_native_widget_|
+  native_widget_.reset();
 }
 
 BEGIN_METADATA_BASE(Widget)

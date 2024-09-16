@@ -4,18 +4,43 @@
 
 #include "ui/display/win/test/virtual_display_util_win.h"
 
+#include <algorithm>
+#include <functional>
+#include <iterator>
+
+#include "base/containers/fixed_flat_map.h"
 #include "base/containers/flat_tree.h"
 #include "base/logging.h"
 #include "third_party/win_virtual_display/driver/public/properties.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
+#include "ui/display/test/virtual_display_util.h"
 #include "ui/display/types/display_constants.h"
 #include "ui/display/win/display_config_helper.h"
 #include "ui/display/win/screen_win.h"
 
 namespace display::test {
-
 namespace {
+
+// Map of `VirtualDisplayUtil` configs to `MonitorConfig` defined in Windows
+// driver controller code.
+static const auto kConfigMap = base::MakeFixedFlatMap<
+    display::test::DisplayParams,
+    std::reference_wrapper<const display::test::MonitorConfig>>(
+    {{display::test::VirtualDisplayUtil::k1024x768,
+      display::test::MonitorConfig::k1024x768},
+     {display::test::VirtualDisplayUtil::k1920x1080,
+      display::test::MonitorConfig::k1920x1080}});
+
+// Comparer for gfx:Size for use in sorting algorithms.
+struct SizeCompare {
+  bool operator()(const gfx::Size& a, const gfx::Size& b) const {
+    if (a.width() == b.width()) {
+      return a.height() < b.height();
+    }
+    return a.width() < b.width();
+  }
+};
 
 // Returns true if the current environment is detected to be headless.
 bool IsHeadless() {
@@ -34,16 +59,34 @@ bool IsHeadless() {
   return true;
 }
 
-}  // namespace
+// Sets the default display resolution to the specified size.
+bool SetDisplayResolution(const gfx::Size& size) {
+  DEVMODE mode;
+  mode.dmSize = sizeof(DEVMODE);
+  mode.dmPelsWidth = size.width();
+  mode.dmPelsHeight = size.height();
+  mode.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
+  LONG settings_result = ::ChangeDisplaySettings(&mode, 0);
+  LOG_IF(ERROR, settings_result != DISP_CHANGE_SUCCESSFUL)
+      << "ChangeDisplaySettings failed with result: " << settings_result;
+  return settings_result == DISP_CHANGE_SUCCESSFUL;
+}
 
-struct DisplayParams {
-  explicit DisplayParams(MonitorConfig config) : monitor_config(config) {}
-  MonitorConfig monitor_config;
-};
+// Creates a comma separated list of display strings (for debug /logs).
+std::string JoinDisplayStrings(const std::vector<display::Display>& displays) {
+  std::vector<std::string> parts;
+  for (const auto& display : displays) {
+    parts.push_back(display.ToString());
+  }
+  return base::JoinString(parts, ", ");
+}
+
+}  // namespace
 
 VirtualDisplayUtilWin::VirtualDisplayUtilWin(Screen* screen)
     : screen_(screen), is_headless_(IsHeadless()) {
   screen_->AddObserver(this);
+  initial_displays_ = screen_->GetAllDisplays();
   if (IsAPIAvailable()) {
     ResetDisplays();
   }
@@ -53,10 +96,46 @@ VirtualDisplayUtilWin::~VirtualDisplayUtilWin() {
   if (IsAPIAvailable()) {
     driver_controller_.Reset();
     if (virtual_displays_.size() > 0) {
+      current_config_ = DriverProperties();
       StartWaiting();
     }
   }
   screen_->RemoveObserver(this);
+
+  std::vector<display::Display> current_displays = screen_->GetAllDisplays();
+
+  // Restore the display to the initial size and wait for displays to update.
+  // This is necessary because Windows may change the resolution of the default
+  // display (Microsoft Basic Display) while virtual displays exists and does
+  // not automatically restore the original resolution.
+  if (is_headless_) {
+    CHECK_EQ(initial_displays_.size(), 1u);
+    CHECK_EQ(current_displays.size(), 1u);
+    const gfx::Size& initial_size = initial_displays_.front().size();
+    bool set_resolution_result = SetDisplayResolution(initial_size);
+    CHECK(set_resolution_result) << "SetDisplayResolution failed.";
+    DisplayConfigWaiter waiter(screen_);
+    waiter.WaitForDisplaySizes(std::vector<gfx::Size>{initial_size});
+
+    // Basic check to ensure that the # of displays and resolutions match what
+    // was in place when the utility was constructed. Helps prevent lingering
+    // changes that may impact other tests running on the bot (i.e.
+    // crbug.com/341931537).
+    CHECK_EQ(current_displays.size(), initial_displays_.size())
+        << "# of displays mismatch after driver was closed.";
+
+    std::multiset<gfx::Size, SizeCompare> initial_sizes, current_sizes;
+    for (const auto& display : screen_->GetAllDisplays()) {
+      current_sizes.insert(display.size());
+    }
+    for (const auto& display : initial_displays_) {
+      initial_sizes.insert(display.size());
+    }
+    CHECK(initial_sizes == current_sizes)
+        << "Display resolution does not match initial config. Initial: "
+        << JoinDisplayStrings(initial_displays_)
+        << ", current: " << JoinDisplayStrings(current_displays);
+  }
 }
 
 // static
@@ -70,9 +149,10 @@ int64_t VirtualDisplayUtilWin::AddDisplay(uint8_t id,
     LOG(ERROR) << "Duplicate virtual display ID added: " << id;
     return kInvalidDisplayId;
   }
-  std::vector<MonitorConfig> monitors;
-  monitors = current_config_.requested_configs();
-  MonitorConfig new_config = display_params.monitor_config;
+  std::vector<MonitorConfig> monitors = current_config_.requested_configs();
+  auto it = kConfigMap.find(display_params);
+  CHECK(it != kConfigMap.end()) << "DisplayParams not mapped to MonitorConfig.";
+  MonitorConfig new_config = it->second;
   new_config.set_product_code(id);
   monitors.push_back(new_config);
   if (!SetDriverProperties(DriverProperties(monitors))) {
@@ -118,7 +198,7 @@ void VirtualDisplayUtilWin::ResetDisplays() {
     // virtualized adapter. Therefore, we replace the default stub display with
     // our own virtual one. See:
     // https://learn.microsoft.com/en-us/windows-hardware/drivers/display/support-for-headless-systems
-    std::vector<MonitorConfig> configs{k1920x1080.monitor_config};
+    std::vector<MonitorConfig> configs{MonitorConfig::k1024x768};
     configs[0].set_product_code(kHeadlessDisplayId);
     new_config = DriverProperties(configs);
   }
@@ -150,13 +230,15 @@ void VirtualDisplayUtilWin::OnDisplayAdded(
   OnDisplayAddedOrRemoved(new_display.id());
 }
 
-void VirtualDisplayUtilWin::OnDisplayRemoved(
-    const display::Display& old_display) {
-  base::EraseIf(virtual_displays_,
-                [&old_display](const std::pair<unsigned short, int64_t>& obj) {
-                  return obj.second == old_display.id();
-                });
-  OnDisplayAddedOrRemoved(old_display.id());
+void VirtualDisplayUtilWin::OnDisplaysRemoved(
+    const display::Displays& removed_displays) {
+  for (const auto& display : removed_displays) {
+    base::EraseIf(virtual_displays_,
+                  [&display](const std::pair<unsigned short, int64_t>& obj) {
+                    return obj.second == display.id();
+                  });
+    OnDisplayAddedOrRemoved(display.id());
+  }
 }
 
 bool VirtualDisplayUtilWin::SetDriverProperties(DriverProperties properties) {
@@ -189,17 +271,6 @@ void VirtualDisplayUtilWin::StopWaiting() {
   run_loop_->Quit();
 }
 
-const DisplayParams VirtualDisplayUtilWin::k1920x1080 =
-    DisplayParams(MonitorConfig::k1920x1080);
-const DisplayParams VirtualDisplayUtilWin::k1024x768 =
-    DisplayParams(MonitorConfig::k1024x768);
-
-// VirtualDisplayUtil definitions:
-const DisplayParams VirtualDisplayUtil::k1920x1080 =
-    VirtualDisplayUtilWin::k1920x1080;
-const DisplayParams VirtualDisplayUtil::k1024x768 =
-    VirtualDisplayUtilWin::k1024x768;
-
 // static
 std::unique_ptr<VirtualDisplayUtil> VirtualDisplayUtil::TryCreate(
     Screen* screen) {
@@ -207,6 +278,48 @@ std::unique_ptr<VirtualDisplayUtil> VirtualDisplayUtil::TryCreate(
     return nullptr;
   }
   return std::make_unique<VirtualDisplayUtilWin>(screen);
+}
+
+DisplayConfigWaiter::DisplayConfigWaiter(Screen* screen) : screen_(screen) {
+  screen_->AddObserver(this);
+}
+
+DisplayConfigWaiter::~DisplayConfigWaiter() {
+  screen_->RemoveObserver(this);
+}
+
+void DisplayConfigWaiter::WaitForDisplaySizes(std::vector<gfx::Size> sizes) {
+  wait_for_sizes_ = std::move(sizes);
+  CHECK(!run_loop_);
+  run_loop_ = std::make_unique<base::RunLoop>();
+  if (!IsWaitConditionMet()) {
+    run_loop_->Run();
+  }
+  run_loop_.reset();
+}
+
+void DisplayConfigWaiter::OnDisplayAdded(const display::Display& new_display) {
+  if (IsWaitConditionMet()) {
+    run_loop_->Quit();
+  }
+}
+
+void DisplayConfigWaiter::OnDisplaysRemoved(
+    const display::Displays& removed_displays) {
+  if (IsWaitConditionMet()) {
+    run_loop_->Quit();
+  }
+}
+
+bool DisplayConfigWaiter::IsWaitConditionMet() {
+  std::multiset<gfx::Size, SizeCompare> expected_sizes, current_sizes;
+  for (display::Display display : screen_->GetAllDisplays()) {
+    current_sizes.insert(display.size());
+  }
+  for (const auto& size : wait_for_sizes_) {
+    expected_sizes.insert(size);
+  }
+  return expected_sizes == current_sizes;
 }
 
 }  // namespace display::test

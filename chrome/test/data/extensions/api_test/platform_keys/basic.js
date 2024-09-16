@@ -645,7 +645,7 @@ function verifySignFail(privateKey, signParams) {
             }));
 }
 
-// TODO(pmarko,emaxx): Test this by verifying that no private key is returned,
+// TODO(emaxx): Test this by verifying that no private key is returned,
 // once that's implemented, see crbug.com/799410.
 function testSignFails(cert, spki) {
   var keyParams = {name: 'RSASSA-PKCS1-v1_5', hash: {name: 'SHA-1'}};
@@ -745,7 +745,7 @@ var testSuites = {
       testSignSha1Client2OnSystemTokenOnly,
       // Interactively select all clients to grant permissions for these
       // certificates.
-      // TODO(crbug.com/1303197): We should move all interactive tests to
+      // TODO(crbug.com/40217298): We should move all interactive tests to
       // a separate test suite.
       testInteractiveSelectClient1,
       testInteractiveSelectClient2,

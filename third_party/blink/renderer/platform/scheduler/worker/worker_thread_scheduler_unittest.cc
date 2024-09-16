@@ -207,7 +207,7 @@ class WorkerThreadSchedulerTest : public testing::Test {
                                         String::FromUTF8(task)));
           break;
         default:
-          NOTREACHED();
+          NOTREACHED_IN_MIGRATION();
       }
     }
   }
@@ -476,6 +476,10 @@ class FrameSchedulerDelegateWithUkmSourceId : public FrameScheduler::Delegate {
 
   const base::UnguessableToken& GetAgentClusterId() const override {
     return base::UnguessableToken::Null();
+  }
+
+  DocumentResourceCoordinator* GetDocumentResourceCoordinator() override {
+    return nullptr;
   }
 
  private:

@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/run_loop.h"
@@ -32,13 +33,13 @@
 #include "components/subresource_filter/content/browser/subresource_filter_safe_browsing_client.h"
 #include "components/subresource_filter/content/browser/subresource_filter_safe_browsing_client_request.h"
 #include "components/subresource_filter/content/browser/throttle_manager_test_support.h"
-#include "components/subresource_filter/content/shared/browser/page_activation_throttle_delegate.h"
 #include "components/subresource_filter/content/shared/common/subresource_filter_utils.h"
 #include "components/subresource_filter/core/browser/subresource_filter_features.h"
 #include "components/subresource_filter/core/browser/subresource_filter_features_test_support.h"
 #include "components/subresource_filter/core/browser/verified_ruleset_dealer.h"
 #include "components/subresource_filter/core/common/activation_decision.h"
 #include "components/subresource_filter/core/common/activation_list.h"
+#include "components/subresource_filter/core/common/constants.h"
 #include "components/subresource_filter/core/common/test_ruleset_creator.h"
 #include "components/subresource_filter/core/common/test_ruleset_utils.h"
 #include "components/subresource_filter/core/mojom/subresource_filter.mojom.h"
@@ -79,7 +80,7 @@ const char kActivationListHistogram[] =
 const char kSubresourceFilterActionsHistogram[] = "SubresourceFilter.Actions2";
 
 class TestSafeBrowsingActivationThrottleDelegate
-    : public PageActivationThrottleDelegate {
+    : public SafeBrowsingPageActivationThrottle::Delegate {
  public:
   TestSafeBrowsingActivationThrottleDelegate() = default;
   ~TestSafeBrowsingActivationThrottleDelegate() override = default;
@@ -88,12 +89,12 @@ class TestSafeBrowsingActivationThrottleDelegate
   TestSafeBrowsingActivationThrottleDelegate& operator=(
       const TestSafeBrowsingActivationThrottleDelegate&) = delete;
 
-  // PageActivationThrottleDelegate:
+  // SafeBrowsingActivationThrottle::Delegate:
   mojom::ActivationLevel OnPageActivationComputed(
       content::NavigationHandle* handle,
       mojom::ActivationLevel effective_level,
       ActivationDecision* decision) override {
-    DCHECK(handle->IsInMainFrame());
+    CHECK(handle->IsInMainFrame());
     if (allowlisted_hosts_.count(handle->GetURL().host())) {
       if (effective_level ==
           subresource_filter::mojom::ActivationLevel::kEnabled)
@@ -167,14 +168,14 @@ class SafeBrowsingPageActivationThrottleTest
   void SetUp() override {
     content::RenderViewHostTestHarness::SetUp();
     Configure();
-    test_io_task_runner_ = new base::TestMockTimeTaskRunner();
     // Note: Using NiceMock to allow uninteresting calls and suppress warnings.
     std::vector<url_pattern_index::proto::UrlRule> rules;
     rules.push_back(testing::CreateSuffixRule("disallowed.html"));
     ASSERT_NO_FATAL_FAILURE(test_ruleset_creator_.CreateRulesetWithRules(
         rules, &test_ruleset_pair_));
     ruleset_dealer_ = std::make_unique<VerifiedRulesetDealer::Handle>(
-        base::SingleThreadTaskRunner::GetCurrentDefault());
+        base::SingleThreadTaskRunner::GetCurrentDefault(),
+        kSafeBrowsingRulesetConfig);
     ruleset_dealer_->TryOpenAndSetRulesetFile(test_ruleset_pair_.indexed.path,
                                               /*expected_checksum=*/0,
                                               base::DoNothing());
@@ -213,9 +214,7 @@ class SafeBrowsingPageActivationThrottleTest
     RunUntilIdle();
     RunUntilIdle();
 
-    // RunUntilIdle() called once more, to delete the database on the IO thread.
     fake_safe_browsing_database_ = nullptr;
-    RunUntilIdle();
 
     content::RenderViewHostTestHarness::TearDown();
 
@@ -232,8 +231,7 @@ class SafeBrowsingPageActivationThrottleTest
     if (IsInSubresourceFilterRoot(navigation_handle)) {
       navigation_handle->RegisterThrottleForTesting(
           std::make_unique<SafeBrowsingPageActivationThrottle>(
-              navigation_handle, delegate(), test_io_task_runner_,
-              fake_safe_browsing_database_));
+              navigation_handle, delegate(), fake_safe_browsing_database_));
     }
     std::vector<std::unique_ptr<content::NavigationThrottle>> throttles;
 
@@ -301,15 +299,6 @@ class SafeBrowsingPageActivationThrottleTest
 
   content::NavigationThrottle::ThrottleCheckResult SimulateCommit(
       content::NavigationSimulator* simulator) {
-    // Need to post a task to flush the IO thread because calling Commit()
-    // blocks until the throttle checks are complete.
-    // TODO(csharrison): Consider adding finer grained control to the
-    // NavigationSimulator by giving it an option to be driven by a
-    // TestMockTimeTaskRunner. Also see https://crbug.com/703346.
-    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-        FROM_HERE,
-        base::BindOnce(&base::TestMockTimeTaskRunner::RunUntilIdle,
-                       base::Unretained(test_io_task_runner_.get())));
     simulator->Commit();
     return simulator->GetLastThrottleCheckResult();
   }
@@ -348,7 +337,6 @@ class SafeBrowsingPageActivationThrottleTest
 
   void RunUntilIdle() {
     base::RunLoop().RunUntilIdle();
-    test_io_task_runner_->RunUntilIdle();
   }
 
   content::NavigationSimulator* navigation_simulator() {
@@ -358,9 +346,6 @@ class SafeBrowsingPageActivationThrottleTest
   const base::HistogramTester& tester() const { return tester_; }
 
   TestSafeBrowsingActivationThrottleDelegate* delegate() { return &delegate_; }
-  base::TestMockTimeTaskRunner* test_io_task_runner() const {
-    return test_io_task_runner_.get();
-  }
 
   testing::ScopedSubresourceFilterConfigurator* scoped_configuration() {
     return &scoped_configuration_;
@@ -373,7 +358,6 @@ class SafeBrowsingPageActivationThrottleTest
 
  private:
   testing::ScopedSubresourceFilterConfigurator scoped_configuration_;
-  scoped_refptr<base::TestMockTimeTaskRunner> test_io_task_runner_;
 
   testing::TestRulesetCreator test_ruleset_creator_;
   testing::TestRulesetPair test_ruleset_pair_;
@@ -664,9 +648,6 @@ TEST_F(SafeBrowsingPageActivationThrottleTest, ActivationList) {
        SB_THREAT_TYPE_API_ABUSE,
        safe_browsing::ThreatPatternType::SOCIAL_ENGINEERING_ADS},
       {mojom::ActivationLevel::kDisabled, ActivationList::PHISHING_INTERSTITIAL,
-       SB_THREAT_TYPE_BLOCKLISTED_RESOURCE,
-       safe_browsing::ThreatPatternType::SOCIAL_ENGINEERING_ADS},
-      {mojom::ActivationLevel::kDisabled, ActivationList::PHISHING_INTERSTITIAL,
        SB_THREAT_TYPE_URL_BINARY_MALWARE,
        safe_browsing::ThreatPatternType::SOCIAL_ENGINEERING_ADS},
       {mojom::ActivationLevel::kDisabled, ActivationList::PHISHING_INTERSTITIAL,
@@ -713,7 +694,7 @@ TEST_F(SafeBrowsingPageActivationThrottleTest, ActivationList) {
 }
 
 // Regression test for an issue where synchronous failure from the SB database
-// caused a double cancel. This is DCHECKed in the fake database.
+// caused a double cancel. This is CHECKed in the fake database.
 TEST_F(SafeBrowsingPageActivationThrottleTest,
        SynchronousResponse) {
   const GURL url(kURL);

@@ -30,18 +30,18 @@
 
 #include "third_party/blink/renderer/platform/graphics/skia/skia_utils.h"
 
-#include "base/allocator/partition_allocator/src/partition_alloc/partition_alloc.h"
+#include <algorithm>
+#include <cmath>
+
 #include "base/numerics/safe_conversions.h"
 #include "build/build_config.h"
 #include "cc/paint/paint_flags.h"
+#include "partition_alloc/partition_alloc.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/partitions.h"
 #include "third_party/skia/include/core/SkColorSpace.h"
 #include "third_party/skia/modules/skcms/skcms.h"
 #include "ui/base/ui_base_features.h"
-
-#include <algorithm>
-#include <cmath>
 
 namespace blink {
 
@@ -79,7 +79,7 @@ SkBlendMode WebCoreCompositeToSkiaComposite(CompositeOperator op,
       return SkBlendMode::kPlus;
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return SkBlendMode::kSrcOver;
 }
 
@@ -121,7 +121,7 @@ SkBlendMode WebCoreBlendModeToSkBlendMode(BlendMode blend_mode) {
       return SkBlendMode::kPlus;
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return SkBlendMode::kSrcOver;
 }
 

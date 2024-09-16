@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/updater/win/app_command_runner.h"
 
 #include <windows.h>
@@ -273,10 +278,10 @@ std::optional<std::wstring> AppCommandRunner::FormatParameter(
     const std::wstring& parameter,
     const std::vector<std::wstring>& substitutions) {
   return base::internal::DoReplaceStringPlaceholders(
-      /*format_string*/ parameter, /*subst*/ substitutions,
-      /*placeholder_prefix*/ L'%',
-      /*should_escape_multiple_placeholder_prefixes*/ false,
-      /*is_strict_mode*/ true, /*offsets*/ nullptr);
+      /*format_string=*/parameter, /*subst=*/substitutions,
+      /*placeholder_prefix=*/L'%',
+      /*should_escape_multiple_placeholder_prefixes=*/false,
+      /*is_strict_mode=*/true, /*offsets=*/nullptr);
 }
 
 // static

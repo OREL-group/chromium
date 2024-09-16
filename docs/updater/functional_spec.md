@@ -57,7 +57,21 @@ with the updater).
 
 #### Elevation (Windows)
 The metainstaller parses its tag and re-launches itself at high integrity if
-installing an application with `needsadmin=true` or `needsadmin=prefers`.
+it is being run at medium integrity with UAC on and installing an application
+with `needsadmin=true` or `needsadmin=prefers`.
+
+More information is in the
+[design document](design_doc.md#elevation)
+.
+
+#### De-elevation (Windows)
+The metainstaller parses its tag and re-launches itself at medium integrity if
+it is being run at high integrity with UAC on and installing an application with
+`needsadmin=false`.
+
+More information is in the
+[design document](design_doc.md#de_elevation)
+.
 
 #### Localization
 Metainstaller localization presents the metainstaller UI with the user's
@@ -65,7 +79,7 @@ preferred language on the current system. Every string shown in the UI is
 translated.
 
 ### Bundle Installer
-TODO(crbug.com/1035895): Implement bundle installers.
+TODO(crbug.com/40664480): Implement bundle installers.
 
 The bundle installer allows installation of more than one application. The
 bundle installer is typically used in software distribution scenarios.
@@ -220,7 +234,7 @@ The final manifest looks as follows:
 ```
 
 ### MSI Wrapper
-TODO(crbug.com/1327497) - Implement and document.
+TODO(crbug.com/40841203) - Implement and document.
 
 ### Scope
 The updater is installed in one of the following modes (or scopes):
@@ -611,7 +625,7 @@ install. Legacy MSI installers read values such as the
 `LastInstallerResultUIString` from the `ClientState` key in the registry and
 display the string.
 
-TODO(crbug.com/1339454): Implement running installers at
+TODO(crbug.com/40229998): Implement running installers at
 BELOW_NORMAL_PRIORITY_CLASS if the update flow is a background flow.
 
 #### Updater UI behavior
@@ -736,7 +750,7 @@ treating "x64" the same as "x86_64".
 For more information, see the
 [protocol document](protocol_3_1.md#update-checks-body-update-check-response-objects-update-check-response-3).
 
-### MSI installers (work in progress)
+### MSI installers
 
 MSI installers package an offline/standalone installer, and can be built using
 [msi_from_standalone.py](https://source.chromium.org/chromium/chromium/src/+/main:chrome/updater/win/signing/msi_from_standalone.py)
@@ -758,13 +772,14 @@ python3 chrome/updater/win/signing/msi_from_standalone.py
     --appid {8237E44A-0054-442C-B6B6-EA0509993955}
     --product_custom_params "&brand=GCEA"
     --product_uninstaller_additional_args=--force-uninstall
-    --product_installer_data "%7B%22dis%22%3A%7B%22msi%22%3Atrue%7D%7D"
+    --product_installer_data "%7B%22distribution%22%3A%7B%22msi%22%3Atrue%7D%7D"
     --standalone_installer_path ChromeBetaOfflineSetup.exe
     --custom_action_dll_path out/Default/msi_custom_action.dll
     --msi_base_name GoogleChromeBetaStandaloneEnterprise
     --enterprise_installer_dir chrome/updater/win/signing
     --company_name "Google"
     --company_full_name "Google LLC"
+    --architecture x64
     --output_dir out/Default
 ```
 
@@ -776,7 +791,7 @@ metainstaller with the following parameters:
       appname=GoogleChromeBeta&needsAdmin=True&brand=GCEA
 --installsource=enterprisemsi
 --appargs=appguid={8237E44A-0054-442C-B6B6-EA0509993955}&
-          installerdata=%7B%22dis%22%3A%7B%22msi%22%3Atrue%7D%7D
+          installerdata=%7B%22distribution%22%3A%7B%22msi%22%3Atrue%7D%7D
 ```
 
 This MSI can be tagged using `tag.exe` as follows:
@@ -799,20 +814,25 @@ the following parameters:
       appname=Google%20Chrome%20Beta&needsAdmin=True&brand=GGLL
 --installsource enterprisemsi
 --appargs=appguid={8237E44A-0054-442C-B6B6-EA0509993955}&
-          installerdata=%7B%22dis%22%3A%7B%22msi%22%3Atrue%7D%7D
+          installerdata=%7B%22distribution%22%3A%7B%22msi%22%3Atrue%7D%7D
 ```
 
 ### Enterprise Enrollment
-The updater may be enrolled with a particular enterprise. Enrollment is
+The machine updater may be enrolled with a particular enterprise. Enrollment is
 coordinated with a device management server by means of an enrollment token and
 a device management token. The enrollment token is placed on the device by other
 programs or the enterprise administrator and serves as an indicator of which
-enterprise the device should attempt to enroll with. The updater sends the
-enrollment token, along with the device's machine name, os information, and
-(on Windows) BIOS serial number. If the server accepts the enrollment, it
-responds with a device-specific device management token, which is used in
-future requests to fetch device-specific policies from the device management
-server.
+enterprise the device should attempt to enroll with. On Windows platform,
+alternatively, an enrollment token can be tagged to the meta-installer by the
+key `etoken`. This is called runtime enrollment token and must be a GUID string.
+When the meta-installer runs, the tagged token is persisted to
+`CloudManagementEnrollmentToken` under registry key
+`{CLIENTSTATE}\{UpdaterAppID}`.  The updater searches the enrollment token from
+known places in order, sends it along with the device's machine name, os
+information, and (on Windows) BIOS serial number. If the server accepts the
+enrollment, it responds with a device-specific device management token, which is
+used in future requests to fetch device-specific policies from the device
+management server.
 
 By default, if enrollment fails, for example if the enrollment token is invalid
 or revoked, the updater will start in an unmanaged state. Instead, if you want
@@ -830,16 +850,23 @@ The maximum size of the token is 4K (Windows only).
 
 #### Windows
 The enrollment token is searched in the order:
+
 * The `EnrollmentToken` REG_SZ value from
   `HKLM\Software\Policies\{COMPANY_SHORTNAME}\CloudManagement`
 * The `CloudManagementEnrollmentToken` REG_SZ value from
   `HKLM\Software\Policies\{COMPANY_SHORTNAME}\{BROWSER_NAME}`
+* The `CloudManagementEnrollmentToken` REG_SZ value from
+  `{CLIENTSTATE}\{UpdaterAppID}` (the runtime enrollmen token)
+* The `CloudManagementEnrollmentToken` REG_SZ value from
+  `{CLIENTSTATE}\{430FD4D0-B729-4F61-AA34-91526481799D}` (the legacy runtime
+  enrollment token)
 
 The `EnrollmentMandatory` `REG_DWORD` value is also read from
 `HKLM\Software\Policies\{COMPANY_SHORTNAME}\CloudManagement`.
 
 #### macOS
 The enrollment token is searched in the order:
+
 * Managed Preference value with key `CloudManagementEnrollmentToken` in domain
  `{MAC_BROWSER_BUNDLE_IDENTIFIER}`.
 * Managed Preference value with key `EnrollmentToken` in domain
@@ -903,8 +930,8 @@ Enterprise policies can control the updates of applications:
 * If no per-application setting specifies otherwise, the default update
   policy is used.
 * If the default update policy is unset, the application may be updated.
-* Updates are always enabled for the updater itself and can't be disabled by
-  policy..
+* Updates and qualification are always enabled for the updater itself and can't
+  be disabled by policy.
 
 Refer to chrome/updater/protos/omaha\_settings.proto for more details.
 
@@ -942,13 +969,22 @@ to a non-zero DWORD value, then the search order of `Group policy` and
 
 #### COM interfaces (Windows only)
 The updater exposes
-[IPolicyStatus3](https://source.chromium.org/chromium/chromium/src/+/main:chrome/updater/app/server/win/updater_legacy_idl.template;l=555?q=IPolicyStatus3&ss=chromium)
+[IPolicyStatus4](https://source.chromium.org/search?q=IPolicyStatus4%20file:updater_legacy_idl.template)
 and the corresponding `IDispatch` implementation to provide clients such as
 Chrome the ability to query the updater enterprise policies.
 
 A client can `CoCreateInstance` the `PolicyStatusUserClass` or the
 `PolicyStatusSystemClass` to get the corresponding policy status object and
-query it via the `IPolicyStatus3` methods.
+query it via the `IPolicyStatus4` methods.
+
+#### Enterprise policies ADM/ADMX files (Windows, Google-branded builds only)
+
+ADM/ADMX files for enterprise policies are generated with each build in
+`GoogleUpdateAdmx.zip` and `GoogleCloudManagementAdmx.zip` for enterprise
+customers.
+
+These ADM/ADMX files are generated using the scripts in
+[chrome/updater/enterprise/win/google/](https://source.chromium.org/chromium/chromium/src/+/main:chrome/updater/enterprise/win/google/).
 
 #### Deploying enterprise applications via updater policy
 For each application that needs to be deployed via the updater, the policy for
@@ -1176,7 +1212,7 @@ The updater accepts updates packaged as CRX₃ files. All files are signed with 
 publisher key. The corresponding public key is hardcoded into the updater.
 
 ### Differential Updates
-TODO(crbug.com/1331030): Implement and document differential update support.
+TODO(crbug.com/40227383): Implement and document differential update support.
 
 ### Update Timing
 The updater runs periodic tasks every hour, checking its own status, detecting
@@ -1409,6 +1445,12 @@ mode and begin normal operation the next time it runs periodic tasks.
 Once operating normally, the updater only returns to eula-required mode when
 it is uninstalled and then reinstalled with `--eularequired`.
 
+### Windows: checking if EULA has already been accepted
+*   Applications can check if the EULA has already been accepted by checking
+    whether the value `eulaaccepted` does not exist at
+    `HKCU|HKLM\SOFTWARE\{Company}\Update`, or if it does exist, that it has a
+    value of `(DWORD): 1`.
+
 ### Usage Stats Acceptance
 The updater may upload its crash reports and send usage stats if and only if
 any piece of software it manages is permitted to send usage stats.
@@ -1476,6 +1518,11 @@ use `%PROGRAMFILESX86%` if appropriate instead.)
 
 On Windows for user-scope updaters, `{UPDATER_DATA_DIR}` is
 `%LOCALAPPDATA%\{COMPANY_SHORTNAME}\{PRODUCT_FULLNAME}`.
+
+On Windows, when the updater uninstalls itself, and there are no other versions
+of the updater in existence for the scope, the updater saves a copy of the final
+log file to `Windows\SystemTemp\updater.log` for system installs, and
+`%TMP%\updater.log` for user installs.
 
 ## Network
 
@@ -1658,10 +1705,12 @@ In addition there is a delay between when the GPO is set on the server and when
 the value is propagated on the client so being able to verify that the updater
 picks up the policy can help debug propagation issues as well.
 
-The IPolicyStatus/IPolicyStatus2/IPolicyStatus3 interfaces therefore expose this
-functionality that can be queried and shown in chrome://policy.
+The IPolicyStatus/IPolicyStatus2/IPolicyStatus3/IPolicyStatus4 interfaces
+therefore expose this functionality that can be queried and shown in
+chrome://policy.
 
-[IPolicyStatus/IPolicyStatus2/IPolicyStatus3 interface definition](https://source.chromium.org/chromium/chromium/src/+/main:chrome/updater/app/server/win/updater_legacy_idl.template?q=IPolicyStatus)
+[IPolicyStatus/IPolicyStatus2/IPolicyStatus3/IPolicyStatus4 interface definition]
+(https://source.chromium.org/chromium/chromium/src/+/main:chrome/updater/app/server/win/updater_legacy_idl.template?q=IPolicyStatus)
 
 ## Uninstallation
 On Mac and Linux, if the application was registered with an existence path

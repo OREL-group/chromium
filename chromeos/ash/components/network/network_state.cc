@@ -7,9 +7,11 @@
 #include <stddef.h>
 
 #include <memory>
+#include <optional>
 #include <type_traits>
 #include <utility>
 
+#include "ash/constants/ash_features.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
@@ -17,6 +19,7 @@
 #include "base/values.h"
 #include "chromeos/ash/components/network/cellular_utils.h"
 #include "chromeos/ash/components/network/device_state.h"
+#include "chromeos/ash/components/network/network_config.h"
 #include "chromeos/ash/components/network/network_event_log.h"
 #include "chromeos/ash/components/network/network_profile_handler.h"
 #include "chromeos/ash/components/network/network_type_pattern.h"
@@ -266,6 +269,9 @@ bool NetworkState::PropertyChanged(const std::string& key,
       return false;
     }
     max_downlink_speed_kbps_ = max_downlink_speed_kbps;
+    return true;
+  } else if (key == shill::kNetworkConfigProperty) {
+    network_config_ = NetworkConfig::ParseFromServicePropertyValue(value);
     return true;
   }
   return false;
@@ -526,6 +532,12 @@ NetworkState::PortalState NetworkState::GetPortalState() const {
                                                        : shill_portal_state_;
 }
 
+void NetworkState::SetChromePortalState(PortalState portal_state) {
+  CHECK(!features::IsRemoveDetectPortalFromChromeEnabled());
+
+  chrome_portal_state_ = portal_state;
+}
+
 bool NetworkState::IsSecure() const {
   return !security_class_.empty() &&
          security_class_ != shill::kSecurityClassNone;
@@ -644,7 +656,7 @@ NetworkState::NetworkTechnologyType NetworkState::GetNetworkTechnologyType()
   if (network_type == shill::kTypeWifi) {
     return NetworkTechnologyType::kWiFi;
   }
-  NOTREACHED() << "Unknown network type: " << network_type;
+  NOTREACHED_IN_MIGRATION() << "Unknown network type: " << network_type;
   return NetworkTechnologyType::kUnknown;
 }
 

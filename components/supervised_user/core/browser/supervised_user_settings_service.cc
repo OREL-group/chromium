@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 #include <set>
+#include <string_view>
 #include <utility>
 
 #include "base/feature_list.h"
@@ -16,7 +17,6 @@
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/user_metrics.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/values.h"
@@ -33,8 +33,8 @@ namespace supervised_user {
 using base::JSONReader;
 using base::UserMetricsAction;
 using base::Value;
+using syncer::DataType;
 using syncer::ModelError;
-using syncer::ModelType;
 using syncer::SUPERVISED_USER_SETTINGS;
 using syncer::SyncChange;
 using syncer::SyncChangeList;
@@ -80,7 +80,7 @@ bool SyncChangeIsNewWebsiteApproval(const std::string& name,
       return !old_value->GetIfBool().value_or(true);
     }
     default: {
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return false;
     }
   }
@@ -235,19 +235,19 @@ void SupervisedUserSettingsService::SaveItem(
   InformSubscribers();
 }
 
-void SupervisedUserSettingsService::SetLocalSetting(base::StringPiece key,
+void SupervisedUserSettingsService::SetLocalSetting(std::string_view key,
                                                     base::Value value) {
   local_settings_.Set(key, std::move(value));
   InformSubscribers();
 }
 
-void SupervisedUserSettingsService::SetLocalSetting(base::StringPiece key,
+void SupervisedUserSettingsService::SetLocalSetting(std::string_view key,
                                                     base::Value::Dict dict) {
   local_settings_.Set(key, std::move(dict));
   InformSubscribers();
 }
 
-void SupervisedUserSettingsService::RemoveLocalSetting(base::StringPiece key) {
+void SupervisedUserSettingsService::RemoveLocalSetting(std::string_view key) {
   local_settings_.Remove(key);
   InformSubscribers();
 }
@@ -286,7 +286,7 @@ void SupervisedUserSettingsService::WaitUntilReadyToSync(
 
 std::optional<syncer::ModelError>
 SupervisedUserSettingsService::MergeDataAndStartSyncing(
-    ModelType type,
+    DataType type,
     const SyncDataList& initial_sync_data,
     std::unique_ptr<SyncChangeProcessor> sync_processor) {
   DCHECK_EQ(SUPERVISED_USER_SETTINGS, type);
@@ -366,13 +366,13 @@ SupervisedUserSettingsService::MergeDataAndStartSyncing(
   return std::nullopt;
 }
 
-void SupervisedUserSettingsService::StopSyncing(ModelType type) {
+void SupervisedUserSettingsService::StopSyncing(DataType type) {
   DCHECK_EQ(syncer::SUPERVISED_USER_SETTINGS, type);
   sync_processor_.reset();
 }
 
 SyncDataList SupervisedUserSettingsService::GetAllSyncDataForTesting(
-    ModelType type) const {
+    DataType type) const {
   DCHECK_EQ(syncer::SUPERVISED_USER_SETTINGS, type);
   SyncDataList data;
   for (const auto it : *GetAtomicSettings()) {
@@ -457,9 +457,6 @@ SupervisedUserSettingsService::ProcessSyncChanges(
 base::WeakPtr<syncer::SyncableService>
 SupervisedUserSettingsService::AsWeakPtr() {
   return weak_ptr_factory_.GetWeakPtr();
-}
-
-void SupervisedUserSettingsService::OnPrefValueChanged(const std::string& key) {
 }
 
 void SupervisedUserSettingsService::OnInitializationCompleted(bool success) {

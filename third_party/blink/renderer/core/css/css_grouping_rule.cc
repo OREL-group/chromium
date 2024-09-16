@@ -30,12 +30,12 @@
 
 #include "third_party/blink/renderer/core/css/css_grouping_rule.h"
 
+#include "third_party/blink/renderer/core/css/css_page_rule.h"
 #include "third_party/blink/renderer/core/css/css_rule_list.h"
 #include "third_party/blink/renderer/core/css/css_style_rule.h"
 #include "third_party/blink/renderer/core/css/css_style_sheet.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
-#include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
@@ -71,14 +71,27 @@ StyleRuleBase* ParseRuleForInsert(const ExecutionContext* execution_context,
       parent_rule.ParserContext(execution_context->GetSecureContextMode()),
       style_sheet);
   StyleRuleBase* new_rule = nullptr;
-  StyleRule* parent_rule_for_nesting =
-      FindClosestParentStyleRuleOrNull(&parent_rule);
-  CSSNestingType nesting_type = parent_rule_for_nesting
-                                    ? CSSNestingType::kNesting
-                                    : CSSNestingType::kNone;
-  new_rule = CSSParser::ParseRule(
-      context, style_sheet ? style_sheet->Contents() : nullptr, nesting_type,
-      parent_rule_for_nesting, rule_string);
+  if (IsA<CSSPageRule>(parent_rule)) {
+    new_rule = CSSParser::ParseMarginRule(
+        context, style_sheet ? style_sheet->Contents() : nullptr, rule_string);
+  } else {
+    StyleRule* parent_rule_for_nesting =
+        FindClosestParentStyleRuleOrNull(&parent_rule);
+    CSSNestingType nesting_type = parent_rule_for_nesting
+                                      ? CSSNestingType::kNesting
+                                      : CSSNestingType::kNone;
+    new_rule = CSSParser::ParseRule(
+        context, style_sheet ? style_sheet->Contents() : nullptr, nesting_type,
+        parent_rule_for_nesting, rule_string);
+
+    if (!new_rule && parent_rule_for_nesting &&
+        RuntimeEnabledFeatures::CSSNestedDeclarationsEnabled()) {
+      // Retry as a CSSNestedDeclarations rule.
+      // https://drafts.csswg.org/cssom/#insert-a-css-rule
+      new_rule = CSSParser::ParseNestedDeclarationsRule(
+          context, nesting_type, parent_rule_for_nesting, rule_string);
+    }
+  }
 
   if (!new_rule) {
     exception_state.ThrowDOMException(
@@ -104,7 +117,8 @@ StyleRuleBase* ParseRuleForInsert(const ExecutionContext* execution_context,
     return nullptr;
   }
 
-  if (!new_rule->IsConditionRule() && !new_rule->IsStyleRule()) {
+  if (!new_rule->IsConditionRule() && !new_rule->IsStyleRule() &&
+      !new_rule->IsNestedDeclarationsRule()) {
     for (const CSSRule* current = &parent_rule; current != nullptr;
          current = current->parentRule()) {
       if (IsA<CSSStyleRule>(current)) {
@@ -112,8 +126,8 @@ StyleRuleBase* ParseRuleForInsert(const ExecutionContext* execution_context,
         // so inserting this rule is not allowed.
         exception_state.ThrowDOMException(
             DOMExceptionCode::kHierarchyRequestError,
-            "Only conditional nested group rules and style rules may be "
-            "nested.");
+            "Only conditional nested group rules, style rules, and nested "
+            "declaration rules may be nested.");
         return nullptr;
       }
     }
@@ -148,7 +162,6 @@ unsigned CSSGroupingRule::insertRule(const ExecutionContext* execution_context,
     CSSStyleSheet::RuleMutationScope mutation_scope(this);
     group_rule_->WrapperInsertRule(parentStyleSheet(), index, new_rule);
     child_rule_cssom_wrappers_.insert(index, Member<CSSRule>(nullptr));
-    UseCountForSignalAffected();
     return index;
   }
 }
@@ -174,7 +187,6 @@ void CSSGroupingRule::deleteRule(unsigned index,
     child_rule_cssom_wrappers_[index]->SetParentRule(nullptr);
   }
   child_rule_cssom_wrappers_.EraseAt(index);
-  UseCountForSignalAffected();
 }
 
 void CSSGroupingRule::AppendCSSTextForItems(StringBuilder& result) const {
@@ -240,12 +252,6 @@ void CSSGroupingRule::Reattach(StyleRuleBase* rule) {
       child_rule_cssom_wrappers_[i]->Reattach(
           group_rule_->ChildRules()[i].Get());
     }
-  }
-}
-
-void CSSGroupingRule::UseCountForSignalAffected() {
-  if (group_rule_->HasSignalingChildRule()) {
-    CountUse(WebFeature::kCSSRuleWithSignalingChildModified);
   }
 }
 

@@ -14,6 +14,7 @@
 #include <utility>
 #include <vector>
 
+#include "ash/app_list/apps_collections_controller.h"
 #include "ash/public/cpp/app_list/app_list_client.h"
 #include "ash/public/cpp/app_list/app_list_metrics.h"
 #include "base/gtest_prod_util.h"
@@ -33,6 +34,7 @@
 class ProfileManager;
 
 namespace app_list {
+class AppListSurveyHandler;
 class SearchController;
 }  // namespace app_list
 
@@ -97,7 +99,8 @@ class AppListClientImpl
   void ActivateItem(int profile_id,
                     const std::string& id,
                     int event_flags,
-                    ash::AppListLaunchedFrom launched_from) override;
+                    ash::AppListLaunchedFrom launched_from,
+                    bool is_above_the_fold) override;
   void GetContextMenuModel(int profile_id,
                            const std::string& id,
                            ash::AppListItemContext item_context,
@@ -116,6 +119,11 @@ class AppListClientImpl
   void LoadIcon(int profile_id, const std::string& app_id) override;
   ash::AppListSortOrder GetPermanentSortingOrder() const override;
   std::optional<bool> IsNewUser(const AccountId& account_id) const override;
+  void RecordAppsDefaultVisibility(
+      const std::vector<std::string>& apps_above_the_fold,
+      const std::vector<std::string>& apps_below_the_fold,
+      bool is_apps_collections_page) override;
+  bool HasReordered() override;
 
   // user_manager::UserManager::UserSessionStateObserver:
   void ActiveUserChanged(user_manager::User* active_user) override;
@@ -167,7 +175,11 @@ class AppListClientImpl
   // Initializes as if a new user logged in for testing.
   void InitializeAsIfNewUserLoginForTest();
 
+  // Recalculate the default position of apps with a modified order.
+  void MaybeRecalculateAppsGridDefaultOrder();
+
  private:
+  friend class AppListSurveyTriggerTest;
   FRIEND_TEST_ALL_PREFIXES(AppListClientWithProfileTest, CheckDataRace);
 
   struct StateForNewUser {
@@ -208,6 +220,14 @@ class AppListClientImpl
   // app and opening a search result from either a suggestion chip or the search
   // box. `launched_from` indicates where the launcher action comes from.
   void MaybeRecordLauncherAction(ash::AppListLaunchedFrom launched_from);
+
+  // Maybe record an activated item's visibility. An app item visibility refers
+  // to above or below the fold of the launcher (i.e. is it is visible without
+  // scrolling or switching the page).
+  void MaybeRecordActivatedItemVisibility(
+      const std::string& id,
+      ash::AppListLaunchedFrom launched_from,
+      bool is_app_above_the_fold);
 
   // Unowned pointer to the associated profile. May change if SetProfile is
   // called.
@@ -256,6 +276,8 @@ class AppListClientImpl
   // sessions for the given user. As such, this value is absent until the first
   // app list sync of the session is completed.
   std::optional<bool> is_primary_profile_new_user_;
+
+  std::unique_ptr<app_list::AppListSurveyHandler> survey_handler_;
 
   // The profile manager is observed in order to ensure that the AppList has the
   // necessary dependencies to identify new users.

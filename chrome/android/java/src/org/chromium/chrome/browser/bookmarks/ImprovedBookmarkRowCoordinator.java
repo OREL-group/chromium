@@ -110,7 +110,7 @@ public class ImprovedBookmarkRowCoordinator {
         propertyModel.set(ImprovedBookmarkRowProperties.EDITABLE, bookmarkItem.isEditable());
 
         // Shopping coordinator setup.
-        if (PowerBookmarkUtils.isShoppingListItem(meta)) {
+        if (PowerBookmarkUtils.isShoppingListItem(mShoppingService, meta)) {
             ShoppingAccessoryCoordinator shoppingAccessoryCoordinator =
                     new ShoppingAccessoryCoordinator(
                             mContext, meta.getShoppingSpecifics(), mShoppingService);
@@ -180,6 +180,11 @@ public class ImprovedBookmarkRowCoordinator {
                 ImprovedBookmarkRowProperties.FOLDER_CHILD_COUNT,
                 BookmarkUtils.getChildCountForDisplay(bookmarkItem.getId(), mBookmarkModel));
         propertyModel.set(
+                ImprovedBookmarkRowProperties.FOLDER_CHILD_COUNT_TEXT_STYLE,
+                BookmarkUtils.isSpecialFolder(mBookmarkModel, bookmarkItem)
+                        ? R.style.TextAppearance_SpecialFolderChildCount
+                        : R.style.TextAppearance_RegularFolderChildCount);
+        propertyModel.set(
                 ImprovedBookmarkRowProperties.FOLDER_START_AREA_BACKGROUND_COLOR,
                 BookmarkUtils.getIconBackground(mContext, mBookmarkModel, bookmarkItem));
         propertyModel.set(
@@ -217,7 +222,7 @@ public class ImprovedBookmarkRowCoordinator {
             BookmarkItem item, @BookmarkRowDisplayPref int displayPref) {
         // Local bookmarks shouldn't get images, even if they're cached. This is only relevant when
         // account bookmarks are enabled.
-        if (SyncFeatureMap.isEnabled(SyncFeatureMap.ENABLE_BOOKMARK_FOLDERS_FOR_ACCOUNT_STORAGE)
+        if (SyncFeatureMap.isEnabled(SyncFeatureMap.SYNC_ENABLE_BOOKMARKS_IN_TRANSPORT_MODE)
                 && !item.isAccountBookmark()) {
             return false;
         }

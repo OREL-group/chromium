@@ -66,11 +66,6 @@ void AffiliationPrefetcher::OnFacetsRemoved(std::vector<FacetURI> facets) {
   for (const FacetURI& facet_uri : facets) {
     if (facet_uri.is_valid()) {
       affiliation_service_->CancelPrefetch(facet_uri, base::Time::Max());
-      // TODO(b/328037758): Implement `TrimCacheForFacetURI` as part of
-      // `CancelPrefetch` and remove it from the API. Since now it's a
-      // responsibility of a source to call `OnFacetsAdded` first before
-      // invoking `OnFacetsRemoved`.
-      affiliation_service_->TrimCacheForFacetURI(facet_uri);
     }
   }
 }
@@ -90,15 +85,6 @@ void AffiliationPrefetcher::OnResultFromAllSourcesReceived(
     return;
   }
 
-  // If no calls to `RegisterSource` happened before
-  // `kInitializationDelayOnStartup`, don't do anything.
-  if (results.empty()) {
-    is_ready_ = true;
-    // TODO(b/328037758): Drop early return to support resetting the cache when
-    // no affiliations are requested.
-    return;
-  }
-
   std::vector<FacetURI> facets;
   for (const auto& result_per_source : results) {
     for (const FacetURI& facet_uri : result_per_source) {
@@ -115,6 +101,10 @@ void AffiliationPrefetcher::OnResultFromAllSourcesReceived(
 
 void AffiliationPrefetcher::Initialize() {
   if (pending_initializations_.empty()) {
+    // Reset the cache if no sources have been registered.
+    DCHECK(initialized_sources_.empty());
+    affiliation_service_->KeepPrefetchForFacets({});
+    affiliation_service_->TrimUnusedCache({});
     is_ready_ = true;
     return;
   }

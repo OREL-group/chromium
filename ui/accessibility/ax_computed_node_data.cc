@@ -25,6 +25,46 @@ AXComputedNodeData::AXComputedNodeData(const AXNode& node) : owner_(&node) {}
 
 AXComputedNodeData::~AXComputedNodeData() = default;
 
+// static
+bool AXComputedNodeData::CanComputeAttribute(
+    const ax::mojom::IntAttribute attribute,
+    const AXNode* node) {
+  // NOTE: This method must be kept strictly in sync with parent deferral logic
+  // in AXInlineTextBox::(next|previous)OnLine.
+  if (attribute != ax::mojom::IntAttribute::kNextOnLineId &&
+      attribute != ax::mojom::IntAttribute::kPreviousOnLineId) {
+    return false;
+  }
+
+  if (!::features::IsAccessibilityPruneRedundantInlineConnectivityEnabled()) {
+    return false;
+  }
+
+  // Inline text boxes share the same next- or previous-on-line ID with the
+  // parent when traversing across the parent's boundary. Determination of the
+  // next- or previous-on-line IDs for this type of connectivity is expensive
+  // during the serialization process. Unnecessary to duplicate the effort.
+  if (node->data().role != ax::mojom::Role::kInlineTextBox) {
+    return false;
+  }
+
+  if (!node->GetParent()) {
+    return false;
+  }
+
+  if (node == node->GetParent()->GetFirstChild() &&
+      attribute == ax::mojom::IntAttribute::kPreviousOnLineId) {
+    return node->GetParent()->data().HasIntAttribute(attribute);
+  }
+
+  if (node == node->GetParent()->GetLastChild() &&
+      attribute == ax::mojom::IntAttribute::kNextOnLineId) {
+    return node->GetParent()->data().HasIntAttribute(attribute);
+  }
+
+  return false;
+}
+
 int AXComputedNodeData::GetOrComputeUnignoredIndexInParent() const {
   DCHECK(!owner_->IsIgnored())
       << "Ignored nodes cannot have an `unignored index in parent`.\n"
@@ -100,6 +140,16 @@ bool AXComputedNodeData::GetOrComputeIsDescendantOfPlatformLeaf() const {
   return *is_descendant_of_leaf_;
 }
 
+bool AXComputedNodeData::ComputeAttribute(
+    const ax::mojom::IntAttribute attribute,
+    int* value) const {
+  DCHECK(CanComputeAttribute(attribute, owner_));
+  // The first inline text box can infer its previous online ID from the parent
+  // static text. The last inline text box can infer its next online ID from the
+  // parent.
+  return owner_->GetParent()->data().GetIntAttribute(attribute, value);
+}
+
 bool AXComputedNodeData::HasOrCanComputeAttribute(
     const ax::mojom::StringAttribute attribute) const {
   if (owner_->data().HasStringAttribute(attribute))
@@ -110,6 +160,10 @@ bool AXComputedNodeData::HasOrCanComputeAttribute(
       // The value attribute could be computed on the browser for content
       // editables and ARIA text/search boxes.
       return owner_->data().IsNonAtomicTextField();
+
+    case ax::mojom::StringAttribute::kName:
+      return CanInferNameAttribute();
+
     default:
       return false;
   }
@@ -151,6 +205,13 @@ const std::string& AXComputedNodeData::GetOrComputeAttributeUTF8(
       // such controls on the browser. The same for all other controls, other
       // than non-atomic text fields.
       return base::EmptyString();
+
+    case ax::mojom::StringAttribute::kName:
+      if (CanInferNameAttribute()) {
+        return GetOrComputeTextContentUTF8();
+      }
+      return base::EmptyString();
+
     default:
       return base::EmptyString();
   }
@@ -174,6 +235,13 @@ std::u16string AXComputedNodeData::GetOrComputeAttributeUTF16(
       // such controls on the browser. The same for all other controls, other
       // than non-atomic text fields.
       return std::u16string();
+
+    case ax::mojom::StringAttribute::kName:
+      if (CanInferNameAttribute()) {
+        return GetOrComputeTextContentUTF16();
+      }
+      return std::u16string();
+
     default:
       return std::u16string();
   }
@@ -286,6 +354,18 @@ int AXComputedNodeData::GetOrComputeTextContentLengthUTF16() const {
     utf16_length_ = ComputeTextContentUTF16().length();
   }
   return utf16_length_.value();
+}
+
+bool AXComputedNodeData::CanInferNameAttribute() const {
+  // The name may be suppressed when serializing an AXInlineTextBox if it
+  // can be inferred from the parent.
+  return ::features::IsAccessibilityPruneRedundantInlineTextEnabled() &&
+         owner_->data().role == ax::mojom::Role::kInlineTextBox &&
+         owner_->data().GetNameFrom() == ax::mojom::NameFrom::kContents &&
+         owner_->GetParent()->data().GetNameFrom() ==
+             ax::mojom::NameFrom::kContents &&
+         owner_->GetParent()->data().HasStringAttribute(
+             ax::mojom::StringAttribute::kName);
 }
 
 void AXComputedNodeData::ComputeUnignoredValues(
@@ -463,7 +543,6 @@ std::string AXComputedNodeData::ComputeTextContentUTF8() const {
   // set and kNone if the text content is to be inferred from the parent.
   if (::features::IsAccessibilityPruneRedundantInlineTextEnabled()) {
     if (owner_->data().role == ax::mojom::Role::kInlineTextBox &&
-        owner_->data().GetNameFrom() == ax::mojom::NameFrom::kNone &&
         !owner_->data().HasStringAttribute(ax::mojom::StringAttribute::kName)) {
       return owner_->GetParent()->data().GetStringAttribute(
           ax::mojom::StringAttribute::kName);
@@ -507,6 +586,13 @@ std::string AXComputedNodeData::ComputeTextContentUTF8() const {
       // The accessible name does not represent the entirety of the node's text
       // content, e.g. a table's caption or a figure's figcaption.
       case ax::mojom::NameFrom::kCaption:
+      // The name comes from CSS alt text.
+      case ax::mojom::NameFrom::kCssAltText:
+      // The object should not have an accessible name according to ARIA 1.2.
+      // If kProhibited is set, that means we calculated a name in Blink and
+      // are deliberately not exposing it.
+      case ax::mojom::NameFrom::kProhibited:
+      case ax::mojom::NameFrom::kProhibitedAndRedundant:
       case ax::mojom::NameFrom::kRelatedElement:
       // The accessible name is not displayed directly inside the node but is
       // visible via e.g. a tooltip.

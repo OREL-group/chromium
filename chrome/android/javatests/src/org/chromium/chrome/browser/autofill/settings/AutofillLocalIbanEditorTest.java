@@ -6,7 +6,14 @@ package org.chromium.chrome.browser.autofill.settings;
 
 import static com.google.common.truth.Truth.assertThat;
 
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
 import android.os.Bundle;
+import android.view.MenuItem;
 
 import androidx.test.filters.MediumTest;
 
@@ -14,28 +21,36 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
 
-import org.chromium.base.test.util.Features;
+import org.chromium.base.ThreadUtils;
+import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.chrome.browser.autofill.AutofillEditorBase;
 import org.chromium.chrome.browser.autofill.AutofillTestHelper;
+import org.chromium.chrome.browser.autofill.PersonalDataManager;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.Iban;
+import org.chromium.chrome.browser.autofill.PersonalDataManagerFactory;
 import org.chromium.chrome.browser.settings.SettingsActivity;
 import org.chromium.chrome.browser.settings.SettingsActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.chrome.test.R;
 import org.chromium.components.autofill.IbanRecordType;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
+import org.chromium.ui.modaldialog.ModalDialogManager;
+import org.chromium.ui.test.util.modaldialog.FakeModalDialogManager;
 
+// TODO(b/309163597): Add Robolectric tests to test the local editor behavior.
 @RunWith(ChromeJUnit4ClassRunner.class)
 public class AutofillLocalIbanEditorTest {
-    @Rule public TestRule mFeaturesProcessorRule = new Features.JUnitProcessor();
     @Rule public final AutofillTestRule rule = new AutofillTestRule();
 
     @Rule
     public final SettingsActivityTestRule<AutofillLocalIbanEditor> mSettingsActivityTestRule =
             new SettingsActivityTestRule<>(AutofillLocalIbanEditor.class);
 
+    @Mock private ObservableSupplierImpl<ModalDialogManager> mModalDialogManagerSupplierMock;
+    @Mock private PersonalDataManager mPersonalDataManagerMock;
     private AutofillTestHelper mAutofillTestHelper;
 
     private Bundle fragmentArgs(String guid) {
@@ -46,7 +61,7 @@ public class AutofillLocalIbanEditorTest {
 
     private static final Iban VALID_BELGIUM_IBAN =
             new Iban.Builder()
-                    .setGuid("")
+                    .setLabel("")
                     .setNickname("My IBAN")
                     .setRecordType(IbanRecordType.UNKNOWN)
                     .setValue("BE71096123456769")
@@ -54,6 +69,7 @@ public class AutofillLocalIbanEditorTest {
 
     @Before
     public void setUp() {
+        MockitoAnnotations.initMocks(this);
         mAutofillTestHelper = new AutofillTestHelper();
     }
 
@@ -67,7 +83,7 @@ public class AutofillLocalIbanEditorTest {
 
     private void setNicknameInEditor(
             AutofillLocalIbanEditor autofillLocalIbanEditorFragment, String nickname) {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     try {
                         autofillLocalIbanEditorFragment.mNickname.setText(nickname);
@@ -79,13 +95,28 @@ public class AutofillLocalIbanEditorTest {
 
     private void setValueInEditor(
             AutofillLocalIbanEditor autofillLocalIbanEditorFragment, String value) {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     try {
                         autofillLocalIbanEditorFragment.mValue.setText(value);
                     } catch (Exception e) {
                         Assert.fail("Failed to set IBAN");
                     }
+                });
+    }
+
+    private void openDeletePaymentMethodConfirmationDialog(
+            AutofillLocalIbanEditor autofillLocalIbanEditorFragment,
+            ModalDialogManager modalDialogManager) {
+        when(mModalDialogManagerSupplierMock.get()).thenReturn(modalDialogManager);
+        autofillLocalIbanEditorFragment.setModalDialogManagerSupplier(
+                mModalDialogManagerSupplierMock);
+
+        MenuItem deleteButton = mock(MenuItem.class);
+        when(deleteButton.getItemId()).thenReturn(R.id.delete_menu_id);
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    autofillLocalIbanEditorFragment.onOptionsItemSelected(deleteButton);
                 });
     }
 
@@ -181,5 +212,57 @@ public class AutofillLocalIbanEditorTest {
         setNicknameInEditor(autofillLocalIbanEditorFragment, /* nickname= */ "My doctor's IBAN");
 
         assertThat(autofillLocalIbanEditorFragment.mDoneButton.isEnabled()).isTrue();
+    }
+
+    @Test
+    @MediumTest
+    public void deleteIbanConfirmationDialog_deleteEntryCanceled_dialogDismissed()
+            throws Exception {
+        String guid = mAutofillTestHelper.addOrUpdateLocalIban(VALID_BELGIUM_IBAN);
+        SettingsActivity activity =
+                mSettingsActivityTestRule.startSettingsActivity(fragmentArgs(guid));
+        AutofillLocalIbanEditor autofillLocalIbanEditorFragment =
+                (AutofillLocalIbanEditor) activity.getMainFragment();
+
+        PersonalDataManagerFactory.setInstanceForTesting(mPersonalDataManagerMock);
+
+        FakeModalDialogManager fakeModalDialogManager =
+                new FakeModalDialogManager(ModalDialogManager.ModalDialogType.APP);
+        openDeletePaymentMethodConfirmationDialog(
+                autofillLocalIbanEditorFragment, fakeModalDialogManager);
+
+        // Verify the dialog is open.
+        Assert.assertNotNull(fakeModalDialogManager.getShownDialogModel());
+        ThreadUtils.runOnUiThreadBlocking(() -> fakeModalDialogManager.clickNegativeButton());
+        // Verify the dialog is closed.
+        Assert.assertNull(fakeModalDialogManager.getShownDialogModel());
+        // Verify the IBAN entry is not deleted.
+        verify(mPersonalDataManagerMock, never()).deleteIban(guid);
+    }
+
+    @Test
+    @MediumTest
+    public void deleteIbanConfirmationDialog_deleteEntryConfirmed_dialogDismissedAndEntryDeleted()
+            throws Exception {
+        String guid = mAutofillTestHelper.addOrUpdateLocalIban(VALID_BELGIUM_IBAN);
+        SettingsActivity activity =
+                mSettingsActivityTestRule.startSettingsActivity(fragmentArgs(guid));
+        AutofillLocalIbanEditor autofillLocalIbanEditorFragment =
+                (AutofillLocalIbanEditor) activity.getMainFragment();
+
+        PersonalDataManagerFactory.setInstanceForTesting(mPersonalDataManagerMock);
+
+        FakeModalDialogManager fakeModalDialogManager =
+                new FakeModalDialogManager(ModalDialogManager.ModalDialogType.APP);
+        openDeletePaymentMethodConfirmationDialog(
+                autofillLocalIbanEditorFragment, fakeModalDialogManager);
+
+        // Verify the dialog is open.
+        Assert.assertNotNull(fakeModalDialogManager.getShownDialogModel());
+        ThreadUtils.runOnUiThreadBlocking(() -> fakeModalDialogManager.clickPositiveButton());
+        // Verify the dialog is closed.
+        Assert.assertNull(fakeModalDialogManager.getShownDialogModel());
+        // Verify the IBAN entry is deleted.
+        verify(mPersonalDataManagerMock, times(1)).deleteIban(guid);
     }
 }

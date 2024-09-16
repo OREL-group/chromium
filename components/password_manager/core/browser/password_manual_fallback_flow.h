@@ -8,13 +8,19 @@
 #include "base/functional/callback_forward.h"
 #include "base/memory/weak_ptr.h"
 #include "components/autofill/core/browser/filling_product.h"
-#include "components/autofill/core/browser/ui/autofill_popup_delegate.h"
-#include "components/autofill/core/browser/ui/popup_item_ids.h"
+#include "components/autofill/core/browser/ui/autofill_suggestion_delegate.h"
 #include "components/autofill/core/browser/ui/suggestion.h"
+#include "components/autofill/core/browser/ui/suggestion_type.h"
 #include "components/password_manager/core/browser/form_fetcher_impl.h"
 #include "components/password_manager/core/browser/password_suggestion_flow.h"
 #include "components/password_manager/core/browser/password_suggestion_generator.h"
 #include "components/password_manager/core/browser/ui/saved_passwords_presenter.h"
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || \
+    BUILDFLAG(IS_CHROMEOS)
+#include "components/password_manager/core/browser/password_cross_domain_confirmation_popup_controller.h"
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) ||
+        // BUILDFLAG(IS_CHROMEOS)
 
 namespace autofill {
 class AutofillClient;
@@ -30,10 +36,11 @@ class FormFetcherImpl;
 class PasswordFormCache;
 class PasswordManagerDriver;
 class PasswordManagerClient;
+class PasswordManualFallbackMetricsRecorder;
 
 // Displays all available passwords password suggestions on password and
 // non-password forms for all available passwords.
-class PasswordManualFallbackFlow : public autofill::AutofillPopupDelegate,
+class PasswordManualFallbackFlow : public autofill::AutofillSuggestionDelegate,
                                    public PasswordSuggestionFlow,
                                    public SavedPasswordsPresenter::Observer,
                                    public FormFetcher::Consumer {
@@ -42,6 +49,7 @@ class PasswordManualFallbackFlow : public autofill::AutofillPopupDelegate,
       PasswordManagerDriver* password_manager_driver,
       autofill::AutofillClient* autofill_client,
       PasswordManagerClient* password_client,
+      PasswordManualFallbackMetricsRecorder* manual_fallback_metrics_recorder,
       const PasswordFormCache* password_form_cache,
       std::unique_ptr<SavedPasswordsPresenter> passwords_presenter);
   PasswordManualFallbackFlow(const PasswordManualFallbackFlow&) = delete;
@@ -49,7 +57,7 @@ class PasswordManualFallbackFlow : public autofill::AutofillPopupDelegate,
       delete;
   ~PasswordManualFallbackFlow() override;
 
-  static bool SupportsSuggestionType(autofill::PopupItemId popup_item_id);
+  static bool SupportsSuggestionType(autofill::SuggestionType type);
 
   // Generates suggestions and shows the Autofill popup if the passwords were
   // already read from disk. Otherwise, saves the input parameters to run the
@@ -58,16 +66,18 @@ class PasswordManualFallbackFlow : public autofill::AutofillPopupDelegate,
                const gfx::RectF& bounds,
                base::i18n::TextDirection text_direction) override;
 
-  // AutofillPopupDelegate:
+  // AutofillSuggestionDelegate:
   absl::variant<autofill::AutofillDriver*, PasswordManagerDriver*> GetDriver()
       override;
-  void OnPopupShown() override;
-  void OnPopupHidden() override;
+  void OnSuggestionsShown(
+      base::span<const autofill::Suggestion> suggestions) override;
+  void OnSuggestionsHidden() override;
   void DidSelectSuggestion(const autofill::Suggestion& suggestion) override;
   void DidAcceptSuggestion(const autofill::Suggestion& suggestion,
-                           const SuggestionPosition& position) override;
+                           const SuggestionMetadata& metadata) override;
   void DidPerformButtonActionForSuggestion(
-      const autofill::Suggestion& suggestion) override;
+      const autofill::Suggestion&,
+      const autofill::SuggestionButtonAction&) override;
   bool RemoveSuggestion(const autofill::Suggestion& suggestion) override;
   void ClearPreviewedForm() override;
   autofill::FillingProduct GetMainFillingProduct() const override;
@@ -112,10 +122,27 @@ class PasswordManualFallbackFlow : public autofill::AutofillPopupDelegate,
   // Cancels an ongoing biometric re-authentication.
   void CancelBiometricReauthIfOngoing();
 
+  // For credentials not originated from the current domain (defined by
+  // `payload.is_cross_domain`), this method makes sure that the `on_allowed`
+  // callback is called only after receiving user's explicit consent (through
+  // a bubble dialog).
+  // For non cross domain usages the `on_allowed` is called immediately.
+  void EnsureCrossDomainPasswordUsageGetsConsent(
+      const autofill::Suggestion::PasswordSuggestionDetails& payload,
+      base::OnceClosure on_allowed);
+
+  // Returns whether `field_id_` represents a username or password field in
+  // `password_form_`. This only considers the username and password fields
+  // stored in the `PasswordForm` object.
+  bool IsTriggerFieldRelevantInPasswordForm(
+      const PasswordForm* password_form) const;
+
   const PasswordSuggestionGenerator suggestion_generator_;
   const raw_ptr<PasswordManagerDriver> password_manager_driver_;
   const raw_ptr<autofill::AutofillClient> autofill_client_;
   const raw_ptr<PasswordManagerClient> password_client_;
+  const raw_ptr<PasswordManualFallbackMetricsRecorder>
+      manual_fallback_metrics_recorder_;
   const raw_ptr<const PasswordFormCache> password_form_cache_;
 
   // Flow state changes the following way:
@@ -132,7 +159,11 @@ class PasswordManualFallbackFlow : public autofill::AutofillPopupDelegate,
   // one invocation is delayed.
   base::OnceClosure on_all_password_data_ready_;
 
-  autofill::FieldRendererId saved_field_id_;
+  // The latest `RunFlow()` call arguments.
+  autofill::FieldRendererId field_id_;
+  gfx::RectF bounds_;
+  base::i18n::TextDirection text_direction_;
+
   // Fetches user passwords relevant for the current domain.
   std::unique_ptr<FormFetcherImpl> form_fetcher_;
   // Reads all user passwords from disk.
@@ -145,6 +176,13 @@ class PasswordManualFallbackFlow : public autofill::AutofillPopupDelegate,
   // to be cleared before the password is filled. Currently only used
   // on Android, Mac and Windows.
   std::unique_ptr<device_reauth::DeviceAuthenticator> authenticator_;
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || \
+    BUILDFLAG(IS_CHROMEOS)
+  std::unique_ptr<PasswordCrossDomainConfirmationPopupController>
+      cross_domain_confirmation_popup_controller_;
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) ||
+        // BUILDFLAG(IS_CHROMEOS)
 
   base::WeakPtrFactory<PasswordManualFallbackFlow> weak_ptr_factory_{this};
 };

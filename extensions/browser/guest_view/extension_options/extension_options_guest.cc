@@ -24,7 +24,6 @@
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/guest_view/extension_options/extension_options_constants.h"
 #include "extensions/browser/guest_view/extension_options/extension_options_guest_delegate.h"
-#include "extensions/browser/guest_view/guest_view_feature_util.h"
 #include "extensions/common/api/extension_options_internal.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
@@ -115,10 +114,8 @@ void ExtensionOptionsGuest::DidInitialize(
 
 void ExtensionOptionsGuest::MaybeRecreateGuestContents(
     content::RenderFrameHost* outer_contents_frame) {
-  if (AreWebviewMPArchBehaviorsEnabled(browser_context())) {
-    // This situation is not possible for ExtensionOptions.
-    NOTREACHED();
-  }
+  // This situation is not possible for ExtensionOptions.
+  NOTREACHED_IN_MIGRATION();
 }
 
 void ExtensionOptionsGuest::GuestViewDidStopLoading() {
@@ -149,7 +146,7 @@ void ExtensionOptionsGuest::OnPreferredSizeChanged(const gfx::Size& pref_size) {
       options.ToValue()));
 }
 
-void ExtensionOptionsGuest::AddNewContents(
+WebContents* ExtensionOptionsGuest::AddNewContents(
     WebContents* source,
     std::unique_ptr<WebContents> new_contents,
     const GURL& target_url,
@@ -163,11 +160,12 @@ void ExtensionOptionsGuest::AddNewContents(
   // WebContents.
   DCHECK(!ExtensionOptionsGuest::FromWebContents(new_contents.get()));
   if (!attached() || !embedder_web_contents()->GetDelegate())
-    return;
+    return nullptr;
 
   embedder_web_contents()->GetDelegate()->AddNewContents(
       source, std::move(new_contents), target_url, disposition, window_features,
       user_gesture, was_blocked);
+  return nullptr;
 }
 
 WebContents* ExtensionOptionsGuest::OpenURLFromTab(
@@ -213,7 +211,7 @@ bool ExtensionOptionsGuest::HandleContextMenu(
 
 bool ExtensionOptionsGuest::ShouldResumeRequestsForCreatedWindow() {
   // Not reached due to the use of `CreateCustomWebContents`.
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return true;
 }
 
@@ -258,7 +256,7 @@ WebContents* ExtensionOptionsGuest::CreateCustomWebContents(
 
 void ExtensionOptionsGuest::DidFinishNavigation(
     content::NavigationHandle* navigation_handle) {
-  // TODO(crbug.com/1261928): Due to the use of inner WebContents, an
+  // TODO(crbug.com/40202416): Due to the use of inner WebContents, an
   // ExtensionOptionsGuest's main frame is considered primary. This will no
   // longer be the case once we migrate guest views to MPArch.
   if (!navigation_handle->IsInPrimaryMainFrame() ||

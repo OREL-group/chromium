@@ -153,8 +153,10 @@ class OmniboxLacrosProviderTest : public testing::Test {
     // The profile needs a template URL service for history Omnibox results.
     profile_ = profile_manager_->CreateTestingProfile(
         chrome::kInitialProfile,
-        {{TemplateURLServiceFactory::GetInstance(),
-          base::BindRepeating(&TemplateURLServiceFactory::BuildInstanceFor)}});
+        {TestingProfile::TestingFactory{
+            TemplateURLServiceFactory::GetInstance(),
+            base::BindRepeating(
+                &TemplateURLServiceFactory::BuildInstanceFor)}});
 
     // Create client of our provider.
     search_controller_ = std::make_unique<TestSearchController>();
@@ -345,8 +347,10 @@ TEST_F(OmniboxLacrosProviderTest, WebSearchControl) {
   auto search_producer = std::make_unique<TestSearchResultProducer>();
   RegisterSearchController(search_producer->BindToRemote());
   base::test::ScopedFeatureList scoped_feature_list_;
-  scoped_feature_list_.InitAndEnableFeature(
-      ash::features::kLauncherSearchControl);
+  scoped_feature_list_.InitWithFeatures(
+      {ash::features::kLauncherSearchControl,
+       ash::features::kFeatureManagementLocalImageSearch},
+      {});
   DisableWebSearch();
 
   StartSearch(u"query");

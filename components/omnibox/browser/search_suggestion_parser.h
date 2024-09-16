@@ -8,16 +8,17 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
-#include "base/strings/string_piece.h"
 #include "base/values.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/autocomplete_match_type.h"
 #include "components/omnibox/browser/autocomplete_provider.h"
 #include "components/omnibox/browser/suggestion_answer.h"
 #include "components/omnibox/browser/suggestion_group_util.h"
+#include "third_party/omnibox_proto/answer_type.pb.h"
 #include "third_party/omnibox_proto/chrome_searchbox_stats.pb.h"
 #include "third_party/omnibox_proto/entity_info.pb.h"
 #include "third_party/omnibox_proto/navigational_intent.pb.h"
@@ -77,8 +78,7 @@ class SearchSuggestionParser {
     bool received_after_last_keystroke() const {
       return received_after_last_keystroke_;
     }
-    void set_received_after_last_keystroke(
-        bool received_after_last_keystroke) {
+    void set_received_after_last_keystroke(bool received_after_last_keystroke) {
       received_after_last_keystroke_ = received_after_last_keystroke;
     }
 
@@ -199,6 +199,9 @@ class SearchSuggestionParser {
       return answer_template_;
     }
 
+    void SetAnswerType(const omnibox::AnswerType& answer_type);
+    const omnibox::AnswerType& answer_type() const { return answer_type_; }
+
     void SetEntityInfo(const omnibox::EntityInfo&);
     const omnibox::EntityInfo& entity_info() const { return entity_info_; }
 
@@ -238,8 +241,11 @@ class SearchSuggestionParser {
     // Optional short answer to the input that produced this suggestion.
     std::optional<SuggestionAnswer> answer_;
 
-    // Optional proto that contains answer info.
+    // Optional proto that contains answer info for rich answers.
     std::optional<omnibox::RichAnswerTemplate> answer_template_;
+
+    // Answer type for answer verticals, including rich answers.
+    omnibox::AnswerType answer_type_ = omnibox::ANSWER_TYPE_UNSPECIFIED;
 
     // Proto containing various pieces of data related to entity suggestions.
     omnibox::EntityInfo entity_info_;
@@ -375,7 +381,7 @@ class SearchSuggestionParser {
   // protection if needed. Returns the parsed data if successful, NULL
   // otherwise.
   static std::optional<base::Value::List> DeserializeJsonData(
-      base::StringPiece json_data);
+      std::string_view json_data);
 
   // Parses results from the suggest server and updates the appropriate suggest
   // and navigation result lists in |results|. |is_keyword_result| indicates

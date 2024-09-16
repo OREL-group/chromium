@@ -35,6 +35,7 @@
 #import "components/remote_cocoa/app_shim/mouse_capture.h"
 #import "components/remote_cocoa/app_shim/native_widget_mac_frameless_nswindow.h"
 #import "components/remote_cocoa/app_shim/native_widget_mac_nswindow.h"
+#import "components/remote_cocoa/app_shim/native_widget_mac_overlay_nswindow.h"
 #import "components/remote_cocoa/app_shim/native_widget_ns_window_host_helper.h"
 #include "components/remote_cocoa/app_shim/select_file_dialog_bridge.h"
 #import "components/remote_cocoa/app_shim/views_nswindow_delegate.h"
@@ -49,6 +50,7 @@
 #import "ui/base/cocoa/window_size_constants.h"
 #include "ui/base/emoji/emoji_panel_helper.h"
 #include "ui/base/hit_test.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
@@ -312,6 +314,13 @@ NativeWidgetMacNSWindow* NativeWidgetNSWindowBridge::CreateNSWindow(
                       backing:NSBackingStoreBuffered
                         defer:NO];
       break;
+    case mojom::WindowClass::kOverlay:
+      ns_window = [[NativeWidgetMacOverlayNSWindow alloc]
+          initWithContentRect:ui::kWindowSizeDeterminedLater
+                    styleMask:params->style_mask
+                      backing:NSBackingStoreBuffered
+                        defer:NO];
+      break;
   }
   ns_window.releasedWhenClosed = NO;
 
@@ -395,7 +404,13 @@ void NativeWidgetNSWindowBridge::SetParent(uint64_t new_parent_id) {
   // NativeWidgetMac.
   NativeWidgetNSWindowBridge* new_parent =
       NativeWidgetNSWindowBridge::GetFromId(new_parent_id);
-  DCHECK(new_parent);
+  if (!new_parent) {
+    // When the OS tells us a window is closing it is removed from the id map.
+    // Since nothing is stopping the browser process from still trying to use
+    // that id until the browser process has been informed that the window is
+    // gone, it is totally possible to be passed no longer valid ids here.
+    return;
+  }
 
   parent_ = new_parent;
   parent_->child_windows_.push_back(this);
@@ -439,7 +454,13 @@ void NativeWidgetNSWindowBridge::ShowCertificateViewer(
 void NativeWidgetNSWindowBridge::StackAbove(uint64_t sibling_id) {
   NativeWidgetNSWindowBridge* sibling_bridge =
       NativeWidgetNSWindowBridge::GetFromId(sibling_id);
-  DCHECK(sibling_bridge);
+  if (!sibling_bridge) {
+    // When the OS tells us a window is closing it is removed from the id map.
+    // Since nothing is stopping the browser process from still trying to use
+    // that id until the browser process has been informed that the window is
+    // gone, it is totally possible to be passed no longer valid ids here.
+    return;
+  }
 
   NSInteger sibling = sibling_bridge->ns_window().windowNumber;
   [window_ orderWindowByShuffling:NSWindowAbove relativeTo:sibling];
@@ -503,8 +524,9 @@ void NativeWidgetNSWindowBridge::InitWindow(
   [window_ setHasShadow:params->has_window_server_shadow];
 
   // Don't allow dragging sheets.
-  if (params->modal_type == ui::MODAL_TYPE_WINDOW)
+  if (params->modal_type == ui::mojom::ModalType::kWindow) {
     [window_ setMovable:NO];
+  }
   [window_ setIsTooltip:params->is_tooltip];
 }
 
@@ -763,17 +785,6 @@ void NativeWidgetNSWindowBridge::SetVisibilityState(
     pending_restoration_data_.clear();
 
     session_restore_in_progress = true;
-
-    // During an immersive fullscreen restore the key view loop can become
-    // corrupted. In certain situation this can cause an infinite loop when
-    // looking for the next valid key view, leading to an OOM. Recalculate the
-    // loop after the restore to prevent this. See https://crbug.com/324812653
-    // for details.
-    // TODO(http://crbug.com/40261565): Remove when FB12010731 is fixed in
-    // AppKit.
-    if ([window_ immersiveFullscreen]) {
-      [window_ recalculateKeyViewLoop];
-    }
   }
 
   // Ensure that:
@@ -1092,6 +1103,11 @@ void NativeWidgetNSWindowBridge::DisplayContextMenu(
   runner.ShowMenu(std::move(menu), GetWindow(), target_view);
 }
 
+void NativeWidgetNSWindowBridge::SetAllowScreenshots(bool allow) {
+  [ns_window()
+      setSharingType:allow ? NSWindowSharingReadOnly : NSWindowSharingNone];
+}
+
 void NativeWidgetNSWindowBridge::OnWindowWillClose() {
   fullscreen_controller_.OnWindowWillClose();
   // Immersive full screen needs to be disabled synchronously when the window
@@ -1320,8 +1336,8 @@ void NativeWidgetNSWindowBridge::OnDisplayAdded(
   UpdateWindowDisplay();
 }
 
-void NativeWidgetNSWindowBridge::OnDisplayRemoved(
-    const display::Display& display) {
+void NativeWidgetNSWindowBridge::OnDisplaysRemoved(
+    const display::Displays& removed_displays) {
   UpdateWindowDisplay();
 }
 
@@ -1521,6 +1537,9 @@ void NativeWidgetNSWindowBridge::ExitFullscreen() {
   fullscreen_controller_.ExitFullscreen();
 }
 
+// TODO(https://crbug.com/357082344): Do not set
+// `NSWindowCollectionBehaviorPrimary` if the window does not already have this
+// flag set by `SetCanAppearInExistingFullscreenSpaces(true)`
 void NativeWidgetNSWindowBridge::SetCanAppearInExistingFullscreenSpaces(
     bool can_appear_in_existing_fullscreen_spaces) {
   NSWindowCollectionBehavior collectionBehavior = window_.collectionBehavior;
@@ -1790,7 +1809,7 @@ void NativeWidgetNSWindowBridge::UpdateWindowDisplay() {
 }
 
 bool NativeWidgetNSWindowBridge::IsWindowModalSheet() const {
-  return parent_ && modal_type_ == ui::MODAL_TYPE_WINDOW;
+  return parent_ && modal_type_ == ui::mojom::ModalType::kWindow;
 }
 
 void NativeWidgetNSWindowBridge::ShowAsModalSheet() {

@@ -45,8 +45,8 @@ namespace {
 webapps::AppId InstallTestWebApp(Profile* profile) {
   const GURL example_url = GURL("http://example.org/");
 
-  auto web_app_info = std::make_unique<web_app::WebAppInstallInfo>();
-  web_app_info->start_url = example_url;
+  auto web_app_info =
+      web_app::WebAppInstallInfo::CreateWithStartUrlForTesting(example_url);
   web_app_info->scope = example_url;
   web_app_info->user_display_mode =
       web_app::mojom::UserDisplayMode::kStandalone;
@@ -107,7 +107,7 @@ IN_PROC_BROWSER_TEST_F(WebAppUninstallDialogViewBrowserTest,
 
   EXPECT_TRUE(test_future.Wait());
   EXPECT_EQ(test_future.Get<webapps::UninstallResultCode>(),
-            webapps::UninstallResultCode::kSuccess);
+            webapps::UninstallResultCode::kAppRemoved);
 }
 
 IN_PROC_BROWSER_TEST_F(WebAppUninstallDialogViewBrowserTest,
@@ -139,5 +139,5 @@ IN_PROC_BROWSER_TEST_F(WebAppUninstallDialogViewBrowserTest,
 
   EXPECT_TRUE(test_future.Wait());
   EXPECT_EQ(test_future.Get<webapps::UninstallResultCode>(),
-            webapps::UninstallResultCode::kSuccess);
+            webapps::UninstallResultCode::kAppRemoved);
 }

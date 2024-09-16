@@ -14,10 +14,12 @@
 #include "components/omnibox/browser/actions/omnibox_action.h"
 #include "components/omnibox/browser/actions/omnibox_action_factory_android.h"
 #include "components/omnibox/browser/clipboard_provider.h"
-#include "components/omnibox/browser/jni_headers/AutocompleteMatch_jni.h"
+#include "components/omnibox/browser/omnibox_feature_configs.h"
 #include "components/omnibox/browser/search_suggestion_parser.h"
-#include "components/query_tiles/android/tile_conversion_bridge.h"
 #include "url/android/gurl_android.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "components/omnibox/browser/jni_headers/AutocompleteMatch_jni.h"
 
 using base::android::ConvertUTF16ToJavaString;
 using base::android::ConvertUTF8ToJavaString;
@@ -55,7 +57,17 @@ ScopedJavaLocalRef<jobject> AutocompleteMatch::GetOrCreateJavaObject(
 
   base::android::ScopedJavaLocalRef<jobject> janswer;
   if (answer)
-    janswer = answer->CreateJavaObject();
+    janswer = answer->CreateJavaObject(answer_type);
+
+  ScopedJavaLocalRef<jbyteArray> j_answer_template;
+  if (answer_template) {
+    std::string str_answer_template;
+    if (answer_template->SerializeToString(&str_answer_template)) {
+      j_answer_template =
+          base::android::ToJavaByteArray(env, str_answer_template);
+    }
+  }
+
   ScopedJavaLocalRef<jstring> j_image_dominant_color;
   ScopedJavaLocalRef<jstring> j_post_content_type;
   ScopedJavaLocalRef<jbyteArray> j_post_content;
@@ -94,13 +106,17 @@ ScopedJavaLocalRef<jobject> AutocompleteMatch::GetOrCreateJavaObject(
           ConvertUTF16ToJavaString(env, description),
           ToJavaIntArray(env, description_class_offsets),
           ToJavaIntArray(env, description_class_styles), janswer,
+          j_answer_template, answer_type,
           ConvertUTF16ToJavaString(env, fill_into_edit),
           url::GURLAndroid::FromNativeGURL(env, destination_url),
           url::GURLAndroid::FromNativeGURL(env, image_url),
           j_image_dominant_color, SupportsDeletion(), j_post_content_type,
           j_post_content, suggestion_group_id.value_or(omnibox::GROUP_INVALID),
           ToJavaByteArray(env, clipboard_image_data),
-          has_tab_match.value_or(false), actions_list));
+          has_tab_match.value_or(false), actions_list,
+          allowed_to_be_default_match,
+          ConvertUTF16ToJavaString(env, inline_autocompletion),
+          ConvertUTF16ToJavaString(env, additional_text)));
 
   return ScopedJavaLocalRef<jobject>(*java_match_);
 }
@@ -202,8 +218,23 @@ void AutocompleteMatch::UpdateJavaDestinationUrl() {
 void AutocompleteMatch::UpdateJavaAnswer() {
   if (java_match_) {
     JNIEnv* env = base::android::AttachCurrentThread();
-    Java_AutocompleteMatch_setAnswer(
-        env, *java_match_, answer ? answer->CreateJavaObject() : nullptr);
+    if (omnibox_feature_configs::SuggestionAnswerMigration::Get().enabled) {
+      ScopedJavaLocalRef<jbyteArray> j_answer_template;
+      if (answer_template) {
+        std::string str_answer_template;
+        if (answer_template->SerializeToString(&str_answer_template)) {
+          j_answer_template =
+              base::android::ToJavaByteArray(env, str_answer_template);
+        }
+      }
+      Java_AutocompleteMatch_setAnswerTemplate(
+          env, *java_match_, answer_template ? j_answer_template : nullptr);
+    } else {
+      Java_AutocompleteMatch_setAnswer(
+          env, *java_match_,
+          answer ? answer->CreateJavaObject(answer_type) : nullptr);
+    }
+    Java_AutocompleteMatch_setAnswerType(env, *java_match_, answer_type);
   }
 }
 

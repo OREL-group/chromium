@@ -39,13 +39,14 @@
 #include "chrome/browser/history/jni_headers/HistoryTabHelper_jni.h"
 #include "chrome/browser/ui/android/tab_model/tab_model.h"
 #include "chrome/browser/ui/android/tab_model/tab_model_list.h"
-#include "components/feed/core/v2/public/feed_api.h"
-#include "components/feed/core/v2/public/feed_service.h"
+#include "components/feed/core/v2/public/feed_api.h"      // nogncheck
+#include "components/feed/core/v2/public/feed_service.h"  // nogncheck
 #include "content/public/browser/web_contents.h"
 #else
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #endif
+
 
 namespace {
 
@@ -65,8 +66,7 @@ bool IsNavigationFromFeed(content::WebContents& web_contents, const GURL& url) {
 
   return feed_service->GetStream()->WasUrlRecentlyNavigatedFromFeed(url);
 }
-
-#endif
+#endif  // BUILDFLAG(IS_ANDROID)
 
 bool ShouldConsiderForNtpMostVisited(
     content::WebContents& web_contents,
@@ -81,7 +81,7 @@ bool ShouldConsiderForNtpMostVisited(
                            navigation_handle->GetRedirectChain()[0])) {
     return false;
   }
-#endif
+#endif  // BUILDFLAG(IS_ANDROID)
 
   return true;
 }
@@ -120,6 +120,8 @@ history::VisitContextAnnotations::BrowserType GetBrowserType(
       return history::VisitContextAnnotations::BrowserType::kTabbed;
     case chrome::android::ActivityType::kCustomTab:
       return history::VisitContextAnnotations::BrowserType::kCustomTab;
+    case chrome::android::ActivityType::kAuthTab:
+      return history::VisitContextAnnotations::BrowserType::kAuthTab;
     case chrome::android::ActivityType::kTrustedWebActivity:
     case chrome::android::ActivityType::kWebapp:
     case chrome::android::ActivityType::kWebApk:
@@ -490,12 +492,15 @@ bool HistoryTabHelper::IsEligibleTab(
     return true;
 
 #if BUILDFLAG(IS_ANDROID)
-  auto* background_tab_manager = BackgroundTabManager::GetInstance();
-  if (background_tab_manager->IsBackgroundTab(web_contents())) {
-    // No history insertion is done for now since this is a tab that speculates
-    // future navigations. Just caching and returning for now.
-    background_tab_manager->CacheHistory(add_page_args);
-    return false;
+  if (web_contents()) {
+    auto* background_tab_manager =
+        BackgroundTabManager::FromWebContents(web_contents());
+    if (background_tab_manager) {
+      // No history insertion is done for now since this is a tab that
+      // speculates future navigations. Just caching and returning for now.
+      background_tab_manager->CacheHistory(add_page_args);
+      return false;
+    }
   }
   return true;
 #else

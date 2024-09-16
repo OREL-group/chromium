@@ -56,25 +56,6 @@ std::string SanitizeUrl(const std::string& url) {
   return GURL(url).DeprecatedGetOriginAsURL().spec();
 }
 
-void MaybeLogDocumentMetrics(const std::string& request_data,
-                             DownloadCheckResultReason reason) {
-  if (request_data.empty()) {
-    return;
-  }
-
-  ClientDownloadRequest request;
-  if (!request.ParseFromString(request_data))
-    return;
-
-  if (request.has_document_summary()) {
-    base::UmaHistogramBoolean(
-        "SBClientDownload.DocumentContainsMacros",
-        request.document_summary().metadata().contains_macros());
-    base::UmaHistogramEnumeration("SBClientDownload.DocumentCheckDownloadStats",
-                                  reason, REASON_MAX);
-  }
-}
-
 }  // namespace
 
 CheckClientDownloadRequestBase::CheckClientDownloadRequestBase(
@@ -117,11 +98,9 @@ void CheckClientDownloadRequestBase::Start() {
   DVLOG(2) << "Starting SafeBrowsing download check for: " << source_url_;
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  if (base::FeatureList::IsEnabled(kStrictDownloadTimeout)) {
-    content::GetUIThreadTaskRunner({})->PostTask(
-        FROM_HERE, base::BindOnce(&CheckClientDownloadRequestBase::StartTimeout,
-                                  GetWeakPtr()));
-  }
+  content::GetUIThreadTaskRunner({})->PostTask(
+      FROM_HERE, base::BindOnce(&CheckClientDownloadRequestBase::StartTimeout,
+                                GetWeakPtr()));
 
   if (IsAllowlistedByPolicy()) {
     FinishRequest(DownloadCheckResult::ALLOWLISTED_BY_POLICY,
@@ -159,7 +138,6 @@ void CheckClientDownloadRequestBase::FinishRequest(
 
   base::UmaHistogramEnumeration("SBClientDownload.CheckDownloadStats", reason,
                                 REASON_MAX);
-  MaybeLogDocumentMetrics(client_download_request_data_, reason);
 
   NotifyRequestFinished(result, reason);
   service()->RequestFinished(this, GetBrowserContext(), result);
@@ -243,7 +221,7 @@ void CheckClientDownloadRequestBase::OnUrlAllowlistCheckDone(
 
       default:
         // We only expect the reasons explicitly handled above.
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
     }
   }
   RecordFileExtensionType(kDownloadExtensionUmaName, target_file_path_);
@@ -309,8 +287,8 @@ void CheckClientDownloadRequestBase::GetAdditionalPromptResult(
     LogDeepScanningPrompt(deep_scanning_prompt);
   }
 
-  bool immediate_deep_scan_prompt =
-      ShouldImmediatelyDeepScan(response.request_deep_scan());
+  bool immediate_deep_scan_prompt = ShouldImmediatelyDeepScan(
+      response.request_deep_scan(), /*log_metrics=*/true);
   if (immediate_deep_scan_prompt) {
     *result = DownloadCheckResult::IMMEDIATE_DEEP_SCAN;
     *reason = DownloadCheckResultReason::REASON_IMMEDIATE_DEEP_SCAN;
@@ -322,10 +300,11 @@ void CheckClientDownloadRequestBase::GetAdditionalPromptResult(
 
   // Only record the UMA metric if we're in a population that potentially
   // could prompt for deep scanning.
-  if (ShouldImmediatelyDeepScan(/*server_requests_prompt=*/true)) {
+  if (ShouldImmediatelyDeepScan(/*server_requests_prompt=*/true,
+                                /*log_metrics=*/false)) {
     base::UmaHistogramBoolean(
-        "SBClientDownload.ServerRequestsImmediateDeepScan",
-        deep_scanning_prompt);
+        "SBClientDownload.ServerRequestsImmediateDeepScan2",
+        immediate_deep_scan_prompt);
   }
 }
 
@@ -365,15 +344,6 @@ void CheckClientDownloadRequestBase::OnRequestBuilt(
     FinishRequest(DownloadCheckResult::UNKNOWN,
                   REASON_ARCHIVE_WITHOUT_BINARIES);
     return;
-  }
-
-  if (!base::FeatureList::IsEnabled(kStrictDownloadTimeout)) {
-    // We wait until after the file checks finish to start the timeout, as
-    // windows can cause permissions errors if the timeout fired while we were
-    // checking the file signature and we tried to complete the download.
-    content::GetUIThreadTaskRunner({})->PostTask(
-        FROM_HERE, base::BindOnce(&CheckClientDownloadRequestBase::StartTimeout,
-                                  GetWeakPtr()));
   }
 
   if (!pingback_enabled_) {
@@ -546,6 +516,12 @@ void CheckClientDownloadRequestBase::OnURLLoaderComplete(
   }
   base::UmaHistogramSparse("SBClientDownload.DownloadRequestNetError",
                            -loader_->NetError());
+
+  if (!access_token_.empty()) {
+    MaybeLogCookieReset(*loader_,
+                        SafeBrowsingAuthenticatedEndpoint::kDownloadProtection);
+  }
+
   DownloadCheckResultReason reason = REASON_SERVER_PING_FAILED;
   DownloadCheckResult result = DownloadCheckResult::UNKNOWN;
   std::string token;
@@ -619,9 +595,9 @@ void CheckClientDownloadRequestBase::OnURLLoaderComplete(
     }
 
     bool upload_requested = response.upload();
-    MaybeStorePingsForDownload(result, upload_requested,
-                               client_download_request_data_,
-                               *response_body.get());
+    MaybeBeginFeedbackForDownload(result, upload_requested,
+                                  client_download_request_data_,
+                                  *response_body.get());
   }
 
   // We don't need the loader anymore.
@@ -646,14 +622,8 @@ void CheckClientDownloadRequestBase::OnURLLoaderComplete(
     case DownloadFileType::DMG:
       metrics_suffix = ".Dmg";
       break;
-    case DownloadFileType::OFFICE_DOCUMENT:
-      metrics_suffix = ".Document";
-      break;
     case DownloadFileType::SEVEN_ZIP:
-      if (base::FeatureList::IsEnabled(kSevenZipEvaluationEnabled))
-        metrics_suffix = ".SevenZip";
-      else
-        metrics_suffix = ".None";
+      metrics_suffix = ".SevenZip";
       break;
   }
   base::UmaHistogramTimes("SBClientDownload.DownloadRequestDuration", duration);

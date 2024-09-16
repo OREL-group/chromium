@@ -179,7 +179,7 @@ const char RandomizedEncoder::FIELD_AUTOCOMPLETE[] = "field-autocomplete";
 // Copy of components/unified_consent/pref_names.cc
 // We could not use the constant from components/unified_constants because of a
 // circular dependency.
-// TODO(https://crbug.com/831123): resolve circular dependency and remove
+// TODO(crbug.com/40570965): resolve circular dependency and remove
 // hardcoded constant
 const char RandomizedEncoder::kUrlKeyedAnonymizedDataCollectionEnabled[] =
     "url_keyed_anonymized_data_collection.enabled";
@@ -218,7 +218,7 @@ std::string RandomizedEncoder::Encode(FormSignature form_signature,
                                       std::string_view data_type,
                                       std::string_view data_value) const {
   if (!encoding_info_) {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return std::string();
   }
 

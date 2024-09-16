@@ -15,8 +15,8 @@
 
 namespace autofill {
 
-struct FormData;
-struct FormFieldData;
+class FormData;
+class FormFieldData;
 
 namespace internal {
 using FormSignatureType = ::base::IdTypeU64<class FormSignatureMarker>;

@@ -36,7 +36,7 @@
 #include "third_party/blink/renderer/core/html/forms/form_controller.h"
 #include "third_party/blink/renderer/core/html/forms/html_form_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
-#include "third_party/blink/renderer/core/layout/layout_ng_block_flow.h"
+#include "third_party/blink/renderer/core/layout/layout_block_flow.h"
 
 namespace blink {
 
@@ -97,16 +97,10 @@ HTMLFormElement* InputTypeView::FormForSubmission() const {
 LayoutObject* InputTypeView::CreateLayoutObject(
     const ComputedStyle& style) const {
   // Avoid LayoutInline, which can be split to multiple lines.
-  if (RuntimeEnabledFeatures::DateInputInlineBlockEnabled() &&
-      style.IsDisplayInlineType() && !style.IsDisplayReplacedType()) {
-    return MakeGarbageCollected<LayoutNGBlockFlow>(&GetElement());
+  if (style.IsDisplayInlineType() && !style.IsDisplayReplacedType()) {
+    return MakeGarbageCollected<LayoutBlockFlow>(&GetElement());
   }
   return LayoutObject::CreateObject(&GetElement(), style);
-}
-
-const ComputedStyle* InputTypeView::CustomStyleForLayoutObject(
-    const ComputedStyle* original_style) const {
-  return original_style;
 }
 
 ControlPart InputTypeView::AutoAppearance() const {
@@ -214,7 +208,7 @@ void InputTypeView::ValueAttributeChanged() {}
 void InputTypeView::DidSetValue(const String&, bool) {}
 
 void InputTypeView::SubtreeHasChanged() {
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 void InputTypeView::ListAttributeTargetChanged() {}

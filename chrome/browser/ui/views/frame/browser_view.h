@@ -15,6 +15,7 @@
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/scoped_observation.h"
+#include "base/task/cancelable_task_tracker.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "build/branding_buildflags.h"
@@ -54,7 +55,6 @@
 #include "third_party/blink/public/common/permissions/permission_utils.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/metadata/metadata_header_macros.h"
-#include "ui/base/models/simple_menu_model.h"
 #include "ui/base/pointer/touch_ui_controller.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/views/controls/button/button.h"
@@ -62,11 +62,6 @@
 #include "ui/views/widget/widget_delegate.h"
 #include "ui/views/widget/widget_observer.h"
 #include "ui/views/window/client_view.h"
-
-#if BUILDFLAG(ENTERPRISE_WATERMARK)
-#include "chrome/browser/enterprise/data_protection/data_protection_navigation_observer.h"
-#include "chrome/browser/enterprise/watermark/watermark_view.h"
-#endif
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 #include "ui/compositor/throughput_tracker.h"
@@ -109,12 +104,16 @@ enum class Channel;
 namespace views {
 class ExternalFocusTracker;
 class WebView;
-}
+}  // namespace views
 
 namespace webapps {
 enum class InstallableWebAppCheckResult;
 struct WebAppBannerData;
 }  // namespace webapps
+
+namespace enterprise_watermark {
+class WatermarkView;
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 // BrowserView
@@ -305,13 +304,8 @@ class BrowserView : public BrowserWindow,
   // Returns true if the specificed |accelerator| is registered with this view.
   bool IsAcceleratorRegistered(const ui::Accelerator& accelerator);
 
-  // Returns the active WebContents. Used by our NonClientView's
-  // TabIconView::TabContentsProvider implementations.
-  // TODO(beng): exposing this here is a bit bogus, since it's only used to
-  // determine loading state. It'd be nicer if we could change this to be
-  // bool IsSelectedTabLoading() const; or something like that. We could even
-  // move it to a WindowDelegate subclass.
-  content::WebContents* GetActiveWebContents() const;
+  // Returns the active WebContents.
+  content::WebContents* GetActiveWebContents();
 
   // Returns true if the Browser object associated with this BrowserView
   // supports tabs, such as all normal browsers, and tabbed apps like terminal.
@@ -329,18 +323,10 @@ class BrowserView : public BrowserWindow,
   // a Picture in Picture window.
   bool GetIsPictureInPictureType() const;
 
-  // Returns the initial_aspect_ratio parameter from |browser_|'s CreateParams.
-  // Valid only for PictureInPicture browsers.
-  float GetInitialAspectRatio() const;
-
   // Returns the document picture in picture options from |browser_|'s
   // CreateParams.
   std::optional<blink::mojom::PictureInPictureWindowOptions>
   GetDocumentPictureInPictureOptions() const;
-
-  // Returns the lock_aspect_ratio parameter from |browser_|'s CreateParams.
-  // Valid only for PictureInPicture browsers.
-  bool GetLockAspectRatio() const;
 
   // Returns true if the top browser controls (a.k.a. top-chrome UIs) are
   // allowed to slide up and down with the gesture scrolls on the current tab's
@@ -507,12 +493,9 @@ class BrowserView : public BrowserWindow,
                        ExclusiveAccessBubbleType bubble_type,
                        int64_t display_id) override;
   void ExitFullscreen() override;
-  void UpdateExclusiveAccessExitBubbleContent(
-      const GURL& url,
-      ExclusiveAccessBubbleType bubble_type,
-      ExclusiveAccessBubbleHideCallback bubble_first_hide_callback,
-      bool notify_download,
-      bool force_update) override;
+  void UpdateExclusiveAccessBubble(
+      const ExclusiveAccessBubbleParams& params,
+      ExclusiveAccessBubbleHideCallback first_hide_callback) override;
   bool IsExclusiveAccessBubbleDisplayed() const override;
   void OnExclusiveAccessUserInput() override;
   bool ShouldHideUIForFullscreen() const override;
@@ -527,6 +510,7 @@ class BrowserView : public BrowserWindow,
   void SetFocusToLocationBar(bool is_user_initiated) override;
   void UpdateReloadStopState(bool is_loading, bool force) override;
   void UpdateToolbar(content::WebContents* contents) override;
+  bool UpdateToolbarSecurityState() override;
   void UpdateCustomTabBarVisibility(bool visible, bool animate) override;
   void ResetToolbarTabState(content::WebContents* contents) override;
   void FocusToolbar() override;
@@ -548,6 +532,8 @@ class BrowserView : public BrowserWindow,
   bool IsLocationBarVisible() const override;
   bool IsBorderlessModeEnabled() const override;
   void ShowChromeLabs() override;
+  views::WebView* GetContentsWebView() override;
+  BrowserView* AsBrowserView() override;
   SharingDialog* ShowSharingDialog(content::WebContents* contents,
                                    SharingDialogData data) override;
   void ShowUpdateChromeDialog() override;
@@ -598,6 +584,7 @@ class BrowserView : public BrowserWindow,
   void SetDownloadShelfVisible(bool visible);
   bool IsDownloadShelfVisible() const override;
   DownloadShelf* GetDownloadShelf() override;
+  views::View* GetTopContainer() override;
   DownloadBubbleUIController* GetDownloadBubbleUIController() override;
   void ConfirmBrowserCloseWithPendingDownloads(
       int download_count,
@@ -606,17 +593,18 @@ class BrowserView : public BrowserWindow,
   void UserChangedTheme(BrowserThemeChangeType theme_change_type) override;
   void ShowAppMenu() override;
   content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
-      const content::NativeWebKeyboardEvent& event) override;
-  bool HandleKeyboardEvent(
-      const content::NativeWebKeyboardEvent& event) override;
-  void CutCopyPaste(int command_id) override;
+      const input::NativeWebKeyboardEvent& event) override;
+  bool HandleKeyboardEvent(const input::NativeWebKeyboardEvent& event) override;
   std::unique_ptr<FindBar> CreateFindBar() override;
   web_modal::WebContentsModalDialogHost* GetWebContentsModalDialogHost()
       override;
   void ShowAvatarBubbleFromAvatarButton(bool is_source_accelerator) override;
+  void ShowBubbleFromManagementToolbarButton() override;
   void MaybeShowProfileSwitchIPH() override;
   void ShowHatsDialog(
       const std::string& site_id,
+      const std::optional<std::string>& hats_histogram_name,
+      const std::optional<uint64_t> hats_survey_ukm_id,
       base::OnceClosure success_callback,
       base::OnceClosure failure_callback,
       const SurveyBitsData& product_specific_bits_data,
@@ -652,7 +640,8 @@ class BrowserView : public BrowserWindow,
       const base::Feature& iph_feature) override;
   void NotifyFeatureEngagementEvent(const char* event_name) override;
   void NotifyPromoFeatureUsed(const base::Feature& feature) override;
-  bool MaybeShowNewBadgeFor(const base::Feature& feature) override;
+  user_education::DisplayNewBadge MaybeShowNewBadgeFor(
+      const base::Feature& feature) override;
 
   void ShowIncognitoClearBrowsingDataDialog() override;
 
@@ -721,15 +710,6 @@ class BrowserView : public BrowserWindow,
 
   // content::WebContentsObserver:
   void DidFirstVisuallyNonEmptyPaint() override;
-#if BUILDFLAG(ENTERPRISE_WATERMARK)
-  void DidStartNavigation(
-      content::NavigationHandle* navigation_handle) override;
-
-  // TODO: b/330960313 - DocumentOnLoad is not the best signal to use for
-  // determining when a data protections should be enabled, FCP is a better
-  // signal.
-  void DocumentOnLoadCompletedInPrimaryMainFrame() override;
-#endif
 
   // views::ClientView:
   views::CloseRequestResult OnWindowCloseRequested() override;
@@ -746,7 +726,6 @@ class BrowserView : public BrowserWindow,
       const views::ViewHierarchyChangedDetails& details) override;
   void AddedToWidget() override;
   void PaintChildren(const views::PaintInfo& paint_info) override;
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   void OnThemeChanged() override;
   bool GetDropFormats(int* formats,
                       std::set<ui::ClipboardFormatType>* format_types) override;
@@ -760,20 +739,17 @@ class BrowserView : public BrowserWindow,
   // ExclusiveAccessContext:
   Profile* GetProfile() override;
   void UpdateUIForTabFullscreen() override;
-  content::WebContents* GetActiveWebContents() override;
+  content::WebContents* GetWebContentsForExclusiveAccess() override;
   bool CanUserExitFullscreen() const override;
 
   // ExclusiveAccessBubbleViewsContext:
   ExclusiveAccessManager* GetExclusiveAccessManager() override;
-  views::Widget* GetBubbleAssociatedWidget() override;
   ui::AcceleratorProvider* GetAcceleratorProvider() override;
   gfx::NativeView GetBubbleParentView() const override;
-  gfx::Point GetCursorPointInParent() const override;
   gfx::Rect GetClientAreaBoundsInScreen() const override;
   bool IsImmersiveModeEnabled() const override;
   gfx::Rect GetTopContainerBoundsInScreen() override;
   void DestroyAnyExclusiveAccessBubble() override;
-  bool CanTriggerOnMousePointer() const override;
 
   // extension::ExtensionKeybindingRegistry::Delegate:
   content::WebContents* GetWebContentsForExtension() override;
@@ -803,7 +779,7 @@ class BrowserView : public BrowserWindow,
   FullscreenControlHost* fullscreen_control_host_for_test() {
     return fullscreen_control_host_.get();
   }
-  views::View* GetSidePanelRoundedCorner() {
+  views::View* GetSidePanelRoundedCornerForTesting() {
     return side_panel_rounded_corner_;
   }
 
@@ -838,17 +814,22 @@ class BrowserView : public BrowserWindow,
     return watermark_view_;
   }
 
-  void set_on_delay_apply_data_protection_settings_if_empty_called_for_testing(
-      base::OnceClosure closure) {
-    on_delay_apply_data_protection_settings_if_empty_called_for_testing_ =
-        std::move(closure);
-  }
-
   // This value is used in a common calculation in NonClientFrameView
   // subclasses. This must be added to the origin of the first painted pixel of
   // NonClientFrameView to get the correct offset. See
   // TopContainerBackground::PaintThemeCustomImage for details.
   gfx::Point GetThemeOffsetFromBrowserView() const;
+
+  void ApplyWatermarkSettings(const std::string& watermark_text);
+
+#if BUILDFLAG(ENTERPRISE_SCREENSHOT_PROTECTION)
+  void ApplyScreenshotSettings(bool allow);
+#endif
+
+  // Clipboard commands.
+  void Cut();
+  void Copy();
+  void Paste();
 
  protected:
   // Enumerates where the devtools are docked relative to the browser's main
@@ -881,6 +862,14 @@ class BrowserView : public BrowserWindow,
   FRIEND_TEST_ALL_PREFIXES(BrowserViewTest, BrowserView);
   FRIEND_TEST_ALL_PREFIXES(BrowserViewTest, AccessibleWindowTitle);
   class AccessibilityModeObserver;
+
+  // Shared implementation by cut, copy and paste.
+  void CutCopyPaste(int command_id);
+
+  // Toggles the look and feel of the browser. If we are in the standard view
+  // and this function is called we will swap the layout to the compact version.
+  // Vice versa if we start in compact mode.
+  void ToggleCompactModeUI();
 
   // If the browser is in immersive full screen mode, it will reveal the
   // tabstrip for a short duration. This is useful for shortcuts that perform
@@ -942,31 +931,31 @@ class BrowserView : public BrowserWindow,
   // removed.
   void UpdateUIForContents(content::WebContents* contents);
 
+  // Invoked to prepare the transition of fullscreen state.
+  // If features::kAsyncFullscreenWindowState is disabled, this is invoked
+  // synchronously when requesting platform window state changes.
+  // If features::kAsyncFullscreenWindowState is enabled, this is invoked
+  // asynchronously when the platform window state change is observed.
+  // TODO(crbug.com/40276379): Deprecate the synchronous codepath.
+  void PrepareFullscreen(bool fullscreen);
+
   // Invoked to update the necessary things when our fullscreen state changes
   // to |fullscreen|. On Windows this is invoked immediately when we toggle the
   // full screen node_data. On Linux changing the fullscreen node_data is async,
   // so we
   // ask the window to change its fullscreen node_data, then when we get
   // notification that it succeeded this method is invoked.
-  // If |url| is not empty, it is the URL of the page that requested fullscreen
-  // (via the fullscreen JS API).
-  // |bubble_type| determines what should be shown in the fullscreen exit
-  // bubble.
   // If the Window Placement experiment is enabled, fullscreen may be requested
   // on a particular display. In that case, |display_id| is the display's id;
   // otherwise, display::kInvalidDisplayId indicates no display is specified.
   void ProcessFullscreen(bool fullscreen,
-                         const GURL& url,
-                         ExclusiveAccessBubbleType bubble_type,
                          int64_t display_id);
+
+  // Request the underlying platform to make the window fullscreen.
+  void RequestFullscreen(bool fullscreen, int64_t display_id);
 
   void SynchronizeRenderWidgetHostVisualPropertiesForMainFrame();
   void NotifyWidgetSizeConstraintsChanged();
-
-  // Returns whether immmersive fullscreen should replace fullscreen. This
-  // should only occur for "browser-fullscreen" for tabbed-typed windows (not
-  // for tab-fullscreen and not for app/popup type windows).
-  bool ShouldUseImmersiveFullscreenForUrl(const GURL& url) const;
 
   // Copy the accelerator table from the app resources into something we can
   // use.
@@ -980,12 +969,6 @@ class BrowserView : public BrowserWindow,
   // learning about how frequently the top-row keys are used.
   void UpdateAcceleratorMetrics(const ui::Accelerator& accelerator,
                                 int command_id);
-
-  // Calls |method| which is either WebContents::Cut, ::Copy, or ::Paste on
-  // the given WebContents, returning true if it consumed the event.
-  bool DoCutCopyPasteForWebContents(
-      content::WebContents* contents,
-      void (content::WebContents::*method)());
 
   // Shows the next app-modal dialog box, if there is one to be shown, or moves
   // an existing showing one to the front.
@@ -1073,27 +1056,6 @@ class BrowserView : public BrowserWindow,
   // prevent policy from incorrectly allowing the browser to enter fullscreen
   // when it should not be able to.
   void UpdateFullscreenAllowedFromPolicy(bool allowed_without_policy);
-
-  // Applies data protection settings based on the verdict received by
-  // safe-browsing's realtime to `watermark_view_`.
-  void ApplyDataProtectionSettings(
-      base::WeakPtr<content::WebContents> expected_web_contents,
-      const enterprise_data_protection::UrlSettings& settings);
-  void ApplyWatermarkSettings(const std::string& watermark_text);
-
-  // Applies data protection settings if there are any to apply, otherwise
-  // delay clearing the data protection settings until the page loads.
-  //
-  // This is called from a finish navigation event to handle the case where the
-  // browser view is switching from a tab with data protections enabled to one
-  // without.  At the end of the navigation, the existing page is still visible
-  // to the user since the UI has not yet refreshed.  In this case the
-  // protections should remain in place.  Once the document finishes loading,
-  // `ApplyDataProtectionSettings()` will be called.  See
-  // `DocumentOnLoadCompletedInPrimaryMainFrame()`.
-  void DelayApplyDataProtectionSettingsIfEmpty(
-      base::WeakPtr<content::WebContents> expected_web_contents,
-      const enterprise_data_protection::UrlSettings& settings);
 
   // The BrowserFrame that hosts this view.
   raw_ptr<BrowserFrame, DanglingUntriaged> frame_ = nullptr;
@@ -1218,9 +1180,6 @@ class BrowserView : public BrowserWindow,
   raw_ptr<views::WebView, AcrossTasksDanglingUntriaged> devtools_web_view_ =
       nullptr;
 
-  // Clear watermark text once the page loads.
-  bool clear_watermark_text_on_page_load_ = false;
-
   // The view that overlays a watermark on the contents container.
   raw_ptr<enterprise_watermark::WatermarkView> watermark_view_ = nullptr;
 
@@ -1231,6 +1190,8 @@ class BrowserView : public BrowserWindow,
 
   // The side panel aligned to the left or the right side of the browser window
   // depending on the kSidePanelHorizontalAlignment pref's value.
+  // Conceptually this member should exist if and only if the
+  // side_panel_coordinator is created.
   raw_ptr<SidePanel, AcrossTasksDanglingUntriaged> unified_side_panel_ =
       nullptr;
   raw_ptr<views::View, AcrossTasksDanglingUntriaged>
@@ -1271,6 +1232,10 @@ class BrowserView : public BrowserWindow,
   bool in_process_fullscreen_ = false;
 
   std::unique_ptr<ExclusiveAccessBubbleViews> exclusive_access_bubble_;
+  // Tracks the task to asynchronously destroy the exclusive access bubble.
+  base::CancelableTaskTracker exclusive_access_bubble_cancelable_task_tracker_;
+  std::optional<base::CancelableTaskTracker::TaskId>
+      exclusive_access_bubble_destruction_task_id_;
 
   // True when we do not want to allow exiting fullscreen, e.g. in Chrome OS
   // Kiosk session.
@@ -1375,9 +1340,6 @@ class BrowserView : public BrowserWindow,
   PrefChangeRegistrar registrar_;
 
   ui::OmniboxPopupCloser omnibox_popup_closer_{this};
-
-  base::OnceClosure
-      on_delay_apply_data_protection_settings_if_empty_called_for_testing_;
 
   mutable base::WeakPtrFactory<BrowserView> weak_ptr_factory_{this};
 };

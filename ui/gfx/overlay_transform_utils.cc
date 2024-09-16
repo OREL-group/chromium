@@ -13,7 +13,7 @@ Transform OverlayTransformToTransform(OverlayTransform overlay_transform,
                                       const SizeF& viewport_bounds) {
   switch (overlay_transform) {
     case OVERLAY_TRANSFORM_INVALID:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return Transform();
     case OVERLAY_TRANSFORM_NONE:
       return Transform();
@@ -35,14 +35,14 @@ Transform OverlayTransformToTransform(OverlayTransform overlay_transform,
                                viewport_bounds.width());
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return Transform();
 }
 
 OverlayTransform InvertOverlayTransform(OverlayTransform transform) {
   switch (transform) {
     case OVERLAY_TRANSFORM_INVALID:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return OVERLAY_TRANSFORM_NONE;
     case OVERLAY_TRANSFORM_NONE:
       return OVERLAY_TRANSFORM_NONE;
@@ -61,7 +61,7 @@ OverlayTransform InvertOverlayTransform(OverlayTransform transform) {
     case OVERLAY_TRANSFORM_FLIP_VERTICAL_CLOCKWISE_270:
       return OVERLAY_TRANSFORM_FLIP_VERTICAL_CLOCKWISE_270;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return OVERLAY_TRANSFORM_NONE;
 }
 
@@ -111,7 +111,7 @@ OverlayTransform OverlayTransformsConcat(OverlayTransform t1,
       case OVERLAY_TRANSFORM_INVALID:
         break;
     }
-    NOTREACHED_NORETURN();
+    NOTREACHED();
   };
 
   DecomposedOverlayTransform decomposed1 = decompose(t1);
@@ -151,7 +151,7 @@ OverlayTransform OverlayTransformsConcat(OverlayTransform t1,
                  : OVERLAY_TRANSFORM_ROTATE_CLOCKWISE_270;
   }
 
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 }  // namespace gfx

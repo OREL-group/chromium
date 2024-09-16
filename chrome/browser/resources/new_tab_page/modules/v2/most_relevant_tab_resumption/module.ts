@@ -2,19 +2,23 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import './icons.html.js';
+import 'chrome://resources/cr_elements/cr_icon/cr_icon.js';
 import 'chrome://resources/cr_elements/cr_shared_style.css.js';
-import 'chrome://resources/polymer/v3_0/iron-icon/iron-icon.js';
-import '../../history_clusters/page_favicon.js';
+import './page_favicon.js';
+import '../icons.html.js';
 
 import type {CrLazyRenderElement} from 'chrome://resources/cr_elements/cr_lazy_render/cr_lazy_render.js';
 import type {DomRepeatEvent} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import type {Tab} from '../../../history_types.mojom-webui.js';
+import {FormFactor} from '../../../history_types.mojom-webui.js';
 import {I18nMixin, loadTimeData} from '../../../i18n_setup.js';
+import {ScoredURLUserAction} from '../../../most_relevant_tab_resumption.mojom-webui.js';
 import type {InfoDialogElement} from '../../info_dialog.js';
 import {ModuleDescriptor} from '../../module_descriptor.js';
-import type {MenuItem, ModuleHeaderElementV2} from '../module_header.js';
+import type {MenuItem, ModuleHeaderElement} from '../module_header.js';
 
 import {getTemplate} from './module.html.js';
 import {MostRelevantTabResumptionProxyImpl} from './most_relevant_tab_resumption_proxy.js';
@@ -24,7 +28,8 @@ export const MAX_TABS = 5;
 export interface MostRelevantTabResumptionModuleElement {
   $: {
     infoDialogRender: CrLazyRenderElement<InfoDialogElement>,
-    moduleHeaderElementV2: ModuleHeaderElementV2,
+    moduleHeaderElementV2: ModuleHeaderElement,
+    tabs: HTMLElement,
   };
 }
 
@@ -40,32 +45,35 @@ export class MostRelevantTabResumptionModuleElement extends I18nMixin
 
   static get properties() {
     return {
+      /** The type of module width (wide, narrow, ...). */
+      format: {
+        type: String,
+        reflectToAttribute: true,
+      },
+
       /** The cluster displayed by this element. */
       tabs: {
         type: Object,
       },
 
-      /** To determine if the hover layer should have all rounded corners. */
-      isSingleTab_: {
-        type: Boolean,
-        reflectToAttribute: true,
-        computed: `computeIsSingleTab_(tabs)`,
-      },
-
       /**
-       * Although this is a V2 class, we use this to make it work for V1
-       * modules.
+       * To determine whether to show the module with the device icon.
        */
-      modulesRedesigned_: {
+      shouldShowDeviceIcon_: {
         type: Boolean,
         reflectToAttribute: true,
-        value: () => loadTimeData.getBoolean('modulesRedesignedEnabled'),
+        value: () => loadTimeData.getBoolean(
+            'mostRelevantTabResumptionDeviceIconEnabled'),
       },
     };
   }
 
+format:
+  string;
 tabs:
   Tab[];
+private shouldShowDeviceIcon_:
+  boolean;
 
   private getMenuItemGroups_(): MenuItem[][] {
     return [
@@ -73,7 +81,7 @@ tabs:
         {
           action: 'dismiss',
           icon: 'modules:thumb_down',
-          text: this.i18n('modulesTabResumptionDismissButton'),
+          text: this.i18n('modulesMostRelevantTabResumptionDismissAll'),
         },
         {
           action: 'disable',
@@ -109,6 +117,45 @@ tabs:
     this.dispatchEvent(disableEvent);
   }
 
+  private onDismissAllButtonClick_() {
+    MostRelevantTabResumptionProxyImpl.getInstance().handler.dismissModule(
+        this.tabs);
+    this.dispatchEvent(new CustomEvent('dismiss-module-instance', {
+      bubbles: true,
+      composed: true,
+      detail: {
+        message: loadTimeData.getStringF(
+            'dismissModuleToastMessage',
+            loadTimeData.getString('modulesTabResumptionSentence')),
+        restoreCallback: () => MostRelevantTabResumptionProxyImpl.getInstance()
+                                   .handler.restoreModule(this.tabs),
+      },
+    }));
+  }
+
+  private onDismissButtonClick_(e: DomRepeatEvent<Tab>) {
+    e.preventDefault();
+    const tab = (e.target! as HTMLElement).parentElement!;
+    const index = e.model.index;
+    tab!.remove();
+    MostRelevantTabResumptionProxyImpl.getInstance().handler.dismissTab(
+        this.tabs[index]);
+    this.dispatchEvent(new CustomEvent('dismiss-module-element', {
+      bubbles: true,
+      composed: true,
+      detail: {
+        message: loadTimeData.getStringF(
+            'dismissModuleToastMessage',
+            loadTimeData.getString('modulesTabResumptionSentence')),
+        restoreCallback: () => {
+          this.$.tabs.insertBefore(tab, this.$.tabs.childNodes[index]);
+          MostRelevantTabResumptionProxyImpl.getInstance().handler.restoreTab(
+              this.tabs[index]);
+        },
+      },
+    }));
+  }
+
   private onInfoButtonClick_() {
     this.$.infoDialogRender.get().showModal();
   }
@@ -118,6 +165,7 @@ tabs:
   }
 
   private onTabClick_(e: DomRepeatEvent<Tab>) {
+    this.dispatchEvent(new Event('usage', {bubbles: true, composed: true}));
     chrome.metricsPrivate.recordSmallCount(
         'NewTabPage.TabResumption.ClickIndex', e.model.index);
 
@@ -131,6 +179,10 @@ tabs:
           buckets: 50,
         },
         Number(e.model.item.relativeTime.microseconds / 1000n));
+
+    const tab = this.tabs[e.model.index];
+    MostRelevantTabResumptionProxyImpl.getInstance().handler.recordAction(
+        ScoredURLUserAction.kActivated, tab.urlKey, tab.trainingRequestId);
   }
 
   private computeDomain_(tab: Tab): string {
@@ -139,18 +191,40 @@ tabs:
     return domain;
   }
 
-  private computeDeviceName_(tab: Tab): string {
+  private computeIcon_(tab: Tab): string {
+    switch (tab.formFactor) {
+      case FormFactor.kDesktop:
+        return 'tab_resumption:computer';
+      case FormFactor.kPhone:
+        return 'tab_resumption:phone';
+      case FormFactor.kTablet:
+        return 'tab_resumption:tablet';
+      case FormFactor.kAutomotive:
+        return 'tab_resumption:automotive';
+      case FormFactor.kWearable:
+        return 'tab_resumption:wearable';
+      case FormFactor.kTv:
+        return 'tab_resumption:tv';
+      default:
+        return 'tab_resumption:globe';
+    }
+  }
+
+  private computeDeviceName_(tab: Tab): string|null {
     return loadTimeData.getBoolean('modulesRedesignedEnabled') ?
         tab.sessionName :
         this.i18n('modulesTabResumptionDevicePrefix') + ` ${tab.sessionName}`;
   }
 
-  private computeIsSingleTab_(): boolean {
-    return this.tabs && this.tabs.length === 1;
+  private computeFaviconSize_(): number {
+    return 24;
+  }
+  private computeShouldShowDeviceName_(tab: Tab): boolean {
+    return !this.shouldShowDeviceIcon_ && !!this.computeDeviceName_(tab);
   }
 
-  private computeFaviconSize_(): number {
-    return 18;
+  private getVisibleTabs_(): Tab[] {
+    return this.tabs.slice(0, MAX_TABS);
   }
 }
 
@@ -167,7 +241,12 @@ async function createElement():
   }
 
   const element = new MostRelevantTabResumptionModuleElement();
-  element.tabs = tabs.slice(0, MAX_TABS);
+  element.tabs = tabs;
+
+  tabs.slice(0, MAX_TABS).forEach((tab) => {
+    MostRelevantTabResumptionProxyImpl.getInstance().handler.recordAction(
+        ScoredURLUserAction.kSeen, tab.urlKey, tab.trainingRequestId);
+  });
 
   return element;
 }

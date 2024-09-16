@@ -6,6 +6,7 @@
 
 #include "base/containers/contains.h"
 #include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom-shared.h"
+#include "third_party/blink/renderer/core/display_lock/display_lock_utilities.h"
 #include "third_party/blink/renderer/core/layout/fragmentation_utils.h"
 #include "third_party/blink/renderer/core/layout/physical_box_fragment.h"
 #include "third_party/blink/renderer/core/layout/physical_fragment.h"
@@ -60,6 +61,14 @@ LogicalAnchorQuery::SetOptions AnchorQuerySetOptions(
 
 }  // namespace
 
+bool FragmentBuilder::IsRoot() const {
+  return node_ && node_.IsView() && !space_.IsAnonymous();
+}
+
+bool FragmentBuilder::IsPaginatedRoot() const {
+  return IsRoot() && node_.IsPaginatedRoot();
+}
+
 PhysicalFragment::BoxType FragmentBuilder::GetBoxType() const {
   if (box_type_ != PhysicalFragment::BoxType::kNormalBox) {
     return box_type_;
@@ -75,6 +84,9 @@ PhysicalFragment::BoxType FragmentBuilder::GetBoxType() const {
   }
   if (layout_object_->IsRenderedLegend()) {
     return PhysicalFragment::BoxType::kRenderedLegend;
+  }
+  if (layout_object_->StyleRef().IsPageMarginBox()) {
+    return PhysicalFragment::BoxType::kPageMargin;
   }
   if (layout_object_->IsInline()) {
     // Check |IsAtomicInlineLevel()| after |IsInline()| because |LayoutReplaced|
@@ -141,8 +153,12 @@ void FragmentBuilder::PropagateSnapAreas(const PhysicalFragment& child) {
     return 0;
   };
   if (child.IsSnapArea()) {
-    auto* snap_area = To<LayoutBox>(child.GetMutableLayoutObject());
-    EnsureSnapAreas().insert(get_insertion_pos(snap_area), snap_area);
+    // Insert a new snap area *once* per node, when at the last fragment
+    // (i.e. when there's no outgoing break token).
+    if (!To<PhysicalBoxFragment>(child).GetBreakToken()) {
+      auto* snap_area = To<LayoutBox>(child.GetMutableLayoutObject());
+      EnsureSnapAreas().insert(get_insertion_pos(snap_area), snap_area);
+    }
   }
 
   if (const auto* child_snap_areas = child.PropagatedSnapAreas()) {
@@ -164,23 +180,36 @@ LogicalAnchorQuery& FragmentBuilder::EnsureAnchorQuery() {
 void FragmentBuilder::PropagateChildAnchors(const PhysicalFragment& child,
                                             const LogicalOffset& child_offset) {
   std::optional<LogicalAnchorQuery::SetOptions> options;
+  Element* context = nullptr;
+  if (auto* node = child.GetNode()) {
+    if (auto* element = DynamicTo<Element>(node)) {
+      if (auto* display_lock = element->GetDisplayLockContext()) {
+        // An element can't anchor to the skipped contents of an element.
+        // https://drafts.csswg.org/css-anchor-position-1/#target
+        if (display_lock->IsLocked()) {
+          return;
+        }
+        context = element;
+      }
+    }
+  }
   if (child.IsBox() &&
       (child.Style().AnchorName() || child.IsImplicitAnchor())) {
     // Set the child's `anchor-name` before propagating its descendants', so
     // that ancestors have precedence over their descendants.
-    DCHECK(RuntimeEnabledFeatures::CSSAnchorPositioningEnabled());
     LogicalRect rect{child_offset,
                      child.Size().ConvertToLogical(GetWritingMode())};
     options = AnchorQuerySetOptions(
         child, node_, IsBlockFragmentationContextRoot() || HasItems());
     if (child.Style().AnchorName()) {
       for (const ScopedCSSName* name : child.Style().AnchorName()->GetNames()) {
-        EnsureAnchorQuery().Set(name, *child.GetLayoutObject(), rect, *options);
+        EnsureAnchorQuery().Set(name, *child.GetLayoutObject(), rect, *options,
+                                context);
       }
     }
     if (child.IsImplicitAnchor()) {
       EnsureAnchorQuery().Set(child.GetLayoutObject(), *child.GetLayoutObject(),
-                              rect, *options);
+                              rect, *options, context);
     }
   }
 
@@ -192,7 +221,7 @@ void FragmentBuilder::PropagateChildAnchors(const PhysicalFragment& child,
     }
     const WritingModeConverter converter(GetWritingDirection(), child.Size());
     EnsureAnchorQuery().SetFromPhysical(*anchor_query, converter, child_offset,
-                                        *options);
+                                        *options, context);
   }
 }
 
@@ -251,6 +280,13 @@ void FragmentBuilder::PropagateFromFragment(
     LogicalOffset child_offset,
     LogicalOffset relative_offset,
     const OofInlineContainer<LogicalOffset>* inline_container) {
+  if (GetBoxType() == PhysicalFragment::kPageBorderBox) {
+    // This is the boundary between page boxes and document contents. No
+    // propagation should take place.
+    DCHECK_EQ(child.GetBoxType(), PhysicalFragment::kPageArea);
+    return;
+  }
+
   // Propagate anchors from the |child|. Anchors are in |OofData| but the
   // |child| itself may have an anchor.
   PropagateChildAnchors(child, child_offset + relative_offset);
@@ -294,14 +330,14 @@ void FragmentBuilder::PropagateFromFragment(
     // depends on the available block-size, rather than the %-block-size.
     const auto& child_style = child.Style();
     if (child.IsCSSBox() && child_style.GetPosition() == EPosition::kRelative) {
-      if (IsHorizontalWritingMode(Style().GetWritingMode())) {
-        if (child_style.Top().IsPercentOrCalc() ||
-            child_style.Bottom().IsPercentOrCalc()) {
+      if (Style().IsHorizontalWritingMode()) {
+        if (child_style.Top().HasPercent() ||
+            child_style.Bottom().HasPercent()) {
           has_descendant_that_depends_on_percentage_block_size_ = true;
         }
       } else {
-        if (child_style.Left().IsPercentOrCalc() ||
-            child_style.Right().IsPercentOrCalc()) {
+        if (child_style.Left().HasPercent() ||
+            child_style.Right().HasPercent()) {
           has_descendant_that_depends_on_percentage_block_size_ = true;
         }
       }
@@ -391,8 +427,14 @@ void FragmentBuilder::AddOutOfFlowChildCandidate(
     const LogicalOffset& child_offset,
     LogicalStaticPosition::InlineEdge inline_edge,
     LogicalStaticPosition::BlockEdge block_edge,
-    bool is_hidden_for_paint) {
+    bool is_hidden_for_paint,
+    bool allow_top_layer_nodes) {
   DCHECK(child);
+  // Top-layer elements are processed separately in the OutOfFlowLayoutPart.
+  if (child.IsInTopOrViewTransitionLayer() && !allow_top_layer_nodes) {
+    return;
+  }
+
   oof_candidates_may_have_anchor_queries_ |= child.MayHaveAnchorQuery();
   oof_positioned_candidates_.emplace_back(
       child, LogicalStaticPosition{child_offset, inline_edge, block_edge},
@@ -544,7 +586,7 @@ void FragmentBuilder::MoveOutOfFlowDescendantCandidatesToDescendants() {
 LayoutUnit FragmentBuilder::BlockOffsetAdjustmentForFragmentainer(
     LayoutUnit fragmentainer_consumed_block_size) const {
   if (IsFragmentainerBoxType() && PreviousBreakToken()) {
-    return PreviousBreakToken()->ConsumedBlockSize();
+    return To<BlockBreakToken>(PreviousBreakToken())->ConsumedBlockSize();
   }
   return fragmentainer_consumed_block_size;
 }

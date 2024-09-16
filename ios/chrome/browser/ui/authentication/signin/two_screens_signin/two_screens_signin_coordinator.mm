@@ -10,8 +10,10 @@
 #import "base/notreached.h"
 #import "base/strings/sys_string_conversions.h"
 #import "components/signin/public/identity_manager/identity_manager.h"
+#import "ios/chrome/browser/first_run/ui_bundled/first_run_util.h"
+#import "ios/chrome/browser/first_run/ui_bundled/signin/signin_screen_coordinator.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/signin/model/authentication_service.h"
 #import "ios/chrome/browser/signin/model/authentication_service_factory.h"
 #import "ios/chrome/browser/signin/model/chrome_account_manager_service_factory.h"
@@ -19,8 +21,6 @@
 #import "ios/chrome/browser/ui/authentication/signin/logging/upgrade_signin_logger.h"
 #import "ios/chrome/browser/ui/authentication/signin/signin_coordinator+protected.h"
 #import "ios/chrome/browser/ui/authentication/signin/uno_signin_screen_provider.h"
-#import "ios/chrome/browser/ui/first_run/first_run_util.h"
-#import "ios/chrome/browser/ui/first_run/signin/signin_screen_coordinator.h"
 #import "ios/chrome/browser/ui/screen/screen_provider.h"
 #import "ios/chrome/browser/ui/screen/screen_type.h"
 
@@ -72,7 +72,7 @@ using base::UserMetricsAction;
     ChromeAccountManagerService* accountManagerService =
         ChromeAccountManagerServiceFactory::GetForBrowserState(
             self.browser->GetBrowserState());
-    // TODO(crbug.com/779791): Need to add `CHECK(accountManagerService)`.
+    // TODO(crbug.com/41352590): Need to add `CHECK(accountManagerService)`.
     [UpgradeSigninLogger logSigninStartedWithAccessPoint:self.accessPoint
                                    accountManagerService:accountManagerService];
   }
@@ -162,12 +162,11 @@ using base::UserMetricsAction;
                                accessPoint:self.accessPoint];
     case kDefaultBrowserPromo:
     case kChoice:
-    case kOmniboxPosition:
     case kDockingPromo:
     case kStepsCompleted:
       break;
   }
-  NOTREACHED_NORETURN() << static_cast<int>(type);
+  NOTREACHED() << static_cast<int>(type);
 }
 
 // Calls the completion callback with the given `result` and a
@@ -176,7 +175,7 @@ using base::UserMetricsAction;
                 identity:(id<SystemIdentity>)identity {
   if (self.accessPoint ==
       signin_metrics::AccessPoint::ACCESS_POINT_SIGNIN_PROMO) {
-    // TODO(crbug.com/1491419): `addedAccount` is not always `NO`. Need to fix
+    // TODO(crbug.com/40074532): `addedAccount` is not always `NO`. Need to fix
     // that call to have the right value.
     [UpgradeSigninLogger logSigninCompletedWithResult:result addedAccount:NO];
   }

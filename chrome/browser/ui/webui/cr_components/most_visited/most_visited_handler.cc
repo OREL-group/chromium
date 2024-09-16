@@ -12,7 +12,6 @@
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_features.h"
 #include "chrome/browser/ntp_tiles/chrome_most_visited_sites_factory.h"
-#include "chrome/browser/page_load_metrics/observers/navigation_handle_user_data.h"
 #include "chrome/browser/predictors/loading_predictor.h"
 #include "chrome/browser/predictors/loading_predictor_config.h"
 #include "chrome/browser/predictors/loading_predictor_factory.h"
@@ -25,6 +24,7 @@
 #include "components/history/core/browser/features.h"
 #include "components/ntp_tiles/constants.h"
 #include "components/ntp_tiles/most_visited_sites.h"
+#include "components/page_load_metrics/browser/navigation_handle_user_data.h"
 #include "components/search/ntp_features.h"
 #include "components/search_engines/template_url_service.h"
 #include "content/public/browser/web_contents.h"
@@ -180,10 +180,6 @@ void MostVisitedHandler::OnMostVisitedTileNavigation(
     bool shift_key) {
   logger_.LogMostVisitedNavigation(MakeNTPTileImpression(*tile, index));
 
-  if (!base::FeatureList::IsEnabled(
-          ntp_features::kNtpHandleMostVisitedNavigationExplicitly))
-    return;
-
   WindowOpenDisposition disposition = ui::DispositionFromClick(
       /*middle_button=*/mouse_button == 1, alt_key, ctrl_key, meta_key,
       shift_key);
@@ -196,8 +192,9 @@ void MostVisitedHandler::OnMostVisitedTileNavigation(
   // |is_query_tile| can be true only when history::kOrganicRepeatableQueries
   // is enabled.
   base::OnceCallback<void(content::NavigationHandle&)>
-      navigation_handle_callback = base::BindRepeating(
-          &NavigationHandleUserData::AttachNewTabPageNavigationHandleUserData);
+      navigation_handle_callback =
+          base::BindRepeating(&page_load_metrics::NavigationHandleUserData::
+                                  AttachNewTabPageNavigationHandleUserData);
   web_contents_->OpenURL(
       content::OpenURLParams(tile->url, content::Referrer(), disposition,
                              tile->is_query_tile
@@ -255,7 +252,8 @@ void MostVisitedHandler::PreconnectMostVisitedTile(
   auto* loading_predictor =
       predictors::LoadingPredictorFactory::GetForProfile(profile_);
   if (loading_predictor) {
-    loading_predictor->PrepareForPageLoad(tile->url,
+    loading_predictor->PrepareForPageLoad(/*initiator_origin=*/std::nullopt,
+                                          tile->url,
                                           predictors::HintOrigin::NEW_TAB_PAGE,
                                           /*preconnectable=*/true);
   }

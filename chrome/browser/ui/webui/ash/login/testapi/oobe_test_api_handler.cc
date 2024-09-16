@@ -24,14 +24,15 @@
 #include "chrome/browser/ash/login/quick_unlock/quick_unlock_utils.h"
 #include "chrome/browser/ash/login/screens/hid_detection_screen.h"
 #include "chrome/browser/ash/login/screens/network_screen.h"
+#include "chrome/browser/ash/login/screens/split_modifier_keyboard_info_screen.h"
 #include "chrome/browser/ash/login/startup_utils.h"
-#include "chrome/browser/ash/login/ui/login_display_host.h"
 #include "chrome/browser/ash/login/wizard_controller.h"
 #include "chrome/browser/ash/policy/core/browser_policy_connector_ash.h"
 #include "chrome/browser/ash/policy/enrollment/enrollment_requisition_manager.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part.h"
-#include "chrome/browser/ui/ash/login_screen_client_impl.h"
+#include "chrome/browser/ui/ash/login/login_display_host.h"
+#include "chrome/browser/ui/ash/login/login_screen_client_impl.h"
 #include "chrome/browser/ui/webui/ash/login/hid_detection_screen_handler.h"
 #include "chromeos/ash/components/assistant/buildflags.h"
 #include "chromeos/ash/components/login/auth/public/saml_password_attributes.h"
@@ -73,8 +74,6 @@ void OobeTestAPIHandler::DeclareJSCallbacks() {
   // this one you need to add a function into login/test_api/test_api.js.
   AddCallback("OobeTestApi.getPrimaryDisplayName",
               &OobeTestAPIHandler::HandleGetPrimaryDisplayName);
-  AddCallback("OobeTestApi.emulateDevicesForTesting",
-              &OobeTestAPIHandler::EmulateDevicesConnectedForTesting);
 
   AddCallback("OobeTestApi.getShouldSkipChoobe",
               &OobeTestAPIHandler::HandleGetShouldSkipChoobe);
@@ -99,7 +98,11 @@ void OobeTestAPIHandler::GetAdditionalParameters(base::Value::Dict* dict) {
 
   dict->Set("testapi_shouldSkipAiIntro", AiIntroScreen::ShouldBeSkipped());
 
-  dict->Set("testapi_shouldSkipTuna", TunaScreen::ShouldBeSkipped());
+  dict->Set("testapi_shouldSkipGeminiIntro",
+            GeminiIntroScreen::ShouldBeSkipped());
+
+  dict->Set("testapi_shouldSkipSplitModifierKeyboardInfo",
+            SplitModifierKeyboardInfoScreen::ShouldBeSkipped());
 
   dict->Set("testapi_shouldSkipAssistant",
             features::IsOobeSkipAssistantEnabled() ||
@@ -119,26 +122,12 @@ void OobeTestAPIHandler::GetAdditionalParameters(base::Value::Dict* dict) {
   dict->Set("testapi_shouldSkipConsolidatedConsent",
             !BUILDFLAG(GOOGLE_CHROME_BRANDING));
   dict->Set("testapi_isHPSEnabled", ash::features::IsQuickDimEnabled());
-
-  bool skip_touchpad_scroll =
-      !features::IsOobeTouchpadScrollEnabled() ||
-      InputDeviceSettingsController::Get()->GetConnectedTouchpads().empty();
-  // TODO(b/327270907) Remove `testapi_shouldSkipTouchpadScroll`.
-  dict->Set("testapi_shouldSkipTouchpadScroll", skip_touchpad_scroll);
-
-  bool skip_display_size = !features::IsOobeDisplaySizeEnabled();
-  dict->Set("testapi_shouldSkipDisplaySize", skip_display_size);
-
-  // CHOOBE screen is only skipped if the number of optional screens is less
-  // than 3, since theme selection is always shown, CHOOBE should be skipped
-  // when display size Screen or touchpad scroll screen is skipped.
-  bool skip_choobe = !features::IsOobeChoobeEnabled() || skip_touchpad_scroll ||
-                     skip_display_size;
-  // TODO(b/327270907) Remove `testapi_shouldSkipChoobe`.
-  dict->Set("testapi_shouldSkipChoobe", skip_choobe);
-
+  dict->Set("testapi_shouldSkipDisplaySize",
+            !features::IsOobeDisplaySizeEnabled());
   dict->Set("testapi_shouldSkipGaiaInfoScreen",
             !features::IsOobeGaiaInfoScreenEnabled());
+  dict->Set("testapi_isOobeQuickStartEnabled",
+            features::IsOobeQuickStartEnabled());
 
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   // The current method is called early, before the user logs-in,
@@ -183,33 +172,6 @@ void OobeTestAPIHandler::SkipToLoginForTesting() {
     return;
   }
   controller->SkipToLoginForTesting();  // IN-TEST
-}
-
-void OobeTestAPIHandler::EmulateDevicesConnectedForTesting() {
-  HIDDetectionScreen* screen_ = static_cast<HIDDetectionScreen*>(
-      WizardController::default_controller()->GetScreen(
-          HIDDetectionView::kScreenId));
-  VLOG(1) << "EmulateDevicesConnectedForTesting";
-  auto touchscreen = device::mojom::InputDeviceInfo::New();
-  touchscreen->id = "fake_touchscreen";
-  touchscreen->subsystem = device::mojom::InputDeviceSubsystem::SUBSYSTEM_INPUT;
-  touchscreen->type = device::mojom::InputDeviceType::TYPE_UNKNOWN;
-  touchscreen->is_touchscreen = true;
-  screen_->InputDeviceAddedForTesting(std::move(touchscreen));  // IN-TEST
-
-  auto mouse = device::mojom::InputDeviceInfo::New();
-  mouse->id = "fake_mouse";
-  mouse->subsystem = device::mojom::InputDeviceSubsystem::SUBSYSTEM_INPUT;
-  mouse->type = device::mojom::InputDeviceType::TYPE_USB;
-  mouse->is_mouse = true;
-  screen_->InputDeviceAddedForTesting(std::move(mouse));  // IN-TEST
-
-  auto keyboard = device::mojom::InputDeviceInfo::New();
-  keyboard->id = "fake_keyboard";
-  keyboard->subsystem = device::mojom::InputDeviceSubsystem::SUBSYSTEM_INPUT;
-  keyboard->type = device::mojom::InputDeviceType::TYPE_USB;
-  keyboard->is_keyboard = true;
-  screen_->InputDeviceAddedForTesting(std::move(keyboard));  // IN-TEST
 }
 
 void OobeTestAPIHandler::SkipPostLoginScreens() {

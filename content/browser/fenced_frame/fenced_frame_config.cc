@@ -10,7 +10,6 @@
 #include "base/strings/string_util.h"
 #include "base/uuid.h"
 #include "content/browser/fenced_frame/fenced_frame_reporter.h"
-#include "services/network/public/cpp/attribution_reporting_runtime_features.h"
 #include "third_party/blink/public/common/frame/fenced_frame_permissions_policies.h"
 #include "third_party/blink/public/common/interest_group/ad_auction_constants.h"
 #include "third_party/blink/public/common/permissions_policy/permissions_policy.h"
@@ -207,7 +206,8 @@ FencedFrameProperties::FencedFrameProperties(const GURL& mapped_url)
       partition_nonce_(std::in_place,
                        base::UnguessableToken::Create(),
                        VisibilityToEmbedder::kOpaque,
-                       VisibilityToContent::kOpaque) {}
+                       VisibilityToContent::kOpaque),
+      allows_information_inflow_(true) {}
 
 FencedFrameProperties::FencedFrameProperties(const FencedFrameConfig& config)
     : mapped_url_(config.mapped_url_),
@@ -226,6 +226,7 @@ FencedFrameProperties::FencedFrameProperties(const FencedFrameConfig& config)
                        VisibilityToEmbedder::kOpaque,
                        VisibilityToContent::kOpaque),
       mode_(config.mode_),
+      allows_information_inflow_(config.allows_information_inflow_),
       is_ad_component_(config.is_ad_component_),
       effective_enabled_permissions_(config.effective_enabled_permissions_),
       parent_permissions_info_(config.parent_permissions_info_) {
@@ -331,36 +332,6 @@ FencedFrameProperties::RedactFor(FencedFrameEntity entity) const {
 void FencedFrameProperties::UpdateMappedURL(GURL url) {
   CHECK(mapped_url_.has_value());
   mapped_url_->value_ = url;
-}
-
-void FencedFrameProperties::UpdateAutomaticBeaconData(
-    blink::mojom::AutomaticBeaconType event_type,
-    const std::string& event_data,
-    const std::vector<blink::FencedFrame::ReportingDestination>& destinations,
-    bool once,
-    bool cross_origin_exposed) {
-  // For an ad component, the event data from its automatic beacon is ignored.
-  automatic_beacon_info_[event_type] =
-      AutomaticBeaconInfo(is_ad_component_ ? std::string{} : event_data,
-                          destinations, once, cross_origin_exposed);
-}
-
-void FencedFrameProperties::MaybeResetAutomaticBeaconData(
-    blink::mojom::AutomaticBeaconType event_type) {
-  auto it = automatic_beacon_info_.find(event_type);
-  if (it != automatic_beacon_info_.end() && it->second.once == true) {
-    automatic_beacon_info_.erase(it);
-  }
-}
-
-const std::optional<AutomaticBeaconInfo>
-FencedFrameProperties::GetAutomaticBeaconInfo(
-    blink::mojom::AutomaticBeaconType event_type) const {
-  auto it = automatic_beacon_info_.find(event_type);
-  if (it == automatic_beacon_info_.end()) {
-    return std::nullopt;
-  }
-  return it->second;
 }
 
 std::vector<std::pair<GURL, FencedFrameConfig>>

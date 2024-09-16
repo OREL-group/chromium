@@ -8,7 +8,15 @@
 #import "components/commerce/core/commerce_feature_list.h"
 #import "components/commerce/core/shopping_service.h"
 #import "ios/chrome/browser/commerce/model/shopping_service_factory.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
+
+const char kLowPriceParam[] = "LowPriceStringParam";
+
+const char kLowPriceParamPriceIsLow[] = "PriceIsLow";
+
+const char kLowPriceParamGoodDealNow[] = "GoodDealNow";
+
+const char kLowPriceParamSeePriceHistory[] = "SeePriceHistory";
 
 bool IsPriceInsightsEnabled(ChromeBrowserState* browser_state) {
   if (!base::FeatureList::IsEnabled(commerce::kPriceInsightsIos)) {
@@ -25,4 +33,15 @@ bool IsPriceInsightsEnabled(ChromeBrowserState* browser_state) {
 
   return service->IsPriceInsightsEligible() ||
          service->IsCommercePriceTrackingEnabled();
+}
+
+std::string GetLowPriceParamValue() {
+  std::string low_price_value = base::GetFieldTrialParamValueByFeature(
+      commerce::kPriceInsightsIos, kLowPriceParam);
+  return low_price_value.empty() ? std::string(kLowPriceParamPriceIsLow)
+                                 : low_price_value;
+}
+
+bool IsPriceInsightsHighPriceEnabled() {
+  return base::FeatureList::IsEnabled(commerce::kPriceInsightsHighPriceIos);
 }

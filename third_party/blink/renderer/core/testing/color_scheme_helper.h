@@ -17,7 +17,7 @@ class Settings;
 // ColorSchemeHelper is used to update the following values and eventually reset
 // the values back to their default upon deconstruction for testing.
 // Values include:
-//   - BrowserPreferredColorScheme,
+//   - PreferredRootScrollbarColorScheme,
 //   - PreferredColorScheme,
 //   - PreferredContrast,
 //   - ForcedColors.
@@ -27,23 +27,26 @@ class ColorSchemeHelper {
   ColorSchemeHelper(Page& page);
   ~ColorSchemeHelper();
 
-  void SetBrowserPreferredColorScheme(
-      mojom::PreferredColorScheme browser_preferred_color_scheme);
+  void SetPreferredRootScrollbarColorScheme(
+      mojom::PreferredColorScheme preferred_root_scrollbar_color_scheme);
   void SetPreferredColorScheme(
       mojom::PreferredColorScheme preferred_color_scheme);
   void SetPreferredContrast(mojom::PreferredContrast preferred_contrast);
-  void SetInForcedColors(bool in_forced_colors);
+  void SetInForcedColors(Document& document, bool in_forced_colors);
   void SetEmulatedForcedColors(Document& document, bool is_dark_theme);
 
  private:
   Settings& settings_;
-  mojom::PreferredColorScheme default_browser_preferred_color_scheme_ =
+  mojom::PreferredColorScheme default_preferred_root_scrollbar_color_scheme_ =
       mojom::PreferredColorScheme::kLight;
   mojom::PreferredColorScheme default_preferred_color_scheme_ =
       mojom::PreferredColorScheme::kLight;
   mojom::PreferredContrast default_preferred_contrast_ =
       mojom::PreferredContrast::kNoPreference;
   bool default_in_forced_colors_ = false;
+  // Only to be used by the destructor, since we need to cleanup but don't store
+  // the Document/Page.
+  void SetInForcedColors(bool in_forced_colors);
 };
 
 }  // namespace blink

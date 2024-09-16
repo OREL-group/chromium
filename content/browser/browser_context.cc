@@ -35,6 +35,7 @@
 #include "content/browser/browsing_data/browsing_data_remover_impl.h"
 #include "content/browser/child_process_host_impl.h"
 #include "content/browser/child_process_security_policy_impl.h"
+#include "content/browser/in_memory_federated_permission_context.h"
 #include "content/browser/media/browser_feature_provider.h"
 #include "content/browser/push_messaging/push_messaging_router.h"
 #include "content/browser/site_info.h"
@@ -326,7 +327,7 @@ base::WeakPtr<BrowserContext> BrowserContext::GetWeakPtr() {
 // how the //content layer interacts with a BrowserContext.  The code below
 // provides default implementations where appropriate.
 //
-// TODO(https://crbug.com/1179776): Migrate method definitions from this
+// TODO(crbug.com/40169693): Migrate method definitions from this
 // section into a separate BrowserContextDelegate class and a separate
 // browser_context_delegate.cc source file.
 
@@ -374,17 +375,17 @@ BrowserContext::CreateVideoDecodePerfHistory() {
 
 FederatedIdentityApiPermissionContextDelegate*
 BrowserContext::GetFederatedIdentityApiPermissionContext() {
-  return nullptr;
+  return impl()->GetFederatedPermissionContext();
 }
 
 FederatedIdentityAutoReauthnPermissionContextDelegate*
 BrowserContext::GetFederatedIdentityAutoReauthnPermissionContext() {
-  return nullptr;
+  return impl()->GetFederatedPermissionContext();
 }
 
 FederatedIdentityPermissionContextDelegate*
 BrowserContext::GetFederatedIdentityPermissionContext() {
-  return nullptr;
+  return impl()->GetFederatedPermissionContext();
 }
 
 KAnonymityServiceDelegate* BrowserContext::GetKAnonymityServiceDelegate() {

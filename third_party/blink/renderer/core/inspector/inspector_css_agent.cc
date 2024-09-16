@@ -63,6 +63,7 @@
 #include "third_party/blink/renderer/core/css/media_list.h"
 #include "third_party/blink/renderer/core/css/media_query.h"
 #include "third_party/blink/renderer/core/css/media_values.h"
+#include "third_party/blink/renderer/core/css/out_of_flow_data.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_context.h"
 #include "third_party/blink/renderer/core/css/properties/computed_style_utils.h"
@@ -156,7 +157,7 @@ Element* GetPseudoIdAndTag(Element* element,
     if (!resolved_element)
       return nullptr;
 
-    element_pseudo_id = pseudo_element->GetPseudoId();
+    element_pseudo_id = pseudo_element->GetPseudoIdForStyling();
     view_transition_name = pseudo_element->view_transition_name();
   }
   return resolved_element;
@@ -239,6 +240,22 @@ enum ForcePseudoClassFlags {
   kPseudoFocusWithin = 1 << 4,
   kPseudoFocusVisible = 1 << 5,
   kPseudoTarget = 1 << 6,
+  kPseudoEnabled = 1 << 7,
+  kPseudoDisabled = 1 << 8,
+  kPseudoValid = 1 << 9,
+  kPseudoInvalid = 1 << 10,
+  kPseudoUserValid = 1 << 11,
+  kPseudoUserInvalid = 1 << 12,
+  kPseudoRequired = 1 << 13,
+  kPseudoOptional = 1 << 14,
+  kPseudoReadOnly = 1 << 15,
+  kPseudoReadWrite = 1 << 16,
+  kPseudoInRange = 1 << 17,
+  kPseudoOutOfRange = 1 << 18,
+  kPseudoChecked = 1 << 19,
+  kPseudoIndeterminate = 1 << 20,
+  kPseudoPlaceholderShown = 1 << 21,
+  kPseudoAutofill = 1 << 22,
 };
 
 static unsigned ComputePseudoClassMask(
@@ -249,28 +266,78 @@ static unsigned ComputePseudoClassMask(
   DEFINE_STATIC_LOCAL(String, focusVisible, ("focus-visible"));
   DEFINE_STATIC_LOCAL(String, focusWithin, ("focus-within"));
   DEFINE_STATIC_LOCAL(String, target, ("target"));
+  // Specific pseudo states
+  DEFINE_STATIC_LOCAL(String, enabled, ("enabled"));
+  DEFINE_STATIC_LOCAL(String, disabled, ("disabled"));
+  DEFINE_STATIC_LOCAL(String, valid, ("valid"));
+  DEFINE_STATIC_LOCAL(String, invalid, ("invalid"));
+  DEFINE_STATIC_LOCAL(String, userValid, ("user-valid"));
+  DEFINE_STATIC_LOCAL(String, userInvalid, ("user-invalid"));
+  DEFINE_STATIC_LOCAL(String, required, ("required"));
+  DEFINE_STATIC_LOCAL(String, optional, ("optional"));
+  DEFINE_STATIC_LOCAL(String, readOnly, ("read-only"));
+  DEFINE_STATIC_LOCAL(String, readWrite, ("read-write"));
+  DEFINE_STATIC_LOCAL(String, inRange, ("in-range"));
+  DEFINE_STATIC_LOCAL(String, outOfRange, ("out-of-range"));
   DEFINE_STATIC_LOCAL(String, visited, ("visited"));
+  DEFINE_STATIC_LOCAL(String, checked, ("checked"));
+  DEFINE_STATIC_LOCAL(String, indeterminate, ("indeterminate"));
+  DEFINE_STATIC_LOCAL(String, placeholderShown, ("placeholder-shown"));
+  DEFINE_STATIC_LOCAL(String, autofill, ("autofill"));
+
   if (!pseudo_class_array || pseudo_class_array->empty())
     return kPseudoNone;
 
   unsigned result = kPseudoNone;
   for (const String& pseudo_class : *pseudo_class_array) {
-    if (pseudo_class == active)
+    if (pseudo_class == active) {
       result |= kPseudoActive;
-    else if (pseudo_class == hover)
+    } else if (pseudo_class == hover) {
       result |= kPseudoHover;
-    else if (pseudo_class == focus)
+    } else if (pseudo_class == focus) {
       result |= kPseudoFocus;
-    else if (pseudo_class == focusVisible)
+    } else if (pseudo_class == focusVisible) {
       result |= kPseudoFocusVisible;
-    else if (pseudo_class == focusWithin)
+    } else if (pseudo_class == focusWithin) {
       result |= kPseudoFocusWithin;
-    else if (pseudo_class == target)
+    } else if (pseudo_class == target) {
       result |= kPseudoTarget;
-    else if (pseudo_class == visited)
+    } else if (pseudo_class == enabled) {
+      result |= kPseudoEnabled;
+    } else if (pseudo_class == disabled) {
+      result |= kPseudoDisabled;
+    } else if (pseudo_class == valid) {
+      result |= kPseudoValid;
+    } else if (pseudo_class == invalid) {
+      result |= kPseudoInvalid;
+    } else if (pseudo_class == userValid) {
+      result |= kPseudoUserValid;
+    } else if (pseudo_class == userInvalid) {
+      result |= kPseudoUserInvalid;
+    } else if (pseudo_class == required) {
+      result |= kPseudoRequired;
+    } else if (pseudo_class == optional) {
+      result |= kPseudoOptional;
+    } else if (pseudo_class == readOnly) {
+      result |= kPseudoReadOnly;
+    } else if (pseudo_class == readWrite) {
+      result |= kPseudoReadWrite;
+    } else if (pseudo_class == inRange) {
+      result |= kPseudoInRange;
+    } else if (pseudo_class == outOfRange) {
+      result |= kPseudoOutOfRange;
+    } else if (pseudo_class == visited) {
       result |= kPseudoVisited;
+    } else if (pseudo_class == checked) {
+      result |= kPseudoChecked;
+    } else if (pseudo_class == indeterminate) {
+      result |= kPseudoIndeterminate;
+    } else if (pseudo_class == placeholderShown) {
+      result |= kPseudoPlaceholderShown;
+    } else if (pseudo_class == autofill) {
+      result |= kPseudoAutofill;
+    }
   }
-
   return result;
 }
 
@@ -393,7 +460,7 @@ class InspectorCSSAgent::ModifyRuleAction final
         return style_sheet_->SetScopeRuleText(new_range_, old_text_, nullptr,
                                               nullptr, exception_state);
       default:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
     }
     return false;
   }
@@ -433,7 +500,7 @@ class InspectorCSSAgent::ModifyRuleAction final
             old_range_, new_text_, &new_range_, &old_text_, exception_state);
         break;
       default:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
     }
     return css_rule_ != nullptr;
   }
@@ -927,8 +994,56 @@ void InspectorCSSAgent::ForcePseudoState(Element* element,
     case CSSSelector::kPseudoTarget:
       force = forced_pseudo_state & kPseudoTarget;
       break;
+    case CSSSelector::kPseudoEnabled:
+      force = forced_pseudo_state & kPseudoEnabled;
+      break;
+    case CSSSelector::kPseudoDisabled:
+      force = forced_pseudo_state & kPseudoDisabled;
+      break;
+    case CSSSelector::kPseudoValid:
+      force = forced_pseudo_state & kPseudoValid;
+      break;
+    case CSSSelector::kPseudoInvalid:
+      force = forced_pseudo_state & kPseudoInvalid;
+      break;
+    case CSSSelector::kPseudoUserValid:
+      force = forced_pseudo_state & kPseudoUserValid;
+      break;
+    case CSSSelector::kPseudoUserInvalid:
+      force = forced_pseudo_state & kPseudoUserInvalid;
+      break;
+    case CSSSelector::kPseudoRequired:
+      force = forced_pseudo_state & kPseudoRequired;
+      break;
+    case CSSSelector::kPseudoOptional:
+      force = forced_pseudo_state & kPseudoOptional;
+      break;
+    case CSSSelector::kPseudoReadOnly:
+      force = forced_pseudo_state & kPseudoReadOnly;
+      break;
+    case CSSSelector::kPseudoReadWrite:
+      force = forced_pseudo_state & kPseudoReadWrite;
+      break;
+    case CSSSelector::kPseudoInRange:
+      force = forced_pseudo_state & kPseudoInRange;
+      break;
+    case CSSSelector::kPseudoOutOfRange:
+      force = forced_pseudo_state & kPseudoOutOfRange;
+      break;
     case CSSSelector::kPseudoVisited:
       force = forced_pseudo_state & kPseudoVisited;
+      break;
+    case CSSSelector::kPseudoChecked:
+      force = forced_pseudo_state & kPseudoChecked;
+      break;
+    case CSSSelector::kPseudoIndeterminate:
+      force = forced_pseudo_state & kPseudoIndeterminate;
+      break;
+    case CSSSelector::kPseudoPlaceholderShown:
+      force = forced_pseudo_state & kPseudoPlaceholderShown;
+      break;
+    case CSSSelector::kPseudoAutofill:
+      force = forced_pseudo_state & kPseudoAutofill;
       break;
     default:
       break;
@@ -1034,33 +1149,39 @@ protocol::Response InspectorCSSAgent::getLocationForSelector(
     if (css_style_rule == nullptr) {
       continue;
     }
+    CHECK(css_style_rule->GetStyleRule());
 
-    const String curr_selector_text = css_style_rule->selectorText();
-    if (selector_text != curr_selector_text) {
-      continue;
-    }
+    // Iterate over selector list. (eg. `.box, .alert` => ['.box', '.alert'])
+    for (const CSSSelector* selector =
+             css_style_rule->GetStyleRule()->FirstSelector();
+         selector; selector = CSSSelectorList::Next(*selector)) {
+      if (selector->SelectorText() == selector_text) {
+        const CSSRuleSourceData* source_data =
+            style_sheet->SourceDataForRule(css_style_rule);
+        if (source_data == nullptr) {
+          continue;
+        }
+        std::unique_ptr<protocol::CSS::SourceRange> range =
+            style_sheet->BuildSourceRangeObject(source_data->rule_header_range);
 
-    const CSSRuleSourceData* source_data =
-        style_sheet->SourceDataForRule(css_style_rule);
-    std::unique_ptr<protocol::CSS::SourceRange> range =
-        style_sheet->BuildSourceRangeObject(source_data->rule_header_range);
-
-    const CSSStyleSheet* page_style_sheet = style_sheet->PageStyleSheet();
-    const TextPosition start_position =
-        page_style_sheet->StartPositionInSource();
-    if (range->getStartLine() == 0) {
-      range->setStartColumn(range->getStartColumn() +
-                            start_position.column_.ZeroBasedInt());
+        const CSSStyleSheet* page_style_sheet = style_sheet->PageStyleSheet();
+        const TextPosition start_position =
+            page_style_sheet->StartPositionInSource();
+        if (range->getStartLine() == 0) {
+          range->setStartColumn(range->getStartColumn() +
+                                start_position.column_.ZeroBasedInt());
+        }
+        if (range->getEndLine() == 0) {
+          range->setEndColumn(range->getEndColumn() +
+                              start_position.column_.ZeroBasedInt());
+        }
+        range->setStartLine(range->getStartLine() +
+                            start_position.line_.ZeroBasedInt());
+        range->setEndLine(range->getEndLine() +
+                          start_position.line_.ZeroBasedInt());
+        (*ranges)->emplace_back(std::move(range));
+      }
     }
-    if (range->getEndLine() == 0) {
-      range->setEndColumn(range->getEndColumn() +
-                          start_position.column_.ZeroBasedInt());
-    }
-    range->setStartLine(range->getStartLine() +
-                        start_position.line_.ZeroBasedInt());
-    range->setEndLine(range->getEndLine() +
-                      start_position.line_.ZeroBasedInt());
-    (*ranges)->emplace_back(std::move(range));
   }
 
   if ((*ranges)->empty()) {
@@ -1085,16 +1206,15 @@ protocol::Response InspectorCSSAgent::getMatchedStylesForNode(
         inherited_pseudo_id_matches,
     Maybe<protocol::Array<protocol::CSS::CSSKeyframesRule>>*
         css_keyframes_rules,
-    Maybe<protocol::Array<protocol::CSS::CSSPositionFallbackRule>>*
-        css_position_fallback_rules,
     Maybe<protocol::Array<protocol::CSS::CSSPositionTryRule>>*
         css_position_try_rules,
+    Maybe<int>* active_position_fallback_index,
     Maybe<protocol::Array<protocol::CSS::CSSPropertyRule>>* css_property_rules,
     Maybe<protocol::Array<protocol::CSS::CSSPropertyRegistration>>*
         css_property_registrations,
     Maybe<protocol::CSS::CSSFontPaletteValuesRule>*
         css_font_palette_values_rule,
-    Maybe<int>* parentLayoutNodeId) {
+    Maybe<int>* parent_layout_node_id) {
   protocol::Response response = AssertEnabled();
   if (!response.IsSuccess())
     return response;
@@ -1225,16 +1345,28 @@ protocol::Response InspectorCSSAgent::getMatchedStylesForNode(
         std::move(inherited_pseudo_element_matches));
   }
 
-  *css_position_try_rules = PositionTryRulesForElement(element);
+  // Get the index of the active position try fallback index.
+  std::optional<size_t> successful_position_fallback_index;
+  if (OutOfFlowData* out_of_flow_data = element->GetOutOfFlowData()) {
+    successful_position_fallback_index =
+        out_of_flow_data->GetNewSuccessfulPositionFallbackIndex();
+    if (successful_position_fallback_index.has_value()) {
+      *active_position_fallback_index =
+          static_cast<int>(successful_position_fallback_index.value());
+    }
+  }
+  *css_position_try_rules =
+      PositionTryRulesForElement(element, successful_position_fallback_index);
 
   if (auto rule = FontPalettesForNode(*element)) {
     *css_font_palette_values_rule = std::move(rule);
   }
 
-  auto* parentLayoutNode = LayoutTreeBuilderTraversal::LayoutParent(*element);
-  if (parentLayoutNode) {
-    if (int boundNodeId = dom_agent_->BoundNodeId(parentLayoutNode))
-      *parentLayoutNodeId = boundNodeId;
+  auto* parent_layout_node = LayoutTreeBuilderTraversal::LayoutParent(*element);
+  if (parent_layout_node) {
+    if (int bound_node_id = dom_agent_->BoundNodeId(parent_layout_node)) {
+      *parent_layout_node_id = bound_node_id;
+    }
   }
 
   return protocol::Response::Success();
@@ -1288,7 +1420,9 @@ static CSSPositionTryRule* FindPositionTryRule(
 }
 
 std::unique_ptr<protocol::Array<protocol::CSS::CSSPositionTryRule>>
-InspectorCSSAgent::PositionTryRulesForElement(Element* element) {
+InspectorCSSAgent::PositionTryRulesForElement(
+    Element* element,
+    std::optional<size_t> active_position_try_index) {
   Document& document = element->GetDocument();
   CHECK(!document.NeedsLayoutTreeUpdateForNode(*element));
 
@@ -1297,17 +1431,20 @@ InspectorCSSAgent::PositionTryRulesForElement(Element* element) {
     return nullptr;
   }
 
-  const PositionTryOptions* position_try_options =
-      style->GetPositionTryOptions();
-  if (!position_try_options) {
+  const PositionTryFallbacks* position_try_fallbacks_ =
+      style->GetPositionTryFallbacks();
+  if (!position_try_fallbacks_) {
     return nullptr;
   }
 
   auto css_position_try_rules =
       std::make_unique<protocol::Array<protocol::CSS::CSSPositionTryRule>>();
   StyleResolver& style_resolver = document.GetStyleResolver();
-  for (const PositionTryOption& option : position_try_options->GetOptions()) {
-    if (const ScopedCSSName* scoped_name = option.GetPositionTryName()) {
+  const HeapVector<PositionTryFallback>& fallbacks =
+      position_try_fallbacks_->GetFallbacks();
+  for (wtf_size_t i = 0; i < fallbacks.size(); ++i) {
+    const PositionTryFallback& fallback = fallbacks[i];
+    if (const ScopedCSSName* scoped_name = fallback.GetPositionTryName()) {
       const TreeScope* tree_scope = scoped_name->GetTreeScope();
       if (!tree_scope) {
         tree_scope = &document;
@@ -1325,6 +1462,8 @@ InspectorCSSAgent::PositionTryRulesForElement(Element* element) {
           document_to_css_style_sheets_.end()) {
         continue;
       }
+      bool is_active = active_position_try_index.has_value() &&
+                       active_position_try_index.value() == i;
       for (CSSStyleSheet* style_sheet :
            *css_style_sheets_for_document_it->value) {
         if (CSSPositionTryRule* css_position_try_rule =
@@ -1333,7 +1472,7 @@ InspectorCSSAgent::PositionTryRulesForElement(Element* element) {
               BindStyleSheet(css_position_try_rule->parentStyleSheet());
           css_position_try_rules->emplace_back(
               inspector_style_sheet->BuildObjectForPositionTryRule(
-                  css_position_try_rule));
+                  css_position_try_rule, is_active));
           break;
         }
       }
@@ -2322,6 +2461,7 @@ protocol::Response InspectorCSSAgent::forcePseudoState(
   unsigned current_forced_pseudo_state =
       it == node_id_to_forced_pseudo_state_.end() ? 0 : it->value;
   bool need_style_recalc = forced_pseudo_state != current_forced_pseudo_state;
+
   if (!need_style_recalc)
     return protocol::Response::Success();
 
@@ -2448,14 +2588,15 @@ std::unique_ptr<protocol::CSS::CSSMedia> InspectorCSSAgent::BuildMediaObject(
     for (wtf_size_t j = 0; j < expressions.size(); ++j) {
       const MediaQueryExp& media_query_exp = expressions.at(j);
       MediaQueryExpValue exp_value = media_query_exp.Bounds().right.value;
-      if (!exp_value.IsNumeric())
+      if (!exp_value.IsNumericLiteralValue()) {
         continue;
+      }
       const char* value_name =
-          CSSPrimitiveValue::UnitTypeToString(exp_value.Unit());
+          CSSPrimitiveValue::UnitTypeToString(exp_value.GetUnitType());
       std::unique_ptr<protocol::CSS::MediaQueryExpression>
           media_query_expression =
               protocol::CSS::MediaQueryExpression::create()
-                  .setValue(exp_value.Value())
+                  .setValue(exp_value.GetDoubleValue())
                   .setUnit(String(value_name))
                   .setFeature(media_query_exp.MediaFeature())
                   .build();
@@ -2467,9 +2608,11 @@ std::unique_ptr<protocol::CSS::CSSMedia> InspectorCSSAgent::BuildMediaObject(
       }
 
       int computed_length;
-      if (media_values->ComputeLength(exp_value.Value(), exp_value.Unit(),
-                                      computed_length))
+      if (media_values->ComputeLength(exp_value.GetDoubleValue(),
+                                      exp_value.GetUnitType(),
+                                      computed_length)) {
         media_query_expression->setComputedLength(computed_length);
+      }
 
       expression_array->emplace_back(std::move(media_query_expression));
       has_expression_items = true;

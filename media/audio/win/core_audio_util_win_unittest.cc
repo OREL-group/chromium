@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/audio/win/core_audio_util_win.h"
 
 #include <stddef.h>
@@ -584,7 +589,7 @@ TEST_F(CoreAudioUtilWinTest, CreateRenderAndCaptureClients) {
     EXPECT_TRUE(SUCCEEDED(
         CoreAudioUtil::GetSharedModeMixFormat(client.Get(), &format)));
     if (data[i] == eRender) {
-      // It is not possible to create a render client using an unitialized
+      // It is not possible to create a render client using an uninitialized
       // client interface.
       render_client = CoreAudioUtil::CreateRenderClient(client.Get());
       EXPECT_FALSE(render_client.Get());
@@ -596,7 +601,7 @@ TEST_F(CoreAudioUtilWinTest, CreateRenderAndCaptureClients) {
       EXPECT_TRUE(render_client.Get());
       EXPECT_GT(endpoint_buffer_size, 0u);
     } else if (data[i] == eCapture) {
-      // It is not possible to create a capture client using an unitialized
+      // It is not possible to create a capture client using an uninitialized
       // client interface.
       capture_client = CoreAudioUtil::CreateCaptureClient(client.Get());
       EXPECT_FALSE(capture_client.Get());

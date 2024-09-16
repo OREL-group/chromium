@@ -52,26 +52,12 @@ const int kProfileImageSize = 128;
 
 // Derives screen mode of sync opt in screen from the
 // CanShowHistorySyncOptInsWithoutMinorModeRestrictions capability.
-bool UseMinorModeRestrictions() {
+constexpr bool UseMinorModeRestrictions() {
 #if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
   // ChromeOS handles minor modes separately.
   return false;
 #else
-  return base::FeatureList::IsEnabled(
-      ::switches::kMinorModeRestrictionsForHistorySyncOptIn);
-#endif
-}
-
-// After this time delta, user must see a screen. If it was impossible to get
-// the CanShowHistorySyncOptInsWithoutMinorModeRestrictions capability before
-// the deadline, the screen should be configured in minor-safe way.
-base::TimeDelta GetMinorModeRestrictionsDeadline() {
-#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_CHROMEOS_LACROS)
-  // Not implemented for those platforms.
-  NOTREACHED_NORETURN();
-#else
-  return base::Milliseconds(
-      ::switches::kMinorModeRestrictionsFetchDeadlineMs.Get());
+  return true;
 #endif
 }
 
@@ -102,18 +88,43 @@ void RecordButtonClicked(SyncConfirmationScreenMode mode,
   std::optional<signin_metrics::SyncButtonClicked> button_clicked;
   switch (mode) {
     case SyncConfirmationScreenMode::kRestricted:
+    case SyncConfirmationScreenMode::kDeadlined:
       button_clicked = equal;
       break;
     case SyncConfirmationScreenMode::kUnrestricted:
       button_clicked = not_equal;
       break;
+    case SyncConfirmationScreenMode::kPending:
+      // Special case: the only button that can be clicked in this mode is the
+      // settings button.
+      button_clicked =
+          signin_metrics::SyncButtonClicked::kSyncSettingsUnknownWeighted;
+      break;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 
   base::UmaHistogramEnumeration("Signin.SyncButtons.Clicked", *button_clicked);
 }
 
+// Translates screen `mode` to the corresponding metric describing what type of
+// buttons are presented.
+signin_metrics::SyncButtonsType GetButtonTypeMetricValue(
+    SyncConfirmationScreenMode mode) {
+  switch (mode) {
+    case SyncConfirmationScreenMode::kRestricted:
+      return signin_metrics::SyncButtonsType::kSyncEqualWeightedFromCapability;
+    case SyncConfirmationScreenMode::kDeadlined:
+      return signin_metrics::SyncButtonsType::kSyncEqualWeightedFromDeadline;
+    case SyncConfirmationScreenMode::kUnrestricted:
+      return signin_metrics::SyncButtonsType::kSyncNotEqualWeighted;
+
+    // Metric is not emitted for these cases:
+    case SyncConfirmationScreenMode::kUnsupported:
+    case SyncConfirmationScreenMode::kPending:
+      NOTREACHED();
+  }
+}
 }  // namespace
 
 SyncConfirmationScreenMode GetScreenMode(
@@ -323,27 +334,19 @@ void SyncConfirmationHandler::OnScreenModeChanged(
   }
 
   FireWebUIListener("screen-mode-changed", static_cast<int>(mode));
-
-  std::optional<signin_metrics::SyncButtonsType> buttons_type;
-  switch (mode) {
-    case SyncConfirmationScreenMode::kRestricted:
-      buttons_type = signin_metrics::SyncButtonsType::kSyncEqualWeighted;
-      break;
-    case SyncConfirmationScreenMode::kUnrestricted:
-      buttons_type = signin_metrics::SyncButtonsType::kSyncNotEqualWeighted;
-      break;
-    default:
-      // kPending and kUnsupported are ruled out in this method.
-      NOTREACHED();
-  }
-
-  base::UmaHistogramEnumeration("Signin.SyncButtons.Shown", *buttons_type);
+  base::UmaHistogramEnumeration("Signin.SyncButtons.Shown",
+                                GetButtonTypeMetricValue(mode));
 }
 
 void SyncConfirmationHandler::OnDeadline() {
-  if (!screen_mode_notified_) {
-    OnScreenModeChanged(SyncConfirmationScreenMode::kRestricted);
+  if (screen_mode_notified_ || !IsJavascriptAllowed()) {
+    // Do not override already configured screen mode, and ignore update attempt
+    // when the UI is no longer present. Note: this is called from a timer
+    // routine rather than directly from being handled from the UI app.
+    return;
   }
+
+  OnScreenModeChanged(SyncConfirmationScreenMode::kDeadlined);
 }
 
 void SyncConfirmationHandler::DispatchAccountInfoUpdate(
@@ -365,6 +368,7 @@ void SyncConfirmationHandler::DispatchAccountInfoUpdate(
     return;
   }
 
+  // Subsequent code will send updates to the UI.
   AllowJavascript();
 
   if (info.IsValid() && !avatar_notified_) {
@@ -452,7 +456,8 @@ void SyncConfirmationHandler::HandleInitializedWithSize(
 
   if (!screen_mode_notified_ && UseMinorModeRestrictions()) {
     // Deadline timer for the case when screen mode doesn't arrive in time.
-    screen_mode_deadline_.Start(FROM_HERE, GetMinorModeRestrictionsDeadline(),
+    screen_mode_deadline_.Start(FROM_HERE,
+                                signin::GetMinorModeRestrictionsDeadline(),
                                 this, &SyncConfirmationHandler::OnDeadline);
   }
 

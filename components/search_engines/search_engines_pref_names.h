@@ -28,17 +28,6 @@ inline constexpr char kDefaultSearchProviderGUID[] =
 inline constexpr char kSyncedDefaultSearchProviderGUID[] =
     "default_search_provider.synced_guid";
 
-// Whether this profile should potentially show the search engine choice
-// dialog before the user can proceed. Actual eligiblity is still determined
-// by the `SearchEngineChoiceDialogService`.
-// Note that this has effect only if the `kSearchEngineChoiceTrigger` feature
-// is enabled and if its `kSearchEngineChoiceTriggerForTaggedProfilesOnly`
-// param is set to `true`.
-// This pref is the replacement for "default_search_provider.choice_pending",
-// that was wrongly populated due to a bug and was deprecated.
-inline constexpr char kDefaultSearchProviderChoicePending[] =
-    "default_search_provider.engine_choice_pending";
-
 // Epoch timestamp in seconds of when the user chose a search engine in
 // the choice screen.
 // The timestamp and the version indicate that the user has already made a
@@ -52,6 +41,15 @@ inline constexpr char kDefaultSearchProviderChoiceScreenCompletionTimestamp[] =
 // search engine choice in the choice screen or in settings.
 inline constexpr char kDefaultSearchProviderChoiceScreenCompletionVersion[] =
     "default_search_provider.choice_screen_completion_version";
+
+// Prepopulated id of the search engine chosen in a guest session if the user
+// decides to propagate the default search engine to all guest sessions. The
+// prepopulated id indicates that the search engine choice dialog should not be
+// displayed in the next guest sessions and should be used to set the guest
+// sessions default search engine.
+// Defaults to 0;
+inline constexpr char kDefaultSearchProviderGuestModePrepopulatedId[] =
+    "default_search_provider.guest_mode_prepopulated_id";
 
 // Display state of the choice screen from which the user selected their
 // default search engine. It is stored for logging purposes, only for a limited

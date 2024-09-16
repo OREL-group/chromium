@@ -21,6 +21,7 @@
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
 #include "base/uuid.h"
+#include "google_apis/common/api_error_codes.h"
 #include "url/gurl.h"
 
 namespace ash::api {
@@ -33,6 +34,10 @@ size_t RunPendingCallbacks(std::list<base::OnceClosure>& pending_callbacks) {
     std::move(callback).Run();
   }
   return callbacks.size();
+}
+
+bool IsHttpErrorSuccess(google_apis::ApiErrorCode http_error) {
+  return http_error == google_apis::ApiErrorCode::HTTP_SUCCESS;
 }
 
 }  // namespace
@@ -64,10 +69,13 @@ void FakeTasksClient::GetTaskLists(bool force_fetch,
   if (paused_ || (paused_on_fetch_ && need_fetch)) {
     pending_get_task_lists_callbacks_.push_back(base::BindOnce(
         [](ui::ListModel<TaskList>* task_lists, GetTaskListsCallback callback,
-           bool success) { std::move(callback).Run(success, task_lists); },
-        task_lists_returned, std::move(callback), !get_task_lists_error_));
+           bool success, std::optional<google_apis::ApiErrorCode> http_error) {
+          std::move(callback).Run(success, http_error, task_lists);
+        },
+        task_lists_returned, std::move(callback), !get_task_lists_error_,
+        http_error_));
   } else {
-    std::move(callback).Run(/*success=*/!get_task_lists_error_,
+    std::move(callback).Run(/*success=*/!get_task_lists_error_, http_error_,
                             task_lists_returned);
   }
 }
@@ -95,11 +103,14 @@ void FakeTasksClient::GetTasks(const std::string& task_list_id,
 
   if (paused_ || (paused_on_fetch_ && need_fetch)) {
     pending_get_tasks_callbacks_.push_back(base::BindOnce(
-        [](ui::ListModel<Task>* tasks, GetTasksCallback callback,
-           bool success) { std::move(callback).Run(success, tasks); },
-        tasks_returned, std::move(callback), !get_tasks_error_));
+        [](ui::ListModel<Task>* tasks, GetTasksCallback callback, bool success,
+           std::optional<google_apis::ApiErrorCode> http_error) {
+          std::move(callback).Run(success, http_error, tasks);
+        },
+        tasks_returned, std::move(callback), !get_tasks_error_, http_error_));
   } else {
-    std::move(callback).Run(/*success=*/!get_tasks_error_, tasks_returned);
+    std::move(callback).Run(/*success=*/!get_tasks_error_, http_error_,
+                            tasks_returned);
   }
 }
 
@@ -219,8 +230,11 @@ size_t FakeTasksClient::RunPendingUpdateTaskCallbacks() {
 void FakeTasksClient::AddTaskImpl(const std::string& task_list_id,
                                   const std::string& title,
                                   TasksClient::OnTaskSavedCallback callback) {
-  if (update_errors_) {
-    std::move(callback).Run(/*task=*/nullptr);
+  CHECK(http_error_);
+  if (!IsHttpErrorSuccess(http_error_.value())) {
+    // Simulate there is an error when requesting data through the Google Task
+    // API.
+    std::move(callback).Run(http_error_.value(), /*task=*/nullptr);
     return;
   }
 
@@ -235,11 +249,13 @@ void FakeTasksClient::AddTaskImpl(const std::string& task_list_id,
       /*has_notes=*/false,
       /*updated=*/base::Time::Now(),
       /*web_view_link=*/
-      GURL(base::StrCat({"https://tasks.google.com/task/", new_task_id})));
+      GURL(base::StrCat({"https://tasks.google.com/task/", new_task_id})),
+      Task::OriginSurfaceType::kRegular);
 
   const auto* const task = task_list_iter->second->AddAt(
       /*index=*/0, std::move(pending_task));
-  std::move(callback).Run(task);
+  // Simulate update the task successfully through the Google Task API.
+  std::move(callback).Run(http_error_.value(), task);
 }
 
 void FakeTasksClient::UpdateTaskImpl(
@@ -248,8 +264,11 @@ void FakeTasksClient::UpdateTaskImpl(
     const std::string& title,
     bool completed,
     TasksClient::OnTaskSavedCallback callback) {
-  if (update_errors_) {
-    std::move(callback).Run(/*task=*/nullptr);
+  CHECK(http_error_);
+  if (!IsHttpErrorSuccess(http_error_.value())) {
+    // Simulate there is an error when requesting data through the Google Task
+    // API.
+    std::move(callback).Run(http_error_.value(), /*task=*/nullptr);
     return;
   }
 
@@ -264,7 +283,8 @@ void FakeTasksClient::UpdateTaskImpl(
   Task* task = task_iter->get();
   task->title = title;
   task->completed = completed;
-  std::move(callback).Run(task);
+  // Simulate update the task successfully through the Google Task API.
+  std::move(callback).Run(http_error_.value(), task);
 }
 
 void FakeTasksClient::CacheTaskLists() {
@@ -291,7 +311,7 @@ void FakeTasksClient::CacheTasks() {
     cached_tasks_->Add(std::make_unique<Task>(
         task->id, task->title, task->due, task->completed, task->has_subtasks,
         task->has_email_link, task->has_notes, task->updated,
-        task->web_view_link));
+        task->web_view_link, Task::OriginSurfaceType::kRegular));
   }
 }
 

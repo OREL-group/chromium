@@ -4,6 +4,9 @@
 
 #include "ui/color/color_provider_utils.h"
 
+#include <memory>
+#include <string_view>
+
 #include "base/containers/contains.h"
 #include "base/containers/fixed_flat_map.h"
 #include "base/no_destructor.h"
@@ -42,28 +45,12 @@ constexpr RendererColorIdTable kRendererColorIdMap[] = {
      kColorMenuItemBackgroundSelected},
     {RendererColorId::kColorMenuSeparator, kColorMenuSeparator},
     {RendererColorId::kColorOverlayScrollbarFill, kColorOverlayScrollbarFill},
-    {RendererColorId::kColorOverlayScrollbarFillDark,
-     kColorOverlayScrollbarFillDark},
-    {RendererColorId::kColorOverlayScrollbarFillLight,
-     kColorOverlayScrollbarFillLight},
     {RendererColorId::kColorOverlayScrollbarFillHovered,
      kColorOverlayScrollbarFillHovered},
-    {RendererColorId::kColorOverlayScrollbarFillHoveredDark,
-     kColorOverlayScrollbarFillHoveredDark},
-    {RendererColorId::kColorOverlayScrollbarFillHoveredLight,
-     kColorOverlayScrollbarFillHoveredLight},
     {RendererColorId::kColorOverlayScrollbarStroke,
      kColorOverlayScrollbarStroke},
-    {RendererColorId::kColorOverlayScrollbarStrokeDark,
-     kColorOverlayScrollbarStrokeDark},
-    {RendererColorId::kColorOverlayScrollbarStrokeLight,
-     kColorOverlayScrollbarStrokeLight},
     {RendererColorId::kColorOverlayScrollbarStrokeHovered,
      kColorOverlayScrollbarStrokeHovered},
-    {RendererColorId::kColorOverlayScrollbarStrokeHoveredDark,
-     kColorOverlayScrollbarStrokeHoveredDark},
-    {RendererColorId::kColorOverlayScrollbarStrokeHoveredLight,
-     kColorOverlayScrollbarStrokeHoveredLight},
     {RendererColorId::kColorWebNativeControlAccent,
      kColorWebNativeControlAccent},
     {RendererColorId::kColorWebNativeControlAccentDisabled,
@@ -151,7 +138,7 @@ ColorProviderUtilsCallbacks* g_color_provider_utils_callbacks = nullptr;
 
 ColorProviderUtilsCallbacks::~ColorProviderUtilsCallbacks() = default;
 
-base::StringPiece ColorModeName(ColorProviderKey::ColorMode color_mode) {
+std::string_view ColorModeName(ColorProviderKey::ColorMode color_mode) {
   switch (color_mode) {
     case ColorProviderKey::ColorMode::kLight:
       return "kLight";
@@ -162,7 +149,7 @@ base::StringPiece ColorModeName(ColorProviderKey::ColorMode color_mode) {
   }
 }
 
-base::StringPiece ContrastModeName(
+std::string_view ContrastModeName(
     ColorProviderKey::ContrastMode contrast_mode) {
   switch (contrast_mode) {
     case ColorProviderKey::ContrastMode::kNormal:
@@ -174,7 +161,7 @@ base::StringPiece ContrastModeName(
   }
 }
 
-base::StringPiece ForcedColorsName(
+std::string_view ForcedColorsName(
     ColorProviderKey::ForcedColors forced_colors) {
   switch (forced_colors) {
     case ColorProviderKey::ForcedColors::kNone:
@@ -196,7 +183,7 @@ base::StringPiece ForcedColorsName(
   }
 }
 
-base::StringPiece SystemThemeName(ui::SystemTheme system_theme) {
+std::string_view SystemThemeName(ui::SystemTheme system_theme) {
   switch (system_theme) {
     case ui::SystemTheme::kDefault:
       return "kDefault";
@@ -219,7 +206,7 @@ std::string ColorIdName(ColorId color_id) {
   auto i = color_id_map.find(color_id);
   if (i != color_id_map.cend())
     return {i->second};
-  base::StringPiece color_name;
+  std::string_view color_name;
   if (g_color_provider_utils_callbacks &&
       g_color_provider_utils_callbacks->ColorIdName(color_id, &color_name))
     return std::string(color_name.data(), color_name.length());
@@ -374,14 +361,14 @@ RendererColorMap CreateRendererColorMap(const ColorProvider& color_provider) {
   return map;
 }
 
-ColorProvider CreateColorProviderFromRendererColorMap(
+std::unique_ptr<ColorProvider> CreateColorProviderFromRendererColorMap(
     const RendererColorMap& renderer_color_map) {
-  ColorProvider color_provider;
-  ui::ColorMixer& mixer = color_provider.AddMixer();
+  std::unique_ptr<ColorProvider> color_provider =
+      std::make_unique<ColorProvider>();
+  ui::ColorMixer& mixer = color_provider->AddMixer();
 
   for (const auto& table : kRendererColorIdMap)
     mixer[table.color_id] = {renderer_color_map.at(table.renderer_color_id)};
-  color_provider.GenerateColorMap();
 
   return color_provider;
 }
@@ -410,9 +397,11 @@ void AddEmulatedForcedColorsToMixer(ColorMixer& mixer, bool dark_mode) {
                                                 : SK_ColorBLACK};
 }
 
-ColorProvider CreateEmulatedForcedColorsColorProvider(bool dark_mode) {
-  ColorProvider color_provider;
-  ui::ColorMixer& mixer = color_provider.AddMixer();
+std::unique_ptr<ColorProvider> CreateEmulatedForcedColorsColorProvider(
+    bool dark_mode) {
+  std::unique_ptr<ColorProvider> color_provider =
+      std::make_unique<ColorProvider>();
+  ui::ColorMixer& mixer = color_provider->AddMixer();
   AddEmulatedForcedColorsToMixer(mixer, dark_mode);
 
   // Set the colors for the scrollbar parts based on the emulated definitions
@@ -440,13 +429,14 @@ ColorProvider CreateEmulatedForcedColorsColorProvider(bool dark_mode) {
   mixer[kColorSeparator] = {kColorMidground};
   CompleteDefaultNonWebNativeRendererColorIdsDefinition(mixer);
 
-  color_provider.GenerateColorMap();
   return color_provider;
 }
 
-ColorProvider CreateEmulatedForcedColorsColorProviderForTest() {
-  ColorProvider color_provider;
-  ui::ColorMixer& mixer = color_provider.AddMixer();
+std::unique_ptr<ColorProvider>
+CreateEmulatedForcedColorsColorProviderForTest() {
+  std::unique_ptr<ColorProvider> color_provider =
+      std::make_unique<ColorProvider>();
+  ui::ColorMixer& mixer = color_provider->AddMixer();
 
   mixer[kColorWebNativeControlAccent] = {SK_ColorCYAN};
   mixer[kColorWebNativeControlAccentDisabled] = {SK_ColorGREEN};
@@ -495,14 +485,14 @@ ColorProvider CreateEmulatedForcedColorsColorProviderForTest() {
   mixer[kColorWebNativeControlSliderHovered] = {SK_ColorCYAN};
   mixer[kColorWebNativeControlSliderPressed] = {SK_ColorCYAN};
 
-  color_provider.GenerateColorMap();
   return color_provider;
 }
 
-ColorProvider COMPONENT_EXPORT(COLOR)
+std::unique_ptr<ColorProvider> COMPONENT_EXPORT(COLOR)
     CreateDefaultColorProviderForBlink(bool dark_mode) {
-  ColorProvider color_provider;
-  ui::ColorMixer& mixer = color_provider.AddMixer();
+  std::unique_ptr<ColorProvider> color_provider =
+      std::make_unique<ColorProvider>();
+  ui::ColorMixer& mixer = color_provider->AddMixer();
 
   mixer[kColorPrimaryBackground] = {dark_mode ? SkColorSetRGB(0x29, 0x2A, 0x2D)
                                               : SK_ColorWHITE};
@@ -669,7 +659,6 @@ ColorProvider COMPONENT_EXPORT(COLOR)
         SkColorSetRGB(0x37, 0x93, 0xFF)};
   }
 
-  color_provider.GenerateColorMap();
   return color_provider;
 }
 
@@ -733,7 +722,7 @@ void CompleteControlsForcedColorsDefinition(ui::ColorMixer& mixer) {
 void CompleteDefaultCssSystemColorDefinition(ui::ColorMixer& mixer,
                                              bool dark_mode) {
   mixer[kColorCssSystemGrayText] = {SkColorSetRGB(0x80, 0x80, 0x80)};
-  mixer[kColorCssSystemHighlight] = {SK_ColorBLUE};
+  mixer[kColorCssSystemHighlight] = {SkColorSetRGB(0x19, 0x67, 0xD2)};
   mixer[kColorCssSystemHighlightText] = {SK_ColorWHITE};
   if (dark_mode) {
     mixer[kColorCssSystemBtnFace] = {SkColorSetRGB(0x6B, 0x6B, 0x6B)};
@@ -762,40 +751,20 @@ void COMPONENT_EXPORT(COLOR)
   mixer[kColorMenuSeparator] = {kColorSeparator};
   mixer[kColorOverlayScrollbarFill] =
       SetAlpha(kColorEndpointForeground, gfx::kGoogleGreyAlpha700);
-  mixer[kColorOverlayScrollbarFillDark] = SetAlpha(
-      GetColorWithMaxContrast(SK_ColorWHITE), gfx::kGoogleGreyAlpha700);
-  mixer[kColorOverlayScrollbarFillLight] = SetAlpha(
-      GetColorWithMaxContrast(SK_ColorBLACK), gfx::kGoogleGreyAlpha700);
   mixer[kColorOverlayScrollbarFillHovered] =
       SetAlpha(kColorEndpointForeground, gfx::kGoogleGreyAlpha800);
-  mixer[kColorOverlayScrollbarFillHoveredDark] = SetAlpha(
-      GetColorWithMaxContrast(SK_ColorWHITE), gfx::kGoogleGreyAlpha800);
-  mixer[kColorOverlayScrollbarFillHoveredLight] = SetAlpha(
-      GetColorWithMaxContrast(SK_ColorBLACK), gfx::kGoogleGreyAlpha800);
   mixer[kColorOverlayScrollbarStroke] =
       SetAlpha(kColorEndpointBackground, gfx::kGoogleGreyAlpha400);
-  mixer[kColorOverlayScrollbarStrokeDark] =
-      SetAlpha(GetColorWithMaxContrast(kColorOverlayScrollbarFillDark),
-               gfx::kGoogleGreyAlpha400);
-  mixer[kColorOverlayScrollbarStrokeLight] =
-      SetAlpha(GetColorWithMaxContrast(kColorOverlayScrollbarFillLight),
-               gfx::kGoogleGreyAlpha400);
   mixer[kColorOverlayScrollbarStrokeHovered] =
       SetAlpha(kColorEndpointBackground, gfx::kGoogleGreyAlpha500);
-  mixer[kColorOverlayScrollbarStrokeHoveredDark] =
-      SetAlpha(GetColorWithMaxContrast(kColorOverlayScrollbarFillHoveredDark),
-               gfx::kGoogleGreyAlpha500);
-  mixer[kColorOverlayScrollbarStrokeHoveredLight] =
-      SetAlpha(GetColorWithMaxContrast(kColorOverlayScrollbarFillHoveredLight),
-               gfx::kGoogleGreyAlpha500);
 }
 
 RendererColorMap COMPONENT_EXPORT(COLOR)
     GetDefaultBlinkColorProviderColorMaps(bool dark_mode,
                                           bool is_forced_colors) {
   return CreateRendererColorMap(
-      is_forced_colors ? CreateEmulatedForcedColorsColorProvider(dark_mode)
-                       : CreateDefaultColorProviderForBlink(dark_mode));
+      is_forced_colors ? *CreateEmulatedForcedColorsColorProvider(dark_mode)
+                       : *CreateDefaultColorProviderForBlink(dark_mode));
 }
 
 bool IsRendererColorMappingEquivalent(

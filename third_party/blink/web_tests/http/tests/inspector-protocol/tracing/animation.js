@@ -7,17 +7,18 @@
     const tracingHelper = new TracingHelper(testRunner, session);
 
     await dp.Page.enable();
+    await dp.Animation.enable();
 
     await tracingHelper.startTracing('blink.animations,devtools.timeline,benchmark,rail');
 
     dp.Page.navigate(
         {url: 'http://127.0.0.1:8000/inspector-protocol/resources/animation.html'});
 
-    // Wait for the DOM to be interactive.
-    await dp.Page.onceLoadEventFired();
+    // Wait for animation.
+    await dp.Animation.onceAnimationStarted();
 
     const events = await tracingHelper.stopTracing(/blink\.animations|devtools\.timeline|benchmark|rail/);
-    const animationEvents = events.filter(event => event.name && event.name === 'Animation').sort((a, b) => a.ts - b.ts);
+    const animationEvents = events.filter(event => event.name && event.name === 'Animation' && event.ph !== 'n').sort((a, b) => a.ts - b.ts);
     for (const event of animationEvents) {
         tracingHelper.logEventShape(event, [], ['name', 'data', 'ph', 'state', 'compositeFailed', 'unsupportedProperties', 'displayName']);
     }

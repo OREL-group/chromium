@@ -11,12 +11,13 @@
 
 #include "base/notreached.h"
 #include "base/ranges/algorithm.h"
+#include "third_party/blink/public/mojom/permissions_policy/permissions_policy_feature.mojom-forward.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
+#include "third_party/blink/renderer/bindings/core/v8/script_value.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_union_object_string.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_credential_request_options.h"
-#include "third_party/blink/renderer/bindings/modules/v8/v8_digital_credential_provider.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_digital_credential_request_options.h"
-#include "third_party/blink/renderer/bindings/modules/v8/v8_identity_credential_request_options.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_identity_provider_request_options.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_identity_request_provider.h"
 #include "third_party/blink/renderer/core/dom/abort_signal.h"
@@ -31,6 +32,8 @@
 #include "third_party/blink/renderer/modules/credentialmanagement/credential_utils.h"
 #include "third_party/blink/renderer/modules/credentialmanagement/digital_credential.h"
 #include "third_party/blink/renderer/modules/credentialmanagement/identity_credential.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/bindings/to_blink_string.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
@@ -52,10 +55,40 @@ void AbortRequest(ScriptState* script_state) {
   CredentialManagerProxy::From(script_state)->DigitalIdentityRequest()->Abort();
 }
 
+String ValidateAndStringifyObject(
+    ScriptPromiseResolver<IDLNullable<Credential>>* resolver,
+    const ScriptValue& input) {
+  v8::Local<v8::String> value;
+  if (input.IsEmpty() || !input.V8Value()->IsObject() ||
+      !v8::JSON::Stringify(resolver->GetScriptState()->GetContext(),
+                           input.V8Value().As<v8::Object>())
+           .ToLocal(&value)) {
+    resolver->RejectWithTypeError(
+        "IdentityRequestProvider request objects should either by strings or "
+        "JSON-Serializable objects.");
+    return String();
+  }
+
+  String output = ToBlinkString<String>(
+      resolver->GetScriptState()->GetIsolate(), value, kDoNotExternalize);
+
+  // Implementation defined constant controlling the allowed JSON length.
+  static constexpr size_t kMaxJSONStringLength = 1024 * 1024;
+
+  if (output.length() > kMaxJSONStringLength) {
+    resolver->RejectWithTypeError(
+        String::Format("JSON serialization of IdentityRequestProvider request "
+                       "objects should be no longer than %zu characters",
+                       kMaxJSONStringLength));
+    return String();
+  }
+
+  return output;
+}
+
 void OnCompleteRequest(ScriptPromiseResolver<IDLNullable<Credential>>* resolver,
                        std::unique_ptr<ScopedAbortState> scoped_abort_state,
                        const WTF::String& protocol,
-                       bool should_return_digital_credential,
                        RequestDigitalIdentityStatus status,
                        const WTF::String& token) {
   switch (status) {
@@ -88,14 +121,8 @@ void OnCompleteRequest(ScriptPromiseResolver<IDLNullable<Credential>>* resolver,
       UseCounter::Count(resolver->GetExecutionContext(),
                         WebFeature::kIdentityDigitalCredentialsSuccess);
 
-      if (should_return_digital_credential) {
-        DigitalCredential* credential =
-            DigitalCredential::Create(protocol, token);
-        resolver->Resolve(credential);
-        return;
-      }
-      IdentityCredential* credential =
-          IdentityCredential::Create(token, /*is_auto_selected=*/false);
+      DigitalCredential* credential =
+          DigitalCredential::Create(protocol, token);
       resolver->Resolve(credential);
       return;
     }
@@ -105,65 +132,63 @@ void OnCompleteRequest(ScriptPromiseResolver<IDLNullable<Credential>>* resolver,
 }  // anonymous namespace
 
 bool IsDigitalIdentityCredentialType(const CredentialRequestOptions& options) {
-  if (options.hasIdentity()) {
-    return options.identity()->hasProviders() &&
-           base::ranges::any_of(options.identity()->providers(),
-                                &IdentityProviderConfig::hasHolder);
-  }
   return options.hasDigital();
 }
 
-ScriptPromise<IDLNullable<Credential>>
-DiscoverDigitalIdentityCredentialFromExternalSource(
-    ScriptState* script_state,
+void DiscoverDigitalIdentityCredentialFromExternalSource(
     ScriptPromiseResolver<IDLNullable<Credential>>* resolver,
-    const CredentialRequestOptions& options,
-    ExceptionState& exception_state) {
+    ExceptionState& exception_state,
+    const CredentialRequestOptions& options) {
   CHECK(IsDigitalIdentityCredentialType(options));
   CHECK(RuntimeEnabledFeatures::WebIdentityDigitalCredentialsEnabled(
       resolver->GetExecutionContext()));
 
   if (!CheckGenericSecurityRequirementsForCredentialsContainerRequest(
           resolver)) {
-    return resolver->Promise();
+    return;
   }
 
-  size_t num_providers = 0u;
-  if (options.hasIdentity()) {
-    num_providers = options.identity()->hasProviders()
-                        ? options.identity()->providers().size()
-                        : 0u;
-  } else {
-    num_providers = options.digital()->hasProviders()
-                        ? options.digital()->providers().size()
-                        : 0u;
+  if (!resolver->GetExecutionContext()->IsFeatureEnabled(
+          mojom::blink::PermissionsPolicyFeature::kDigitalCredentialsGet)) {
+    resolver->Reject(MakeGarbageCollected<DOMException>(
+        DOMExceptionCode::kNotAllowedError,
+        "The 'digital-credentials-get' feature is not enabled in this "
+        "document. Permissions Policy may be used to delegate digital "
+        "credential API capabilities to cross-origin child frames."));
+    return;
   }
+
+  size_t num_providers = options.digital()->hasProviders()
+                             ? options.digital()->providers().size()
+                             : 0u;
 
   if (num_providers == 0) {
-    exception_state.ThrowTypeError(
+    resolver->RejectWithTypeError(
         "Digital identity API needs at least one provider.");
-    resolver->Detach();
-    return ScriptPromise<IDLNullable<Credential>>();
+    return;
   }
 
   // TODO(https://crbug.com/1416939): make sure the Digital Credentials
   // API works well with the Multiple IdP API.
   if (num_providers > 1u) {
-    exception_state.ThrowTypeError(
+    resolver->RejectWithTypeError(
         "Digital identity API currently does not support multiple "
         "providers.");
-    resolver->Detach();
-    return ScriptPromise<IDLNullable<Credential>>();
+    return;
   }
 
-  if (!IsSameSecurityOriginWithAncestors(
-          To<LocalDOMWindow>(resolver->GetExecutionContext())->GetFrame())) {
-    exception_state.ThrowDOMException(
-        DOMExceptionCode::kNotAllowedError,
-        "The digital identity credential can only be requested in a "
-        "document which is same-origin with all of its ancestors.");
-    resolver->Detach();
-    return ScriptPromise<IDLNullable<Credential>>();
+  auto provider = options.digital()->providers()[0];
+  V8UnionObjectOrString* request_object_or_string = provider->request();
+
+  String stringified_request;
+  if (request_object_or_string->IsString()) {
+    stringified_request = request_object_or_string->GetAsString();
+  } else {
+    stringified_request = ValidateAndStringifyObject(
+        resolver, request_object_or_string->GetAsObject());
+    if (stringified_request.IsNull()) {
+      return;
+    }
   }
 
   UseCounter::Count(resolver->GetExecutionContext(),
@@ -171,11 +196,12 @@ DiscoverDigitalIdentityCredentialFromExternalSource(
 
   auto* signal = options.getSignalOr(nullptr);
   if (signal && signal->aborted()) {
-    resolver->Reject(MakeGarbageCollected<DOMException>(
-        DOMExceptionCode::kAbortError, "Request has been aborted"));
-    return resolver->Promise();
+    resolver->RejectWithDOMException(DOMExceptionCode::kAbortError,
+                                     "Request has been aborted");
+    return;
   }
 
+  ScriptState* script_state = resolver->GetScriptState();
   std::unique_ptr<ScopedAbortState> scoped_abort_state;
   if (signal) {
     auto callback = WTF::BindOnce(&AbortRequest, WrapPersistent(script_state));
@@ -183,33 +209,18 @@ DiscoverDigitalIdentityCredentialFromExternalSource(
     scoped_abort_state = std::make_unique<ScopedAbortState>(signal, handle);
   }
 
-  WTF::String protocol;
-  blink::mojom::blink::DigitalCredentialProviderPtr digital_credential_provider;
-  if (options.hasIdentity()) {
-    digital_credential_provider =
-        blink::mojom::blink::DigitalCredentialProvider::From(
-            *options.identity()->providers()[0]->holder());
-  } else if (options.hasDigital()) {
-    digital_credential_provider =
-        blink::mojom::blink::DigitalCredentialProvider::New();
-    auto provider = options.digital()->providers()[0];
-    if (provider->hasProtocol()) {
-      digital_credential_provider->protocol = provider->protocol();
-    }
-    if (provider->hasRequest()) {
-      digital_credential_provider->request = provider->request();
-    }
-    protocol = provider->protocol();
-  }
+  blink::mojom::blink::DigitalCredentialProviderPtr
+      digital_credential_provider =
+          blink::mojom::blink::DigitalCredentialProvider::New();
+  digital_credential_provider->protocol = provider->protocol();
+  digital_credential_provider->request = stringified_request;
 
   auto* request =
       CredentialManagerProxy::From(script_state)->DigitalIdentityRequest();
   request->Request(
       std::move(digital_credential_provider),
       WTF::BindOnce(&OnCompleteRequest, WrapPersistent(resolver),
-                    std::move(scoped_abort_state), protocol,
-                    /*should_return_digital_credential=*/options.hasDigital()));
-  return resolver->Promise();
+                    std::move(scoped_abort_state), provider->protocol()));
 }
 
 }  // namespace blink

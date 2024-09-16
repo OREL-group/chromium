@@ -8,6 +8,7 @@
 #include <string_view>
 
 #include "apps/launcher.h"
+#include "ash/constants/ash_features.h"
 #include "ash/constants/notifier_catalogs.h"
 #include "ash/login/ui/lock_screen.h"
 #include "ash/public/cpp/app_list/app_list_controller.h"
@@ -44,8 +45,6 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/ash/system_web_apps/system_web_app_ui_utils.h"
-#include "chrome/browser/ui/browser_navigator.h"
-#include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/settings_window_manager_chromeos.h"
 #include "chrome/grit/chrome_unscaled_resources.h"
 #include "chromeos/ash/components/phonehub/feature_status_provider.h"
@@ -232,7 +231,7 @@ int GetResourceId(BubbleIcon icon) {
     case BubbleIcon::kGooglePhotosIcon:
       return IDR_SCALABLE_IPH_GOOGLE_PHOTOS_ICON_120_PNG;
     case BubbleIcon::kNoIcon:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 #else
   return IDR_PRODUCT_LOGO_128;
@@ -357,22 +356,26 @@ ScalableIphDelegateImpl::ScalableIphDelegateImpl(Profile* profile,
   synced_printers_manager_observer_.Observe(synced_printers_manager_);
   MaybeNotifyHasSavedPrinters();
 
-  DCHECK(ash::Shell::Get()->system_tray_model()->phone_hub_manager())
-      << "PhoneHubManager is expected to be initialized at a specific timing. "
-         "See a comment in "
-         "PhoneHubManagerFactory::ServiceIsCreatedWithBrowserContext. Below "
-         "PhoneHubManagerFactory::GetForProfile will lazy create a "
-         "PhoneHubManager. It should be fine as ScalableIph is also "
-         "initialized at the same timing. But it's ideal if PhoneHubManager is "
-         "created at the intended initialization timing instead of our call, "
-         "i.e. PhoneHubManager should be already created at this point.";
-  phonehub::PhoneHubManager* phone_hub_manager =
-      phonehub::PhoneHubManagerFactory::GetForProfile(profile);
-  CHECK(phone_hub_manager);
-  feature_status_provider_ = phone_hub_manager->GetFeatureStatusProvider();
-  CHECK(feature_status_provider_);
-  feature_status_provider_observer_.Observe(feature_status_provider_);
-  MaybeNotifyPhoneHubOnboardingEligibility();
+  if (features::IsCrossDeviceFeatureSuiteAllowed()) {
+    DCHECK(ash::Shell::Get()->system_tray_model()->phone_hub_manager())
+        << "PhoneHubManager is expected to be initialized at a specific "
+           "timing. "
+           "See a comment in "
+           "PhoneHubManagerFactory::ServiceIsCreatedWithBrowserContext. Below "
+           "PhoneHubManagerFactory::GetForProfile will lazy create a "
+           "PhoneHubManager. It should be fine as ScalableIph is also "
+           "initialized at the same timing. But it's ideal if PhoneHubManager "
+           "is "
+           "created at the intended initialization timing instead of our call, "
+           "i.e. PhoneHubManager should be already created at this point.";
+    phonehub::PhoneHubManager* phone_hub_manager =
+        phonehub::PhoneHubManagerFactory::GetForProfile(profile);
+    CHECK(phone_hub_manager);
+    feature_status_provider_ = phone_hub_manager->GetFeatureStatusProvider();
+    CHECK(feature_status_provider_);
+    feature_status_provider_observer_.Observe(feature_status_provider_);
+    MaybeNotifyPhoneHubOnboardingEligibility();
+  }
 }
 
 // Remember NOT to interact with `iph_session` from the destructor. See the

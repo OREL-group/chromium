@@ -98,11 +98,13 @@ class TestWebContents : public WebContentsImpl, public WebContentsTester {
   void SetLastCommittedURL(const GURL& url) override;
   void SetTitle(const std::u16string& new_title) override;
   void SetMainFrameMimeType(const std::string& mime_type) override;
+  void SetMainFrameSize(const gfx::Size& frame_size) override;
   const std::string& GetContentsMimeType() override;
   void SetIsCurrentlyAudible(bool audible) override;
   void TestDidReceiveMouseDownEvent() override;
   void TestDidFinishLoad(const GURL& url) override;
   void TestDidFailLoadWithError(const GURL& url, int error_code) override;
+  void TestDidFirstVisuallyNonEmptyPaint() override;
 
   // True if a cross-site navigation is pending.
   bool CrossProcessNavigationPending();
@@ -131,7 +133,8 @@ class TestWebContents : public WebContentsImpl, public WebContentsTester {
 
   void ResetPauseSubresourceLoadingCalled() override;
 
-  void SetLastActiveTime(base::TimeTicks last_active_time) override;
+  void SetLastActiveTimeTicks(base::TimeTicks last_active_time_ticks) override;
+  void SetLastActiveTime(base::Time last_active_time) override;
 
   void TestIncrementUsbActiveFrameCount() override;
   void TestDecrementUsbActiveFrameCount() override;
@@ -155,7 +158,7 @@ class TestWebContents : public WebContentsImpl, public WebContentsTester {
 
   TestRenderFrameHost* GetSpeculativePrimaryMainFrame();
 
-  int AddPrerender(const GURL& url) override;
+  FrameTreeNodeId AddPrerender(const GURL& url) override;
   TestRenderFrameHost* AddPrerenderAndCommitNavigation(
       const GURL& url) override;
   std::unique_ptr<NavigationSimulator> AddPrerenderAndStartNavigation(

@@ -47,7 +47,7 @@
 #include "chrome/browser/nearby_sharing/wifi_network_configuration/fake_wifi_network_configuration_handler.h"
 #include "chrome/browser/notifications/notification_display_service_factory.h"
 #include "chrome/browser/notifications/notification_display_service_tester.h"
-#include "chrome/browser/ui/ash/test_session_controller.h"
+#include "chrome/browser/ui/ash/session/test_session_controller.h"
 #include "chrome/services/sharing/nearby/decoder/advertisement_decoder.h"
 #include "chrome/services/sharing/public/cpp/advertisement.h"
 #include "chrome/test/base/testing_browser_process.h"
@@ -352,7 +352,7 @@ constexpr base::TimeDelta kCertificateDownloadDuringDiscoveryPeriod =
 // We will run tests with the following feature flags enabled and disabled in
 // all permutations. To add or a remove a feature you can just update this list.
 const std::vector<base::test::FeatureRef> kTestFeatures = {
-    features::kNearbySharingSelfShare};
+    chromeos::features::kQuickShareV2};
 
 bool FileExists(const base::FilePath& file_path) {
   base::ScopedAllowBlockingForTesting allow_blocking;
@@ -561,7 +561,9 @@ class NearbySharingServiceImplTestBase : public testing::Test {
     service_ = CreateService();
     SetFakeFastInitiationAdvertiserFactory(/*should_succeed_on_start=*/true);
 
-    EXPECT_FALSE(IsVisibilityReminderTimerRunning());
+    // Visibility timer starts on |service_| creation because default visibility
+    // is 'Your Devices'.
+    EXPECT_TRUE(IsVisibilityReminderTimerRunning());
 
     service_->set_free_disk_space_for_testing(kFreeDiskSpace);
 
@@ -1055,7 +1057,8 @@ class NearbySharingServiceImplTestBase : public testing::Test {
         EXPECT_CALL(transfer_callback, OnTransferUpdate).Times(updates.size());
 
     for (TransferMetadata::Status status : updates) {
-      expectation.WillOnce(testing::Invoke([=](const ShareTarget& share_target,
+      expectation.WillOnce(testing::Invoke([=, this](
+                                               const ShareTarget& share_target,
                                                TransferMetadata metadata) {
         EXPECT_EQ(target.id, share_target.id);
         EXPECT_EQ(status, metadata.status());
@@ -1522,6 +1525,11 @@ class NearbySharingServiceImplTestBase : public testing::Test {
     return service_->visibility_reminder_timer_.IsRunning();
   }
 
+  void ShutdownNearbyProcess(NearbyProcessShutdownReason shutdown_reason) {
+    fake_nearby_connections_manager_->CleanupForProcessStopped();
+    std::move(process_stopped_callback_).Run(shutdown_reason);
+  }
+
   base::test::ScopedFeatureList scoped_feature_list_;
   base::ScopedTempDir temp_dir_;
   // We need to ensure that |network_notifier_| is created and destroyed after
@@ -1761,7 +1769,7 @@ TEST_P(NearbySharingServiceImplTest,
 TEST_P(NearbySharingServiceImplTest,
        StartFastInitiationAdvertising_BluetoothNotPresent) {
   SetConnectionType(net::NetworkChangeNotifier::CONNECTION_WIFI);
-  is_bluetooth_present_ = false;
+  SetBluetoothIsPresent(false);
   MockTransferUpdateCallback transfer_callback;
   MockShareTargetDiscoveredCallback discovery_callback;
   EXPECT_EQ(
@@ -1828,7 +1836,7 @@ TEST_P(NearbySharingServiceImplTest,
 
 TEST_P(NearbySharingServiceImplTest, RegisterSendSurface_BluetoothNotPresent) {
   SetConnectionType(net::NetworkChangeNotifier::CONNECTION_NONE);
-  is_bluetooth_present_ = false;
+  SetBluetoothIsPresent(false);
   MockTransferUpdateCallback transfer_callback;
   MockShareTargetDiscoveredCallback discovery_callback;
   EXPECT_EQ(
@@ -2184,10 +2192,6 @@ TEST_P(NearbySharingServiceImplTest, UnregisterSendSurfaceStopsDiscovering) {
       NearbySharingService::StatusCodes::kOk,
       service_->UnregisterSendSurface(&transfer_callback, &discovery_callback));
   EXPECT_FALSE(fake_nearby_connections_manager_->IsDiscovering());
-  EXPECT_FALSE(fake_nearby_connections_manager_->is_shutdown());
-  EXPECT_TRUE(IsBoundToProcess());
-  FireProcessShutdownIfRunning();
-  EXPECT_FALSE(IsBoundToProcess());
 }
 
 TEST_P(NearbySharingServiceImplTest,
@@ -2210,6 +2214,8 @@ TEST_P(NearbySharingServiceImplTest,
 }
 
 TEST_P(NearbySharingServiceImplTest, UnregisterSendSurfaceNeverRegistered) {
+  // Set visibility to Hidden to stop advertising.
+  SetVisibility(nearby_share::mojom::Visibility::kNoOne);
   SetConnectionType(net::NetworkChangeNotifier::CONNECTION_WIFI);
 
   MockTransferUpdateCallback transfer_callback;
@@ -2338,11 +2344,7 @@ TEST_P(NearbySharingServiceImplTest,
   NearbySharingService::StatusCodes result = service_->RegisterReceiveSurface(
       &callback, NearbySharingService::ReceiveSurfaceState::kForeground);
   EXPECT_EQ(result, NearbySharingService::StatusCodes::kOk);
-  if (features::IsSelfShareEnabled()) {
-    EXPECT_TRUE(fake_nearby_connections_manager_->IsAdvertising());
-  } else {
-    EXPECT_FALSE(fake_nearby_connections_manager_->IsAdvertising());
-  }
+  EXPECT_TRUE(fake_nearby_connections_manager_->IsAdvertising());
   EXPECT_FALSE(fake_nearby_connections_manager_->is_shutdown());
 }
 
@@ -2356,11 +2358,7 @@ TEST_P(NearbySharingServiceImplTest, ScreenLocksDuringAdvertising) {
   EXPECT_FALSE(fake_nearby_connections_manager_->is_shutdown());
 
   session_controller_->SetScreenLocked(true);
-  if (features::IsSelfShareEnabled()) {
-    EXPECT_TRUE(fake_nearby_connections_manager_->IsAdvertising());
-  } else {
-    EXPECT_FALSE(fake_nearby_connections_manager_->IsAdvertising());
-  }
+  EXPECT_TRUE(fake_nearby_connections_manager_->IsAdvertising());
   EXPECT_FALSE(fake_nearby_connections_manager_->is_shutdown());
 
   session_controller_->SetScreenLocked(false);
@@ -2494,7 +2492,7 @@ TEST_P(NearbySharingServiceImplTest,
 
 TEST_P(NearbySharingServiceImplTest,
        NoBluetoothNoNetworkRegisterForegroundReceiveSurfaceNotAdvertising) {
-  is_bluetooth_present_ = false;
+  SetBluetoothIsPresent(false);
   MockTransferUpdateCallback callback;
   NearbySharingService::StatusCodes result = service_->RegisterReceiveSurface(
       &callback, NearbySharingService::ReceiveSurfaceState::kForeground);
@@ -2506,7 +2504,7 @@ TEST_P(NearbySharingServiceImplTest,
 
 TEST_P(NearbySharingServiceImplTest,
        NoBluetoothNoNetworkRegisterBackgroundReceiveSurfaceWorks) {
-  is_bluetooth_present_ = false;
+  SetBluetoothIsPresent(false);
   MockTransferUpdateCallback callback;
   NearbySharingService::StatusCodes result = service_->RegisterReceiveSurface(
       &callback, NearbySharingService::ReceiveSurfaceState::kBackground);
@@ -2546,7 +2544,7 @@ TEST_P(NearbySharingServiceImplTest,
 
 TEST_P(NearbySharingServiceImplTest,
        NoBluetoothWifiReceiveSurfaceIsAdvertising) {
-  is_bluetooth_present_ = false;
+  SetBluetoothIsPresent(false);
   SetConnectionType(net::NetworkChangeNotifier::CONNECTION_WIFI);
   MockTransferUpdateCallback callback;
   NearbySharingService::StatusCodes result = service_->RegisterReceiveSurface(
@@ -2561,7 +2559,7 @@ TEST_P(NearbySharingServiceImplTest,
 
 TEST_P(NearbySharingServiceImplTest,
        NoBluetoothEthernetReceiveSurfaceIsAdvertising) {
-  is_bluetooth_present_ = false;
+  SetBluetoothIsPresent(false);
   SetConnectionType(net::NetworkChangeNotifier::CONNECTION_ETHERNET);
   MockTransferUpdateCallback callback;
   NearbySharingService::StatusCodes result = service_->RegisterReceiveSurface(
@@ -2576,7 +2574,7 @@ TEST_P(NearbySharingServiceImplTest,
 
 TEST_P(NearbySharingServiceImplTest,
        NoBluetoothThreeGReceiveSurfaceNotAdvertising) {
-  is_bluetooth_present_ = false;
+  SetBluetoothIsPresent(false);
   SetConnectionType(net::NetworkChangeNotifier::CONNECTION_3G);
   MockTransferUpdateCallback callback;
   NearbySharingService::StatusCodes result = service_->RegisterReceiveSurface(
@@ -2734,6 +2732,8 @@ TEST_P(NearbySharingServiceImplTest,
 }
 
 TEST_P(NearbySharingServiceImplTest, UnregisterReceiveSurfaceStopsAdvertising) {
+  // Set visibility to Hidden to stop advertising.
+  SetVisibility(nearby_share::mojom::Visibility::kNoOne);
   SetConnectionType(net::NetworkChangeNotifier::CONNECTION_WIFI);
   MockTransferUpdateCallback callback;
   NearbySharingService::StatusCodes result = service_->RegisterReceiveSurface(
@@ -2768,6 +2768,8 @@ TEST_P(NearbySharingServiceImplTest,
 }
 
 TEST_P(NearbySharingServiceImplTest, UnregisterReceiveSurfaceNeverRegistered) {
+  // Set visibility to Hidden to stop advertising.
+  SetVisibility(nearby_share::mojom::Visibility::kNoOne);
   SetConnectionType(net::NetworkChangeNotifier::CONNECTION_WIFI);
 
   MockTransferUpdateCallback callback;
@@ -3276,7 +3278,7 @@ TEST_P(NearbySharingServiceImplTest,
 
   EXPECT_FALSE(connection_.IsClosed());
 
-  // TODO(https://crbug.com/1122552) - Remove cleanups after bugfix
+  // TODO(crbug.com/40146639) - Remove cleanups after bugfix
   {
     base::ScopedAllowBlockingForTesting allow_blocking;
     std::optional<base::FilePath> path =
@@ -3329,7 +3331,7 @@ TEST_P(NearbySharingServiceImplTest, AcceptValidShareTarget) {
 
   EXPECT_FALSE(connection_.IsClosed());
 
-  // TODO(https://crbug.com/1122552) - Remove cleanups after bugfix
+  // TODO(crbug.com/40146639) - Remove cleanups after bugfix
   {
     base::ScopedAllowBlockingForTesting allow_blocking;
     std::optional<base::FilePath> path =
@@ -5059,7 +5061,7 @@ TEST_P(NearbySharingServiceImplRestartTest, RestartsServiceWhenAppropriate) {
   // If the feature is disabled, the saved process_stopped_callback_ is invalid
   // and shouldn't be called.
   if (is_enabled) {
-    std::move(process_stopped_callback_).Run(shutdown_reason);
+    ShutdownNearbyProcess(shutdown_reason);
   }
 }
 
@@ -5083,6 +5085,10 @@ INSTANTIATE_TEST_SUITE_P(
         testing::Range<size_t>(0, 1 << kTestFeatures.size())));
 
 TEST_P(NearbySharingServiceImplTest, ProcessShutdownTimerDoesNotRestart) {
+  // Set visibility to Hidden to deactivate advertising to start the process
+  // shutdown timer.
+  SetVisibility(nearby_share::mojom::Visibility::kNoOne);
+
   EXPECT_TRUE(IsBoundToProcess());
   EXPECT_TRUE(IsProcessShutdownTimerRunning());
 
@@ -5110,9 +5116,9 @@ TEST_P(NearbySharingServiceImplTest, ProcessShutdownTimerDoesNotRestart) {
 }
 
 TEST_P(NearbySharingServiceImplTest, NoShutdownTimerWithoutProcessRef) {
-  EXPECT_TRUE(IsBoundToProcess());
-  EXPECT_TRUE(IsProcessShutdownTimerRunning());
   FireProcessShutdownIfRunning();
+  // Reset process reference.
+  SetIsEnabled(false);
   EXPECT_FALSE(IsBoundToProcess());
   EXPECT_FALSE(IsProcessShutdownTimerRunning());
 
@@ -5284,9 +5290,7 @@ TEST_P(NearbySharingServiceImplTest, CreateShareTarget) {
   ASSERT_TRUE(share_target.has_value());
   EXPECT_EQ(kDeviceName, share_target->device_name);
   EXPECT_EQ(kDeviceType, share_target->type);
-  if (features::IsSelfShareEnabled()) {
-    EXPECT_EQ(certificate_proto.for_self_share(), share_target->for_self_share);
-  }
+  EXPECT_EQ(certificate_proto.for_self_share(), share_target->for_self_share);
 
   // Test when |certificate| is null.
   share_target = CreateShareTarget(advertisement, /*certificate=*/std::nullopt);
@@ -5312,20 +5316,6 @@ TEST_P(NearbySharingServiceImplTest, SelfShareAutoAccept) {
   NiceMock<MockTransferUpdateCallback> callback;
   ShareTarget share_target = SetUpIncomingConnection(
       callback, /*for_self_share=*/true, /*wifi_credentials_metadata_count=*/0);
-
-  // If Self Share is not enabled, we should just time out.
-  if (!features::IsSelfShareEnabled()) {
-    base::RunLoop run_loop;
-    EXPECT_CALL(callback, OnTransferUpdate(testing::_, testing::_))
-        .WillOnce(testing::Invoke(
-            [&](const ShareTarget& share_target, TransferMetadata metadata) {
-              EXPECT_TRUE(metadata.is_final_status());
-              EXPECT_EQ(TransferMetadata::Status::kTimedOut, metadata.status());
-              run_loop.Quit();
-            }));
-    run_loop.Run();
-    return;
-  }
 
   base::RunLoop run_loop;
   EXPECT_CALL(callback, OnTransferUpdate(testing::_, testing::_))
@@ -5401,76 +5391,55 @@ TEST_P(NearbySharingServiceImplTest, SelfShareAutoAccept_WiFiCredentials) {
 
 TEST_P(NearbySharingServiceImplTest,
        SelfShareEnabled_YourDevicesVisibilityOnScreenLock) {
-  if (features::IsSelfShareEnabled()) {
-    const std::set<std::string> contacts = {"1", "2"};
-    SetVisibility(nearby_share::mojom::Visibility::kAllContacts);
-    contact_manager()->SetAllowedContacts(contacts);
+  const std::set<std::string> contacts = {"1", "2"};
+  SetVisibility(nearby_share::mojom::Visibility::kAllContacts);
+  contact_manager()->SetAllowedContacts(contacts);
 
-    // Lock screen, expect Your Devices visibility.
-    session_controller_->SetScreenLocked(true);
-    EXPECT_EQ(nearby_share::mojom::Visibility::kYourDevices, GetVisibility());
-    EXPECT_EQ(std::set<std::string>(), contact_manager()->GetAllowedContacts());
+  // Lock screen, expect Your Devices visibility.
+  session_controller_->SetScreenLocked(true);
+  EXPECT_EQ(nearby_share::mojom::Visibility::kYourDevices, GetVisibility());
+  EXPECT_EQ(std::set<std::string>(), contact_manager()->GetAllowedContacts());
 
-    // Unlock screen, expect visibility to return to All Contacts.
-    session_controller_->SetScreenLocked(false);
-    EXPECT_EQ(nearby_share::mojom::Visibility::kAllContacts, GetVisibility());
-    EXPECT_EQ(contacts, contact_manager()->GetAllowedContacts());
-  }
+  // Unlock screen, expect visibility to return to All Contacts.
+  session_controller_->SetScreenLocked(false);
+  EXPECT_EQ(nearby_share::mojom::Visibility::kAllContacts, GetVisibility());
+  EXPECT_EQ(contacts, contact_manager()->GetAllowedContacts());
 }
 
 TEST_P(
     NearbySharingServiceImplTest,
     SelfShareEnabled_YourDevicesVisibilityOnScreenLock_DefaultSelectedContactsVisibility) {
-  if (features::IsSelfShareEnabled()) {
-    const std::set<std::string> contacts = {"1", "2"};
-    SetVisibility(nearby_share::mojom::Visibility::kSelectedContacts);
-    contact_manager()->SetAllowedContacts(contacts);
+  const std::set<std::string> contacts = {"1", "2"};
+  SetVisibility(nearby_share::mojom::Visibility::kSelectedContacts);
+  contact_manager()->SetAllowedContacts(contacts);
 
-    // Lock screen, expect Your Devices visibility.
-    session_controller_->SetScreenLocked(true);
-    EXPECT_EQ(nearby_share::mojom::Visibility::kYourDevices, GetVisibility());
-    EXPECT_EQ(std::set<std::string>(), contact_manager()->GetAllowedContacts());
+  // Lock screen, expect Your Devices visibility.
+  session_controller_->SetScreenLocked(true);
+  EXPECT_EQ(nearby_share::mojom::Visibility::kYourDevices, GetVisibility());
+  EXPECT_EQ(std::set<std::string>(), contact_manager()->GetAllowedContacts());
 
-    // Unlock screen, expect visibility to return to All Contacts.
-    session_controller_->SetScreenLocked(false);
-    EXPECT_EQ(nearby_share::mojom::Visibility::kSelectedContacts,
-              GetVisibility());
-    EXPECT_EQ(contacts, contact_manager()->GetAllowedContacts());
-  }
-}
-
-TEST_P(NearbySharingServiceImplTest,
-       SelfShareDisabled_NoVisibilityChangeOnScreenLock) {
-  if (!features::IsSelfShareEnabled()) {
-    SetVisibility(nearby_share::mojom::Visibility::kAllContacts);
-
-    // Lock screen, expect no change in visibility.
-    session_controller_->SetScreenLocked(true);
-    EXPECT_EQ(nearby_share::mojom::Visibility::kAllContacts, GetVisibility());
-
-    // Unlock screen, expect no change in visibility.
-    session_controller_->SetScreenLocked(false);
-    EXPECT_EQ(nearby_share::mojom::Visibility::kAllContacts, GetVisibility());
-  }
+  // Unlock screen, expect visibility to return to All Contacts.
+  session_controller_->SetScreenLocked(false);
+  EXPECT_EQ(nearby_share::mojom::Visibility::kSelectedContacts,
+            GetVisibility());
+  EXPECT_EQ(contacts, contact_manager()->GetAllowedContacts());
 }
 
 TEST_P(NearbySharingServiceImplTest,
        UserSelectsHiddenVisibility_HiddenVisibilityOnScreenLock) {
-  if (features::IsSelfShareEnabled()) {
-    SetVisibility(nearby_share::mojom::Visibility::kNoOne);
-    std::set<std::string> empty_set;
-    contact_manager()->SetAllowedContacts(empty_set);
+  SetVisibility(nearby_share::mojom::Visibility::kNoOne);
+  std::set<std::string> empty_set;
+  contact_manager()->SetAllowedContacts(empty_set);
 
-    // Lock screen, expect Hidden visibility.
-    session_controller_->SetScreenLocked(true);
-    EXPECT_EQ(nearby_share::mojom::Visibility::kNoOne, GetVisibility());
-    EXPECT_EQ(empty_set, contact_manager()->GetAllowedContacts());
+  // Lock screen, expect Hidden visibility.
+  session_controller_->SetScreenLocked(true);
+  EXPECT_EQ(nearby_share::mojom::Visibility::kNoOne, GetVisibility());
+  EXPECT_EQ(empty_set, contact_manager()->GetAllowedContacts());
 
-    // Unlock screen, expect visibility to still be Hidden.
-    session_controller_->SetScreenLocked(false);
-    EXPECT_EQ(nearby_share::mojom::Visibility::kNoOne, GetVisibility());
-    EXPECT_EQ(empty_set, contact_manager()->GetAllowedContacts());
-  }
+  // Unlock screen, expect visibility to still be Hidden.
+  session_controller_->SetScreenLocked(false);
+  EXPECT_EQ(nearby_share::mojom::Visibility::kNoOne, GetVisibility());
+  EXPECT_EQ(empty_set, contact_manager()->GetAllowedContacts());
 }
 
 INSTANTIATE_TEST_SUITE_P(NearbySharingServiceImplTest,

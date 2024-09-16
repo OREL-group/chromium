@@ -52,8 +52,11 @@ class VideoDecodeAcceleratorTestSuite : public base::TestSuite {
   // Gets the name of the test output file path (testsuitename/testname).
   base::FilePath GetTestOutputFilePath() const;
 
-  // Returns whether the VideoPlayerTestEnvironment is initialized.
-  bool ValidVideoTestEnvironment() const;
+  // Gets whether the video_test_env_ exists.
+  bool ValidVideoTestEnv() const;
+
+  // Queries whether V4L2 virtual driver is used on ARM VM.
+  bool IsV4L2VirtualDriver() const;
 
  protected:
   // Overridden from base::TestSuite:

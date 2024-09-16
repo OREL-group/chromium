@@ -44,7 +44,6 @@ std::string MessageStreamLookupImpl::CreateMessageStreamAttemptTypeToString(
   }
 
   NOTREACHED();
-  return "";
 }
 
 MessageStreamLookupImpl::MessageStreamLookupImpl() {

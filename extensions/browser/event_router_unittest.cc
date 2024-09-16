@@ -150,8 +150,9 @@ scoped_refptr<const Extension> CreateExtension(bool component,
   manifest.SetByDottedPath("background.page", "background.html");
   manifest.SetByDottedPath("background.persistent", persistent);
   builder.SetManifest(std::move(manifest));
-  if (component)
+  if (component) {
     builder.SetLocation(mojom::ManifestLocation::kComponent);
+  }
 
   return builder.Build();
 }
@@ -309,8 +310,9 @@ class EventRouterFilterTest : public ExtensionsTest,
         ADD_FAILURE();
         return false;
       }
-      if (filter.GetDict() == to_check)
+      if (filter.GetDict() == to_check) {
         return true;
+      }
     }
     return false;
   }
@@ -322,8 +324,9 @@ class EventRouterFilterTest : public ExtensionsTest,
                                          const std::string& event_name) {
     const base::Value::Dict* filtered_events = GetFilteredEvents(extension_id);
     const auto iter = filtered_events->begin();
-    if (iter->first != event_name)
+    if (iter->first != event_name) {
       return nullptr;
+    }
 
     return iter->second.is_list() ? &iter->second.GetList() : nullptr;
   }
@@ -437,6 +440,9 @@ class EventRouterObserver : public EventRouter::TestObserver {
 // A fake that pretends that all contexts are WebUI.
 class ProcessMapFake : public ProcessMap {
  public:
+  explicit ProcessMapFake(content::BrowserContext* browser_context)
+      : ProcessMap(browser_context) {}
+
   mojom::ContextType GetMostLikelyContextType(const Extension* extension,
                                               int process_id,
                                               const GURL* url) const override {
@@ -446,7 +452,7 @@ class ProcessMapFake : public ProcessMap {
 
 std::unique_ptr<KeyedService> BuildProcessMap(
     content::BrowserContext* profile) {
-  return std::make_unique<ProcessMapFake>();
+  return std::make_unique<ProcessMapFake>(profile);
 }
 
 }  // namespace
@@ -585,7 +591,7 @@ TEST_F(EventRouterTest, TestReportEvent) {
 }
 
 // Tests adding and removing events with filters.
-// TODO(crbug.com/1479954): test is flaky across platforms.
+// TODO(crbug.com/40281129): test is flaky across platforms.
 TEST_P(EventRouterFilterTest, DISABLED_Basic) {
   // For the purpose of this test, "." is important in |event_name| as it
   // exercises the code path that uses |event_name| as a key in
@@ -650,7 +656,7 @@ TEST_P(EventRouterFilterTest, DISABLED_Basic) {
   ASSERT_FALSE(ContainsFilter(kExtensionId, kEventName, filters[2]));
 }
 
-// TODO(crbug.com/1479954): test is flaky across platforms.
+// TODO(crbug.com/40281129): test is flaky across platforms.
 TEST_P(EventRouterFilterTest, DISABLED_URLBasedFilteredEventListener) {
   const std::string kEventName = "windows.onRemoved";
   const GURL kUrl("chrome-untrusted://terminal");
@@ -758,7 +764,7 @@ TEST_F(EventRouterDispatchTest, TestDispatch) {
   EXPECT_EQ(0u, observer.dispatched_events().size());
 }
 
-// TODO(crbug.com/1479954): test is flaky across platforms.
+// TODO(crbug.com/40281129): test is flaky across platforms.
 TEST_F(EventRouterDispatchTest, DISABLED_TestDispatchCallback) {
   std::string ext1 = "ext1";
   std::string ext2 = "ext2";

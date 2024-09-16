@@ -17,11 +17,10 @@
 #include "components/autofill/content/renderer/password_autofill_agent.h"
 #include "components/autofill/content/renderer/password_generation_agent.h"
 #include "components/autofill/content/renderer/test_password_autofill_agent.h"
+#include "components/input/native_web_keyboard_event.h"
 #include "components/spellcheck/renderer/spellcheck.h"
 #include "components/spellcheck/spellcheck_buildflags.h"
-#include "content/public/common/input/native_web_keyboard_event.h"
 #include "extensions/buildflags/buildflags.h"
-#include "extensions/renderer/extensions_renderer_api_provider.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
 #include "third_party/blink/public/platform/web_url_request.h"
@@ -35,7 +34,8 @@
 #include "chrome/renderer/extensions/chrome_extensions_renderer_client.h"
 #include "extensions/browser/extension_function_dispatcher.h"
 #include "extensions/common/extension.h"
-#include "extensions/renderer/dispatcher.h"
+#include "extensions/renderer/dispatcher.h"                        // nogncheck
+#include "extensions/renderer/extensions_renderer_api_provider.h"  // nogncheck
 #endif
 
 using autofill::AutofillAgent;
@@ -62,8 +62,8 @@ void ChromeRenderViewTest::SetUp() {
 
   registry_ = std::make_unique<service_manager::BinderRegistry>();
 
-  // TODO(crbug/862989): Before this SetUp, the test agents defined at the end
-  // of this method should be injected into the creation of RenderViewImpl.
+  // TODO(crbug.com/41401202): Before this SetUp, the test agents defined at the
+  // end of this method should be injected into the creation of RenderViewImpl.
   // In the current state, regular agents are created before the test agents.
   content::RenderViewTest::SetUp();
 
@@ -123,9 +123,8 @@ void ChromeRenderViewTest::RegisterMainFrameRemoteInterfaces() {}
 void ChromeRenderViewTest::InitChromeContentRendererClient(
     ChromeContentRendererClient* client) {
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-  ChromeExtensionsRendererClient* ext_client =
-      ChromeExtensionsRendererClient::GetInstance();
-  ext_client->SetExtensionDispatcherForTest(
+  ChromeExtensionsRendererClient::Create();
+  extensions::ExtensionsRendererClient::Get()->SetDispatcherForTesting(
       std::make_unique<extensions::Dispatcher>(
           std::vector<std::unique_ptr<
               const extensions::ExtensionsRendererAPIProvider>>()));

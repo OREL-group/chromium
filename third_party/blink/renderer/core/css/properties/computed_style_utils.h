@@ -16,7 +16,6 @@
 #include "third_party/blink/renderer/core/css/css_value_list.h"
 #include "third_party/blink/renderer/core/css/css_value_pair.h"
 #include "third_party/blink/renderer/core/css/zoom_adjusted_pixel_value.h"
-#include "third_party/blink/renderer/core/layout/counter_node.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/style/computed_style_constants.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
@@ -28,7 +27,7 @@ class CSSNumericLiteralValue;
 class CSSStyleValue;
 class CSSValue;
 class FontFamily;
-class InsetArea;
+class PositionArea;
 class StyleColor;
 class StyleIntrinsicLength;
 class StylePropertyShorthand;
@@ -51,9 +50,14 @@ class CORE_EXPORT ComputedStyleUtils {
     return ZoomAdjustedPixelValue(length.Value(), style);
   }
 
-  static CSSValue* CurrentColorOrValidColor(const ComputedStyle&,
-                                            const StyleColor&,
-                                            CSSValuePhase);
+  static const CSSValue* ValueForColor(const StyleColor&);
+  static const CSSValue* ValueForColor(const StyleColor&,
+                                       const ComputedStyle&,
+                                       const Color* override_current_color,
+                                       CSSValuePhase);
+  static const CSSValue* CurrentColorOrValidColor(const ComputedStyle&,
+                                                  const StyleColor&,
+                                                  CSSValuePhase);
   static const blink::Color BorderSideColor(const ComputedStyle&,
                                             const StyleColor&,
                                             EBorderStyle,
@@ -155,6 +159,10 @@ class CORE_EXPORT ComputedStyleUtils {
                                          const ComputedStyle&,
                                          bool force_computed_value = false);
   static CSSValue* ValueForGridPosition(const GridPosition&);
+  static CSSValue* ValueForMasonrySlack(const std::optional<Length>&,
+                                        const ComputedStyle&);
+  static CSSValue* ValueForMasonryTrackList(const LayoutObject*,
+                                            const ComputedStyle&);
   static gfx::SizeF UsedBoxSize(const LayoutObject&);
   static CSSValue* RenderTextDecorationFlagsToCSSValue(TextDecorationLine);
   static CSSValue* ValueForTextDecorationStyle(ETextDecorationStyle);
@@ -164,8 +172,7 @@ class CORE_EXPORT ComputedStyleUtils {
                                       bool will_change_contents,
                                       bool will_change_scroll_position);
 
-  static CSSValue* ValueForAnimationDelayStart(const Timing::Delay& delay);
-  static CSSValue* ValueForAnimationDelayEnd(const Timing::Delay& delay);
+  static CSSValue* ValueForAnimationDelay(const Timing::Delay& delay);
   static CSSValue* ValueForAnimationDirection(Timing::PlaybackDirection);
   static CSSValue* ValueForAnimationDuration(const std::optional<double>&,
                                              bool resolve_auto_to_zero);
@@ -182,8 +189,7 @@ class CORE_EXPORT ComputedStyleUtils {
       const scoped_refptr<TimingFunction>&);
   static CSSValue* ValueForAnimationTimeline(const StyleTimeline&);
 
-  static CSSValue* ValueForAnimationDelayStartList(const CSSTimingData*);
-  static CSSValue* ValueForAnimationDelayEndList(const CSSTimingData*);
+  static CSSValue* ValueForAnimationDelayList(const CSSTimingData*);
   static CSSValue* ValueForAnimationDirectionList(const CSSAnimationData*);
   static CSSValue* ValueForAnimationDurationList(const CSSAnimationData*,
                                                  CSSValuePhase phase);
@@ -246,8 +252,9 @@ class CORE_EXPORT ComputedStyleUtils {
                                        bool allow_visited_style,
                                        CSSValuePhase value_phase);
 
-  static CSSValue* ValueForCounterDirectives(const ComputedStyle&,
-                                             CounterNode::Type type);
+  static CSSValue* ValueForCounterDirectives(
+      const ComputedStyle&,
+      CountersAttachmentContext::Type type);
   static CSSValue* ValueForShape(const ComputedStyle&,
                                  bool allow_visited_style,
                                  ShapeValue*,
@@ -255,7 +262,8 @@ class CORE_EXPORT ComputedStyleUtils {
   static CSSValueList* ValueForBorderRadiusShorthand(const ComputedStyle&);
   static CSSValue* StrokeDashArrayToCSSValueList(const SVGDashArray&,
                                                  const ComputedStyle&);
-  static CSSValue* ValueForSVGPaint(const SVGPaint&, const ComputedStyle&);
+  static const CSSValue* ValueForSVGPaint(const SVGPaint&,
+                                          const ComputedStyle&);
   static CSSValue* ValueForSVGResource(const StyleSVGResource*);
   static CSSValue* ValueForShadowData(const ShadowData&,
                                       const ComputedStyle&,
@@ -348,7 +356,8 @@ class CORE_EXPORT ComputedStyleUtils {
                                            const StyleIntrinsicLength&);
   static CSSValue* ValueForScrollStart(const ComputedStyle&,
                                        const ScrollStartData&);
-  static CSSValue* ValueForInsetArea(const blink::InsetArea&);
+  static CSSValue* ValueForPositionArea(const blink::PositionArea&);
+  static CSSValue* ValueForPositionTryFallbacks(const PositionTryFallbacks&);
   static std::unique_ptr<CrossThreadStyleValue>
   CrossThreadStyleValueFromCSSStyleValue(CSSStyleValue* style_value);
 

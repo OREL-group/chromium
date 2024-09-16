@@ -11,8 +11,8 @@
 #include "chrome/browser/ui/views/editor_menu/editor_menu_view_delegate.h"
 #include "chrome/browser/ui/views/editor_menu/utils/pre_target_handler.h"
 #include "chrome/browser/ui/views/editor_menu/utils/utils.h"
-#include "chrome/browser/ui/views/editor_menu/vector_icons/vector_icons.h"
 #include "chromeos/strings/grit/chromeos_strings.h"
+#include "chromeos/ui/vector_icons/vector_icons.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/models/image_model.h"
@@ -66,29 +66,33 @@ EditorMenuPromoCardView::EditorMenuPromoCardView(
     const gfx::Rect& anchor_view_bounds,
     EditorMenuViewDelegate* delegate)
     : pre_target_handler_(
-          std::make_unique<PreTargetHandler>(this, CardType::kEditorMenu)),
+          std::make_unique<PreTargetHandler>(/*delegate=*/*this,
+                                             CardType::kEditorMenu)),
       delegate_(delegate) {
   CHECK(delegate_);
   InitLayout();
+
+  GetViewAccessibility().SetRole(ax::mojom::Role::kDialog);
+  GetViewAccessibility().SetName(GetEditorMenuPromoCardTitle());
 }
 
 EditorMenuPromoCardView::~EditorMenuPromoCardView() = default;
 
 // static
-views::UniqueWidgetPtr EditorMenuPromoCardView::CreateWidget(
+std::unique_ptr<views::Widget> EditorMenuPromoCardView::CreateWidget(
     const gfx::Rect& anchor_view_bounds,
     EditorMenuViewDelegate* delegate) {
-  views::Widget::InitParams params;
+  views::Widget::InitParams params(
+      views::Widget::InitParams::CLIENT_OWNS_WIDGET,
+      views::Widget::InitParams::TYPE_POPUP);
   params.opacity = views::Widget::InitParams::WindowOpacity::kTranslucent;
   params.activatable = views::Widget::InitParams::Activatable::kYes;
   params.shadow_elevation = 2;
   params.shadow_type = views::Widget::InitParams::ShadowType::kDrop;
-  params.type = views::Widget::InitParams::TYPE_POPUP;
   params.z_order = ui::ZOrderLevel::kFloatingUIElement;
   params.name = kWidgetName;
 
-  views::UniqueWidgetPtr widget =
-      std::make_unique<views::Widget>(std::move(params));
+  auto widget = std::make_unique<views::Widget>(std::move(params));
   EditorMenuPromoCardView* editor_menu_promo_card_view =
       widget->SetContentsView(std::make_unique<EditorMenuPromoCardView>(
           anchor_view_bounds, delegate));
@@ -107,12 +111,13 @@ void EditorMenuPromoCardView::RequestFocus() {
   dismiss_button_->RequestFocus();
 }
 
-void EditorMenuPromoCardView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  node_data->role = ax::mojom::Role::kDialog;
-  node_data->SetName(GetEditorMenuPromoCardTitle());
-}
+gfx::Size EditorMenuPromoCardView::CalculatePreferredSize(
+    const views::SizeBounds& available_size) const {
+  if (!available_size.width().is_bounded()) {
+    return views::View::CalculatePreferredSize(available_size);
+  }
 
-int EditorMenuPromoCardView::GetHeightForWidth(int width) const {
+  int width = available_size.width().value();
   // The default GetHeightForWidth() does not consider the heights of children
   // correctly, thus we need to estimate the height of promo card by ourself.
 
@@ -125,8 +130,8 @@ int EditorMenuPromoCardView::GetHeightForWidth(int width) const {
   //  - top and bottom of the container.
   //  - padding between title and description.
   //  - padding between description and buttons.
-  return kPromoCardVerticalPaddingDip * 4 + height_title + height_description +
-         height_button;
+  return gfx::Size(width, kPromoCardVerticalPaddingDip * 4 + height_title +
+                              height_description + height_button);
 }
 
 void EditorMenuPromoCardView::OnWidgetDestroying(views::Widget* widget) {
@@ -173,6 +178,15 @@ void EditorMenuPromoCardView::OnWidgetVisibilityChanged(views::Widget* widget,
 void EditorMenuPromoCardView::UpdateBounds(
     const gfx::Rect& anchor_view_bounds) {
   GetWidget()->SetBounds(GetEditorMenuBounds(anchor_view_bounds, this));
+}
+
+views::View* EditorMenuPromoCardView::GetRootView() {
+  return this;
+}
+
+std::vector<views::View*>
+EditorMenuPromoCardView::GetTraversableViewsByUpDownKeys() {
+  return {this};
 }
 
 void EditorMenuPromoCardView::InitLayout() {

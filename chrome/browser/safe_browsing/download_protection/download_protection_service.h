@@ -158,10 +158,10 @@ class DownloadProtectionService {
 
   // Checks the user permissions, and submits the downloaded file if
   // appropriate. Returns whether the submission was successful.
-  bool MaybeBeginFeedbackForDownload(
-      Profile* profile,
-      download::DownloadItem* download,
-      DownloadCommands::Command download_command);
+  bool MaybeBeginFeedbackForDownload(Profile* profile,
+                                     download::DownloadItem* download,
+                                     const std::string& ping_request,
+                                     const std::string& ping_response);
 
   // Registers a callback that will be run when a ClientDownloadRequest has
   // been formed.
@@ -264,6 +264,12 @@ class DownloadProtectionService {
   // `browser_context`.
   void RemovePendingDownloadRequests(content::BrowserContext* browser_context);
 
+  // Returns the maximum number of user gestures for a download referrer
+  // chain. If `item` is non-null, information about that download may
+  // change the limit.
+  static int GetDownloadAttributionUserGestureLimit(
+      download::DownloadItem* item = nullptr);
+
  private:
   friend class PPAPIDownloadRequest;
   friend class DownloadUrlSBClient;
@@ -275,7 +281,7 @@ class DownloadProtectionService {
   friend class DeepScanningRequest;
   friend class DownloadRequestMaker;
 
-  FRIEND_TEST_ALL_PREFIXES(DownloadProtectionServiceTest,
+  FRIEND_TEST_ALL_PREFIXES(DownloadProtectionServiceMockTimeTest,
                            TestDownloadRequestTimeout);
   FRIEND_TEST_ALL_PREFIXES(DownloadProtectionServiceTest,
                            PPAPIDownloadRequest_InvalidResponse);
@@ -332,16 +338,6 @@ class DownloadProtectionService {
   virtual void RequestFinished(DeepScanningRequest* request);
 
   void PPAPIDownloadCheckRequestFinished(PPAPIDownloadRequest* request);
-
-  // Identify referrer chain info of a download. This function also records UMA
-  // stats of download attribution result.
-  std::unique_ptr<ReferrerChainData> IdentifyReferrerChain(
-      const download::DownloadItem& item);
-
-  // Identify referrer chain info of a File System Access write. This function
-  // also records UMA stats of download attribution result.
-  std::unique_ptr<ReferrerChainData> IdentifyReferrerChain(
-      const content::FileSystemAccessWriteItem& item);
 
   // Identify referrer chain of the PPAPI download based on the frame URL where
   // the download is initiated. Then add referrer chain info to

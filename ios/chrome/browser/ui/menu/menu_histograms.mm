@@ -12,6 +12,7 @@ namespace {
 const char kMenuEntryPointsHistogram[] = "Mobile.ContextMenu.EntryPoints";
 
 // Histograms for tracking actions performed on given menus.
+// LINT.IfChange
 const char kBookmarkEntryActionsHistogram[] =
     "Mobile.ContextMenu.BookmarkEntry.Actions";
 const char kBookmarkFolderActionsHistogram[] =
@@ -53,6 +54,25 @@ const char kTabGroupEntryActionsHistogram[] =
     "Mobile.ContextMenu.TabGroupEntry.Actions";
 const char kTabGroupViewEntryActionsHistogram[] =
     "Mobile.ContextMenu.TabGroupViewEntry.Actions";
+const char kAutofillManualFallbackAllPasswordsEntryActionsHistogram[] =
+    "Mobile.ContextMenu.AutofillManualFallbackAllPasswordsEntry.Actions";
+const char kAutofillManualFallbackPasswordEntryActionsHistogram[] =
+    "Mobile.ContextMenu.AutofillManualFallbackPasswordEntry.Actions";
+const char kAutofillManualFallbackPaymentEntryActionsHistogram[] =
+    "Mobile.ContextMenu.AutofillManualFallbackPaymentEntry.Actions";
+const char kAutofillManualFallbackAddressEntryActionsHistogram[] =
+    "Mobile.ContextMenu.AutofillManualFallbackAddressEntry.Actions";
+const char kTabGroupsPanelEntryActionsHistogram[] =
+    "Mobile.ContextMenu.TabGroupsPanelEntry.Actions";
+const char kSortDriveItemsEntryActionsHistogram[] =
+    "Mobile.ContextMenu.SortDriveItemsEntry.Actions";
+const char kSelectDriveIdentityEntryActionsHistogram[] =
+    "Mobile.ContextMenu.SelectDriveIdentityEntry.Actions";
+const char kTabGroupIndicatorEntryActionsHistogram[] =
+    "Mobile.ContextMenu.TabGroupIndicatorEntry.Actions";
+const char kAutofillManualFallbackPlusAddressEntryActionsHistogram[] =
+    "Mobile.ContextMenu.AutofillManualFallbackPlusAddressEntry.Actions";
+// LINT.ThenChange(/tools/metrics/histograms/metadata/mobile/histograms.xml)
 }  // namespace
 
 void RecordMenuShown(MenuScenarioHistogram scenario) {
@@ -106,7 +126,25 @@ const char* GetActionsHistogramName(MenuScenarioHistogram scenario) {
       return kTabGroupEntryActionsHistogram;
     case kMenuScenarioHistogramTabGroupViewTabEntry:
       return kTabGroupViewEntryActionsHistogram;
+    case kMenuScenarioHistogramAutofillManualFallbackAllPasswordsEntry:
+      return kAutofillManualFallbackAllPasswordsEntryActionsHistogram;
+    case kMenuScenarioHistogramAutofillManualFallbackPasswordEntry:
+      return kAutofillManualFallbackPasswordEntryActionsHistogram;
+    case kMenuScenarioHistogramAutofillManualFallbackPaymentEntry:
+      return kAutofillManualFallbackPaymentEntryActionsHistogram;
+    case kMenuScenarioHistogramAutofillManualFallbackAddressEntry:
+      return kAutofillManualFallbackAddressEntryActionsHistogram;
+    case kMenuScenarioHistogramTabGroupsPanelEntry:
+      return kTabGroupsPanelEntryActionsHistogram;
+    case kMenuScenarioHistogramSortDriveItemsEntry:
+      return kSortDriveItemsEntryActionsHistogram;
+    case kMenuScenarioHistogramSelectDriveIdentityEntry:
+      return kSelectDriveIdentityEntryActionsHistogram;
+    case kMenuScenarioHistogramTabGroupIndicatorEntry:
+      return kTabGroupIndicatorEntryActionsHistogram;
+    case kMenuScenarioHistogramAutofillManualFallbackPlusAddressEntry:
+      return kAutofillManualFallbackPlusAddressEntryActionsHistogram;
     case kMenuScenarioHistogramCount:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }

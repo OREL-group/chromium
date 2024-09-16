@@ -19,6 +19,7 @@
 #include "components/sessions/core/sessions_export.h"
 #include "components/tab_groups/tab_group_id.h"
 #include "components/tab_groups/tab_group_visual_data.h"
+#include "ui/base/mojom/window_show_state.mojom-forward.h"
 #include "ui/gfx/geometry/rect.h"
 
 namespace sessions::tab_restore {
@@ -142,6 +143,10 @@ struct SESSIONS_EXPORT Group : public Entry {
   // Entry:
   size_t EstimateMemoryUsage() const override;
 
+  // Creates a new Group object using the group metadata from a tab. CHECK if
+  // `tab` has a group value.
+  static std::unique_ptr<Group> FromTab(const Tab& tab);
+
   // The tabs that comprised the group, in order.
   std::vector<std::unique_ptr<Tab>> tabs;
 
@@ -170,18 +175,13 @@ struct SESSIONS_EXPORT Window : public Entry {
   // Type of window.
   sessions::SessionWindow::WindowType type;
 
-  // TODO(crbug.com/333425400): `tabs`, `groups`, and `tab_groups` contain
-  // duplicated data. To prevent duplication of data consider changing `tabs`
-  // to std::vector<std::unique_ptr<Entries>> so all data can be stored
-  // together in one object. This should prevent data duplication.
   // The tabs that comprised the window, in order.
   std::vector<std::unique_ptr<Tab>> tabs;
 
-  // Tab groups in this window including their tabs.
-  std::map<tab_groups::TabGroupId, std::unique_ptr<Group>> groups;
-
-  // Tab group data.
-  std::map<tab_groups::TabGroupId, tab_groups::TabGroupVisualData> tab_groups;
+  // The tab groups in the window. These are only used to query properties about
+  // a group such as visual data, collapsed state, and saved state. As such,
+  // groups in this structure should NOT contain any tabs.
+  std::map<tab_groups::TabGroupId, std::unique_ptr<Group>> tab_groups;
 
   // Index of the selected tab.
   int selected_tab_index = -1;
@@ -194,7 +194,7 @@ struct SESSIONS_EXPORT Window : public Entry {
 
   // Where and how the window is displayed.
   gfx::Rect bounds;
-  ui::WindowShowState show_state;
+  ui::mojom::WindowShowState show_state;
   std::string workspace;
 };
 

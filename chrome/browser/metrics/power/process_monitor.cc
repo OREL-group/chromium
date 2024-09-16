@@ -11,6 +11,7 @@
 #include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/not_fatal_until.h"
 #include "base/observer_list.h"
 #include "base/process/process_handle.h"
 #include "base/process/process_metrics.h"
@@ -111,25 +112,12 @@ MonitoredProcessType GetMonitoredProcessTypeForRenderProcess(
     return MonitoredProcessType::kRenderer;
   }
 
-  extensions::ProcessMap* extension_process_map =
-      extensions::ProcessMap::Get(browser_context);
-  DCHECK(extension_process_map);
-  std::set<std::string> extension_ids =
-      extension_process_map->GetExtensionsInProcess(host->GetID());
-
-  // We only collect more granular metrics when there's only one extension
-  // running in a given renderer, to reduce noise.
-  if (extension_ids.size() != 1)
-    return MonitoredProcessType::kRenderer;
-
-  extensions::ExtensionRegistry* extension_registry =
-      extensions::ExtensionRegistry::Get(browser_context);
-
   const extensions::Extension* extension =
-      extension_registry->enabled_extensions().GetByID(*extension_ids.begin());
-
-  if (!extension)
-    return MonitoredProcessType::kRenderer;
+      extensions::ProcessMap::Get(browser_context)
+          ->GetEnabledExtensionByProcessID(host->GetID());
+  if (!extension) {
+    return kRenderer;
+  }
 
   return extensions::BackgroundInfo::HasPersistentBackgroundPage(extension)
              ? MonitoredProcessType::kExtensionPersistent
@@ -145,7 +133,7 @@ MonitoredProcessType GetMonitoredProcessTypeForNonRendererChildProcess(
     case content::PROCESS_TYPE_BROWSER:
     case content::PROCESS_TYPE_RENDERER:
       // Not a non-renderer child process.
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return kCount;
     case content::PROCESS_TYPE_GPU:
       return MonitoredProcessType::kGpu;
@@ -415,7 +403,7 @@ void ProcessMonitor::OnBrowserChildProcessExited(
     return;
   }
 
-  DCHECK(it != browser_child_process_infos_.end());
+  CHECK(it != browser_child_process_infos_.end(), base::NotFatalUntil::M130);
   // Remember the metrics from when the process exited, if available.
   if (info.cpu_usage.has_value()) {
     const ProcessInfo& process_info = it->second;

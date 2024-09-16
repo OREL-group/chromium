@@ -154,12 +154,15 @@ class UkmPageLoadMetricsObserverTest
 
   TestingProfile::TestingFactories GetTestingFactories() const override {
     return {
-        {BookmarkModelFactory::GetInstance(),
-         BookmarkModelFactory::GetDefaultFactory()},
-        {HistoryServiceFactory::GetInstance(),
-         HistoryServiceFactory::GetDefaultFactory()},
-        {TemplateURLServiceFactory::GetInstance(),
-         base::BindRepeating(&TemplateURLServiceFactory::BuildInstanceFor)}};
+        TestingProfile::TestingFactory{
+            BookmarkModelFactory::GetInstance(),
+            BookmarkModelFactory::GetDefaultFactory()},
+        TestingProfile::TestingFactory{
+            HistoryServiceFactory::GetInstance(),
+            HistoryServiceFactory::GetDefaultFactory()},
+        TestingProfile::TestingFactory{
+            TemplateURLServiceFactory::GetInstance(),
+            base::BindRepeating(&TemplateURLServiceFactory::BuildInstanceFor)}};
   }
 
   MockNetworkQualityProvider& mock_network_quality_provider() {
@@ -1852,8 +1855,8 @@ TEST_F(UkmPageLoadMetricsObserverTest, LayoutInstability) {
               testing::ElementsAre(base::Bucket(25, 1)));
   EXPECT_THAT(tester()->histogram_tester().GetAllSamples(
                   "PageLoad.LayoutInstability.MaxCumulativeShiftScore."
-                  "SessionWindow.Gap1000ms.Max5000ms"),
-              testing::ElementsAre(base::Bucket(25, 1)));
+                  "SessionWindow.Gap1000ms.Max5000ms2"),
+              testing::ElementsAre(base::Bucket(24000, 1)));
 }
 
 TEST_F(UkmPageLoadMetricsObserverTest, SoftNavigationCount) {
@@ -1981,8 +1984,8 @@ TEST_F(UkmPageLoadMetricsObserverTest,
               testing::ElementsAre(base::Bucket(25, 1)));
   EXPECT_THAT(tester()->histogram_tester().GetAllSamples(
                   "PageLoad.LayoutInstability.MaxCumulativeShiftScore."
-                  "SessionWindow.Gap1000ms.Max5000ms"),
-              testing::ElementsAre(base::Bucket(25, 1)));
+                  "SessionWindow.Gap1000ms.Max5000ms2"),
+              testing::ElementsAre(base::Bucket(24000, 1)));
   EXPECT_THAT(tester()->histogram_tester().GetAllSamples(
                   "PageLoad.LayoutInstability."
                   "CumulativeShiftScoreAtFirstOnHidden"),
@@ -2980,13 +2983,12 @@ TEST_F(UkmPageLoadMetricsObserverTest, TestRefreshRateThrottled) {
   TestingPrefServiceSimple local_state;
   performance_manager::user_tuning::prefs::RegisterLocalStatePrefs(
       local_state.registry());
-  local_state.SetInteger(
-      performance_manager::user_tuning::prefs::kBatterySaverModeState,
-      static_cast<int>(performance_manager::user_tuning::prefs::
-                           BatterySaverModeState::kEnabled));
   performance_manager::user_tuning::TestUserPerformanceTuningManagerEnvironment
       uptm_environment;
   uptm_environment.SetUp(&local_state);
+  performance_manager::user_tuning::
+      TestUserPerformanceTuningManagerEnvironment::SetBatterySaverMode(
+          &local_state, true);
 
   NavigateAndCommit(GURL(kTestUrl1));
 
@@ -3008,7 +3010,6 @@ TEST_F(UkmPageLoadMetricsObserverTest, TestRefreshRateThrottled) {
 // The following tests are ensure that Page Load metrics are recorded in a
 // trace. Currently enabled only for platforms where USE_PERFETTO_CLIENT_LIBRARY
 // is true (Android, Linux) as test infra (TestTraceProcessor) requires it.
-#if BUILDFLAG(USE_PERFETTO_CLIENT_LIBRARY)
 class TracingWebContentsObserver : public content::WebContentsObserver {
  public:
   explicit TracingWebContentsObserver(content::WebContents* contents)
@@ -3101,4 +3102,3 @@ TEST_F(UkmPageLoadMetricsObserverTest, TestTracingUserTimingMetrics) {
                                      std::vector<std::string>{
                                          base::NumberToString(navigation_id)}));
 }
-#endif

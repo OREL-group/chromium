@@ -28,7 +28,7 @@
 
 namespace content {
 
-class ServiceWorkerContainerHost;
+class ServiceWorkerClient;
 class ServiceWorkerContextCore;
 class ServiceWorkerRegistration;
 class ServiceWorkerVersion;
@@ -38,7 +38,7 @@ class ServiceWorkerVersion;
 // live across redirects. ServiceWorkerMainResourceLoaderInterceptor creates
 // one instance of this class for each request/redirect.
 //
-// This class associates the ServiceWorkerContainerHost undergoing navigation
+// This class associates the ServiceWorkerClient undergoing navigation
 // with a controller service worker, after looking up the registration and
 // activating the service worker if needed.  Once ready, it creates
 // ServiceWorkerMainResourceLoader to perform the resource load.
@@ -84,10 +84,10 @@ class CONTENT_EXPORT ServiceWorkerControlleeRequestHandler final {
   // request interception.
   ServiceWorkerControlleeRequestHandler(
       base::WeakPtr<ServiceWorkerContextCore> context,
-      base::WeakPtr<ServiceWorkerContainerHost> container_host,
+      base::WeakPtr<ServiceWorkerClient> service_worker_client,
       network::mojom::RequestDestination destination,
       bool skip_service_worker,
-      int frame_tree_node_id,
+      FrameTreeNodeId frame_tree_node_id,
       ServiceWorkerAccessedCallback service_worker_accessed_callback);
 
   ServiceWorkerControlleeRequestHandler(
@@ -119,8 +119,8 @@ class CONTENT_EXPORT ServiceWorkerControlleeRequestHandler final {
   FRIEND_TEST_ALL_PREFIXES(ServiceWorkerControlleeRequestHandlerTest,
                            ActivateWaitingVersion);
 
-  // Does all initialization of |container_host_| for a request.
-  void InitializeContainerHost(
+  // Does all initialization of |service_worker_client_| for a request.
+  void InitializeServiceWorkerClient(
       const network::ResourceRequest& tentative_request,
       const blink::StorageKey& storage_key);
 
@@ -154,15 +154,17 @@ class CONTENT_EXPORT ServiceWorkerControlleeRequestHandler final {
   void MaybeScheduleUpdate();
 
   // Runs service worker if not running.
-  void MaybeStartServiceWorker(
+  static void MaybeStartServiceWorker(
       scoped_refptr<ServiceWorkerVersion> active_version,
-      ServiceWorkerMetrics::EventType event_type);
+      ServiceWorkerMetrics::EventType event_type,
+      uintptr_t trace_id);
 
   // Runs after ServiceWorker has started.
   // Normally ServiceWorker starts before dispatching the main resource request,
   // but if the browser handles an empty fetch handler, this runs after the
   // service worker starts.
-  void DidStartWorker(blink::ServiceWorkerStatusCode status);
+  static void DidStartWorker(uintptr_t trace_id,
+                             blink::ServiceWorkerStatusCode status);
 
   int GetServiceWorkerForEmptyFetchHandlerDurationMs();
 
@@ -170,7 +172,7 @@ class CONTENT_EXPORT ServiceWorkerControlleeRequestHandler final {
       start_service_worker_for_empty_fetch_handler_duration_for_testing_;
 
   const base::WeakPtr<ServiceWorkerContextCore> context_;
-  const base::WeakPtr<ServiceWorkerContainerHost> container_host_;
+  const base::WeakPtr<ServiceWorkerClient> service_worker_client_;
   const network::mojom::RequestDestination destination_;
 
   // If true, service workers are bypassed for request interception.
@@ -180,7 +182,7 @@ class CONTENT_EXPORT ServiceWorkerControlleeRequestHandler final {
   GURL stripped_url_;
   blink::StorageKey storage_key_;
   bool force_update_started_;
-  const int frame_tree_node_id_;
+  const FrameTreeNodeId frame_tree_node_id_;
   std::string parent_client_uuid_;
 
   NavigationLoaderInterceptor::LoaderCallback loader_callback_;

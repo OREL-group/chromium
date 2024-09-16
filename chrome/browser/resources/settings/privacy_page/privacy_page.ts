@@ -16,11 +16,14 @@ import 'chrome://resources/cr_elements/cr_shared_style.css.js';
 import 'chrome://resources/cr_elements/cr_hidden_style.css.js';
 import 'chrome://resources/polymer/v3_0/iron-flex-layout/iron-flex-layout-classes.js';
 import '../controls/settings_toggle_button.js';
+import '../privacy_icons.html.js';
 import '../safety_hub/safety_hub_module.js';
 import '../settings_page/settings_animated_pages.js';
 import '../settings_page/settings_subpage.js';
 import '../settings_shared.css.js';
+import '../site_settings/offer_writing_help_page.js';
 import '../site_settings/settings_category_default_radio_group.js';
+import '../site_settings/smart_card_readers_page.js';
 import './privacy_guide/privacy_guide_dialog.js';
 
 import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
@@ -126,6 +129,13 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
         },
       },
 
+      enableHandTrackingContentSetting_: {
+        type: Boolean,
+        value() {
+          return loadTimeData.getBoolean('enableHandTrackingContentSetting');
+        },
+      },
+
       enableFederatedIdentityApiContentSetting_: {
         type: Boolean,
         value() {
@@ -147,6 +157,14 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
         readOnly: true,
         value() {
           return loadTimeData.getBoolean('enableSecurityKeysSubpage');
+        },
+      },
+
+      enableSmartCardReadersContentSetting_: {
+        type: Boolean,
+        value() {
+          return loadTimeData.getBoolean(
+              'enableSmartCardReadersContentSetting');
         },
       },
 
@@ -196,6 +214,11 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
       capturedSurfaceControlEnabled_: {
         type: Boolean,
         value: () => loadTimeData.getBoolean('capturedSurfaceControlEnabled'),
+      },
+
+      enableComposeProactiveNudge_: {
+        type: Boolean,
+        value: () => loadTimeData.getBoolean('enableComposeProactiveNudge'),
       },
 
       /**
@@ -326,6 +349,11 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
             loadTimeData.getBoolean('enableKeyboardAndPointerLockPrompt'),
       },
 
+      enableWebAppInstallation_: {
+        type: Boolean,
+        value: () => loadTimeData.getBoolean('enableWebAppInstallation'),
+      },
+
       isNotificationAllowed_: Boolean,
       isLocationAllowed_: Boolean,
       notificationPermissionsReviewHeader_: String,
@@ -342,8 +370,10 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
   private blockAutoplayStatus_: BlockAutoplayStatus;
   private enableFederatedIdentityApiContentSetting_: boolean;
   private enablePaymentHandlerContentSetting_: boolean;
+  private enableHandTrackingContentSetting_: boolean;
   private enableExperimentalWebPlatformFeatures_: boolean;
   private enableSecurityKeysSubpage_: boolean;
+  private enableSmartCardReadersContentSetting_: boolean;
   private enableWebBluetoothNewPermissionsBackend_: boolean;
   private enableWebPrintingContentSetting_: boolean;
   private showNotificationPermissionsReview_: boolean;
@@ -355,7 +385,9 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
   private privateStateTokensEnabled_: boolean;
   private autoPictureInPictureEnabled_: boolean;
   private capturedSurfaceControlEnabled_: boolean;
+  private enableComposeProactiveNudge_: boolean;
   private enableSafetyHub_: boolean;
+  private enableWebAppInstallation_: boolean;
   private focusConfig_: FocusConfig;
   private searchFilter_: string;
   private notificationPermissionsReviewHeader_: string;

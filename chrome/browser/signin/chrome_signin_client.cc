@@ -30,7 +30,6 @@
 #include "chrome/browser/signin/chrome_device_id_helper.h"
 #include "chrome/browser/signin/force_signin_verifier.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
-#include "chrome/browser/signin/signin_features.h"
 #include "chrome/browser/signin/signin_util.h"
 #include "chrome/common/buildflags.h"
 #include "chrome/common/channel_info.h"
@@ -308,7 +307,7 @@ void ChromeSigninClient::PreSignOut(
   // `signin_metrics::ProfileSignout::kRevokeSyncFromSettings` when the user
   // turns off sync from the settings, we should also keep the window open at
   // this point.
-  // TODO(https://crbug.com/1478102): Check for managed accounts to be modified
+  // TODO(crbug.com/40280466): Check for managed accounts to be modified
   // when aligning Managed vs Consumer accounts.
   bool user_declines_sync_after_consenting_to_management =
       (signout_source_metric == signin_metrics::ProfileSignout::kAbortSignin ||
@@ -316,7 +315,7 @@ void ChromeSigninClient::PreSignOut(
            signin_metrics::ProfileSignout::kRevokeSyncFromSettings ||
        signout_source_metric == signin_metrics::ProfileSignout::
                                     kCancelSyncConfirmationOnWebOnlySignedIn) &&
-      chrome::enterprise_util::UserAcceptedAccountManagement(profile_);
+      enterprise_util::UserAcceptedAccountManagement(profile_);
   // These sign out won't remove the policy cache, keep the window opened.
   bool keep_window_opened =
       signout_source_metric ==
@@ -390,9 +389,9 @@ void ChromeSigninClient::OnPrimaryAccountChanged(
       case signin::PrimaryAccountChangeEvent::Type::kCleared:
         break;
       case signin::PrimaryAccountChangeEvent::Type::kSet:
-        CHECK(event_details.GetAccessPoint().has_value());
+        CHECK(event_details.GetSetPrimaryAccountAccessPoint().has_value());
         signin_metrics::AccessPoint access_point =
-            event_details.GetAccessPoint().value();
+            event_details.GetSetPrimaryAccountAccessPoint().value();
 
         // Only record metrics when setting the primary account.
         std::optional<size_t> all_bookmarks_count = GetAllBookmarksCount();
@@ -466,7 +465,7 @@ SigninClient::SignoutDecision ChromeSigninClient::GetSignoutDecision(
 // Android allows signing out of Managed accounts.
 #if !BUILDFLAG(IS_ANDROID)
   // Check if managed user.
-  if (chrome::enterprise_util::UserAcceptedAccountManagement(profile_)) {
+  if (enterprise_util::UserAcceptedAccountManagement(profile_)) {
     if (base::FeatureList::IsEnabled(kDisallowManagedProfileSignout)) {
       // Allow revoke sync but disallow signout regardless of consent level of
       // the primary account.

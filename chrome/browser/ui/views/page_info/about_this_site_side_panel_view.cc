@@ -4,7 +4,8 @@
 
 #include "chrome/browser/ui/views/page_info/about_this_site_side_panel_view.h"
 
-#include "base/strings/string_piece.h"
+#include <string_view>
+
 #include "base/task/single_thread_task_runner.h"
 #include "chrome/browser/page_info/about_this_site_side_panel_throttle.h"
 #include "chrome/browser/profiles/profile.h"
@@ -22,6 +23,7 @@
 #include "net/base/url_util.h"
 #include "third_party/blink/public/common/loader/loader_constants.h"
 #include "ui/base/window_open_disposition.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/layout/flex_layout_types.h"
 #include "ui/views/layout/flex_layout_view.h"
 #include "url/origin.h"
@@ -78,6 +80,10 @@ AboutThisSiteSidePanelView::AboutThisSiteSidePanelView(
       kAboutThisSiteWebContentsUserDataKey,
       std::make_unique<AboutThisSiteWebContentsUserData>(AsWeakPtr()));
   Observe(web_contents);
+
+  GetViewAccessibility().SetRole(ax::mojom::Role::kWebView);
+  GetViewAccessibility().SetName(
+      std::u16string(), ax::mojom::NameFrom::kAttributeExplicitlyEmpty);
 }
 
 void AboutThisSiteSidePanelView::LoadProgressChanged(double progress) {
@@ -143,7 +149,7 @@ content::WebContents* AboutThisSiteSidePanelView::OpenURLFromTab(
 
 bool AboutThisSiteSidePanelView::HandleKeyboardEvent(
     content::WebContents* source,
-    const content::NativeWebKeyboardEvent& event) {
+    const input::NativeWebKeyboardEvent& event) {
   // Redirect keyboard events to the main browser.
   if (auto* delegate = outer_delegate()) {
     return delegate->HandleKeyboardEvent(source, event);
@@ -186,7 +192,7 @@ GURL AboutThisSiteSidePanelView::CleanUpQueryParams(const GURL& url) {
   // Override the ilrm=minimal parameter for navigations to a real tab.
   if (url::IsSameOriginWith(url, last_url_) &&
       url.query_piece().find(page_info::AboutThisSiteRenderModeParameterName) !=
-          base::StringPiece::npos) {
+          std::string_view::npos) {
     return net::AppendOrReplaceQueryParameter(
         url, page_info::AboutThisSiteRenderModeParameterName, std::string());
   }
@@ -196,11 +202,6 @@ GURL AboutThisSiteSidePanelView::CleanUpQueryParams(const GURL& url) {
 void AboutThisSiteSidePanelView::SetContentVisible(bool visible) {
   web_view_->SetVisible(visible);
   loading_indicator_web_view_->SetVisible(!visible);
-}
-
-void AboutThisSiteSidePanelView::GetAccessibleNodeData(
-    ui::AXNodeData* node_data) {
-  return static_cast<View*>(web_view_)->GetAccessibleNodeData(node_data);
 }
 
 AboutThisSiteSidePanelView::~AboutThisSiteSidePanelView() = default;

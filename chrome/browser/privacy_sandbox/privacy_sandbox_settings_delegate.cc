@@ -75,6 +75,10 @@ PrivacySandboxSettingsDelegate::PrivacySandboxSettingsDelegate(
 
 PrivacySandboxSettingsDelegate::~PrivacySandboxSettingsDelegate() = default;
 
+bool PrivacySandboxSettingsDelegate::IsRestrictedNoticeEnabled() const {
+  return privacy_sandbox::IsRestrictedNoticeRequired();
+}
+
 bool PrivacySandboxSettingsDelegate::IsPrivacySandboxRestricted() const {
   if (privacy_sandbox::kPrivacySandboxSettings4ForceRestrictedUserForTesting
           .Get()) {
@@ -133,7 +137,7 @@ bool PrivacySandboxSettingsDelegate::IsPrivacySandboxCurrentlyUnrestricted()
 
 bool PrivacySandboxSettingsDelegate::IsSubjectToM1NoticeRestricted() const {
   // If the feature is deactivated, the notice shouldn't be shown.
-  if (!privacy_sandbox::kPrivacySandboxSettings4RestrictedNotice.Get()) {
+  if (!privacy_sandbox::IsRestrictedNoticeRequired()) {
     return false;
   }
   return PrivacySandboxRestrictedNoticeRequired();
@@ -329,12 +333,8 @@ bool PrivacySandboxSettingsDelegate::IsCookieDeprecationLabelAllowed() const {
           kIneligible:
         return false;
       case privacy_sandbox::TrackingProtectionOnboarding::OnboardingStatus::
-          kOffboarded:
-      case privacy_sandbox::TrackingProtectionOnboarding::OnboardingStatus::
           kEligible:
         return !tpcd::experiment::kNeedOnboardingForLabel.Get();
-      case privacy_sandbox::TrackingProtectionOnboarding::OnboardingStatus::
-          kOnboardingRequested:
       case privacy_sandbox::TrackingProtectionOnboarding::OnboardingStatus::
           kOnboarded:
         return true;
@@ -382,10 +382,6 @@ bool PrivacySandboxSettingsDelegate::
         kIneligible:
     case privacy_sandbox::TrackingProtectionOnboarding::OnboardingStatus::
         kEligible:
-    case privacy_sandbox::TrackingProtectionOnboarding::OnboardingStatus::
-        kOffboarded:
-    case privacy_sandbox::TrackingProtectionOnboarding::OnboardingStatus::
-        kOnboardingRequested:
       return false;
     case privacy_sandbox::TrackingProtectionOnboarding::OnboardingStatus::
         kOnboarded:
@@ -407,6 +403,7 @@ bool PrivacySandboxSettingsDelegate::
 
   switch (cookie_controls_mode) {
     case content_settings::CookieControlsMode::kBlockThirdParty:
+    case content_settings::CookieControlsMode::kLimited:
       return false;
     case content_settings::CookieControlsMode::kIncognitoOnly:
     case content_settings::CookieControlsMode::kOff:

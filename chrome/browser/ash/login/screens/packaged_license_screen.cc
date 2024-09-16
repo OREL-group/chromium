@@ -4,7 +4,6 @@
 
 #include "chrome/browser/ash/login/screens/packaged_license_screen.h"
 
-#include "ash/constants/ash_features.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/ash/policy/core/browser_policy_connector_ash.h"
 #include "chrome/browser/ash/policy/enrollment/enrollment_config.h"
@@ -17,6 +16,7 @@ namespace ash {
 
 // static
 std::string PackagedLicenseScreen::GetResultString(Result result) {
+  // LINT.IfChange(UsageMetrics)
   switch (result) {
     case Result::DONT_ENROLL:
       return "DontEnroll";
@@ -27,6 +27,7 @@ std::string PackagedLicenseScreen::GetResultString(Result result) {
     case Result::NOT_APPLICABLE_SKIP_TO_ENROLL:
       return BaseScreen::kNotApplicable;
   }
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/oobe/histograms.xml)
 }
 
 PackagedLicenseScreen::PackagedLicenseScreen(
@@ -46,14 +47,12 @@ bool PackagedLicenseScreen::MaybeSkip(WizardContext& context) {
   // enrollment flows are not triggered by the device state.
   if (config.is_license_packaged_with_device && !config.should_enroll()) {
     // Skip to enroll since GAIA form has welcoming text for enterprise license.
-    if (features::IsLicensePackagedOobeFlowEnabled() &&
-        config.license_type == policy::LicenseType::kEnterprise) {
+    if (config.license_type == policy::LicenseType::kEnterprise) {
       exit_callback_.Run(Result::NOT_APPLICABLE_SKIP_TO_ENROLL);
       return true;
     }
     // Skip to enroll since GAIA form has welcoming text for education license.
-    if (features::IsEducationEnrollmentOobeFlowEnabled() &&
-        config.license_type == policy::LicenseType::kEducation) {
+    if (config.license_type == policy::LicenseType::kEducation) {
       exit_callback_.Run(Result::NOT_APPLICABLE_SKIP_TO_ENROLL);
       return true;
     }

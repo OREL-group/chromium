@@ -22,8 +22,11 @@ import android.webkit.WebViewDatabase;
 
 import androidx.annotation.IntDef;
 
+import com.android.webview.chromium.WebViewChromium.ApiCall;
+
 import org.chromium.android_webview.AwBrowserContext;
 import org.chromium.android_webview.AwBrowserProcess;
+import org.chromium.android_webview.AwClassPreloader;
 import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.AwContentsStatics;
 import org.chromium.android_webview.AwCookieManager;
@@ -37,7 +40,6 @@ import org.chromium.android_webview.AwServiceWorkerController;
 import org.chromium.android_webview.AwThreadUtils;
 import org.chromium.android_webview.AwTracingController;
 import org.chromium.android_webview.HttpAuthDatabase;
-import org.chromium.android_webview.ProductConfig;
 import org.chromium.android_webview.R;
 import org.chromium.android_webview.WebViewChromiumRunQueue;
 import org.chromium.android_webview.common.AwFeatures;
@@ -48,7 +50,6 @@ import org.chromium.android_webview.gfx.AwDrawFnImpl;
 import org.chromium.android_webview.variations.FastVariationsSeedSafeModeAction;
 import org.chromium.android_webview.variations.VariationsSeedLoader;
 import org.chromium.base.BuildInfo;
-import org.chromium.base.BundleUtils;
 import org.chromium.base.CommandLine;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.FieldTrialList;
@@ -190,8 +191,6 @@ public class WebViewChromiumAwInit {
 
             ResourceBundle.setAvailablePakLocales(AwLocaleConfig.getWebViewSupportedPakLocales());
 
-            BundleUtils.setIsBundle(ProductConfig.IS_BUNDLE);
-
             // We are rewriting Java resources in the background.
             // NOTE: Any reference to Java resources will cause a crash.
 
@@ -252,6 +251,10 @@ public class WebViewChromiumAwInit {
             }
 
             AwBrowserProcess.start();
+
+            // TODO(crbug.com/332706093): See if this can be moved before loading native.
+            AwClassPreloader.preloadClasses();
+
             AwBrowserProcess.handleMinidumpsAndSetMetricsConsent(/* updateMetricsConsent= */ true);
             doNetworkInitializations(context);
 
@@ -297,6 +300,13 @@ public class WebViewChromiumAwInit {
             if (CommandLine.getInstance().hasSwitch(AwSwitches.WEBVIEW_VERBOSE_LOGGING)) {
                 logCommandLineAndActiveTrials();
             }
+
+            PostTask.postTask(
+                    TaskTraits.BEST_EFFORT,
+                    () ->
+                            mFactory.setWebViewContextExperimentValue(
+                                    AwFeatureMap.isEnabled(
+                                            AwFeatures.WEBVIEW_SEPARATE_RESOURCE_CONTEXT)));
 
             // This runs all the pending tasks queued for after Chromium init is finished,
             // so should be the last thing that happens in startChromiumLocked.
@@ -551,6 +561,7 @@ public class WebViewChromiumAwInit {
     public android.webkit.WebIconDatabase getWebIconDatabase() {
         synchronized (mLock) {
             ensureChromiumStartedLocked(true, CallSite.GET_WEB_ICON_DATABASE);
+            WebViewChromium.recordWebViewApiCall(ApiCall.WEB_ICON_DATABASE_GET_INSTANCE);
             if (mWebIconDatabase == null) {
                 mWebIconDatabase = new WebIconDatabaseAdapter();
             }

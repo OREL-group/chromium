@@ -294,7 +294,7 @@ class FrameInjectingAudioDemuxerStream final
   // DemuxerStream remainder of implementation.
   media::AudioDecoderConfig audio_decoder_config() final { return config(); }
   media::VideoDecoderConfig video_decoder_config() final {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return media::VideoDecoderConfig();
   }
   Type type() const final { return Type::AUDIO; }
@@ -311,7 +311,7 @@ class FrameInjectingVideoDemuxerStream final
  private:
   // DemuxerStream remainder of implementation.
   media::AudioDecoderConfig audio_decoder_config() final {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return media::AudioDecoderConfig();
   }
   media::VideoDecoderConfig video_decoder_config() final { return config(); }
@@ -509,7 +509,7 @@ void FrameInjectingDemuxer::OnEnabledAudioTracksChanged(
     TrackChangeCB change_completed_cb) {
   DLOG(WARNING) << "Track changes are not supported.";
   std::vector<media::DemuxerStream*> streams;
-  std::move(change_completed_cb).Run(media::DemuxerStream::AUDIO, streams);
+  std::move(change_completed_cb).Run(streams);
 }
 
 // Not supported.
@@ -519,7 +519,7 @@ void FrameInjectingDemuxer::OnSelectedVideoTrackChanged(
     TrackChangeCB change_completed_cb) {
   DLOG(WARNING) << "Track changes are not supported.";
   std::vector<media::DemuxerStream*> streams;
-  std::move(change_completed_cb).Run(media::DemuxerStream::VIDEO, streams);
+  std::move(change_completed_cb).Run(streams);
 }
 
 }  // namespace cast_streaming

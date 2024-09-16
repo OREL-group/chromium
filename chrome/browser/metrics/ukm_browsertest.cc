@@ -34,6 +34,7 @@
 #include "chrome/browser/unified_consent/unified_consent_service_factory.h"
 #include "components/metrics/demographics/demographic_metrics_provider.h"
 #include "components/metrics/demographics/demographic_metrics_test_utils.h"
+#include "components/metrics/metrics_pref_names.h"
 #include "components/metrics_services_manager/metrics_services_manager.h"
 #include "components/signin/public/base/signin_buildflags.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
@@ -185,7 +186,8 @@ class TestTabModel : public TabModel {
   void SetActiveIndex(int index) override {}
   void CloseTabAt(int index) override {}
   void CreateTab(TabAndroid* parent,
-                 content::WebContents* web_contents) override {}
+                 content::WebContents* web_contents,
+                 bool select) override {}
   void HandlePopupNavigation(TabAndroid* parent,
                              NavigateParams* params) override {}
   content::WebContents* CreateNewTabForDevTools(const GURL& url) override {
@@ -195,6 +197,13 @@ class TestTabModel : public TabModel {
   bool IsActiveModel() const override { return false; }
   void AddObserver(TabModelObserver* observer) override {}
   void RemoveObserver(TabModelObserver* observer) override {}
+  int GetTabCountNavigatedInTimeWindow(
+      const base::Time& begin_time,
+      const base::Time& end_time) const override {
+    return 0;
+  }
+  void CloseTabsNavigatedInTimeWindow(const base::Time& begin_time,
+                                      const base::Time& end_time) override {}
 
  private:
   // The WebContents associated with this tab's profile.
@@ -355,10 +364,6 @@ class UkmBrowserTest : public UkmBrowserTestBase {
     // would need to remove the pre-existing TabModel and add a new one.
     // Having an empty TabModelList allows us to simply add the appropriate
     // TabModel.
-    if (base::FeatureList::IsEnabled(chrome::android::kAndroidTabDeclutter)) {
-      EXPECT_EQ(2U, TabModelList::models().size());
-      TabModelList::RemoveTabModel(TabModelList::models()[1]);
-    }
     EXPECT_EQ(1U, TabModelList::models().size());
     TabModelList::RemoveTabModel(TabModelList::models()[0]);
     EXPECT_EQ(0U, TabModelList::models().size());
@@ -472,9 +477,14 @@ class UkmBrowserTestWithDemographics
 
 // Make sure that UKM is disabled while an incognito window is open.
 // Keep in sync with testRegularPlusIncognito in ios/chrome/browser/metrics/
-// ukm_egtest.mm and with RegularPlusIncognitoCheck in
-// weblayer/browser/ukm_browsertest.cc.
-IN_PROC_BROWSER_TEST_F(UkmBrowserTest, RegularPlusIncognitoCheck) {
+// ukm_egtest.mm.
+// Disabled on Android due to flakiness. See crbug.com/355609356.
+#if BUILDFLAG(IS_ANDROID)
+#define MAYBE_RegularPlusIncognitoCheck DISABLED_RegularPlusIncognitoCheck
+#else
+#define MAYBE_RegularPlusIncognitoCheck RegularPlusIncognitoCheck
+#endif
+IN_PROC_BROWSER_TEST_F(UkmBrowserTest, MAYBE_RegularPlusIncognitoCheck) {
   ukm::UkmTestHelper ukm_test_helper(GetUkmService());
   MetricsConsentOverride metrics_consent(true);
 
@@ -516,8 +526,7 @@ IN_PROC_BROWSER_TEST_F(UkmBrowserTest, RegularPlusIncognitoCheck) {
 
 // Make sure opening a real window after Incognito doesn't enable UKM.
 // Keep in sync with testIncognitoPlusRegular in ios/chrome/browser/metrics/
-// ukm_egtest.mm and with IncognitoPlusRegularCheck in
-// weblayer/browser/ukm_browsertest.cc.
+// ukm_egtest.mm.
 IN_PROC_BROWSER_TEST_F(UkmBrowserTest, IncognitoPlusRegularCheck) {
   ukm::UkmTestHelper ukm_test_helper(GetUkmService());
   MetricsConsentOverride metrics_consent(true);
@@ -706,7 +715,7 @@ IN_PROC_BROWSER_TEST_F(UkmBrowserTest, LogProtoData) {
 }
 #endif  // !BUILDFLAG(IS_ANDROID)
 
-// TODO(crbug/1016118): Add the remaining test cases.
+// TODO(crbug.com/40103988): Add the remaining test cases.
 // Keep this test in sync with testUKMDemographicsReportingWithFeatureEnabled
 // and testUKMDemographicsReportingWithFeatureDisabled in
 // ios/chrome/browser/metrics/demographics_egtest.mm.
@@ -826,6 +835,45 @@ IN_PROC_BROWSER_TEST_F(UkmBrowserTest, NetworkProviderPopulatesSystemProfile) {
   CloseBrowserSynchronously(sync_browser);
 }
 #endif  // !BUILDFLAG(IS_ANDROID)
+
+// Verifies that install date is attached.
+// Disabled on Android due to flakiness. See crbug.com/355609356.
+#if BUILDFLAG(IS_ANDROID)
+#define MAYBE_InstallDateProviderPopulatesSystemProfile \
+  DISABLED_InstallDateProviderPopulatesSystemProfile
+#else
+#define MAYBE_InstallDateProviderPopulatesSystemProfile \
+  InstallDateProviderPopulatesSystemProfile
+#endif
+IN_PROC_BROWSER_TEST_F(UkmBrowserTest,
+                       MAYBE_InstallDateProviderPopulatesSystemProfile) {
+  PrefService* local_state = g_browser_process->local_state();
+  local_state->SetInt64(prefs::kInstallDate, 123456);
+
+  ukm::UkmTestHelper ukm_test_helper(GetUkmService());
+
+  MetricsConsentOverride metrics_consent(true);
+
+  Profile* profile = ProfileManager::GetLastUsedProfileIfLoaded();
+  std::unique_ptr<SyncServiceImplHarness> harness =
+      EnableSyncForProfile(profile);
+
+  PlatformBrowser browser = CreatePlatformBrowser(profile);
+  EXPECT_TRUE(ukm_test_helper.IsRecordingEnabled());
+  uint64_t original_client_id = ukm_test_helper.GetClientId();
+  EXPECT_NE(0U, original_client_id);
+
+  // Make sure there is a persistent log.
+  ukm_test_helper.BuildAndStoreLog();
+  EXPECT_TRUE(ukm_test_helper.HasUnsentLogs());
+  // Check log contents.
+  std::unique_ptr<ukm::Report> report = ukm_test_helper.GetUkmReport();
+
+  // Rounded from the 123456 we set earlier, to nearest hour.
+  EXPECT_EQ(122400, report->system_profile().install_date());
+
+  ClosePlatformBrowser(browser);
+}
 
 // Make sure that providing consent doesn't enable UKM when sync is disabled.
 // Keep in sync with testConsentAddedButNoSync in ios/chrome/browser/metrics/

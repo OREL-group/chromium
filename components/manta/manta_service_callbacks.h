@@ -22,10 +22,12 @@ namespace manta {
 // Enum that indicates the source of the call to manta server, used for logging
 // UMA metrics.
 enum class MantaMetricType {
+  kAnchovy,
   kOrca,
   kSnapper,
   kMahiSummary,
   kMahiQA,
+  kSparky,
 };
 
 // Manta service uses this callback to return a Response proto parsed

@@ -16,6 +16,7 @@
 #include "base/values.h"
 #include "components/guest_view/browser/guest_view.h"
 #include "content/public/browser/javascript_dialog_manager.h"
+#include "content/public/browser/permission_result.h"
 #include "extensions/browser/guest_view/web_view/javascript_dialog_helper.h"
 #include "extensions/browser/guest_view/web_view/web_view_find_helper.h"
 #include "extensions/browser/guest_view/web_view/web_view_guest_delegate.h"
@@ -206,13 +207,15 @@ class WebViewGuest : public guest_view::GuestView<WebViewGuest> {
   void WillAttachToEmbedder() final;
   bool RequiresSslInterstitials() const final;
   bool IsPermissionRequestable(ContentSettingsType type) const final;
+  std::optional<content::PermissionResult> OverridePermissionResult(
+      ContentSettingsType type) const final;
 
   // WebContentsDelegate implementation.
   void CloseContents(content::WebContents* source) final;
   bool HandleContextMenu(content::RenderFrameHost& render_frame_host,
                          const content::ContextMenuParams& params) final;
   bool HandleKeyboardEvent(content::WebContents* source,
-                           const content::NativeWebKeyboardEvent& event) final;
+                           const input::NativeWebKeyboardEvent& event) final;
   bool PreHandleGestureEvent(content::WebContents* source,
                              const blink::WebGestureEvent& event) final;
   void RendererResponsive(content::WebContents* source,
@@ -234,13 +237,14 @@ class WebViewGuest : public guest_view::GuestView<WebViewGuest> {
   content::JavaScriptDialogManager* GetJavaScriptDialogManager(
       content::WebContents* source) final;
   bool ShouldResumeRequestsForCreatedWindow() override;
-  void AddNewContents(content::WebContents* source,
-                      std::unique_ptr<content::WebContents> new_contents,
-                      const GURL& target_url,
-                      WindowOpenDisposition disposition,
-                      const blink::mojom::WindowFeatures& window_features,
-                      bool user_gesture,
-                      bool* was_blocked) final;
+  content::WebContents* AddNewContents(
+      content::WebContents* source,
+      std::unique_ptr<content::WebContents> new_contents,
+      const GURL& target_url,
+      WindowOpenDisposition disposition,
+      const blink::mojom::WindowFeatures& window_features,
+      bool user_gesture,
+      bool* was_blocked) final;
   content::WebContents* OpenURLFromTab(
       content::WebContents* source,
       const content::OpenURLParams& params,
@@ -322,7 +326,7 @@ class WebViewGuest : public guest_view::GuestView<WebViewGuest> {
   void NewGuestWebViewCallback(const content::OpenURLParams& params,
                                std::unique_ptr<GuestViewBase> guest);
 
-  bool HandleKeyboardShortcuts(const content::NativeWebKeyboardEvent& event);
+  bool HandleKeyboardShortcuts(const input::NativeWebKeyboardEvent& event);
 
   void ApplyAttributes(const base::Value::Dict& params);
 

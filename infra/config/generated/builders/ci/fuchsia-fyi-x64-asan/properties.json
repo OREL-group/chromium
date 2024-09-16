@@ -48,12 +48,12 @@
           "builder": "fuchsia-fyi-x64-asan",
           "group": "tryserver.chromium.fuchsia"
         }
-      ]
+      ],
+      "targets_spec_directory": "src/infra/config/generated/builders/ci/fuchsia-fyi-x64-asan/targets"
     }
   },
   "$build/reclient": {
     "instance": "rbe-chromium-trusted",
-    "jobs": 250,
     "metrics_project": "chromium-reclient-metrics",
     "scandeps_server": true
   },
@@ -75,6 +75,9 @@
     ]
   },
   "builder_group": "chromium.fuchsia.fyi",
+  "gardener_rotations": [
+    "fuchsia"
+  ],
   "recipe": "chromium",
   "sheriff_rotations": [
     "fuchsia"

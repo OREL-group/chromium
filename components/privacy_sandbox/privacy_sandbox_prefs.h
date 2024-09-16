@@ -143,6 +143,22 @@ inline constexpr char kPrivacySandboxTopicsConsentLastUpdateReason[] =
 inline constexpr char kPrivacySandboxTopicsConsentTextAtLastUpdate[] =
     "privacy_sandbox.topics_consent.text_at_last_update";
 
+// TODO(crbug.com/348369971): Clean up old pref.
+// Pref which contains a list of the activity type from the last 100 chrome
+// launches
+inline constexpr char kPrivacySandboxActivityTypeRecord[] =
+    "privacy_sandbox.activity_type.record";
+
+// Pref which contains a list of the activity type from recent chrome launches.
+// Version 2 after enum values changed.
+inline constexpr char kPrivacySandboxActivityTypeRecord2[] =
+    "privacy_sandbox.activity_type.record2";
+
+// Pref that records the timestamp of when a profile was shown a sentiment
+// survey.
+inline constexpr char kPrivacySandboxSentimentSurveyLastSeen[] =
+    "privacy_sandbox.sentiment_survey.last_seen";
+
 }  // namespace prefs
 
 namespace privacy_sandbox {

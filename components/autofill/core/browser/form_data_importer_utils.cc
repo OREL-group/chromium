@@ -6,6 +6,7 @@
 
 #include "base/containers/contains.h"
 #include "base/strings/utf_string_conversions.h"
+#include "components/autofill/core/browser/address_data_manager.h"
 #include "components/autofill/core/browser/geo/autofill_country.h"
 #include "components/autofill/core/browser/profile_requirement_utils.h"
 #include "components/autofill/core/common/autofill_features.h"
@@ -110,6 +111,15 @@ void MultiStepImportMerger::MergeImportMetadata(
   // of them were complemented. Otherwise one of them was observed and
   // complementing the country has not made a difference.
   target.did_complement_country &= source.did_complement_country;
+  // Conceptually, this constructs the union of `source` and `target`'s
+  // `filled_types_to_autofill_guid`. There can be edge cases where the same
+  // type is contained in both containers, if subsequent forms contained fields
+  // of the same types and the user filled them with the same value (making the
+  // observed profiles mergeable). In this case, the latter value counts.
+  for (auto& [key, value] : source.filled_types_to_autofill_guid) {
+    target.filled_types_to_autofill_guid.insert_or_assign(key,
+                                                          std::move(value));
+  }
 }
 
 void MultiStepImportMerger::OnBrowsingHistoryCleared(
@@ -118,16 +128,16 @@ void MultiStepImportMerger::OnBrowsingHistoryCleared(
     Clear();
 }
 
-void MultiStepImportMerger::OnPersonalDataChanged(
-    PersonalDataManager& personal_data_manager) {
+void MultiStepImportMerger::OnAddressDataChanged(
+    AddressDataManager& address_data_manager) {
   auto it = multistep_candidates_.begin();
   while (it != multistep_candidates_.end()) {
     // `it` might get erased, so `it++` at the end of the loop doesn't suffice.
     auto next = std::next(it);
     // Incomplete profiles are not imported yet, so they cannot have changed.
     if (it->is_imported) {
-      AutofillProfile* stored_profile =
-          personal_data_manager.GetProfileByGUID(it->profile.guid());
+      const AutofillProfile* stored_profile =
+          address_data_manager.GetProfileByGUID(it->profile.guid());
       if (!stored_profile) {
         // The profile was deleted, so we shouldn't offer importing it again.
         multistep_candidates_.erase(it, next);
@@ -147,7 +157,7 @@ FormAssociator::~FormAssociator() = default;
 void FormAssociator::TrackFormAssociations(const url::Origin& origin,
                                            FormSignature form_signature,
                                            FormType form_type) {
-  const base::TimeDelta ttl = features::kAutofillAssociateFormsTTL.Get();
+  static constexpr base::TimeDelta ttl = base::Minutes(5);
   // This ensures that `recent_address_forms_` and `recent_credit_card_forms`
   // share the same origin (if they are non-empty).
   recent_address_forms_.RemoveOutdatedItems(ttl, origin);

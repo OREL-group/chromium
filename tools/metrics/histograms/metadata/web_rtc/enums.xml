@@ -102,6 +102,15 @@ chromium-metrics-reviews@google.com.
   <int value="1" label="Unknown error"/>
 </enum>
 
+<enum name="GenerateCertificateAlgorithms">
+  <int value="0" label="ECDSA-P256"/>
+  <int value="1" label="RSA-1024"/>
+  <int value="2" label="RSA-2048"/>
+  <int value="3" label="RSA-4096"/>
+  <int value="4" label="RSA-8192"/>
+  <int value="5" label="RSA-other"/>
+</enum>
+
 <enum name="IceCandidatePairTypes">
   <int value="0" label="host_host"/>
   <int value="1" label="host_srflx"/>
@@ -467,6 +476,14 @@ chromium-metrics-reviews@google.com.
   <int value="1" label="No integrity attribute"/>
   <int value="2" label="OK"/>
   <int value="3" label="Bad"/>
+</enum>
+
+<enum name="WebRtcTextLoggingStartError">
+  <int value="0" label="RendererClosing"/>
+  <int value="1" label="LogAlreadyOpen"/>
+  <int value="2" label="ApplyForStartFailed"/>
+  <int value="3" label="Cancelled"/>
+  <int value="4" label="RendererClosingInStartDone"/>
 </enum>
 
 <enum name="WebRtcVideoCodecs">

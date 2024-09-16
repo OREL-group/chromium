@@ -8,7 +8,6 @@
 #include <cstddef>
 #include <vector>
 
-#include "ash/constants/app_types.h"
 #include "ash/constants/ash_features.h"
 #include "ash/display/screen_orientation_controller.h"
 #include "ash/public/cpp/shell_window_ids.h"
@@ -37,6 +36,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "chromeos/ui/base/app_types.h"
 #include "chromeos/ui/base/window_properties.h"
 #include "chromeos/ui/wm/constants.h"
 #include "chromeos/ui/wm/window_util.h"
@@ -95,8 +95,7 @@ void UpdateWindowBoundsForTablet(
   // `SetBoundsWMEvent` instead. Otherwise, the window bounds are updated only
   // in Chrome-side whereas ARC++ doesn’t know the changes. (See comments in
   // `TabletModeWindowState::UpdateWindowPosition`.)
-  if (window->GetProperty(aura::client::kAppType) ==
-      static_cast<int>(AppType::ARC_APP)) {
+  if (window_state->is_client_controlled()) {
     // If any animation is requested, it will directly animate the
     // client-controlled windows for a rich animation. The client bounds change
     // will follow.
@@ -177,6 +176,10 @@ class FloatLayoutManager : public WmDefaultLayoutManager {
   }
 
   void OnWillRemoveWindowFromLayout(aura::Window* child) override {
+    // Same as what we are doing inside
+    // `WorkspaceLayoutManager::OnWillRemoveWindowFromLayout` for this. But we
+    // need to do it separately here as `WorkspaceLayoutManager` is not tracking
+    // the float container.
     WindowState::Get(child)->set_pre_added_to_workspace_window_bounds(
         child->bounds());
   }
@@ -582,13 +585,15 @@ gfx::Rect FloatController::GetFloatWindowTabletBounds(aura::Window* window) {
   const int width = preferred_size.width();
   const int height = preferred_size.height();
 
-  // Get `floated_window_info` from the float controller. For non ARC apps, it
-  // is expected we call this function on already floated windows.
+  // Get `floated_window_info` from the float controller. For non
+  // client-controlled apps, it is expected we call this function on already
+  // floated windows. For client controlled windows, we need to send the floated
+  // bounds before the client applies the float state, which results in using
+  // `GetFloatWindowTabletBounds` before `FloatImpl` is called.
   auto* floated_window_info =
       Shell::Get()->float_controller()->MaybeGetFloatedWindowInfo(window);
 #if DCHECK_IS_ON()
-  if (window->GetProperty(aura::client::kAppType) !=
-      static_cast<int>(AppType::ARC_APP)) {
+  if (!WindowState::Get(window)->is_client_controlled()) {
     DCHECK(floated_window_info);
   }
 #endif
@@ -960,8 +965,7 @@ void FloatController::OnScreenRotationAnimationFinished(
   // TODO(b/278519956): Remove this workaround once ARC/Exo handle rotation
   // bounds better.
   for (auto& [window, info] : floated_window_info_map_) {
-    if (window->GetProperty(aura::client::kAppType) ==
-        static_cast<int>(AppType::ARC_APP)) {
+    if (WindowState::Get(window)->is_client_controlled()) {
       const gfx::Rect bounds =
           display::Screen::GetScreen()->InTabletMode()
               ? GetFloatWindowTabletBounds(window)
@@ -1107,7 +1111,7 @@ void FloatController::FloatImpl(aura::Window* window) {
 
   // Since a floated window is always on top, we don't want to track its
   // z-ordering.
-  if (reset_all_desks && features::IsPerDeskZOrderEnabled()) {
+  if (reset_all_desks) {
     desk_controller->UntrackWindowFromAllDesks(window);
   }
 
@@ -1146,13 +1150,6 @@ void FloatController::UnfloatImpl(aura::Window* window) {
   if (!floated_window_info)
     return;
 
-  // When a window is moved in/out from active desk container to float
-  // container, it gets reparented and will use
-  // `pre_added_to_workspace_window_bounds_` to update it's bounds, here we
-  // update `pre_added_to_workspace_window_bounds_` as window is re-added to
-  // active desk container from float container.
-  WindowState::Get(window)->set_pre_added_to_workspace_window_bounds(
-      window->bounds());
   // Floated window have been hidden on purpose on the inactive desk.
   ShowFloatedWindow(window);
   // Re-parent window to the "parent" desk's desk container.
@@ -1167,8 +1164,7 @@ void FloatController::UnfloatImpl(aura::Window* window) {
 
   // A floated window does not have per-desk z-order, so we need to start
   // tracking the window again after it is unfloated.
-  if (desks_util::IsWindowVisibleOnAllWorkspaces(window) &&
-      features::IsPerDeskZOrderEnabled()) {
+  if (desks_util::IsWindowVisibleOnAllWorkspaces(window)) {
     DesksController::Get()->TrackWindowOnAllDesks(window);
   }
 }
@@ -1188,6 +1184,8 @@ FloatController::FloatedWindowInfo* FloatController::MaybeGetFloatedWindowInfo(
 }
 
 void FloatController::OnFloatedWindowDestroying(aura::Window* floated_window) {
+  DesksController::Get()->MaybeRemoveVisibleOnAllDesksWindow(floated_window);
+
   floated_window_info_map_.erase(floated_window);
   if (floated_window_info_map_.empty()) {
     desks_controller_observation_.Reset();

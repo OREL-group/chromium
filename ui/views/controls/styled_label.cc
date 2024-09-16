@@ -24,6 +24,7 @@
 #include "ui/gfx/text_constants.h"
 #include "ui/gfx/text_elider.h"
 #include "ui/gfx/text_utils.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/link.h"
 #include "ui/views/controls/link_fragment.h"
@@ -83,9 +84,9 @@ struct StyledLabel::LayoutViews {
 };
 
 StyledLabel::StyledLabel() {
-  SetAccessibilityProperties(text_context_ == style::CONTEXT_DIALOG_TITLE
-                                 ? ax::mojom::Role::kTitleBar
-                                 : ax::mojom::Role::kStaticText);
+  GetViewAccessibility().SetRole(text_context_ == style::CONTEXT_DIALOG_TITLE
+                                     ? ax::mojom::Role::kTitleBar
+                                     : ax::mojom::Role::kStaticText);
 }
 
 StyledLabel::~StyledLabel() = default;
@@ -104,7 +105,7 @@ void StyledLabel::SetText(std::u16string text) {
   }
 
   text_ = text;
-  SetAccessibleName(text_);
+  GetViewAccessibility().SetName(text_);
   style_ranges_.clear();
   RemoveOrDeleteAllChildViews();
   OnPropertyChanged(&text_, kPropertyEffectsPreferredSizeChanged);
@@ -145,9 +146,9 @@ void StyledLabel::SetTextContext(int text_context) {
   }
 
   text_context_ = text_context;
-  SetAccessibleRole(text_context_ == style::CONTEXT_DIALOG_TITLE
-                        ? ax::mojom::Role::kTitleBar
-                        : ax::mojom::Role::kStaticText);
+  GetViewAccessibility().SetRole(text_context_ == style::CONTEXT_DIALOG_TITLE
+                                     ? ax::mojom::Role::kTitleBar
+                                     : ax::mojom::Role::kStaticText);
   OnPropertyChanged(&text_context_, kPropertyEffectsPreferredSizeChanged);
 }
 
@@ -268,10 +269,6 @@ gfx::Size StyledLabel::GetMinimumSize() const {
       SizeBounds(width() == 0 ? SizeBound() : SizeBound(width()), {}));
 }
 
-gfx::Size StyledLabel::CalculatePreferredSize() const {
-  NOTREACHED_NORETURN() << "Use GetPreferredSize(SizeBounds)";
-}
-
 gfx::Size StyledLabel::CalculatePreferredSize(
     const SizeBounds& available_size) const {
   int width = 0;
@@ -293,10 +290,6 @@ void StyledLabel::OnBoundsChanged(const gfx::Rect& previous_bounds) {
   }
 
   need_recreate_child_ = true;
-}
-
-int StyledLabel::GetHeightForWidth(int w) const {
-  return GetLayoutSizeInfoForWidth(w).total_size.height();
 }
 
 void StyledLabel::Layout(PassKey) {
@@ -334,7 +327,7 @@ void StyledLabel::ClearStyleRanges() {
 
 void StyledLabel::ClickFirstLinkForTesting() {
   GetFirstLinkForTesting()->OnKeyPressed(  // IN-TEST
-      ui::KeyEvent(ui::ET_KEY_PRESSED, ui::VKEY_SPACE, ui::EF_NONE));
+      ui::KeyEvent(ui::EventType::kKeyPressed, ui::VKEY_SPACE, ui::EF_NONE));
 }
 
 views::Link* StyledLabel::GetFirstLinkForTesting() {
@@ -563,17 +556,18 @@ std::unique_ptr<Label> StyledLabel::CreateLabel(
     const gfx::Range& range,
     LinkFragment** previous_link_fragment) const {
   std::unique_ptr<Label> result;
-  if (style_info.text_style == style::STYLE_LINK) {
+  if (style_info.text_style == style::STYLE_LINK ||
+      style_info.text_style == style::STYLE_LINK_5) {
     // Nothing should (and nothing does) use a custom font for links.
     DCHECK(!style_info.custom_font);
 
     // Note this ignores |default_text_style_|, in favor of `style::STYLE_LINK`.
     auto link = std::make_unique<LinkFragment>(
-        text, text_context_, style::STYLE_LINK, *previous_link_fragment);
+        text, text_context_, *style_info.text_style, *previous_link_fragment);
     *previous_link_fragment = link.get();
     link->SetCallback(style_info.callback);
     if (!style_info.accessible_name.empty())
-      link->SetAccessibleName(style_info.accessible_name);
+      link->GetViewAccessibility().SetName(style_info.accessible_name);
 
     result = std::move(link);
   } else if (style_info.custom_font) {
@@ -596,7 +590,7 @@ std::unique_ptr<Label> StyledLabel::CreateLabel(
     result->SetTooltipText(style_info.tooltip);
   }
   if (!style_info.accessible_name.empty())
-    result->SetAccessibleName(style_info.accessible_name);
+    result->GetViewAccessibility().SetName(style_info.accessible_name);
   if (absl::holds_alternative<SkColor>(displayed_on_background_color_)) {
     result->SetBackgroundColor(
         absl::get<SkColor>(displayed_on_background_color_));
@@ -630,10 +624,14 @@ void StyledLabel::UpdateLabelBackgroundColor() {
 }
 
 void StyledLabel::RemoveOrDeleteAllChildViews() {
+  pending_delete_views_.clear();
   while (children().size() > 0) {
     std::unique_ptr<View> view = RemoveChildViewT(children()[0]);
-    if (view->GetProperty(kStyledLabelCustomViewKey))
+    if (view->GetProperty(kStyledLabelCustomViewKey)) {
       custom_views_.push_back(std::move(view));
+    } else {
+      pending_delete_views_.push_back(std::move(view));
+    }
   }
 }
 

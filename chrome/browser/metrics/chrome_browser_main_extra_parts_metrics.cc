@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/metrics/chrome_browser_main_extra_parts_metrics.h"
 
 #include <algorithm>
@@ -41,9 +46,12 @@
 #include "chrome/browser/metrics/process_memory_metrics_emitter.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/shell_integration.h"
+#include "chrome/browser/ui/performance_controls/performance_controls_metrics.h"
 #include "chrome/common/chrome_switches.h"
 #include "components/flags_ui/pref_service_flags_storage.h"
 #include "components/metrics/android_metrics_helper.h"
+#include "components/performance_manager/public/features.h"
+#include "components/performance_manager/public/performance_manager.h"
 #include "components/policy/core/common/management/management_service.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
@@ -78,7 +86,7 @@
 #include "chrome/browser/flags/android/chrome_session_state.h"
 #endif  // BUILDFLAG(IS_ANDROID)
 
-// TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
+// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
 // of lacros-chrome is complete.
 #if defined(__GLIBC__) && (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS))
 #include <gnu/libc-version.h>
@@ -93,7 +101,6 @@
 
 #include "base/files/file_path.h"
 #include "base/path_service.h"
-#include "base/win/base_win_buildflags.h"
 #include "base/win/registry.h"
 #include "base/win/scoped_handle.h"
 #include "base/win/windows_version.h"
@@ -137,8 +144,8 @@ constexpr char kUnexportableKeysKeychainAccessGroup[] =
 
 void RecordMemoryMetrics();
 
-// Gets the delay for logging memory related metrics for testing.
-std::optional<base::TimeDelta> GetDelayForNextMemoryLogTest() {
+// Gets the delay for logging memory related metrics. Minimum is 1 second.
+base::TimeDelta GetDelayForNextMemoryLogTest() {
   int test_delay_in_minutes;
   const base::CommandLine* command_line =
       base::CommandLine::ForCurrentProcess();
@@ -146,24 +153,28 @@ std::optional<base::TimeDelta> GetDelayForNextMemoryLogTest() {
       base::StringToInt(command_line->GetSwitchValueASCII(
                             switches::kTestMemoryLogDelayInMinutes),
                         &test_delay_in_minutes)) {
-    return base::Minutes(test_delay_in_minutes);
+    // Setting --test-memory-log-delay-in-minutes=0 is useful for testing the
+    // feature, but zero delay tends to overwhelm the system.
+    return test_delay_in_minutes <= 0 ? base::Seconds(1)
+                                      : base::Minutes(test_delay_in_minutes);
   }
-  return std::nullopt;
+  return memory_instrumentation::GetDelayForNextMemoryLog();
 }
 
 // Records memory metrics after a delay.
 void RecordMemoryMetricsAfterDelay() {
   content::GetUIThreadTaskRunner({})->PostDelayedTask(
       FROM_HERE, base::BindOnce(&RecordMemoryMetrics),
-      GetDelayForNextMemoryLogTest().value_or(
-          memory_instrumentation::GetDelayForNextMemoryLog()));
+      GetDelayForNextMemoryLogTest());
 }
 
-// Records memory metrics, and then triggers memory colleciton after a delay.
+// Records memory metrics, and then triggers memory collection after a delay.
 void RecordMemoryMetrics() {
   scoped_refptr<ProcessMemoryMetricsEmitter> emitter(
       new ProcessMemoryMetricsEmitter);
   emitter->FetchAndEmitProcessMemoryMetrics();
+
+  performance_manager::PerformanceManager::RecordMemoryMetrics();
 
   RecordMemoryMetricsAfterDelay();
 }
@@ -702,7 +713,7 @@ void RecordLinuxDistro() {
 #endif  // BUILDFLAG(IS_LINUX)
 
 void RecordLinuxGlibcVersion() {
-// TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
+// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
 // of lacros-chrome is complete.
 #if defined(__GLIBC__) && (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS))
   base::Version version(gnu_get_libc_version());
@@ -800,7 +811,7 @@ bool IsParallelDllLoadingEnabled() {
 // process.
 void RecordAppCompatMetrics() {
   HMODULE mod = ::GetModuleHandleW(L"AcLayers.dll");
-  base::UmaHistogramBoolean("Windows.AcLayersLoaded", mod ? true : false);
+  base::UmaHistogramBoolean("Windows.AcLayersLoaded", !!mod);
 }
 
 #endif  // BUILDFLAG(IS_WIN)
@@ -971,7 +982,6 @@ void ChromeBrowserMainExtraPartsMetrics::PreBrowserStart() {
 
   // Records whether or not the Segment heap is in use.
 #if BUILDFLAG(IS_WIN)
-
   if (base::win::GetVersion() >= base::win::Version::WIN10_20H1) {
     ChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial("WinSegmentHeap",
 #if BUILDFLAG(ENABLE_SEGMENT_HEAP)
@@ -984,17 +994,6 @@ void ChromeBrowserMainExtraPartsMetrics::PreBrowserStart() {
     ChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial("WinSegmentHeap",
                                                               "NotSupported");
   }
-
-  // Records whether or not CFG indirect call dispatch guards are present
-  // or not.
-  ChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial("WinCFG",
-#if BUILDFLAG(WIN_ENABLE_CFG_GUARDS)
-                                                            "Enabled"
-#else
-                                                            "Disabled"
-#endif
-  );
-
 #endif  // BUILDFLAG(IS_WIN)
 
   // Register synthetic Finch trials proposed by PartitionAlloc.
@@ -1137,7 +1136,16 @@ void ChromeBrowserMainExtraPartsMetrics::PostBrowserStart() {
   display_observer_.emplace(this);
 
 #if !BUILDFLAG(IS_ANDROID)
+// In ChromeOS, the chrome application typically starts at the login screen and
+// waits for the user to log in before opening a browser window, so calling
+// `BeginFirstWebContentsProfiling()` is inappropriate because the
+// `BrowserList` is typically empty at this point. Similarly, a restart after a
+// crash (which has no login screen) requires the user to click a notification
+// prompt before browser windows are restored, so the `BrowserList` is also
+// empty in this case.
+#if !BUILDFLAG(IS_CHROMEOS_ASH)
   metrics::BeginFirstWebContentsProfiling();
+#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
 
   // Instantiate the power-related metrics reporters.
 
@@ -1159,6 +1167,13 @@ void ChromeBrowserMainExtraPartsMetrics::PostBrowserStart() {
   if (process_monitor_) {
     power_metrics_reporter_ =
         std::make_unique<PowerMetricsReporter>(process_monitor_.get());
+  }
+
+  if (performance_manager::features::
+          ShouldUsePerformanceInterventionBackend()) {
+    performance_intervention_metrics_reporter_ =
+        std::make_unique<PerformanceInterventionMetricsReporter>(
+            g_browser_process->local_state());
   }
 #endif  // !BUILDFLAG(IS_ANDROID)
 
@@ -1199,6 +1214,11 @@ void ChromeBrowserMainExtraPartsMetrics::PostDestroyThreads() {
     // pointer or similar.
     metrics::TabStatsTracker::ClearInstance();
   }
+
+  // Reset the pointer to `performance_intervention_metrics_reporter_` to ensure
+  // that PrefService outlives the metrics reporter to prevent the reporter from
+  // holding a dangling pointer.
+  performance_intervention_metrics_reporter_.reset();
 #endif  // !BUILDFLAG(IS_ANDROID)
 }
 
@@ -1267,8 +1287,8 @@ void ChromeBrowserMainExtraPartsMetrics::OnDisplayAdded(
   RecordDisplayHDRStatus(new_display);
 }
 
-void ChromeBrowserMainExtraPartsMetrics::OnDisplayRemoved(
-    const display::Display& old_display) {
+void ChromeBrowserMainExtraPartsMetrics::OnDisplaysRemoved(
+    const display::Displays& removed_displays) {
   EmitDisplaysChangedMetric();
 }
 

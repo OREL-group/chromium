@@ -33,6 +33,10 @@ void HelpAppPageHandler::OpenFeedbackDialog(
   std::move(callback).Run(std::move(error_message));
 }
 
+void HelpAppPageHandler::ShowOnDeviceAppControls() {
+  help_app_ui_->delegate()->ShowOnDeviceAppControls();
+}
+
 void HelpAppPageHandler::ShowParentalControls() {
   help_app_ui_->delegate()->ShowParentalControls();
 }
@@ -70,6 +74,11 @@ void HelpAppPageHandler::OpenUrlInBrowserAndTriggerInstallDialog(
   if (error_message.has_value()) {
     receiver_.ReportBadMessage(error_message.value());
   }
+}
+
+void HelpAppPageHandler::OpenSettings(
+    help_app::mojom::SettingsComponent component) {
+  help_app_ui_->delegate()->OpenSettings(component);
 }
 
 }  // namespace ash

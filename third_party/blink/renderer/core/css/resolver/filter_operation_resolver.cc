@@ -69,7 +69,7 @@ FilterOperation::OperationType FilterOperationResolver::FilterOperationForType(
     case CSSValueID::kDropShadow:
       return FilterOperation::OperationType::kDropShadow;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       // FIXME: We shouldn't have a type None since we never create them
       return FilterOperation::OperationType::kNone;
   }
@@ -77,16 +77,14 @@ FilterOperation::OperationType FilterOperationResolver::FilterOperationForType(
 
 static void CountFilterUse(FilterOperation::OperationType operation_type,
                            const Document& document) {
-  // This variable is always reassigned, but MSVC thinks it might be left
-  // uninitialized.
-  WebFeature feature = WebFeature::kNumberOfFeatures;
+  std::optional<WebFeature> feature;
   switch (operation_type) {
     case FilterOperation::OperationType::kNone:
     case FilterOperation::OperationType::kBoxReflect:
     case FilterOperation::OperationType::kConvolveMatrix:
     case FilterOperation::OperationType::kComponentTransfer:
     case FilterOperation::OperationType::kTurbulence:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return;
     case FilterOperation::OperationType::kReference:
       feature = WebFeature::kCSSFilterReference;
@@ -128,11 +126,13 @@ static void CountFilterUse(FilterOperation::OperationType operation_type,
       feature = WebFeature::kCSSFilterDropShadow;
       break;
   };
-  document.CountUse(feature);
+  DCHECK(feature.has_value());
+  document.CountUse(*feature);
 }
 
 double FilterOperationResolver::ResolveNumericArgumentForFunction(
-    const CSSFunctionValue& filter) {
+    const CSSFunctionValue& filter,
+    const CSSLengthResolver& length_resolver) {
   switch (filter.FunctionType()) {
     case CSSValueID::kGrayscale:
     case CSSValueID::kSepia:
@@ -141,21 +141,20 @@ double FilterOperationResolver::ResolveNumericArgumentForFunction(
     case CSSValueID::kBrightness:
     case CSSValueID::kContrast:
     case CSSValueID::kOpacity: {
-      double amount = 1;
       if (filter.length() == 1) {
         const CSSPrimitiveValue& value = To<CSSPrimitiveValue>(filter.Item(0));
-        amount = value.GetDoubleValue();
         if (value.IsPercentage()) {
-          amount /= 100;
+          return value.ComputePercentage(length_resolver) / 100;
         }
+        return value.ComputeNumber(length_resolver);
       }
-      return amount;
+      return 1;
     }
     case CSSValueID::kHueRotate: {
       double angle = 0;
       if (filter.length() == 1) {
         const CSSPrimitiveValue& value = To<CSSPrimitiveValue>(filter.Item(0));
-        angle = value.ComputeDegrees();
+        angle = value.ComputeDegrees(length_resolver);
       }
       return angle;
     }
@@ -205,7 +204,8 @@ FilterOperations FilterOperationResolver::CreateFilterOperations(
       case CSSValueID::kHueRotate: {
         operations.Operations().push_back(
             MakeGarbageCollected<BasicColorMatrixFilterOperation>(
-                ResolveNumericArgumentForFunction(*filter_value),
+                ResolveNumericArgumentForFunction(*filter_value,
+                                                  conversion_data),
                 operation_type));
         break;
       }
@@ -215,7 +215,8 @@ FilterOperations FilterOperationResolver::CreateFilterOperations(
       case CSSValueID::kOpacity: {
         operations.Operations().push_back(
             MakeGarbageCollected<BasicComponentTransferFilterOperation>(
-                ResolveNumericArgumentForFunction(*filter_value),
+                ResolveNumericArgumentForFunction(*filter_value,
+                                                  conversion_data),
                 operation_type));
         break;
       }
@@ -238,7 +239,7 @@ FilterOperations FilterOperationResolver::CreateFilterOperations(
         break;
       }
       default:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
         break;
     }
   }
@@ -288,7 +289,8 @@ FilterOperations FilterOperationResolver::CreateOffscreenFilterOperations(
       case CSSValueID::kHueRotate: {
         operations.Operations().push_back(
             MakeGarbageCollected<BasicColorMatrixFilterOperation>(
-                ResolveNumericArgumentForFunction(*filter_value),
+                ResolveNumericArgumentForFunction(*filter_value,
+                                                  conversion_data),
                 operation_type));
         break;
       }
@@ -298,7 +300,8 @@ FilterOperations FilterOperationResolver::CreateOffscreenFilterOperations(
       case CSSValueID::kOpacity: {
         operations.Operations().push_back(
             MakeGarbageCollected<BasicComponentTransferFilterOperation>(
-                ResolveNumericArgumentForFunction(*filter_value),
+                ResolveNumericArgumentForFunction(*filter_value,
+                                                  conversion_data),
                 operation_type));
         break;
       }
@@ -321,7 +324,7 @@ FilterOperations FilterOperationResolver::CreateOffscreenFilterOperations(
         break;
       }
       default:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
         break;
     }
   }

@@ -61,14 +61,8 @@ DataObject* DataObject::CreateFromClipboard(ExecutionContext* context,
   ClipboardSequenceNumberToken sequence_number =
       system_clipboard->SequenceNumber();
   for (const String& type : system_clipboard->ReadAvailableTypes()) {
-    if (paste_mode == PasteMode::kPlainTextOnly && type != kMimeTypeTextPlain) {
+    if (paste_mode == PasteMode::kPlainTextOnly && type != kMimeTypeTextPlain)
       continue;
-    }
-    // `image/svg+xml` is not supported by the DataTransfer API, so we should
-    // ignore it.
-    if (type == kMimeTypeImageSvg) {
-      continue;
-    }
     mojom::blink::ClipboardFilesPtr files;
     if (type == kMimeTypeTextURIList) {
       files = system_clipboard->ReadFiles();
@@ -238,7 +232,7 @@ String DataObject::GetData(const String& type) const {
 void DataObject::SetData(const String& type, const String& data) {
   ClearData(type);
   if (!Add(data, type))
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
 }
 
 void DataObject::UrlAndTitle(String& url, String* title) const {
@@ -473,7 +467,7 @@ WebDragData DataObject::ToWebDragData() {
             string_item.data = file->name();
           }
         } else {
-          NOTREACHED();
+          NOTREACHED_IN_MIGRATION();
         }
         break;
       }

@@ -15,7 +15,6 @@ import {flushTasks, waitAfterNextRender} from 'chrome://webui-test/polymer_test_
 import {eventToPromise} from 'chrome://webui-test/test_util.js';
 import {assertFalse, assertTrue, assertEquals} from 'chrome://webui-test/chai_assert.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
-import type {CrButtonElement} from 'chrome://resources/ash/common/cr_elements/cr_button/cr_button.js';
 import type {CrInputElement} from 'chrome://resources/ash/common/cr_elements/cr_input/cr_input.js';
 
 import {FakeBarcodeDetector, FakeImageCapture} from './fake_barcode_detector.js';
@@ -47,36 +46,35 @@ suite('CrComponentsActivationCodePageTest', function() {
   // requests to play the video due to the speed of execution. Avoid this by
   // mocking the play and pause actions.
   function playVideoFunction(): void {}
-  function stopStreamFunction(_: MediaStream): void {}
 
   setup(async function() {
     networkConfigRemote = new FakeNetworkConfig();
     MojoInterfaceProviderImpl.getInstance().setMojoServiceRemoteForTest(
         networkConfigRemote);
-    loadTimeData.overrideValues({'isCellularCarrierLockEnabled': true});
     networkConfigRemote.setDeviceStateForTest({
-        ipv4Address: undefined,
-        ipv6Address: undefined,
-        imei: undefined,
-        macAddress: undefined,
-        scanning: false,
-        simLockStatus: undefined,
-        simInfos: undefined,
-        inhibitReason: InhibitReason.kNotInhibited,
-        simAbsent: false,
-        managedNetworkAvailable: false,
-        serial: undefined,
-        isCarrierLocked: true,
-        type: NetworkType.kCellular,
-        deviceState: DeviceStateType.kEnabled,
-      });
+      ipv4Address: undefined,
+      ipv6Address: undefined,
+      imei: undefined,
+      macAddress: undefined,
+      scanning: false,
+      simLockStatus: undefined,
+      simInfos: undefined,
+      inhibitReason: InhibitReason.kNotInhibited,
+      simAbsent: false,
+      managedNetworkAvailable: false,
+      serial: undefined,
+      isCarrierLocked: true,
+      isFlashing: false,
+      type: NetworkType.kCellular,
+      deviceState: DeviceStateType.kEnabled,
+    });
 
     await flushAsync();
 
     activationCodePage = document.createElement('activation-code-page');
     await activationCodePage.setFakesForTesting(
         FakeBarcodeDetector, FakeImageCapture, setIntervalFunction,
-        playVideoFunction, stopStreamFunction);
+        playVideoFunction);
     document.body.appendChild(activationCodePage);
     await flushAsync();
 
@@ -170,8 +168,6 @@ suite('CrComponentsActivationCodePageTest', function() {
     assertFalse(!!getUseCameraAgainButton());
     assertTrue(!!scanSuccessContainer);
     assertTrue(!!scanFailureContainer);
-    assertFalse(
-        !!activationCodePage.shadowRoot!.querySelector('paper-spinner-lite'));
 
     // Initial state should only be showing the start scanning UI.
     assertFalse(startScanningContainer.hidden);
@@ -179,8 +175,6 @@ suite('CrComponentsActivationCodePageTest', function() {
     assertTrue(video.hidden);
     assertTrue(scanFinishContainer.hidden);
     assertTrue(switchCameraButton.hidden);
-    assertFalse(
-        !!activationCodePage.shadowRoot!.querySelector('paper-spinner-lite'));
 
     // Click the start scanning button.
     startScanningButton.click();
@@ -226,13 +220,8 @@ suite('CrComponentsActivationCodePageTest', function() {
     assertTrue(video.hidden);
     assertTrue(scanFinishContainer.hidden);
     assertTrue(switchCameraButton.hidden);
-    assertFalse(
-        !!activationCodePage.shadowRoot!.querySelector('paper-spinner-lite'));
 
-    activationCodePage.showBusy = true;
     await flushAsync();
-    assertTrue(
-        !!activationCodePage.shadowRoot!.querySelector('paper-spinner-lite'));
 
     // Mock, no media devices present
     mediaDevices.removeDevice();
@@ -321,32 +310,59 @@ suite('CrComponentsActivationCodePageTest', function() {
     assertTrue(video.hidden);
   });
 
-  test('UI is disabled when showBusy property is set', async function() {
-    const startScanningButton =
-        activationCodePage.shadowRoot!.querySelector<CrButtonElement>('#startScanningButton');
-    const switchCameraButton =
-        activationCodePage.shadowRoot!.querySelector<CrButtonElement>('#switchCameraButton');
-    const tryAgainButton =
-        activationCodePage.shadowRoot!.querySelector<CrButtonElement>('#tryAgainButton');
-    const input =
-        activationCodePage.shadowRoot!.querySelector<CrInputElement>('#activationCode');
+  test('Opening multiple streams is not supported', async function() {
+    assertTrue(!!mediaDevices);
+    mediaDevices.setShouldUserMediaRequestFail(true);
 
+    const video =
+        activationCodePage.shadowRoot!.querySelector<HTMLElement>('#video');
+    const startScanningButton =
+        activationCodePage.shadowRoot!.querySelector<HTMLElement>(
+            '#startScanningButton');
+    const switchCameraButton =
+        activationCodePage.shadowRoot!.querySelector<HTMLElement>(
+            '#switchCameraButton');
+    const scanFailureContainer =
+        activationCodePage.shadowRoot!.querySelector<HTMLElement>(
+            '#scanFailureContainer');
+
+    // Confirm the UI starts in a good state.
+    assertTrue(!!video);
     assertTrue(!!startScanningButton);
     assertTrue(!!switchCameraButton);
-    assertTrue(!!tryAgainButton);
-    assertTrue(!!input);
+    assertTrue(!!scanFailureContainer);
 
-    assertFalse(startScanningButton.disabled);
-    assertFalse(switchCameraButton.disabled);
-    assertFalse(tryAgainButton.disabled);
-    assertFalse(input.disabled);
+    // Initial state should only be showing the start scanning UI.
+    assertTrue(video.hidden);
+    assertTrue(switchCameraButton.hidden);
+    assertTrue(scanFailureContainer.hidden);
 
-    activationCodePage.showBusy = true;
+    // Click the start scanning button.
+    startScanningButton.click();
+    mediaDevices.resolveGetUserMedia();
+    await flushAsync();
 
-    assertTrue(startScanningButton.disabled);
-    assertTrue(switchCameraButton.disabled);
-    assertTrue(tryAgainButton.disabled);
-    assertTrue(input.disabled);
+    // The video should be visible and switch camera button hidden.
+    assertFalse(video.hidden);
+    assertTrue(switchCameraButton.hidden);
+    assertTrue(mediaDevices.isStreamingUserFacingCamera);
+
+    // Add a new video device.
+    await addMediaDevice();
+
+    // The switch camera button should now be visible.
+    assertFalse(switchCameraButton.hidden);
+    assertTrue(mediaDevices.isStreamingUserFacingCamera);
+
+    switchCameraButton.click();
+    mediaDevices.resolveGetUserMedia();
+    await flushAsync();
+
+    // The failure message should be visible as multiple media streams are not
+    // allowed.
+    assertFalse(scanFailureContainer.hidden);
+    assertTrue(video.hidden);
+    assertTrue(switchCameraButton.hidden);
   });
 
   test(
@@ -365,7 +381,7 @@ suite('CrComponentsActivationCodePageTest', function() {
         FakeBarcodeDetector.setShouldFail(true);
         await activationCodePage.setFakesForTesting(
             FakeBarcodeDetector, FakeImageCapture, setIntervalFunction,
-            playVideoFunction, stopStreamFunction);
+            playVideoFunction);
 
         qrCodeDetectorContainer =
             activationCodePage.shadowRoot!.querySelector('#esimQrCodeDetection');
@@ -429,8 +445,9 @@ suite('CrComponentsActivationCodePageTest', function() {
         const scanInstallFailureHeader =
             activationCodePage.shadowRoot!.querySelector<HTMLElement>(
                 '#scanInstallFailureHeader');
-        const scanSucessHeader =
-            activationCodePage.shadowRoot!.querySelector<HTMLElement>('#scanSucessHeader');
+        const scanSuccessHeader =
+            activationCodePage.shadowRoot!.querySelector<HTMLElement>(
+                '#scanSuccessHeader');
         const getUseCameraAgainButton = () => {
           return activationCodePage.shadowRoot!.querySelector<HTMLElement>(
               '#useCameraAgainButton');
@@ -440,7 +457,7 @@ suite('CrComponentsActivationCodePageTest', function() {
         assertTrue(!!startScanningButton);
         assertTrue(!!scanFinishContainer);
         assertTrue(!!scanInstallFailureHeader);
-        assertTrue(!!scanSucessHeader);
+        assertTrue(!!scanSuccessHeader);
         assertFalse(!!getUseCameraAgainButton());
         assertFalse(input.invalid);
 
@@ -458,7 +475,7 @@ suite('CrComponentsActivationCodePageTest', function() {
         // The code detected UI should be showing.
         assertTrue(startScanningContainer.hidden);
         assertFalse(scanFinishContainer.hidden);
-        assertFalse(scanSucessHeader.hidden);
+        assertFalse(scanSuccessHeader.hidden);
         assertTrue(scanInstallFailureHeader.hidden);
         assertFalse(!!getUseCameraAgainButton());
 
@@ -469,7 +486,7 @@ suite('CrComponentsActivationCodePageTest', function() {
         // The scan install failure UI should be showing.
         assertTrue(startScanningContainer.hidden);
         assertFalse(scanFinishContainer.hidden);
-        assertTrue(scanSucessHeader.hidden);
+        assertTrue(scanSuccessHeader.hidden);
         assertFalse(scanInstallFailureHeader.hidden);
         assertTrue(!!getUseCameraAgainButton());
 
@@ -616,8 +633,9 @@ suite('CrComponentsActivationCodePageTest', function() {
     const scanInstallFailureHeader =
         activationCodePage.shadowRoot!.querySelector<HTMLElement>(
             '#scanInstallFailureHeader');
-    const scanSucessHeader =
-        activationCodePage.shadowRoot!.querySelector<HTMLElement>('#scanSucessHeader');
+    const scanSuccessHeader =
+        activationCodePage.shadowRoot!.querySelector<HTMLElement>(
+            '#scanSuccessHeader');
     const getUseCameraAgainButton = () => {
       return activationCodePage.shadowRoot!.querySelector<HTMLElement>(
           '#useCameraAgainButton');
@@ -627,7 +645,7 @@ suite('CrComponentsActivationCodePageTest', function() {
     assertTrue(!!startScanningButton);
     assertTrue(!!scanFinishContainer);
     assertTrue(!!scanInstallFailureHeader);
-    assertTrue(!!scanSucessHeader);
+    assertTrue(!!scanSuccessHeader);
     assertFalse(!!getUseCameraAgainButton());
     assertFalse(input.invalid);
 
@@ -648,7 +666,7 @@ suite('CrComponentsActivationCodePageTest', function() {
     // The scan install failure UI should be showing.
     assertTrue(startScanningContainer.hidden);
     assertFalse(scanFinishContainer.hidden);
-    assertTrue(scanSucessHeader.hidden);
+    assertTrue(scanSuccessHeader.hidden);
     assertFalse(scanInstallFailureHeader.hidden);
     assertTrue(!!getUseCameraAgainButton());
     assertTrue(input.invalid);
@@ -670,7 +688,7 @@ suite('CrComponentsActivationCodePageTest', function() {
     // The scan install failure UI should be showing.
     assertTrue(startScanningContainer.hidden);
     assertFalse(scanFinishContainer.hidden);
-    assertTrue(scanSucessHeader.hidden);
+    assertTrue(scanSuccessHeader.hidden);
     assertFalse(scanInstallFailureHeader.hidden);
     assertTrue(!!getUseCameraAgainButton());
     assertFalse(input.invalid);
@@ -693,7 +711,7 @@ suite('CrComponentsActivationCodePageTest', function() {
     assertTrue(activationCodePage.isFromQrCode);
     assertTrue(startScanningContainer.hidden);
     assertFalse(scanFinishContainer.hidden);
-    assertFalse(scanSucessHeader.hidden);
+    assertFalse(scanSuccessHeader.hidden);
     assertTrue(scanInstallFailureHeader.hidden);
     assertFalse(!!getUseCameraAgainButton());
     assertFalse(input.invalid);
@@ -712,47 +730,22 @@ suite('CrComponentsActivationCodePageTest', function() {
       'check carrier lock warning not displayed for consumer devices',
       async function() {
         networkConfigRemote.setDeviceStateForTest({
-            ipv4Address: undefined,
-            ipv6Address: undefined,
-            imei: undefined,
-            macAddress: undefined,
-            scanning: false,
-            simLockStatus: undefined,
-            simInfos: undefined,
-            inhibitReason: InhibitReason.kNotInhibited,
-            simAbsent: false,
-            managedNetworkAvailable: false,
-            serial: undefined,
-            isCarrierLocked: false,
-            type: NetworkType.kCellular,
-            deviceState: DeviceStateType.kEnabled,
-          });
-        await flushAsync();
-        const page = document.createElement('activation-code-page');
-        assertFalse(
-            !!page.shadowRoot?.querySelector('#carrierLockWarningContainer'));
-      });
-
-  test(
-      'check carrier lock warning not displayed with feature flag disabled',
-      async function() {
-        loadTimeData.overrideValues({'isCellularCarrierLockEnabled': false});
-        networkConfigRemote.setDeviceStateForTest({
-            ipv4Address: undefined,
-            ipv6Address: undefined,
-            imei: undefined,
-            macAddress: undefined,
-            scanning: false,
-            simLockStatus: undefined,
-            simInfos: undefined,
-            inhibitReason: InhibitReason.kNotInhibited,
-            simAbsent: false,
-            managedNetworkAvailable: false,
-            serial: undefined,
-            isCarrierLocked: true,
-            type: NetworkType.kCellular,
-            deviceState: DeviceStateType.kEnabled,
-          });
+          ipv4Address: undefined,
+          ipv6Address: undefined,
+          imei: undefined,
+          macAddress: undefined,
+          scanning: false,
+          simLockStatus: undefined,
+          simInfos: undefined,
+          inhibitReason: InhibitReason.kNotInhibited,
+          simAbsent: false,
+          managedNetworkAvailable: false,
+          serial: undefined,
+          isCarrierLocked: false,
+          isFlashing: false,
+          type: NetworkType.kCellular,
+          deviceState: DeviceStateType.kEnabled,
+        });
         await flushAsync();
         const page = document.createElement('activation-code-page');
         assertFalse(

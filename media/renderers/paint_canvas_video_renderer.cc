@@ -2,9 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/renderers/paint_canvas_video_renderer.h"
 
 #include <GLES3/gl3.h>
+
+#include <array>
 #include <limits>
 #include <numeric>
 
@@ -46,11 +53,11 @@
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkImageGenerator.h"
 #include "third_party/skia/include/core/SkImageInfo.h"
-#include "third_party/skia/include/gpu/GrBackendSurface.h"
-#include "third_party/skia/include/gpu/GrDirectContext.h"
+#include "third_party/skia/include/gpu/ganesh/GrBackendSurface.h"
+#include "third_party/skia/include/gpu/ganesh/GrDirectContext.h"
 #include "third_party/skia/include/gpu/ganesh/SkImageGanesh.h"
 #include "third_party/skia/include/gpu/ganesh/gl/GrGLBackendSurface.h"
-#include "third_party/skia/include/gpu/gl/GrGLTypes.h"
+#include "third_party/skia/include/gpu/ganesh/gl/GrGLTypes.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/geometry/skia_conversions.h"
 
@@ -86,10 +93,6 @@ namespace media {
 
 namespace {
 
-BASE_FEATURE(kPCVRAddSharedImageRasterUsageWithNonOOPR,
-             "PCVRAddSharedImageRasterUsageWithNonOOPR",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 // This class keeps the last image drawn.
 // We delete the temporary resource if it is not used for 3 seconds.
 const int kTemporaryResourceDeletionDelay = 3;  // Seconds;
@@ -101,38 +104,27 @@ class ScopedSharedImageAccess {
   ScopedSharedImageAccess(
       gpu::gles2::GLES2Interface* gl,
       GLuint texture,
-      const gpu::Mailbox& mailbox,
       GLenum access = GL_SHARED_IMAGE_ACCESS_MODE_READ_CHROMIUM)
-      : gl(gl),
-        ri(nullptr),
-        texture(texture),
-        is_shared_image(mailbox.IsSharedImage()) {
-    if (is_shared_image)
-      gl->BeginSharedImageAccessDirectCHROMIUM(texture, access);
+      : gl(gl), ri(nullptr), texture(texture) {
+    gl->BeginSharedImageAccessDirectCHROMIUM(texture, access);
   }
 
-  // TODO(crbug.com/1023270): Remove this ctor once we're no longer relying on
+  // TODO(crbug.com/40106960): Remove this ctor once we're no longer relying on
   // texture ids for Mailbox access as that is only supported on
   // RasterImplementationGLES.
   ScopedSharedImageAccess(
       gpu::raster::RasterInterface* ri,
       GLuint texture,
-      const gpu::Mailbox& mailbox,
       GLenum access = GL_SHARED_IMAGE_ACCESS_MODE_READ_CHROMIUM)
-      : gl(nullptr),
-        ri(ri),
-        texture(texture),
-        is_shared_image(mailbox.IsSharedImage()) {
-    if (is_shared_image)
-      ri->BeginSharedImageAccessDirectCHROMIUM(texture, access);
+      : gl(nullptr), ri(ri), texture(texture) {
+    ri->BeginSharedImageAccessDirectCHROMIUM(texture, access);
   }
 
   ~ScopedSharedImageAccess() {
-    if (is_shared_image) {
-      if (gl)
-        gl->EndSharedImageAccessDirectCHROMIUM(texture);
-      else
-        ri->EndSharedImageAccessDirectCHROMIUM(texture);
+    if (gl) {
+      gl->EndSharedImageAccessDirectCHROMIUM(texture);
+    } else {
+      ri->EndSharedImageAccessDirectCHROMIUM(texture);
     }
   }
 
@@ -140,7 +132,6 @@ class ScopedSharedImageAccess {
   raw_ptr<gpu::gles2::GLES2Interface> gl;
   raw_ptr<gpu::raster::RasterInterface> ri;
   GLuint texture;
-  bool is_shared_image;
 };
 
 const gpu::MailboxHolder& GetVideoFrameMailboxHolder(VideoFrame* video_frame) {
@@ -154,11 +145,17 @@ const gpu::MailboxHolder& GetVideoFrameMailboxHolder(VideoFrame* video_frame) {
          PIXEL_FORMAT_XBGR == video_frame->format() ||
          PIXEL_FORMAT_XB30 == video_frame->format() ||
          PIXEL_FORMAT_XR30 == video_frame->format() ||
+         PIXEL_FORMAT_I420 == video_frame->format() ||
          PIXEL_FORMAT_YV12 == video_frame->format() ||
          PIXEL_FORMAT_NV12 == video_frame->format() ||
+         PIXEL_FORMAT_NV16 == video_frame->format() ||
+         PIXEL_FORMAT_NV24 == video_frame->format() ||
          PIXEL_FORMAT_NV12A == video_frame->format() ||
-         PIXEL_FORMAT_P016LE == video_frame->format() ||
-         PIXEL_FORMAT_RGBAF16 == video_frame->format())
+         PIXEL_FORMAT_P010LE == video_frame->format() ||
+         PIXEL_FORMAT_P210LE == video_frame->format() ||
+         PIXEL_FORMAT_P410LE == video_frame->format() ||
+         PIXEL_FORMAT_RGBAF16 == video_frame->format() ||
+         PIXEL_FORMAT_BGRA == video_frame->format())
       << "Format: " << VideoPixelFormatToString(video_frame->format());
 
   const gpu::MailboxHolder& mailbox_holder = video_frame->mailbox_holder(0);
@@ -216,11 +213,9 @@ void CopyMailboxToTexture(gpu::gles2::GLES2Interface* gl,
                           bool flip_y) {
   gl->WaitSyncTokenCHROMIUM(source_sync_token.GetConstData());
   GLuint source_texture =
-      source_mailbox.IsSharedImage()
-          ? gl->CreateAndTexStorage2DSharedImageCHROMIUM(source_mailbox.name)
-          : gl->CreateAndConsumeTextureCHROMIUM(source_mailbox.name);
+      gl->CreateAndTexStorage2DSharedImageCHROMIUM(source_mailbox.name);
   {
-    ScopedSharedImageAccess access(gl, source_texture, source_mailbox);
+    ScopedSharedImageAccess access(gl, source_texture);
     // The video is stored in a unmultiplied format, so premultiply if
     // necessary. Application itself needs to take care of setting the right
     // |flip_y| value down to get the expected result. "flip_y == true" means to
@@ -319,10 +314,12 @@ const libyuv::YuvConstants* GetYuvContantsForColorSpace(SkYUVColorSpace cs) {
     case kBT2020_8bit_Full_SkYUVColorSpace:
     case kBT2020_10bit_Full_SkYUVColorSpace:
     case kBT2020_12bit_Full_SkYUVColorSpace:
+    case kBT2020_16bit_Full_SkYUVColorSpace:
       return &YUV_MATRIX(libyuv::kYuvV2020Constants);
     case kBT2020_8bit_Limited_SkYUVColorSpace:
     case kBT2020_10bit_Limited_SkYUVColorSpace:
     case kBT2020_12bit_Limited_SkYUVColorSpace:
+    case kBT2020_16bit_Limited_SkYUVColorSpace:
       return &YUV_MATRIX(libyuv::kYuv2020Constants);
     case kFCC_Full_SkYUVColorSpace:
     case kFCC_Limited_SkYUVColorSpace:
@@ -338,12 +335,14 @@ const libyuv::YuvConstants* GetYuvContantsForColorSpace(SkYUVColorSpace cs) {
     case kYCgCo_10bit_Limited_SkYUVColorSpace:
     case kYCgCo_12bit_Full_SkYUVColorSpace:
     case kYCgCo_12bit_Limited_SkYUVColorSpace:
+    case kYCgCo_16bit_Full_SkYUVColorSpace:
+    case kYCgCo_16bit_Limited_SkYUVColorSpace:
       // TODO(crbug.com/41486014): Return color space for default
       // kRec601_SkYUVColorSpace as libyuv does not have FCC, SMPTE240M, YDZDX,
       // GBR, YCgCo equivalent support.
       return &YUV_MATRIX(libyuv::kYuvI601Constants);
     case kIdentity_SkYUVColorSpace:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   };
 }
 
@@ -394,10 +393,11 @@ void ConvertVideoFrameToRGBPixelsTask(const VideoFrame* video_frame,
   if (task_index + 1 == n_tasks)
     rows += height % rows_per_chunk;
 
-  struct {
+  struct PlaneMetaData {
     int stride;
-    const uint8_t* data;
-  } plane_meta[VideoFrame::kMaxPlanes];
+    raw_ptr<const uint8_t> data;
+  };
+  std::array<PlaneMetaData, VideoFrame::kMaxPlanes> plane_meta;
 
   for (size_t plane = 0; plane < VideoFrame::kMaxPlanes; ++plane) {
     if (VideoFrame::IsValidPlane(format, plane)) {
@@ -421,7 +421,7 @@ void ConvertVideoFrameToRGBPixelsTask(const VideoFrame* video_frame,
   if (format == PIXEL_FORMAT_ARGB || format == PIXEL_FORMAT_XRGB ||
       format == PIXEL_FORMAT_ABGR || format == PIXEL_FORMAT_XBGR) {
     DCHECK_LE(width, static_cast<int>(row_bytes));
-    const uint8_t* data = plane_meta[VideoFrame::kARGBPlane].data;
+    const uint8_t* data = plane_meta[VideoFrame::Plane::kARGB].data;
 
     // Handle order swapping depending on the source and destination formats.
     if ((OUTPUT_ARGB &&
@@ -432,11 +432,11 @@ void ConvertVideoFrameToRGBPixelsTask(const VideoFrame* video_frame,
       for (size_t i = 0; i < rows; i++) {
         memcpy(dest, data, width * 4);
         dest += row_bytes;
-        data += plane_meta[VideoFrame::kARGBPlane].stride;
+        data += plane_meta[VideoFrame::Plane::kARGB].stride;
       }
     } else {
-      LIBYUV_ABGR_TO_ARGB(plane_meta[VideoFrame::kARGBPlane].data,
-                          plane_meta[VideoFrame::kARGBPlane].stride, pixels,
+      LIBYUV_ABGR_TO_ARGB(plane_meta[VideoFrame::Plane::kARGB].data,
+                          plane_meta[VideoFrame::Plane::kARGB].stride, pixels,
                           row_bytes, width, rows);
     }
 
@@ -452,126 +452,126 @@ void ConvertVideoFrameToRGBPixelsTask(const VideoFrame* video_frame,
     return;
   }
 
-  // TODO(crbug.com/828599): This should default to BT.709 color space.
+  // TODO(crbug.com/41380578): This should default to BT.709 color space.
   auto yuv_cs = kRec601_SkYUVColorSpace;
   video_frame->ColorSpace().ToSkYUVColorSpace(video_frame->BitDepth(), &yuv_cs);
   const libyuv::YuvConstants* matrix = GetYuvContantsForColorSpace(yuv_cs);
 
-  if (!video_frame->data(VideoFrame::kUPlane) &&
-      !video_frame->data(VideoFrame::kVPlane)) {
+  if (!video_frame->data(VideoFrame::Plane::kU) &&
+      !video_frame->data(VideoFrame::Plane::kV)) {
     DCHECK_EQ(format, PIXEL_FORMAT_I420);
     // For monochrome content ARGB and ABGR are interchangeable.
-    libyuv::I400ToARGBMatrix(plane_meta[VideoFrame::kYPlane].data,
-                             plane_meta[VideoFrame::kYPlane].stride, pixels,
+    libyuv::I400ToARGBMatrix(plane_meta[VideoFrame::Plane::kY].data,
+                             plane_meta[VideoFrame::Plane::kY].stride, pixels,
                              row_bytes, matrix, width, rows);
     done->Run();
     return;
   }
 
   auto convert_yuv = [&](const libyuv::YuvConstants* matrix, auto&& func) {
-    func(YUV_ORDER(plane_meta[VideoFrame::kYPlane].data,
-                   plane_meta[VideoFrame::kYPlane].stride,
-                   plane_meta[VideoFrame::kUPlane].data,
-                   plane_meta[VideoFrame::kUPlane].stride,
-                   plane_meta[VideoFrame::kVPlane].data,
-                   plane_meta[VideoFrame::kVPlane].stride),
+    func(YUV_ORDER(plane_meta[VideoFrame::Plane::kY].data,
+                   plane_meta[VideoFrame::Plane::kY].stride,
+                   plane_meta[VideoFrame::Plane::kU].data,
+                   plane_meta[VideoFrame::Plane::kU].stride,
+                   plane_meta[VideoFrame::Plane::kV].data,
+                   plane_meta[VideoFrame::Plane::kV].stride),
          pixels, row_bytes, matrix, width, rows);
   };
 
   auto convert_yuv_with_filter = [&](const libyuv::YuvConstants* matrix,
                                      auto&& func) {
-    func(YUV_ORDER(plane_meta[VideoFrame::kYPlane].data,
-                   plane_meta[VideoFrame::kYPlane].stride,
-                   plane_meta[VideoFrame::kUPlane].data,
-                   plane_meta[VideoFrame::kUPlane].stride,
-                   plane_meta[VideoFrame::kVPlane].data,
-                   plane_meta[VideoFrame::kVPlane].stride),
+    func(YUV_ORDER(plane_meta[VideoFrame::Plane::kY].data,
+                   plane_meta[VideoFrame::Plane::kY].stride,
+                   plane_meta[VideoFrame::Plane::kU].data,
+                   plane_meta[VideoFrame::Plane::kU].stride,
+                   plane_meta[VideoFrame::Plane::kV].data,
+                   plane_meta[VideoFrame::Plane::kV].stride),
          pixels, row_bytes, matrix, width, rows, filter);
   };
 
   auto convert_yuva = [&](const libyuv::YuvConstants* matrix, auto&& func) {
-    func(YUV_ORDER(plane_meta[VideoFrame::kYPlane].data,
-                   plane_meta[VideoFrame::kYPlane].stride,
-                   plane_meta[VideoFrame::kUPlane].data,
-                   plane_meta[VideoFrame::kUPlane].stride,
-                   plane_meta[VideoFrame::kVPlane].data,
-                   plane_meta[VideoFrame::kVPlane].stride),
-         plane_meta[VideoFrame::kAPlane].data,
-         plane_meta[VideoFrame::kAPlane].stride, pixels, row_bytes, matrix,
+    func(YUV_ORDER(plane_meta[VideoFrame::Plane::kY].data,
+                   plane_meta[VideoFrame::Plane::kY].stride,
+                   plane_meta[VideoFrame::Plane::kU].data,
+                   plane_meta[VideoFrame::Plane::kU].stride,
+                   plane_meta[VideoFrame::Plane::kV].data,
+                   plane_meta[VideoFrame::Plane::kV].stride),
+         plane_meta[VideoFrame::Plane::kA].data,
+         plane_meta[VideoFrame::Plane::kA].stride, pixels, row_bytes, matrix,
          width, rows, premultiply_alpha);
   };
 
   auto convert_yuva_with_filter = [&](const libyuv::YuvConstants* matrix,
                                       auto&& func) {
-    func(YUV_ORDER(plane_meta[VideoFrame::kYPlane].data,
-                   plane_meta[VideoFrame::kYPlane].stride,
-                   plane_meta[VideoFrame::kUPlane].data,
-                   plane_meta[VideoFrame::kUPlane].stride,
-                   plane_meta[VideoFrame::kVPlane].data,
-                   plane_meta[VideoFrame::kVPlane].stride),
-         plane_meta[VideoFrame::kAPlane].data,
-         plane_meta[VideoFrame::kAPlane].stride, pixels, row_bytes, matrix,
+    func(YUV_ORDER(plane_meta[VideoFrame::Plane::kY].data,
+                   plane_meta[VideoFrame::Plane::kY].stride,
+                   plane_meta[VideoFrame::Plane::kU].data,
+                   plane_meta[VideoFrame::Plane::kU].stride,
+                   plane_meta[VideoFrame::Plane::kV].data,
+                   plane_meta[VideoFrame::Plane::kV].stride),
+         plane_meta[VideoFrame::Plane::kA].data,
+         plane_meta[VideoFrame::Plane::kA].stride, pixels, row_bytes, matrix,
          width, rows, premultiply_alpha, filter);
   };
 
   auto convert_yuv16 = [&](const libyuv::YuvConstants* matrix, auto&& func) {
     func(YUV_ORDER(reinterpret_cast<const uint16_t*>(
-                       plane_meta[VideoFrame::kYPlane].data),
-                   plane_meta[VideoFrame::kYPlane].stride / 2,
+                       plane_meta[VideoFrame::Plane::kY].data.get()),
+                   plane_meta[VideoFrame::Plane::kY].stride / 2,
                    reinterpret_cast<const uint16_t*>(
-                       plane_meta[VideoFrame::kUPlane].data),
-                   plane_meta[VideoFrame::kUPlane].stride / 2,
+                       plane_meta[VideoFrame::Plane::kU].data.get()),
+                   plane_meta[VideoFrame::Plane::kU].stride / 2,
                    reinterpret_cast<const uint16_t*>(
-                       plane_meta[VideoFrame::kVPlane].data),
-                   plane_meta[VideoFrame::kVPlane].stride / 2),
+                       plane_meta[VideoFrame::Plane::kV].data.get()),
+                   plane_meta[VideoFrame::Plane::kV].stride / 2),
          pixels, row_bytes, matrix, width, rows);
   };
 
   auto convert_yuv16_with_filter = [&](const libyuv::YuvConstants* matrix,
                                        auto&& func) {
     func(YUV_ORDER(reinterpret_cast<const uint16_t*>(
-                       plane_meta[VideoFrame::kYPlane].data),
-                   plane_meta[VideoFrame::kYPlane].stride / 2,
+                       plane_meta[VideoFrame::Plane::kY].data.get()),
+                   plane_meta[VideoFrame::Plane::kY].stride / 2,
                    reinterpret_cast<const uint16_t*>(
-                       plane_meta[VideoFrame::kUPlane].data),
-                   plane_meta[VideoFrame::kUPlane].stride / 2,
+                       plane_meta[VideoFrame::Plane::kU].data.get()),
+                   plane_meta[VideoFrame::Plane::kU].stride / 2,
                    reinterpret_cast<const uint16_t*>(
-                       plane_meta[VideoFrame::kVPlane].data),
-                   plane_meta[VideoFrame::kVPlane].stride / 2),
+                       plane_meta[VideoFrame::Plane::kV].data.get()),
+                   plane_meta[VideoFrame::Plane::kV].stride / 2),
          pixels, row_bytes, matrix, width, rows, filter);
   };
 
   auto convert_yuva16 = [&](const libyuv::YuvConstants* matrix, auto&& func) {
-    func(
-        YUV_ORDER(reinterpret_cast<const uint16_t*>(
-                      plane_meta[VideoFrame::kYPlane].data),
-                  plane_meta[VideoFrame::kYPlane].stride / 2,
-                  reinterpret_cast<const uint16_t*>(
-                      plane_meta[VideoFrame::kUPlane].data),
-                  plane_meta[VideoFrame::kUPlane].stride / 2,
-                  reinterpret_cast<const uint16_t*>(
-                      plane_meta[VideoFrame::kVPlane].data),
-                  plane_meta[VideoFrame::kVPlane].stride / 2),
-        reinterpret_cast<const uint16_t*>(plane_meta[VideoFrame::kAPlane].data),
-        plane_meta[VideoFrame::kAPlane].stride / 2, pixels, row_bytes, matrix,
-        width, rows, premultiply_alpha);
+    func(YUV_ORDER(reinterpret_cast<const uint16_t*>(
+                       plane_meta[VideoFrame::Plane::kY].data.get()),
+                   plane_meta[VideoFrame::Plane::kY].stride / 2,
+                   reinterpret_cast<const uint16_t*>(
+                       plane_meta[VideoFrame::Plane::kU].data.get()),
+                   plane_meta[VideoFrame::Plane::kU].stride / 2,
+                   reinterpret_cast<const uint16_t*>(
+                       plane_meta[VideoFrame::Plane::kV].data.get()),
+                   plane_meta[VideoFrame::Plane::kV].stride / 2),
+         reinterpret_cast<const uint16_t*>(
+             plane_meta[VideoFrame::Plane::kA].data.get()),
+         plane_meta[VideoFrame::Plane::kA].stride / 2, pixels, row_bytes,
+         matrix, width, rows, premultiply_alpha);
   };
 
   auto convert_yuva16_with_filter = [&](const libyuv::YuvConstants* matrix,
                                         auto&& func) {
-    func(
-        YUV_ORDER(reinterpret_cast<const uint16_t*>(
-                      plane_meta[VideoFrame::kYPlane].data),
-                  plane_meta[VideoFrame::kYPlane].stride / 2,
-                  reinterpret_cast<const uint16_t*>(
-                      plane_meta[VideoFrame::kUPlane].data),
-                  plane_meta[VideoFrame::kUPlane].stride / 2,
-                  reinterpret_cast<const uint16_t*>(
-                      plane_meta[VideoFrame::kVPlane].data),
-                  plane_meta[VideoFrame::kVPlane].stride / 2),
-        reinterpret_cast<const uint16_t*>(plane_meta[VideoFrame::kAPlane].data),
-        plane_meta[VideoFrame::kAPlane].stride / 2, pixels, row_bytes, matrix,
-        width, rows, premultiply_alpha, filter);
+    func(YUV_ORDER(reinterpret_cast<const uint16_t*>(
+                       plane_meta[VideoFrame::Plane::kY].data.get()),
+                   plane_meta[VideoFrame::Plane::kY].stride / 2,
+                   reinterpret_cast<const uint16_t*>(
+                       plane_meta[VideoFrame::Plane::kU].data.get()),
+                   plane_meta[VideoFrame::Plane::kU].stride / 2,
+                   reinterpret_cast<const uint16_t*>(
+                       plane_meta[VideoFrame::Plane::kV].data.get()),
+                   plane_meta[VideoFrame::Plane::kV].stride / 2),
+         reinterpret_cast<const uint16_t*>(
+             plane_meta[VideoFrame::Plane::kA].data.get()),
+         plane_meta[VideoFrame::Plane::kA].stride / 2, pixels, row_bytes,
+         matrix, width, rows, premultiply_alpha, filter);
   };
 
   switch (format) {
@@ -587,14 +587,14 @@ void ConvertVideoFrameToRGBPixelsTask(const VideoFrame* video_frame,
       if (video_frame->ColorSpace().GetMatrixID() ==
           gfx::ColorSpace::MatrixID::GBR) {
         libyuv::MergeARGBPlane(
-            GBR_TO_RGB_ORDER(plane_meta[VideoFrame::kYPlane].data,
-                             plane_meta[VideoFrame::kYPlane].stride,
-                             plane_meta[VideoFrame::kUPlane].data,
-                             plane_meta[VideoFrame::kUPlane].stride,
-                             plane_meta[VideoFrame::kVPlane].data,
-                             plane_meta[VideoFrame::kVPlane].stride),
-            plane_meta[VideoFrame::kAPlane].data,
-            plane_meta[VideoFrame::kAPlane].stride, pixels, row_bytes, width,
+            GBR_TO_RGB_ORDER(plane_meta[VideoFrame::Plane::kY].data,
+                             plane_meta[VideoFrame::Plane::kY].stride,
+                             plane_meta[VideoFrame::Plane::kU].data,
+                             plane_meta[VideoFrame::Plane::kU].stride,
+                             plane_meta[VideoFrame::Plane::kV].data,
+                             plane_meta[VideoFrame::Plane::kV].stride),
+            plane_meta[VideoFrame::Plane::kA].data,
+            plane_meta[VideoFrame::Plane::kA].stride, pixels, row_bytes, width,
             rows);
       } else {
         convert_yuv(matrix, libyuv::I444ToARGBMatrix);
@@ -632,20 +632,21 @@ void ConvertVideoFrameToRGBPixelsTask(const VideoFrame* video_frame,
       break;
 
     case PIXEL_FORMAT_NV12:
-      LIBYUV_NV12_TO_ARGB_MATRIX(plane_meta[VideoFrame::kYPlane].data,
-                                 plane_meta[VideoFrame::kYPlane].stride,
-                                 plane_meta[VideoFrame::kUVPlane].data,
-                                 plane_meta[VideoFrame::kUVPlane].stride,
+      LIBYUV_NV12_TO_ARGB_MATRIX(plane_meta[VideoFrame::Plane::kY].data,
+                                 plane_meta[VideoFrame::Plane::kY].stride,
+                                 plane_meta[VideoFrame::Plane::kUV].data,
+                                 plane_meta[VideoFrame::Plane::kUV].stride,
                                  pixels, row_bytes, matrix, width, rows);
       break;
-    case PIXEL_FORMAT_P016LE:
-      libyuv::P016ToARGBMatrix(reinterpret_cast<const uint16_t*>(
-                                   plane_meta[VideoFrame::kYPlane].data),
-                               plane_meta[VideoFrame::kYPlane].stride,
-                               reinterpret_cast<const uint16_t*>(
-                                   plane_meta[VideoFrame::kUVPlane].data),
-                               plane_meta[VideoFrame::kUVPlane].stride, pixels,
-                               row_bytes, matrix, width, rows);
+    case PIXEL_FORMAT_P010LE:
+      libyuv::P010ToARGBMatrix(
+          reinterpret_cast<const uint16_t*>(
+              plane_meta[VideoFrame::Plane::kY].data.get()),
+          plane_meta[VideoFrame::Plane::kY].stride,
+          reinterpret_cast<const uint16_t*>(
+              plane_meta[VideoFrame::Plane::kUV].data.get()),
+          plane_meta[VideoFrame::Plane::kUV].stride, pixels, row_bytes, matrix,
+          width, rows);
       if (!OUTPUT_ARGB)
         libyuv::ARGBToABGR(pixels, row_bytes, pixels, row_bytes, width, rows);
       break;
@@ -656,13 +657,17 @@ void ConvertVideoFrameToRGBPixelsTask(const VideoFrame* video_frame,
     case PIXEL_FORMAT_YUV422P12:
     case PIXEL_FORMAT_YUV444P12:
     case PIXEL_FORMAT_Y16:
-      NOTREACHED()
+      NOTREACHED_IN_MIGRATION()
           << "These cases should be handled in ConvertVideoFrameToRGBPixels";
       break;
 
     case PIXEL_FORMAT_UYVY:
     case PIXEL_FORMAT_NV21:
+    case PIXEL_FORMAT_NV16:
+    case PIXEL_FORMAT_NV24:
     case PIXEL_FORMAT_NV12A:
+    case PIXEL_FORMAT_P210LE:
+    case PIXEL_FORMAT_P410LE:
     case PIXEL_FORMAT_YUY2:
     case PIXEL_FORMAT_ARGB:
     case PIXEL_FORMAT_BGRA:
@@ -675,8 +680,9 @@ void ConvertVideoFrameToRGBPixelsTask(const VideoFrame* video_frame,
     case PIXEL_FORMAT_XB30:
     case PIXEL_FORMAT_RGBAF16:
     case PIXEL_FORMAT_UNKNOWN:
-      NOTREACHED() << "Only YUV formats and Y16 are supported, got: "
-                   << media::VideoPixelFormatToString(format);
+      NOTREACHED_IN_MIGRATION()
+          << "Only YUV formats and Y16 are supported, got: "
+          << media::VideoPixelFormatToString(format);
   }
   done->Run();
 }
@@ -687,8 +693,6 @@ bool ValidFormatForDirectUploading(
     viz::RasterContextProvider* raster_context_provider,
     GrGLenum format,
     unsigned int type) {
-  const gpu::Capabilities& context_caps =
-      raster_context_provider->ContextCapabilities();
   switch (format) {
     case GL_RGBA:
       return type == GL_UNSIGNED_BYTE || type == GL_UNSIGNED_SHORT_4_4_4_4;
@@ -701,7 +705,9 @@ bool ValidFormatForDirectUploading(
     case GL_RGB8:
     case GL_RGB10_A2:
     case GL_RGBA4:
-      return context_caps.major_version >= 3;
+      // TODO(crbug.com/356649879): RasterContextProvider never has ES3 context.
+      // Use the correct WebGL major version here.
+      return false;
     default:
       return false;
   }
@@ -804,16 +810,13 @@ class VideoImageGenerator : public cc::PaintImageGenerator {
     SkYUVColorSpace yuv_color_space;
     if (!frame_->ColorSpace().ToSkYUVColorSpace(frame_->BitDepth(),
                                                 &yuv_color_space)) {
-      // TODO(crbug.com/828599): This should default to BT.709 color space.
+      // TODO(crbug.com/41380578): This should default to BT.709 color space.
       yuv_color_space = kRec601_SkYUVColorSpace;
     }
 
-    // We use the Y plane size because it may get rounded up to an even size.
-    // Our implementation of GetYUVAPlanes expects this.
-    auto y_size = VideoFrame::PlaneSizeInSamples(
-        frame_->format(), VideoFrame::kYPlane, frame_->visible_rect().size());
-    auto yuva_info = SkYUVAInfo({y_size.width(), y_size.height()}, plane_config,
-                                subsampling, yuv_color_space);
+    auto yuva_info = SkYUVAInfo(
+        {frame_->visible_rect().width(), frame_->visible_rect().height()},
+        plane_config, subsampling, yuv_color_space);
     *info = SkYUVAPixmapInfo(yuva_info, SkYUVAPixmapInfo::DataType::kUnorm8,
                              /*rowBytes=*/nullptr);
     return true;
@@ -835,7 +838,7 @@ class VideoImageGenerator : public cc::PaintImageGenerator {
     DCHECK_EQ(subsampling, pixmaps.yuvaInfo().subsampling());
 #endif
 
-    for (int plane = VideoFrame::kYPlane; plane <= VideoFrame::kVPlane;
+    for (int plane = VideoFrame::Plane::kY; plane <= VideoFrame::Plane::kV;
          ++plane) {
       const auto plane_size = VideoFrame::PlaneSizeInSamples(
           frame_->format(), plane, frame_->visible_rect().size());
@@ -1209,7 +1212,7 @@ scoped_refptr<VideoFrame> DownShiftHighbitVideoFrame(
       break;
 
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
   const int scale = 1 << (24 - video_frame->BitDepth());
   scoped_refptr<VideoFrame> ret = VideoFrame::CreateFrame(
@@ -1221,7 +1224,8 @@ scoped_refptr<VideoFrame> DownShiftHighbitVideoFrame(
   // (May be enough to copy color space)
   ret->metadata().MergeMetadataFrom(video_frame->metadata());
 
-  for (int plane = VideoFrame::kYPlane; plane <= VideoFrame::kVPlane; ++plane) {
+  for (int plane = VideoFrame::Plane::kY; plane <= VideoFrame::Plane::kV;
+       ++plane) {
     int width = VideoFrame::Columns(plane, video_frame->format(),
                                     video_frame->visible_rect().width());
     int height = VideoFrame::Rows(plane, video_frame->format(),
@@ -1232,7 +1236,7 @@ scoped_refptr<VideoFrame> DownShiftHighbitVideoFrame(
     if (!src) {
       // An AV1 monochrome (grayscale) frame has no U and V planes. Set all U
       // and V samples to the neutral value (128).
-      DCHECK_NE(plane, VideoFrame::kYPlane);
+      DCHECK_NE(plane, VideoFrame::Plane::kY);
       memset(dst, 128, height * ret->stride(plane));
       continue;
     }
@@ -1288,8 +1292,9 @@ void FlipAndConvertY16(const VideoFrame* video_frame,
       }
       continue;
     }
-    NOTREACHED() << "Unsupported Y16 conversion for format: 0x" << std::hex
-                 << format << " and type: 0x" << std::hex << type;
+    NOTREACHED_IN_MIGRATION()
+        << "Unsupported Y16 conversion for format: 0x" << std::hex << format
+        << " and type: 0x" << std::hex << type;
   }
 }
 
@@ -1379,7 +1384,8 @@ void PaintCanvasVideoRenderer::ConvertVideoFrameToRGBPixels(
     FilterMode filter,
     bool disable_threading) {
   if (!video_frame->IsMappable()) {
-    NOTREACHED() << "Cannot extract pixels from non-CPU frame formats.";
+    NOTREACHED_IN_MIGRATION()
+        << "Cannot extract pixels from non-CPU frame formats.";
     return;
   }
 
@@ -1400,8 +1406,8 @@ void PaintCanvasVideoRenderer::ConvertVideoFrameToRGBPixels(
       // frame with no U and V planes. Since there are no 10-bit and 12-bit
       // versions of libyuv::I400ToARGBMatrix(), convert the frame to an 8-bit
       // YUV 4:2:0 frame with U and V planes.
-      if (!video_frame->data(VideoFrame::kUPlane) &&
-          !video_frame->data(VideoFrame::kVPlane)) {
+      if (!video_frame->data(VideoFrame::Plane::kU) &&
+          !video_frame->data(VideoFrame::Plane::kV)) {
         temporary_frame = DownShiftHighbitVideoFrame(video_frame);
         video_frame = temporary_frame.get();
       }
@@ -1477,11 +1483,11 @@ bool PaintCanvasVideoRenderer::CopyVideoFrameTexturesToGLTexture(
     // Since skia always produces premultiply alpha outputs,
     // trying direct uploading path when video format is opaque or premultiply
     // alpha been requested. And dst texture mipLevel must be 0.
-    // TODO(crbug.com/1155003): Figure out whether premultiply options here are
+    // TODO(crbug.com/40159723): Figure out whether premultiply options here are
     // accurate.
     // NOTE: The direct upload path is not supported on Android (see comment on
     // UploadVideoFrameToGLTexture()).
-    // TODO(crbug.com/1494365): Enable on Android.
+    // TODO(crbug.com/40075313): Enable on Android.
 #if !BUILDFLAG(IS_ANDROID)
     if ((media::IsOpaque(video_frame->format()) || premultiply_alpha) &&
         level == 0 &&
@@ -1583,7 +1589,7 @@ bool PaintCanvasVideoRenderer::UploadVideoFrameToGLTexture(
     return false;
   }
 
-  // TODO(crbug.com/1108154): Support more texture target, e.g.
+  // TODO(crbug.com/40141173): Support more texture target, e.g.
   // 2d array, 3d etc.
   if (target != GL_TEXTURE_2D) {
     return false;
@@ -1612,22 +1618,7 @@ bool PaintCanvasVideoRenderer::UploadVideoFrameToGLTexture(
 
   DCHECK(video_frame->metadata().texture_origin_is_top_left);
 
-  // All platforms except Android (on which this code does not run) exclusively
-  // use the passthrough decoder, which supports YUV->RGB conversion.
-  CHECK(destination_gl_capabilities.supports_yuv_to_rgb_conversion);
-
   CHECK(video_frame->HasTextures());
-
-  // It is not possible for VideoFrames holding legacy mailboxes to reach this
-  // function. The reason is the following:
-  // * VideoFrames holding legacy mailboxes must have exactly one texture
-  // * By definition, they are not using multiplanar SharedImages (since they
-  //   are not using SharedImage at all)
-  // * This function's only entrypoint is from
-  //   CopyVideoFrameTexturesToGLTexture(), and that entrypoint is
-  //   conditional on the mailbox either having more than one texture or
-  //   holding a multiplanar SharedImage.
-  CHECK(video_frame->mailbox_holder(0).mailbox.IsSharedImage());
 
   // Trigger resource allocation for dst texture to back SkSurface.
   // Dst texture size should equal to video frame visible rect.
@@ -1661,7 +1652,7 @@ bool PaintCanvasVideoRenderer::UploadVideoFrameToGLTexture(
       mailboxes[i] = mailbox_holder.mailbox;
     }
 
-    auto mailbox_name_size = sizeof(mailboxes[0].name);
+    constexpr auto mailbox_name_size = sizeof(mailboxes[0].name);
     GLbyte mailbox_names[mailbox_name_size * SkYUVAInfo::kMaxPlanes];
     for (int i = 0; i < SkYUVAInfo::kMaxPlanes; i++) {
       memcpy(mailbox_names + mailbox_name_size * i, mailboxes[i].name,
@@ -1701,7 +1692,7 @@ bool PaintCanvasVideoRenderer::CopyVideoFrameYUVDataToGLTexture(
   if (!raster_context_provider)
     return false;
 #if BUILDFLAG(IS_ANDROID)
-  // TODO(crbug.com/1181993): These formats don't work with the passthrough
+  // TODO(crbug.com/40751207): These formats don't work with the passthrough
   // command decoder on Android for some reason.
   const auto format_enum = static_cast<GLenum>(internal_format);
   if (format_enum == GL_RGB10_A2 || format_enum == GL_RGB565 ||
@@ -1736,26 +1727,15 @@ bool PaintCanvasVideoRenderer::CopyVideoFrameYUVDataToGLTexture(
     yuv_cache_.raster_context_provider = raster_context_provider;
     yuv_cache_.size = video_frame->coded_size();
 
-    // We read out the contents of the intermediate SI into the destination GL
-    // texture via the GLES2 interface.
-    uint32_t usage = gpu::SHARED_IMAGE_USAGE_GLES2_READ;
-
-    // We copy the contents of the source VideoFrame *into* the
-    // intermediate SI over the raster interface - the usage bits depend on
-    // whether OOP-Raster is enabled.
+    // We copy the contents of the source VideoFrame into the intermediate SI
+    // over the raster interface and read out the contents of the intermediate
+    // SI into the destination GL texture via the GLES2 interface.
+    gpu::SharedImageUsageSet usage = gpu::SHARED_IMAGE_USAGE_RASTER_WRITE |
+                                     gpu::SHARED_IMAGE_USAGE_GLES2_READ;
     if (raster_context_provider->ContextCapabilities().gpu_rasterization) {
-      usage |= gpu::SHARED_IMAGE_USAGE_RASTER_WRITE |
-               gpu::SHARED_IMAGE_USAGE_OOP_RASTERIZATION;
+      usage |= gpu::SHARED_IMAGE_USAGE_OOP_RASTERIZATION;
     } else {
       usage |= gpu::SHARED_IMAGE_USAGE_GLES2_WRITE;
-      // RASTER_WRITE usage should be included as these SharedImages are written
-      // via raster, but historically this usage was included only for OOP-R.
-      // Currently in the process of adding with a killswitch.
-      // TODO(crbug.com/1524353): Remove this killswitch post-safe rollout.
-      if (base::FeatureList::IsEnabled(
-              kPCVRAddSharedImageRasterUsageWithNonOOPR)) {
-        usage = usage | gpu::SHARED_IMAGE_USAGE_RASTER_WRITE;
-      }
     }
 
     yuv_cache_.shared_image = sii->CreateSharedImage(
@@ -1980,7 +1960,7 @@ bool PaintCanvasVideoRenderer::UpdateLastImage(
 
         // This SI is used to cache the VideoFrame. We will eventually read out
         // its contents into a destination GL texture via the GLES2 interface.
-        uint32_t flags = gpu::SHARED_IMAGE_USAGE_GLES2_READ;
+        gpu::SharedImageUsageSet flags = gpu::SHARED_IMAGE_USAGE_GLES2_READ;
         // We copy the contents of the source VideoFrame *into* the
         // cached SI over the raster interface - the usage bits depend on
         // whether OOP-Raster is enabled.
@@ -2041,8 +2021,8 @@ bool PaintCanvasVideoRenderer::UpdateLastImage(
     if (!gpu_rasterization) {
       cache_->source_texture = ri->CreateAndConsumeForGpuRaster(mailbox);
 
-      auto access = std::make_unique<ScopedSharedImageAccess>(
-          ri, cache_->source_texture, mailbox);
+      auto access =
+          std::make_unique<ScopedSharedImageAccess>(ri, cache_->source_texture);
       auto source_image = WrapGLTexture(
           wraps_video_frame_texture
               ? video_frame->mailbox_holder(0).texture_target

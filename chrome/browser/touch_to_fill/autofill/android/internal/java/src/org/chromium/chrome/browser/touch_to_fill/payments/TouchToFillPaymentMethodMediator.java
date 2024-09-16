@@ -4,17 +4,32 @@
 
 package org.chromium.chrome.browser.touch_to_fill.payments;
 
-import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.CreditCardProperties.ITEM_COLLECTION_INFO;
-import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.CreditCardProperties.ON_CREDIT_CARD_CLICK_ACTION;
+import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.CreditCardSuggestionProperties.APPLY_DEACTIVATED_STYLE;
+import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.CreditCardSuggestionProperties.CARD_IMAGE;
+import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.CreditCardSuggestionProperties.FIRST_LINE_LABEL;
+import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.CreditCardSuggestionProperties.ITEM_COLLECTION_INFO;
+import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.CreditCardSuggestionProperties.MAIN_TEXT;
+import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.CreditCardSuggestionProperties.MINOR_TEXT;
+import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.CreditCardSuggestionProperties.NETWORK_NAME;
+import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.CreditCardSuggestionProperties.NON_TRANSFORMING_CREDIT_CARD_SUGGESTION_KEYS;
+import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.CreditCardSuggestionProperties.ON_CREDIT_CARD_CLICK_ACTION;
+import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.CreditCardSuggestionProperties.SECOND_LINE_LABEL;
 import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.FooterProperties.SCAN_CREDIT_CARD_CALLBACK;
 import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.FooterProperties.SHOULD_SHOW_SCAN_CREDIT_CARD;
 import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.FooterProperties.SHOW_PAYMENT_METHOD_SETTINGS_CALLBACK;
 import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.HeaderProperties.IMAGE_DRAWABLE_ID;
+import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.IbanProperties.IBAN_NICKNAME;
+import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.IbanProperties.IBAN_VALUE;
+import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.IbanProperties.NON_TRANSFORMING_IBAN_KEYS;
 import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.IbanProperties.ON_IBAN_CLICK_ACTION;
 import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.ItemType.CREDIT_CARD;
 import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.ItemType.FILL_BUTTON;
+import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.ItemType.FOOTER;
+import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.ItemType.HEADER;
 import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.ItemType.IBAN;
+import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.ItemType.TERMS_LABEL;
 import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.SHEET_ITEMS;
+import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.TermsLabelProperties.CARD_BENEFITS_TERMS_AVAILABLE;
 import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.VISIBLE;
 
 import android.content.Context;
@@ -32,6 +47,9 @@ import org.chromium.chrome.browser.touch_to_fill.common.FillableItemCollectionIn
 import org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodComponent.Delegate;
 import org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.FooterProperties;
 import org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.HeaderProperties;
+import org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.TermsLabelProperties;
+import org.chromium.components.autofill.AutofillSuggestion;
+import org.chromium.components.autofill.IbanRecordType;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController.StateChangeReason;
 import org.chromium.components.payments.InputProtector;
@@ -42,7 +60,6 @@ import org.chromium.url.GURL;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Function;
@@ -53,9 +70,9 @@ import java.util.function.Function;
  */
 class TouchToFillPaymentMethodMediator {
     /**
-     * The final outcome that closes the Touch To Fill sheet.
+     * The final outcome that closes the credit card Touch To Fill sheet.
      *
-     * Entries should not be renumbered and numeric values should never be reused. Needs to stay
+     * <p>Entries should not be renumbered and numeric values should never be reused. Needs to stay
      * in sync with TouchToFill.CreditCard.Outcome in enums.xml.
      */
     @IntDef({
@@ -75,17 +92,47 @@ class TouchToFillPaymentMethodMediator {
         int MAX_VALUE = DISMISS;
     }
 
+    /**
+     * The final outcome that closes the IBAN Touch To Fill sheet.
+     *
+     * <p>Entries should not be renumbered and numeric values should never be reused. Needs to stay
+     * in sync with TouchToFill.Iban.Outcome in enums.xml.
+     */
+    @IntDef({
+        TouchToFillIbanOutcome.IBAN,
+        TouchToFillIbanOutcome.MANAGE_PAYMENTS,
+        TouchToFillIbanOutcome.DISMISS
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    @interface TouchToFillIbanOutcome {
+        int IBAN = 0;
+        int MANAGE_PAYMENTS = 1;
+        int DISMISS = 2;
+        int MAX_VALUE = DISMISS;
+    }
+
     @VisibleForTesting
-    static final String TOUCH_TO_FILL_OUTCOME_HISTOGRAM =
+    static final String TOUCH_TO_FILL_CREDIT_CARD_OUTCOME_HISTOGRAM =
             "Autofill.TouchToFill.CreditCard.Outcome2";
 
     @VisibleForTesting
-    static final String TOUCH_TO_FILL_INDEX_SELECTED =
+    static final String TOUCH_TO_FILL_CREDIT_CARD_INDEX_SELECTED =
             "Autofill.TouchToFill.CreditCard.SelectedIndex";
 
     @VisibleForTesting
     static final String TOUCH_TO_FILL_NUMBER_OF_CARDS_SHOWN =
             "Autofill.TouchToFill.CreditCard.NumberOfCardsShown";
+
+    @VisibleForTesting
+    static final String TOUCH_TO_FILL_IBAN_OUTCOME_HISTOGRAM = "Autofill.TouchToFill.Iban.Outcome";
+
+    @VisibleForTesting
+    static final String TOUCH_TO_FILL_IBAN_INDEX_SELECTED =
+            "Autofill.TouchToFill.Iban.SelectedIndex";
+
+    @VisibleForTesting
+    static final String TOUCH_TO_FILL_NUMBER_OF_IBANS_SHOWN =
+            "Autofill.TouchToFill.Iban.NumberOfIbansShown";
 
     // TODO(crbug.com/40246126): Remove the Context from the Mediator.
     private Context mContext;
@@ -110,59 +157,71 @@ class TouchToFillPaymentMethodMediator {
     }
 
     void showSheet(
-            CreditCard[] cards,
+            List<CreditCard> cards,
+            List<AutofillSuggestion> suggestions,
             boolean shouldShowScanCreditCard,
             Function<TouchToFillPaymentMethodProperties.CardImageMetaData, Drawable>
                     cardImageFunction) {
         mInputProtector.markShowTime();
 
         assert cards != null;
-        mCards = Arrays.asList(cards);
+        mCards = cards;
+        mIbans = null;
+        assert mCards.size() == suggestions.size()
+                : "The number of cards and suggestions should be same.";
 
         ModelList sheetItems = mModel.get(SHEET_ITEMS);
         sheetItems.clear();
+        boolean cardBenefitsTermsAvailable = false;
 
-        for (int i = 0; i < cards.length; ++i) {
-            CreditCard card = cards[i];
+        for (int i = 0; i < mCards.size(); ++i) {
+            CreditCard card = mCards.get(i);
             final PropertyModel model =
-                    createCardModel(
+                    createCardSuggestionModel(
                             card,
-                            new FillableItemCollectionInfo(i + 1, cards.length),
+                            suggestions.get(i),
+                            new FillableItemCollectionInfo(i + 1, mCards.size()),
                             cardImageFunction);
             sheetItems.add(new ListItem(CREDIT_CARD, model));
+            cardBenefitsTermsAvailable |= suggestions.get(i).shouldDisplayTermsAvailable();
         }
 
-        if (cards.length == 1) {
+        if (cardBenefitsTermsAvailable) {
+            sheetItems.add(buildTermsLabel(cardBenefitsTermsAvailable));
+        }
+
+        if (mCards.size() == 1) {
             // Use the credit card model as the property model for the fill button too
             assert sheetItems.get(0).type == CREDIT_CARD;
             sheetItems.add(new ListItem(FILL_BUTTON, sheetItems.get(0).model));
         }
 
-        sheetItems.add(0, buildHeader(hasOnlyLocalCards(cards)));
+        sheetItems.add(0, buildHeader(hasOnlyLocalCards(mCards)));
         sheetItems.add(buildFooterForCreditCard(shouldShowScanCreditCard));
 
         mBottomSheetFocusHelper.registerForOneTimeUse();
         mModel.set(VISIBLE, true);
 
-        RecordHistogram.recordCount100Histogram(TOUCH_TO_FILL_NUMBER_OF_CARDS_SHOWN, cards.length);
+        RecordHistogram.recordCount100Histogram(TOUCH_TO_FILL_NUMBER_OF_CARDS_SHOWN, mCards.size());
     }
 
-    public void showSheet(Iban[] ibans) {
+    public void showSheet(List<Iban> ibans) {
         mInputProtector.markShowTime();
 
         assert ibans != null;
-        mIbans = Arrays.asList(ibans);
+        mIbans = ibans;
+        mCards = null;
 
         ModelList sheetItems = mModel.get(SHEET_ITEMS);
         sheetItems.clear();
 
-        for (int i = 0; i < ibans.length; ++i) {
-            Iban iban = ibans[i];
+        for (int i = 0; i < mIbans.size(); ++i) {
+            Iban iban = mIbans.get(i);
             final PropertyModel model = createIbanModel(iban);
             sheetItems.add(new ListItem(IBAN, model));
         }
 
-        if (ibans.length == 1) {
+        if (mIbans.size() == 1) {
             // Use the IBAN model as the property model for the fill button too.
             assert sheetItems.get(0).type == IBAN;
             sheetItems.add(new ListItem(FILL_BUTTON, sheetItems.get(0).model));
@@ -173,7 +232,8 @@ class TouchToFillPaymentMethodMediator {
 
         mBottomSheetFocusHelper.registerForOneTimeUse();
         mModel.set(VISIBLE, true);
-        // TODO(b/332193789): Add IBAN-related metrics.
+
+        RecordHistogram.recordCount100Histogram(TOUCH_TO_FILL_NUMBER_OF_IBANS_SHOWN, mIbans.size());
     }
 
     void hideSheet() {
@@ -190,37 +250,63 @@ class TouchToFillPaymentMethodMediator {
                         || reason == StateChangeReason.TAP_SCRIM;
         mDelegate.onDismissed(dismissedByUser);
         if (dismissedByUser) {
-            RecordHistogram.recordEnumeratedHistogram(
-                    TOUCH_TO_FILL_OUTCOME_HISTOGRAM,
-                    TouchToFillCreditCardOutcome.DISMISS,
-                    TouchToFillCreditCardOutcome.MAX_VALUE + 1);
+            if (mCards != null) {
+                RecordHistogram.recordEnumeratedHistogram(
+                        TOUCH_TO_FILL_CREDIT_CARD_OUTCOME_HISTOGRAM,
+                        TouchToFillCreditCardOutcome.DISMISS,
+                        TouchToFillCreditCardOutcome.MAX_VALUE + 1);
+            } else {
+                assert mIbans != null;
+                RecordHistogram.recordEnumeratedHistogram(
+                        TOUCH_TO_FILL_IBAN_OUTCOME_HISTOGRAM,
+                        TouchToFillIbanOutcome.DISMISS,
+                        TouchToFillIbanOutcome.MAX_VALUE + 1);
+            }
         }
     }
 
     public void scanCreditCard() {
         mDelegate.scanCreditCard();
-        recordTouchToFillOutcomeHistogram(TouchToFillCreditCardOutcome.SCAN_NEW_CARD);
+        recordTouchToFillCreditCardOutcomeHistogram(TouchToFillCreditCardOutcome.SCAN_NEW_CARD);
     }
 
     public void showPaymentMethodSettings() {
         mDelegate.showPaymentMethodSettings();
-        recordTouchToFillOutcomeHistogram(TouchToFillCreditCardOutcome.MANAGE_PAYMENTS);
+        if (mCards != null) {
+            recordTouchToFillCreditCardOutcomeHistogram(
+                    TouchToFillCreditCardOutcome.MANAGE_PAYMENTS);
+        } else {
+            assert mIbans != null;
+            recordTouchToFillIbanOutcomeHistogram(TouchToFillIbanOutcome.MANAGE_PAYMENTS);
+        }
     }
 
     public void onSelectedCreditCard(CreditCard card) {
         if (!mInputProtector.shouldInputBeProcessed()) return;
-        mDelegate.suggestionSelected(card.getGUID(), card.getIsVirtual());
-        recordTouchToFillOutcomeHistogram(
+        mDelegate.creditCardSuggestionSelected(card.getGUID(), card.getIsVirtual());
+        recordTouchToFillCreditCardOutcomeHistogram(
                 card.getIsVirtual()
                         ? TouchToFillCreditCardOutcome.VIRTUAL_CARD
                         : TouchToFillCreditCardOutcome.CREDIT_CARD);
-        RecordHistogram.recordCount100Histogram(TOUCH_TO_FILL_INDEX_SELECTED, mCards.indexOf(card));
+        RecordHistogram.recordCount100Histogram(
+                TOUCH_TO_FILL_CREDIT_CARD_INDEX_SELECTED, mCards.indexOf(card));
     }
 
-    public void onSelectedIban(Iban iban) {}
+    public void onSelectedIban(Iban iban) {
+        if (!mInputProtector.shouldInputBeProcessed()) return;
+        if (iban.getRecordType() == IbanRecordType.LOCAL_IBAN) {
+            mDelegate.localIbanSuggestionSelected(iban.getGuid());
+        } else {
+            mDelegate.serverIbanSuggestionSelected(iban.getInstrumentId());
+        }
+        recordTouchToFillIbanOutcomeHistogram(TouchToFillIbanOutcome.IBAN);
+        RecordHistogram.recordCount100Histogram(
+                TOUCH_TO_FILL_IBAN_INDEX_SELECTED, mIbans.indexOf(iban));
+    }
 
-    private PropertyModel createCardModel(
+    private PropertyModel createCardSuggestionModel(
             CreditCard card,
+            AutofillSuggestion suggestion,
             FillableItemCollectionInfo itemCollectionInfo,
             Function<TouchToFillPaymentMethodProperties.CardImageMetaData, Drawable>
                     cardImageFunction) {
@@ -231,68 +317,54 @@ class TouchToFillPaymentMethodMediator {
                         : new GURL("");
         TouchToFillPaymentMethodProperties.CardImageMetaData cardImageMetaData =
                 new TouchToFillPaymentMethodProperties.CardImageMetaData(drawableId, artUrl);
-        PropertyModel.Builder creditCardModelBuilder =
-                new PropertyModel.Builder(
-                                TouchToFillPaymentMethodProperties.CreditCardProperties
-                                        .NON_TRANSFORMING_CREDIT_CARD_KEYS)
-                        .withTransformingKey(
-                                TouchToFillPaymentMethodProperties.CreditCardProperties.CARD_IMAGE,
-                                cardImageFunction,
-                                cardImageMetaData)
-                        .with(
-                                TouchToFillPaymentMethodProperties.CreditCardProperties
-                                        .NETWORK_NAME,
-                                "")
-                        .with(
-                                TouchToFillPaymentMethodProperties.CreditCardProperties.CARD_NAME,
-                                card.getCardNameForAutofillDisplay())
-                        .with(
-                                TouchToFillPaymentMethodProperties.CreditCardProperties.CARD_NUMBER,
-                                card.getObfuscatedLastFourDigits())
+        PropertyModel.Builder creditCardSuggestionModelBuilder =
+                new PropertyModel.Builder(NON_TRANSFORMING_CREDIT_CARD_SUGGESTION_KEYS)
+                        .withTransformingKey(CARD_IMAGE, cardImageFunction, cardImageMetaData)
+                        .with(NETWORK_NAME, "")
+                        .with(MAIN_TEXT, suggestion.getLabel())
+                        .with(MINOR_TEXT, suggestion.getSecondaryLabel())
+                        // For virtual cards, show the "Virtual card" label on the second
+                        // line, and for non-virtual cards, show the expiration date.
+                        // If the merchant has opted-out for the virtual card, on the second
+                        // line we convey that merchant does not accept this virtual card.
+                        // For cards with benefits, show the benefits on the second line and
+                        // the expiration date or virtual card status on the third line.
+                        .with(FIRST_LINE_LABEL, suggestion.getSublabel())
+                        .with(SECOND_LINE_LABEL, suggestion.getSecondarySublabel())
                         .with(ON_CREDIT_CARD_CLICK_ACTION, () -> this.onSelectedCreditCard(card))
-                        .with(ITEM_COLLECTION_INFO, itemCollectionInfo);
+                        .with(ITEM_COLLECTION_INFO, itemCollectionInfo)
+                        .with(APPLY_DEACTIVATED_STYLE, suggestion.applyDeactivatedStyle());
 
         // If a card has a nickname, the network name should also be announced, otherwise the name
         // of the card will be the network name and it will be announced.
         if (!card.getBasicCardIssuerNetwork()
                 .equals(card.getCardNameForAutofillDisplay().toLowerCase(Locale.getDefault()))) {
-            creditCardModelBuilder.with(
-                    TouchToFillPaymentMethodProperties.CreditCardProperties.NETWORK_NAME,
-                    card.getBasicCardIssuerNetwork());
+            creditCardSuggestionModelBuilder.with(NETWORK_NAME, card.getBasicCardIssuerNetwork());
         }
 
-        // For virtual cards, show the "Virtual card" label on the second line, and for non-virtual
-        // cards, show the expiration date.
-        if (card.getIsVirtual()) {
-            creditCardModelBuilder.with(
-                    TouchToFillPaymentMethodProperties.CreditCardProperties.VIRTUAL_CARD_LABEL,
-                    mContext.getString(R.string.autofill_virtual_card_number_switch_label));
-        } else {
-            creditCardModelBuilder.with(
-                    TouchToFillPaymentMethodProperties.CreditCardProperties.CARD_EXPIRATION,
-                    card.getFormattedExpirationDate(mContext));
-        }
-        return creditCardModelBuilder.build();
+        return creditCardSuggestionModelBuilder.build();
     }
 
     private PropertyModel createIbanModel(Iban iban) {
         PropertyModel.Builder ibanModelBuilder =
-                new PropertyModel.Builder(
-                                TouchToFillPaymentMethodProperties.IbanProperties
-                                        .NON_TRANSFORMING_IBAN_KEYS)
-                        .with(
-                            TouchToFillPaymentMethodProperties.IbanProperties.IBAN_VALUE,
-                                iban.getLabel())
-                        .with(
-                            TouchToFillPaymentMethodProperties.IbanProperties.IBAN_NICKNAME,
-                                iban.getNickname())
+                new PropertyModel.Builder(NON_TRANSFORMING_IBAN_KEYS)
+                        .with(IBAN_VALUE, iban.getLabel())
+                        .with(IBAN_NICKNAME, iban.getNickname())
                         .with(ON_IBAN_CLICK_ACTION, () -> this.onSelectedIban(iban));
         return ibanModelBuilder.build();
     }
 
+    private ListItem buildTermsLabel(boolean cardBenefitsTermsAvailable) {
+        return new ListItem(
+                TERMS_LABEL,
+                new PropertyModel.Builder(TermsLabelProperties.ALL_TERMS_LABEL_KEYS)
+                        .with(CARD_BENEFITS_TERMS_AVAILABLE, cardBenefitsTermsAvailable)
+                        .build());
+    }
+
     private ListItem buildHeader(boolean hasOnlyLocalPaymentMethods) {
         return new ListItem(
-                TouchToFillPaymentMethodProperties.ItemType.HEADER,
+                HEADER,
                 new PropertyModel.Builder(HeaderProperties.ALL_KEYS)
                         .with(
                                 IMAGE_DRAWABLE_ID,
@@ -304,7 +376,7 @@ class TouchToFillPaymentMethodMediator {
 
     private ListItem buildFooterForCreditCard(boolean hasScanCardButton) {
         return new ListItem(
-                TouchToFillPaymentMethodProperties.ItemType.FOOTER,
+                FOOTER,
                 new PropertyModel.Builder(FooterProperties.ALL_KEYS)
                         .with(SHOULD_SHOW_SCAN_CREDIT_CARD, hasScanCardButton)
                         .with(SCAN_CREDIT_CARD_CALLBACK, this::scanCreditCard)
@@ -316,7 +388,7 @@ class TouchToFillPaymentMethodMediator {
 
     private ListItem buildFooterForIban() {
         return new ListItem(
-                TouchToFillPaymentMethodProperties.ItemType.FOOTER,
+                FOOTER,
                 new PropertyModel.Builder(FooterProperties.ALL_KEYS)
                         .with(
                                 SHOW_PAYMENT_METHOD_SETTINGS_CALLBACK,
@@ -324,19 +396,26 @@ class TouchToFillPaymentMethodMediator {
                         .build());
     }
 
-    private static boolean hasOnlyLocalCards(CreditCard[] cards) {
+    private static boolean hasOnlyLocalCards(List<CreditCard> cards) {
         for (CreditCard card : cards) {
             if (!card.getIsLocal()) return false;
         }
         return true;
     }
 
-    private static void recordTouchToFillOutcomeHistogram(
+    private static void recordTouchToFillCreditCardOutcomeHistogram(
             @TouchToFillCreditCardOutcome int outcome) {
         RecordHistogram.recordEnumeratedHistogram(
-                TOUCH_TO_FILL_OUTCOME_HISTOGRAM,
+                TOUCH_TO_FILL_CREDIT_CARD_OUTCOME_HISTOGRAM,
                 outcome,
                 TouchToFillCreditCardOutcome.MAX_VALUE + 1);
+    }
+
+    private static void recordTouchToFillIbanOutcomeHistogram(@TouchToFillIbanOutcome int outcome) {
+        RecordHistogram.recordEnumeratedHistogram(
+                TOUCH_TO_FILL_IBAN_OUTCOME_HISTOGRAM,
+                outcome,
+                TouchToFillIbanOutcome.MAX_VALUE + 1);
     }
 
     void setInputProtectorForTesting(InputProtector inputProtector) {

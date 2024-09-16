@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ash/wallpaper/wallpaper_utils/wallpaper_file_utils.h"
 
 #include "base/files/file_path.h"
@@ -38,7 +43,7 @@ bool EncodeImage(const gfx::ImageSkia& image_skia,
 
   if (image_metadata.empty()) {
     return gfx::JPEGCodec::Encode(bitmap, kDefaultEncodingQuality,
-                                  &(*output)->data());
+                                  &(*output)->as_vector());
   }
 
   SkPixmap pixmap;
@@ -51,7 +56,7 @@ bool EncodeImage(const gfx::ImageSkia& image_skia,
 
   return gfx::JPEGCodec::Encode(pixmap, kDefaultEncodingQuality,
                                 SkJpegEncoder::Downsample::k420,
-                                &(*output)->data(), xmpMetadata.get());
+                                &(*output)->as_vector(), xmpMetadata.get());
 }
 
 // Resizes `image` to a resolution which is nearest to `preferred_width` and

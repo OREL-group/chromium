@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ash/app_list/search/search_controller.h"
 
 #include <memory>
@@ -866,8 +871,10 @@ TEST_F(SearchControllerTest, NotifyObserverWhenPublished) {
 
 TEST_F(SearchControllerTest, ProviderIsFilteredWithSearchControl) {
   base::test::ScopedFeatureList scoped_feature_list_;
-  scoped_feature_list_.InitAndEnableFeature(
-      ash::features::kLauncherSearchControl);
+  scoped_feature_list_.InitWithFeatures(
+      {ash::features::kLauncherSearchControl,
+       ash::features::kFeatureManagementLocalImageSearch},
+      {});
 
   const Result result_categories[] = {
       Result::kAnswerCard, Result::kDriveSearch,    Result::kAppShortcutV2,

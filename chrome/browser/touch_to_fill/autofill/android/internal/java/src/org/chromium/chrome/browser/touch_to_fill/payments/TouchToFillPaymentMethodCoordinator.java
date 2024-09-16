@@ -7,10 +7,11 @@ package org.chromium.chrome.browser.touch_to_fill.payments;
 import static org.chromium.chrome.browser.autofill.AutofillUiUtils.getCardIcon;
 import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.DISMISS_HANDLER;
 import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.ItemType.CREDIT_CARD;
-import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.ItemType.IBAN;
 import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.ItemType.FILL_BUTTON;
 import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.ItemType.FOOTER;
 import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.ItemType.HEADER;
+import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.ItemType.IBAN;
+import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.ItemType.TERMS_LABEL;
 import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.SHEET_ITEMS;
 import static org.chromium.chrome.browser.touch_to_fill.payments.TouchToFillPaymentMethodProperties.VISIBLE;
 
@@ -19,17 +20,19 @@ import android.graphics.drawable.Drawable;
 
 import androidx.annotation.VisibleForTesting;
 
-import org.chromium.chrome.browser.autofill.AutofillUiUtils;
 import org.chromium.chrome.browser.autofill.PersonalDataManager;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.CreditCard;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.Iban;
 import org.chromium.chrome.browser.touch_to_fill.common.BottomSheetFocusHelper;
+import org.chromium.components.autofill.AutofillSuggestion;
+import org.chromium.components.autofill.ImageSize;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.ui.modelutil.MVCListAdapter.ModelList;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 import org.chromium.ui.modelutil.SimpleRecyclerViewAdapter;
 
+import java.util.List;
 import java.util.function.Function;
 
 /**
@@ -57,9 +60,9 @@ public class TouchToFillPaymentMethodCoordinator implements TouchToFillPaymentMe
                                 personalDataManager,
                                 metaData.artUrl,
                                 metaData.iconId,
-                                AutofillUiUtils.CardIconSize.LARGE,
+                                ImageSize.LARGE,
                                 /* showCustomIcon= */ true);
-       mMediator.initialize(
+        mMediator.initialize(
                 context, delegate, mTouchToFillPaymentMethodModel, bottomSheetFocusHelper);
         setUpModelChangeProcessors(
                 mTouchToFillPaymentMethodModel,
@@ -67,13 +70,16 @@ public class TouchToFillPaymentMethodCoordinator implements TouchToFillPaymentMe
     }
 
     @Override
-    public void showSheet(CreditCard[] cards, boolean shouldShowScanCreditCard) {
+    public void showSheet(
+            List<CreditCard> cards,
+            List<AutofillSuggestion> suggestions,
+            boolean shouldShowScanCreditCard) {
         assert mCardImageFunction != null : "Attempting to call showSheet before initialize.";
-        mMediator.showSheet(cards, shouldShowScanCreditCard, mCardImageFunction);
+        mMediator.showSheet(cards, suggestions, shouldShowScanCreditCard, mCardImageFunction);
     }
 
     @Override
-    public void showSheet(Iban[] ibans) {
+    public void showSheet(List<Iban> ibans) {
         mMediator.showSheet(ibans);
     }
 
@@ -115,6 +121,10 @@ public class TouchToFillPaymentMethodCoordinator implements TouchToFillPaymentMe
                 FOOTER,
                 TouchToFillPaymentMethodViewBinder::createFooterItemView,
                 TouchToFillPaymentMethodViewBinder::bindFooterView);
+        adapter.registerType(
+                TERMS_LABEL,
+                TouchToFillPaymentMethodViewBinder::createTermsLabelView,
+                TouchToFillPaymentMethodViewBinder::bindTermsLabelView);
         view.setSheetItemListAdapter(adapter);
     }
 

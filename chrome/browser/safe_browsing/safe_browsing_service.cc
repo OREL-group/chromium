@@ -100,6 +100,8 @@ using content::BrowserThread;
 
 namespace safe_browsing {
 
+using enum ExtendedReportingLevel;
+
 namespace {
 
 // The number of user gestures to trace back for the referrer chain.
@@ -143,8 +145,7 @@ std::unique_ptr<ClientSafeBrowsingReportRequest> CreateDownloadReport(
     PopulateDownloadWarningActions(download, report.get());
     base::Time warning_first_shown_time =
         DownloadItemWarningData::WarningFirstShownTime(download);
-    if (!warning_first_shown_time.is_null() &&
-        base::FeatureList::IsEnabled(kDownloadReportWithoutUserDecision)) {
+    if (!warning_first_shown_time.is_null()) {
       report->set_warning_shown_timestamp_msec(
           warning_first_shown_time.InMillisecondsSinceUnixEpoch());
     }
@@ -319,8 +320,8 @@ SafeBrowsingService::GetReferrerChainProviderFromBrowserContext(
 }
 
 #if BUILDFLAG(IS_ANDROID)
-LoginReputationClientRequest::ReferringAppInfo
-SafeBrowsingService::GetReferringAppInfo(content::WebContents* web_contents) {
+ReferringAppInfo SafeBrowsingService::GetReferringAppInfo(
+    content::WebContents* web_contents) {
   return safe_browsing::GetReferringAppInfo(web_contents);
 }
 #endif
@@ -390,7 +391,7 @@ void SafeBrowsingService::Start() {
 
   if (!enabled_) {
     enabled_ = true;
-    services_delegate_->StartOnSBThread(
+    services_delegate_->StartOnUIThread(
         g_browser_process->shared_url_loader_factory(), GetV4ProtocolConfig());
   }
 }
@@ -398,7 +399,7 @@ void SafeBrowsingService::Start() {
 void SafeBrowsingService::Stop(bool shutdown) {
   ui_manager_->Stop(shutdown);
 
-  services_delegate_->StopOnSBThread(shutdown);
+  services_delegate_->StopOnUIThread(shutdown);
 
   enabled_ = false;
 }
@@ -465,6 +466,20 @@ void SafeBrowsingService::OnProfileAdded(Profile* profile) {
 
   // Extended Reporting metrics are handled together elsewhere.
   RecordExtendedReportingMetrics(*pref_service);
+
+  // TODO(crbug.com/339468572): Set the new pref value in iOS and WebView
+  // For users in the extended reporting deprecation experiment group, save the
+  // extended reporting preference value.
+  if (base::FeatureList::IsEnabled(kExtendedReportingRemovePrefDependency)) {
+    pref_service->SetBoolean(
+        prefs::kSafeBrowsingScoutReportingEnabledWhenDeprecated,
+        pref_service->GetBoolean(prefs::kSafeBrowsingScoutReportingEnabled));
+  } else {
+    // Set the pref value to false as this feature is not deprecated when the
+    // feature flag is off.
+    pref_service->SetBoolean(
+        prefs::kSafeBrowsingScoutReportingEnabledWhenDeprecated, false);
+  }
 
   SafeBrowsingMetricsCollectorFactory::GetForProfile(profile)->StartLogging();
 
@@ -569,7 +584,8 @@ bool SafeBrowsingService::SendPhishyInteractionsReport(
     const GURL& url,
     const GURL& page_url,
     const PhishySiteInteractionMap& phishy_interaction_data) {
-  if (!profile || !IsExtendedReportingEnabled(*profile->GetPrefs())) {
+  if (!profile || !IsExtendedReportingEnabled(*profile->GetPrefs()) ||
+      profile->IsOffTheRecord()) {
     return false;
   }
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -594,8 +610,9 @@ bool SafeBrowsingService::SendPhishyInteractionsReport(
           &new_phishy_site_interaction);
     }
   }
-  return ChromePingManagerFactory::GetForBrowserContext(profile)
-             ->ReportThreatDetails(std::move(report)) ==
+  auto* ping_manager = ChromePingManagerFactory::GetForBrowserContext(profile);
+  DCHECK(ping_manager);
+  return ping_manager->ReportThreatDetails(std::move(report)) ==
          PingManager::ReportThreatDetailsResult::SUCCESS;
 }
 #endif
@@ -610,7 +627,8 @@ bool SafeBrowsingService::MaybeSendNotificationsAcceptedReport(
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!profile || !IsExtendedReportingEnabled(*profile->GetPrefs()) ||
       !base::FeatureList::IsEnabled(
-          kCreateNotificationsAcceptedClientSafeBrowsingReports)) {
+          kCreateNotificationsAcceptedClientSafeBrowsingReports) ||
+      profile->IsOffTheRecord()) {
     return false;
   }
   // Only send report if the UnsafeResource was allowlisted, due to the user
@@ -705,7 +723,6 @@ bool SafeBrowsingService::IsURLAllowlisted(
   security_interstitials::UnsafeResource resource;
   resource.url = url;
   resource.original_url = url;
-  resource.is_subresource = false;
   resource.threat_type = SBThreatType::SB_THREAT_TYPE_URL_PHISHING;
   const content::GlobalRenderFrameHostId primary_main_frame_id =
       primary_main_frame->GetGlobalId();
@@ -718,8 +735,9 @@ bool SafeBrowsingService::IsURLAllowlisted(
 // don't leak it.
 class SafeBrowsingServiceFactoryImpl : public SafeBrowsingServiceFactory {
  public:
-  // TODO(crbug/925153): Once callers of this function are no longer downcasting
-  // it to the SafeBrowsingService, we can make this a scoped_refptr.
+  // TODO(crbug.com/41437292): Once callers of this function are no longer
+  // downcasting it to the SafeBrowsingService, we can make this a
+  // scoped_refptr.
   SafeBrowsingServiceInterface* CreateSafeBrowsingService() override {
     return new SafeBrowsingService();
   }

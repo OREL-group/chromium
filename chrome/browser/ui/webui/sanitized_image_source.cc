@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ui/webui/sanitized_image_source.h"
 
 #include <map>
@@ -347,10 +352,10 @@ void SanitizedImageSource::EncodeAndReplyStaticImage(
             const bool success =
                 encode_type == RequestAttributes::EncodeType::kWebP
                     ? gfx::WebpCodec::Encode(bitmap, /*quality=*/90,
-                                             &encoded->data())
+                                             &encoded->as_vector())
                     : gfx::PNGCodec::EncodeBGRASkBitmap(
                           bitmap, /*discard_transparency=*/false,
-                          &encoded->data());
+                          &encoded->as_vector());
             return success ? encoded
                            : base::MakeRefCounted<base::RefCountedBytes>();
           },

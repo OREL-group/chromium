@@ -7,6 +7,7 @@
 
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include "base/strings/stringprintf.h"
 #include "cc/paint/draw_looper.h"
@@ -42,6 +43,22 @@ class PaintOpHelper {
   template <typename T>
   static std::string ToString(const std::optional<T>& opt) {
     return opt.has_value() ? ToString(*opt) : "(nil)";
+  }
+
+  template <typename T>
+  static std::string ToString(const std::vector<T>& vec) {
+    std::ostringstream str;
+    str << "{";
+    bool is_first = true;
+    for (const T& element : vec) {
+      if (!is_first) {
+        str << ", ";
+      }
+      str << ToString(element);
+      is_first = false;
+    }
+    str << "}";
+    return str.str();
   }
 
   static std::string ToString(const PaintOp& base_op) {
@@ -121,12 +138,27 @@ class PaintOpHelper {
             << ", flags=" << ToString(op.flags);
         break;
       }
+      case PaintOpType::kDrawLineLite: {
+        const auto& op = static_cast<const DrawLineLiteOp&>(base_op);
+        str << "x0=" << ToString(op.x0) << ", y0=" << ToString(op.y0)
+            << ", x1=" << ToString(op.x1) << ", y1=" << ToString(op.y1)
+            << ", flags=" << ToString(op.core_paint_flags);
+        break;
+      }
       case PaintOpType::kDrawArc: {
         const auto& op = static_cast<const DrawArcOp&>(base_op);
-        str << "DrawArcOp(oval=" << ToString(op.oval)
+        str << "oval=" << ToString(op.oval)
             << ", start_angle=" << ToString(op.start_angle_degrees)
             << ", sweep_angle=" << ToString(op.sweep_angle_degrees)
-            << ", flags=" << ToString(op.flags) << ")";
+            << ", flags=" << ToString(op.flags);
+        break;
+      }
+      case PaintOpType::kDrawArcLite: {
+        const auto& op = static_cast<const DrawArcLiteOp&>(base_op);
+        str << "oval=" << ToString(op.oval)
+            << ", start_angle=" << ToString(op.start_angle_degrees)
+            << ", sweep_angle=" << ToString(op.sweep_angle_degrees)
+            << ", flags=" << ToString(op.core_paint_flags);
         break;
       }
       case PaintOpType::kDrawOval: {
@@ -205,6 +237,12 @@ class PaintOpHelper {
         const auto& op = static_cast<const SaveLayerAlphaOp&>(base_op);
         str << "bounds=" << ToString(op.bounds)
             << ", alpha=" << ToString(op.alpha);
+        break;
+      }
+      case PaintOpType::kSaveLayerFilters: {
+        const auto& op = static_cast<const SaveLayerFiltersOp&>(base_op);
+        str << "flags=" << ToString(op.flags)
+            << ", filters=" << ToString(op.filters);
         break;
       }
       case PaintOpType::kScale: {
@@ -318,7 +356,7 @@ class PaintOpHelper {
       case SkColorChannel::kA:
         return "kA";
     }
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return "unknown";
   }
 
@@ -951,6 +989,11 @@ class PaintOpHelper {
     str << ", hasDiscardableImages=" << flags.HasDiscardableImages();
     str << "]";
     return str.str();
+  }
+
+  static std::string ToString(const CorePaintFlags& flags) {
+    PaintFlags paint_flags(flags);
+    return ToString(paint_flags);
   }
 };
 

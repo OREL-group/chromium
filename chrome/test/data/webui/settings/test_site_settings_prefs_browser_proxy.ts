@@ -70,8 +70,10 @@ export class TestSiteSettingsPrefsBrowserProxy extends TestBrowserProxy
       'clearPartitionedOriginDataAndCookies',
       'recordAction',
       'getRecentSitePermissions',
-      'getFpsMembershipLabel',
+      'getRwsMembershipLabel',
       'getNumCookiesString',
+      'getSystemDeniedPermissions',
+      'openSystemPermissionSettings',
       'getExtensionName',
       'getFileSystemGrants',
       'revokeFileSystemGrant',
@@ -301,7 +303,7 @@ export class TestSiteSettingsPrefsBrowserProxy extends TestBrowserProxy
 
       const mockUsage = index * 100;
 
-      // TODO(https://crbug.com/1021606): Add test where existing evaluates to
+      // TODO(crbug.com/40106241): Add test where existing evaluates to
       // true.
       if (existing) {
         const originInfo = createOriginInfo(origin, {usage: mockUsage});
@@ -615,12 +617,12 @@ export class TestSiteSettingsPrefsBrowserProxy extends TestBrowserProxy
     this.methodCalled('setProtocolHandlerDefault', value);
   }
 
-  getFpsMembershipLabel(fpsNumMembers: number, fpsOwner: string) {
-    this.methodCalled('getFpsMembershipLabel', fpsNumMembers, fpsOwner);
+  getRwsMembershipLabel(rwsNumMembers: number, rwsOwner: string) {
+    this.methodCalled('getRwsMembershipLabel', rwsNumMembers, rwsOwner);
     return Promise.resolve([
-      `${fpsNumMembers}`,
-      (fpsNumMembers === 1 ? 'site' : 'sites'),
-      `in ${fpsOwner}'s group`,
+      `${rwsNumMembers}`,
+      (rwsNumMembers === 1 ? 'site' : 'sites'),
+      `in ${rwsOwner}'s group`,
     ].join(' '));
   }
 
@@ -628,6 +630,15 @@ export class TestSiteSettingsPrefsBrowserProxy extends TestBrowserProxy
     this.methodCalled('getNumCookiesString', numCookies);
     return Promise.resolve(
         `${numCookies} ` + (numCookies === 1 ? 'cookie' : 'cookies'));
+  }
+
+  getSystemDeniedPermissions() {
+    this.methodCalled('getSystemDeniedPermissions');
+    return Promise.resolve([]);
+  }
+
+  openSystemPermissionSettings(contentType: string): void {
+    this.methodCalled('openSystemPermissionSettings', contentType);
   }
 
   getExtensionName(id: string) {

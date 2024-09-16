@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/prefs/pref_service_incognito_allowlist.h"
 
 #include <vector>
@@ -68,6 +73,7 @@ const char* const kPersistentPrefNames[] = {
     ash::prefs::kAccessibilityColorVisionCorrectionAmount,
     ash::prefs::kAccessibilityColorVisionCorrectionType,
     ash::prefs::kAccessibilityReducedAnimationsEnabled,
+    ash::prefs::kAccessibilityFaceGazeAcceleratorDialogHasBeenAccepted,
     ash::prefs::kAccessibilityFaceGazeEnabled,
     ash::prefs::kAccessibilityFaceGazeCursorSpeedUp,
     ash::prefs::kAccessibilityFaceGazeCursorSpeedDown,
@@ -75,12 +81,18 @@ const char* const kPersistentPrefNames[] = {
     ash::prefs::kAccessibilityFaceGazeCursorSpeedRight,
     ash::prefs::kAccessibilityFaceGazeCursorSmoothing,
     ash::prefs::kAccessibilityFaceGazeCursorUseAcceleration,
+    ash::prefs::kAccessibilityFaceGazeGesturesToKeyCombos,
     ash::prefs::kAccessibilityFaceGazeGesturesToMacros,
     ash::prefs::kAccessibilityFaceGazeGesturesToConfidence,
+    ash::prefs::kAccessibilityFaceGazeActionsEnabled,
+    ash::prefs::kAccessibilityFaceGazeCursorControlEnabled,
+    ash::prefs::kAccessibilityFaceGazeAdjustSpeedSeparately,
+    ash::prefs::kAccessibilityFlashNotificationsEnabled,
+    ash::prefs::kAccessibilityFlashNotificationsColor,
     ash::prefs::kAccessibilityHighContrastEnabled,
-    ash::prefs::kAccessibilityScreenMagnifierCenterFocus,
     ash::prefs::kAccessibilityScreenMagnifierEnabled,
     ash::prefs::kAccessibilityScreenMagnifierFocusFollowingEnabled,
+    ash::prefs::kAccessibilityMagnifierFollowsChromeVox,
     ash::prefs::kAccessibilityMagnifierFollowsSts,
     ash::prefs::kAccessibilityScreenMagnifierMouseFollowingMode,
     ash::prefs::kAccessibilityScreenMagnifierScale,
@@ -93,10 +105,9 @@ const char* const kPersistentPrefNames[] = {
     ash::prefs::kAccessibilityAutoclickStabilizePosition,
     ash::prefs::kAccessibilityAutoclickMovementThreshold,
     ash::prefs::kAccessibilityMouseKeysEnabled,
-    ash::prefs::kAccessibilityMouseKeysShortcutToPauseEnabled,
-    ash::prefs::kAccessibilityMouseKeysDisableInTextFields,
     ash::prefs::kAccessibilityMouseKeysAcceleration,
     ash::prefs::kAccessibilityMouseKeysMaxSpeed,
+    ash::prefs::kAccessibilityMouseKeysUsePrimaryKeys,
     ash::prefs::kAccessibilityMouseKeysDominantHand,
     ash::prefs::kAccessibilityCaretHighlightEnabled,
     ash::prefs::kAccessibilityCaretBlinkInterval,
@@ -122,6 +133,8 @@ const char* const kPersistentPrefNames[] = {
     ash::prefs::kHighContrastAcceleratorDialogHasBeenAccepted,
     ash::prefs::kScreenMagnifierAcceleratorDialogHasBeenAccepted,
     ash::prefs::kShouldAlwaysShowAccessibilityMenu,
+    ash::prefs::kAccessibilityDisableTrackpadEnabled,
+    ash::prefs::kAccessibilityDisableTrackpadMode,
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 #if !BUILDFLAG(IS_ANDROID)
     kAnimationPolicyAllowed,

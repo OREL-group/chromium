@@ -80,7 +80,7 @@ class ConciergeClientImpl : public ConciergeClient {
   }
 
   bool IsDiskImageProgressSignalConnected() override {
-    return is_disk_import_progress_signal_connected_;
+    return is_disk_image_progress_signal_connected_;
   }
 
   void CreateDiskImage(
@@ -120,6 +120,15 @@ class ConciergeClientImpl : public ConciergeClient {
                      std::move(callback));
   }
 
+  void ExportDiskImage(
+      std::vector<base::ScopedFD> fds,
+      const concierge::ExportDiskImageRequest& request,
+      chromeos::DBusMethodCallback<concierge::ExportDiskImageResponse> callback)
+      override {
+    CallMethodWithFds(concierge::kExportDiskImageMethod, request,
+                      std::move(fds), std::move(callback));
+  }
+
   void CancelDiskImageOperation(
       const concierge::CancelDiskImageRequest& request,
       chromeos::DBusMethodCallback<concierge::CancelDiskImageResponse> callback)
@@ -154,15 +163,6 @@ class ConciergeClientImpl : public ConciergeClient {
           callback) override {
     std::vector<base::ScopedFD> fds;
     fds.emplace_back(std::move(fd));
-    CallMethodWithFds(concierge::kStartVmMethod, request, std::move(fds),
-                      std::move(callback));
-  }
-
-  void StartVmWithFds(
-      std::vector<base::ScopedFD> fds,
-      const vm_tools::concierge::StartVmRequest& request,
-      chromeos::DBusMethodCallback<vm_tools::concierge::StartVmResponse>
-          callback) override {
     CallMethodWithFds(concierge::kStartVmMethod, request, std::move(fds),
                       std::move(callback));
   }
@@ -226,24 +226,8 @@ class ConciergeClientImpl : public ConciergeClient {
       const concierge::AttachUsbDeviceRequest& request,
       chromeos::DBusMethodCallback<concierge::AttachUsbDeviceResponse> callback)
       override {
-    dbus::MethodCall method_call(concierge::kVmConciergeInterface,
-                                 concierge::kAttachUsbDeviceMethod);
-    dbus::MessageWriter writer(&method_call);
-
-    if (!writer.AppendProtoAsArrayOfBytes(request)) {
-      LOG(ERROR) << "Failed to encode AttachUsbDeviceRequest protobuf";
-      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-          FROM_HERE, base::BindOnce(std::move(callback), std::nullopt));
-      return;
-    }
-
-    writer.AppendFileDescriptor(fd.get());
-
-    concierge_proxy_->CallMethod(
-        &method_call, kConciergeDBusTimeoutMs,
-        base::BindOnce(&ConciergeClientImpl::OnDBusProtoResponse<
-                           concierge::AttachUsbDeviceResponse>,
-                       weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
+    CallMethodWithFd(concierge::kAttachUsbDeviceMethod, request, std::move(fd),
+                     std::move(callback));
   }
 
   void DetachUsbDevice(
@@ -364,8 +348,7 @@ class ConciergeClientImpl : public ConciergeClient {
 
     if (!writer.AppendProtoAsArrayOfBytes(request)) {
       LOG(ERROR) << "Failed to encode protobuf for " << method_name;
-      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-          FROM_HERE, base::BindOnce(std::move(callback), std::nullopt));
+      std::move(callback).Run(std::nullopt);
       return;
     }
 
@@ -395,8 +378,7 @@ class ConciergeClientImpl : public ConciergeClient {
 
     if (!writer.AppendProtoAsArrayOfBytes(request)) {
       LOG(ERROR) << "Failed to encode protobuf for " << method_name;
-      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-          FROM_HERE, base::BindOnce(std::move(callback), std::nullopt));
+      std::move(callback).Run(std::nullopt);
       return;
     }
 
@@ -553,13 +535,13 @@ class ConciergeClientImpl : public ConciergeClient {
     } else if (signal_name == concierge::kVmStoppedSignal) {
       is_vm_stopped_signal_connected_ = is_connected;
     } else if (signal_name == concierge::kDiskImageProgressSignal) {
-      is_disk_import_progress_signal_connected_ = is_connected;
+      is_disk_image_progress_signal_connected_ = is_connected;
     } else if (signal_name == concierge::kVmStoppingSignal) {
       is_vm_stopping_signal_connected_ = is_connected;
     } else if (signal_name == concierge::kVmSwappingSignal) {
       // DO NOTHING.
     } else {
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
     }
   }
 
@@ -575,7 +557,7 @@ class ConciergeClientImpl : public ConciergeClient {
   bool is_vm_started_signal_connected_ = false;
   bool is_vm_stopped_signal_connected_ = false;
   bool is_vm_stopping_signal_connected_ = false;
-  bool is_disk_import_progress_signal_connected_ = false;
+  bool is_disk_image_progress_signal_connected_ = false;
 
   // Note: This should remain the last member so it'll be destroyed and
   // invalidate its weak pointers before any other members are destroyed.

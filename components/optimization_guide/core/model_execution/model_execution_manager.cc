@@ -12,14 +12,17 @@
 #include "base/strings/stringprintf.h"
 #include "base/types/expected.h"
 #include "components/optimization_guide/core/model_execution/feature_keys.h"
+#include "components/optimization_guide/core/model_execution/model_execution_features.h"
 #include "components/optimization_guide/core/model_execution/model_execution_fetcher.h"
 #include "components/optimization_guide/core/model_execution/model_execution_util.h"
-#include "components/optimization_guide/core/model_execution/on_device_model_execution_config_interpreter.h"
+#include "components/optimization_guide/core/model_execution/on_device_model_adaptation_loader.h"
+#include "components/optimization_guide/core/model_execution/on_device_model_metadata.h"
 #include "components/optimization_guide/core/model_execution/on_device_model_service_controller.h"
 #include "components/optimization_guide/core/model_execution/optimization_guide_model_execution_error.h"
 #include "components/optimization_guide/core/model_quality/model_quality_log_entry.h"
 #include "components/optimization_guide/core/model_util.h"
 #include "components/optimization_guide/core/optimization_guide_constants.h"
+#include "components/optimization_guide/core/optimization_guide_enums.h"
 #include "components/optimization_guide/core/optimization_guide_logger.h"
 #include "components/optimization_guide/core/optimization_guide_model_executor.h"
 #include "components/optimization_guide/core/optimization_guide_model_provider.h"
@@ -109,6 +112,32 @@ void NoOpExecuteRemoteFn(
       nullptr);
 }
 
+std::map<ModelBasedCapabilityKey, OnDeviceModelAdaptationLoader>
+GetRequiredModelAdaptationLoaders(
+    OptimizationGuideModelProvider* model_provider,
+    base::WeakPtr<OnDeviceModelComponentStateManager>
+        on_device_component_state_manager,
+    PrefService* local_state,
+    base::WeakPtr<OnDeviceModelServiceController>
+        on_device_model_service_controller) {
+  std::map<ModelBasedCapabilityKey, OnDeviceModelAdaptationLoader> loaders;
+  for (const auto feature : kAllModelBasedCapabilityKeys) {
+    if (!features::internal::IsOnDeviceModelEnabled(feature) ||
+        !features::internal::IsOnDeviceModelAdaptationEnabled(feature)) {
+      continue;
+    }
+    loaders.emplace(
+        std::piecewise_construct, std::forward_as_tuple(feature),
+        std::forward_as_tuple(
+            feature, model_provider, on_device_component_state_manager,
+            local_state,
+            base::BindRepeating(
+                &OnDeviceModelServiceController::MaybeUpdateModelAdaptation,
+                on_device_model_service_controller, feature)));
+  }
+  return loaders;
+}
+
 }  // namespace
 
 using ModelExecutionError =
@@ -121,6 +150,8 @@ ModelExecutionManager::ModelExecutionManager(
     scoped_refptr<OnDeviceModelServiceController>
         on_device_model_service_controller,
     OptimizationGuideModelProvider* model_provider,
+    base::WeakPtr<OnDeviceModelComponentStateManager>
+        on_device_component_state_manager,
     OptimizationGuideLogger* optimization_guide_logger,
     base::WeakPtr<ModelQualityLogsUploaderService>
         model_quality_uploader_service)
@@ -132,6 +163,13 @@ ModelExecutionManager::ModelExecutionManager(
           features::GetOptimizationGuideServiceAPIKey())),
       url_loader_factory_(url_loader_factory),
       identity_manager_(identity_manager),
+      model_adaptation_loaders_(GetRequiredModelAdaptationLoaders(
+          model_provider,
+          on_device_component_state_manager,
+          local_state,
+          on_device_model_service_controller
+              ? on_device_model_service_controller->GetWeakPtr()
+              : nullptr)),
       model_provider_(model_provider),
       on_device_model_service_controller_(
           std::move(on_device_model_service_controller)) {
@@ -142,10 +180,12 @@ ModelExecutionManager::ModelExecutionManager(
     return;
   }
   if (GetGenAILocalFoundationalModelEnterprisePolicySettings(local_state) !=
-      prefs::GenAILocalFoundationalModelEnterprisePolicySettings::kAllowed) {
+      model_execution::prefs::
+          GenAILocalFoundationalModelEnterprisePolicySettings::kAllowed) {
     return;
   }
 
+  did_register_for_supplementary_on_device_models_ = true;
   model_provider_->AddObserverForOptimizationTargetModel(
       proto::OptimizationTarget::OPTIMIZATION_TARGET_TEXT_SAFETY,
       /*model_metadata=*/std::nullopt, this);
@@ -155,8 +195,7 @@ ModelExecutionManager::ModelExecutionManager(
 }
 
 ModelExecutionManager::~ModelExecutionManager() {
-  if (model_provider_ && on_device_model_service_controller_ &&
-      features::ShouldUseTextSafetyClassifierModel()) {
+  if (did_register_for_supplementary_on_device_models_) {
     model_provider_->RemoveObserverForOptimizationTargetModel(
         proto::OptimizationTarget::OPTIMIZATION_TARGET_TEXT_SAFETY, this);
     model_provider_->RemoveObserverForOptimizationTargetModel(
@@ -240,6 +279,25 @@ void ModelExecutionManager::ExecuteModel(
                      std::move(log_ai_data_request), std::move(callback)));
 }
 
+bool ModelExecutionManager::CanCreateOnDeviceSession(
+    ModelBasedCapabilityKey feature,
+    OnDeviceModelEligibilityReason* on_device_model_eligibility_reason) {
+  if (!on_device_model_service_controller_) {
+    if (on_device_model_eligibility_reason) {
+      *on_device_model_eligibility_reason =
+          OnDeviceModelEligibilityReason::kFeatureNotEnabled;
+    }
+    return false;
+  }
+
+  OnDeviceModelEligibilityReason reason =
+      on_device_model_service_controller_->CanCreateSession(feature);
+  if (on_device_model_eligibility_reason) {
+    *on_device_model_eligibility_reason = reason;
+  }
+  return reason == OnDeviceModelEligibilityReason::kSuccess;
+}
+
 std::unique_ptr<OptimizationGuideModelExecutor::Session>
 ModelExecutionManager::StartSession(
     ModelBasedCapabilityKey feature,
@@ -281,19 +339,22 @@ void ModelExecutionManager::OnModelExecuteResponse(
   active_model_execution_fetchers_.erase(feature);
   ScopedModelExecutionResponseLogger scoped_logger(feature,
                                                    optimization_guide_logger_);
-  if (!execute_response.has_value()) {
-    scoped_logger.set_message("Error: No Response");
-    RecordModelExecutionResultHistogram(feature, false);
-    std::move(callback).Run(base::unexpected(execute_response.error()),
-                            nullptr);
-    return;
-  }
 
   // Create corresponding log entry for `log_ai_data_request` to pass it with
   // the callback.
   std::unique_ptr<ModelQualityLogEntry> log_entry =
       std::make_unique<ModelQualityLogEntry>(std::move(log_ai_data_request),
                                              model_quality_uploader_service_);
+
+  if (!execute_response.has_value()) {
+    scoped_logger.set_message("Error: No Response");
+    RecordModelExecutionResultHistogram(feature, false);
+    auto error = execute_response.error();
+    // TODO(b/350546291): move this logging code to a ModelExecute wrapper.
+    log_entry->set_model_execution_error(error);
+    std::move(callback).Run(base::unexpected(error), std::move(log_entry));
+    return;
+  }
 
   // Set the id if present.
   if (execute_response->has_server_execution_id()) {
@@ -307,14 +368,17 @@ void ModelExecutionManager::OnModelExecuteResponse(
     auto error =
         OptimizationGuideModelExecutionError::FromModelExecutionServerError(
             execute_response->error_response());
-    if (!error.ShouldLogModelQuality()) {
-      log_entry = nullptr;
-    }
     RecordModelExecutionResultHistogram(feature, false);
     base::UmaHistogramEnumeration(
         base::StrCat({"OptimizationGuide.ModelExecution.ServerError.",
                       GetStringNameForModelExecutionFeature(feature)}),
         error.error());
+    // TODO(b/350546291): move this logging code to a ModelExecute wrapper.
+    log_entry->set_model_execution_error(error);
+
+    if (!error.ShouldLogModelQuality()) {
+      log_entry = nullptr;
+    }
     std::move(callback).Run(base::unexpected(error), std::move(log_entry));
     return;
   }
@@ -322,13 +386,13 @@ void ModelExecutionManager::OnModelExecuteResponse(
   if (!execute_response->has_response_metadata()) {
     scoped_logger.set_message("Error: No Response Metadata");
     RecordModelExecutionResultHistogram(feature, false);
+    auto error = OptimizationGuideModelExecutionError::FromModelExecutionError(
+        ModelExecutionError::kGenericFailure);
+    // TODO(b/350546291): move this logging code to a ModelExecute wrapper.
+    log_entry->set_model_execution_error(error);
     // Log the request in case response is not present by passing the
     // `log_entry`.
-    std::move(callback).Run(
-        base::unexpected(
-            OptimizationGuideModelExecutionError::FromModelExecutionError(
-                ModelExecutionError::kGenericFailure)),
-        std::move(log_entry));
+    std::move(callback).Run(base::unexpected(error), std::move(log_entry));
     return;
   }
 
@@ -345,9 +409,9 @@ void ModelExecutionManager::OnModelExecuteResponse(
             execute_response->response_metadata());
         message += "Response: [";
         int group_cnt = 0;
-        for (const auto& tab_organization : tab_response->tab_organizations()) {
+        for (const auto& tab_group : tab_response->tab_groups()) {
           std::string tab_titles = "";
-          for (const auto& tab : tab_organization.tabs()) {
+          for (const auto& tab : tab_group.tabs()) {
             tab_titles +=
                 base::StringPrintf("%s\" %s \"", tab_titles.empty() ? "" : ",",
                                    tab.title().c_str());
@@ -356,7 +420,7 @@ void ModelExecutionManager::OnModelExecuteResponse(
               "%s{"
               "\"label\": \"%s\", "
               "\"tabs\": [%s] }",
-              group_cnt > 0 ? "," : "", tab_organization.label().c_str(),
+              group_cnt > 0 ? "," : "", tab_group.label().c_str(),
               tab_titles.c_str());
           group_cnt += 1;
         }

@@ -178,10 +178,10 @@ ImageServiceImpl::ImageServiceImpl(
       remote_suggestions_service_(remote_suggestions_service),
       history_consent_helper_(std::make_unique<ImageServiceConsentHelper>(
           sync_service,
-          syncer::ModelType::HISTORY_DELETE_DIRECTIVES)),
+          syncer::DataType::HISTORY_DELETE_DIRECTIVES)),
       bookmarks_consent_helper_(std::make_unique<ImageServiceConsentHelper>(
           sync_service,
-          syncer::ModelType::BOOKMARKS)),
+          syncer::DataType::BOOKMARKS)),
       autocomplete_scheme_classifier_(
           std::move(autocomplete_scheme_classifier)) {
   if (opt_guide && base::FeatureList::IsEnabled(
@@ -223,7 +223,8 @@ void ImageServiceImpl::GetConsentToFetchImage(
   switch (client_id) {
     case mojom::ClientId::Journeys:
     case mojom::ClientId::JourneysSidePanel:
-    case mojom::ClientId::NtpQuests: {
+    case mojom::ClientId::NtpQuests:
+    case mojom::ClientId::NtpTabResumption: {
       return history_consent_helper_->EnqueueRequest(std::move(callback),
                                                      client_id);
     }
@@ -357,7 +358,8 @@ void ImageServiceImpl::ProcessAllBatchedOptimizationGuideRequests(
       break;
     }
     case mojom::ClientId::NtpQuests:
-    case mojom::ClientId::NtpRealbox: {
+    case mojom::ClientId::NtpRealbox:
+    case mojom::ClientId::NtpTabResumption: {
       request_context = optimization_guide::proto::CONTEXT_NEW_TAB_PAGE;
       break;
     }

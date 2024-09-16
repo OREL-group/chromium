@@ -28,6 +28,11 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/platform/text/character.h"
 
 #include <unicode/uchar.h>
@@ -38,7 +43,6 @@
 #include <algorithm>
 
 #include "base/synchronization/lock.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/text/character_property_data.h"
 #include "third_party/blink/renderer/platform/text/icu_error.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
@@ -180,9 +184,7 @@ unsigned Character::ExpansionOpportunityCount(
         count++;
         is_after_expansion = true;
         continue;
-      } else if (!RuntimeEnabledFeatures::
-                     TextAlignJustifyBidiIsolateEnabled() ||
-                 !IsDefaultIgnorable(character)) {
+      } else if (!IsDefaultIgnorable(character)) {
         is_after_expansion = false;
       }
     }
@@ -204,9 +206,7 @@ unsigned Character::ExpansionOpportunityCount(
         count++;
         is_after_expansion = true;
         continue;
-      } else if (!RuntimeEnabledFeatures::
-                     TextAlignJustifyBidiIsolateEnabled() ||
-                 !IsDefaultIgnorable(character)) {
+      } else if (!IsDefaultIgnorable(character)) {
         is_after_expansion = false;
       }
     }

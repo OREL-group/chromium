@@ -3,9 +3,10 @@
 // found in the LICENSE file.
 
 #include "chrome/services/sharing/nearby/nearby_presence.h"
+
 #include "base/strings/string_number_conversions.h"
-#include "chrome/services/sharing/nearby/nearby_presence_conversions.h"
 #include "chrome/services/sharing/nearby/nearby_shared_remotes.h"
+#include "chromeos/ash/components/nearby/presence/conversions/nearby_presence_conversions.h"
 #include "components/cross_device/logging/logging.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "third_party/abseil-cpp/absl/status/status.h"
@@ -155,7 +156,7 @@ void NearbyPresence::UpdateLocalDeviceMetadata(mojom::MetadataPtr metadata) {
       /*regen_credentials=*/false,
       /*manager_app_id=*/kChromeOSManagerAppId,
       /*identity_types=*/
-      {::nearby::internal::IdentityType::IDENTITY_TYPE_PRIVATE},
+      {::nearby::internal::IdentityType::IDENTITY_TYPE_PRIVATE_GROUP},
       /*credential_life_cycle_days=*/kCredentialLifeCycleDays,
       /*contiguous_copy_of_credentials=*/kNumCredentials,
       /*credentials_generated_cb=*/{});
@@ -169,7 +170,7 @@ void NearbyPresence::UpdateLocalDeviceMetadataAndGenerateCredentials(
       /*regen_credentials=*/true,
       /*manager_app_id=*/kChromeOSManagerAppId,
       /*identity_types=*/
-      {::nearby::internal::IdentityType::IDENTITY_TYPE_PRIVATE},
+      {::nearby::internal::IdentityType::IDENTITY_TYPE_PRIVATE_GROUP},
       /*credential_life_cycle_days=*/kCredentialLifeCycleDays,
       /*contiguous_copy_of_credentials=*/kNumCredentials,
       {.credentials_generated_cb = [cb = base::BindOnce(std::move(callback)),
@@ -250,7 +251,7 @@ void NearbyPresence::GetLocalSharedCredentials(
       /*credential_selector=*/{.manager_app_id = kChromeOSManagerAppId,
                                .account_name = account_name,
                                .identity_type = ::nearby::internal::
-                                   IdentityType::IDENTITY_TYPE_PRIVATE},
+                                   IdentityType::IDENTITY_TYPE_PRIVATE_GROUP},
       {.credentials_fetched_cb =
            [cb = base::BindOnce(std::move(callback)),
             task_runner = base::SequencedTaskRunner::GetCurrentDefault()](

@@ -83,6 +83,7 @@ public class WebsitePermissionsFetcher {
             case ContentSettingsType.FEDERATED_IDENTITY_API:
             case ContentSettingsType.JAVASCRIPT:
             case ContentSettingsType.JAVASCRIPT_JIT:
+            case ContentSettingsType.JAVASCRIPT_OPTIMIZER:
             case ContentSettingsType.POPUPS:
             case ContentSettingsType.REQUEST_DESKTOP_SITE:
             case ContentSettingsType.SOUND:
@@ -90,6 +91,7 @@ public class WebsitePermissionsFetcher {
             case ContentSettingsType.AR:
             case ContentSettingsType.CLIPBOARD_READ_WRITE:
             case ContentSettingsType.GEOLOCATION:
+            case ContentSettingsType.HAND_TRACKING:
             case ContentSettingsType.IDLE_DETECTION:
             case ContentSettingsType.MEDIASTREAM_CAMERA:
             case ContentSettingsType.MEDIASTREAM_MIC:
@@ -186,10 +188,10 @@ public class WebsitePermissionsFetcher {
      * @param category A category to fetch.
      * @param callback The callback to run when the fetch is complete.
      */
-    public void fetchPreferencesForCategoryAndPopulateFpsInfo(
+    public void fetchPreferencesForCategoryAndPopulateRwsInfo(
             SiteSettingsCategory category, @NonNull WebsitePermissionsCallback callback) {
         var fetcherInternal = new WebsitePermissionFetcherInternal();
-        fetcherInternal.fetchPreferencesForCategoryAndPopulateFpsInfo(category, callback);
+        fetcherInternal.fetchPreferencesForCategoryAndPopulateRwsInfo(category, callback);
     }
 
     /**
@@ -269,10 +271,10 @@ public class WebsitePermissionsFetcher {
          * @param category A category to fetch.
          * @param callback The callback to run when the fetch is complete.
          */
-        public void fetchPreferencesForCategoryAndPopulateFpsInfo(
+        public void fetchPreferencesForCategoryAndPopulateRwsInfo(
                 SiteSettingsCategory category, @NonNull WebsitePermissionsCallback callback) {
             TaskQueue queue = createFetchersForCategory(category);
-            queue.add(new FirstPartySetsInfoFetcher());
+            queue.add(new RelatedWebsiteSetsInfoFetcher());
 
             queue.add(new PermissionsAvailableCallbackRunner(callback));
             queue.next();
@@ -579,7 +581,7 @@ public class WebsitePermissionsFetcher {
                                     if (address == null) continue;
                                     // Convert host to origin, in order to avoid duplication in the
                                     // UI.
-                                    // TODO(crbug.com/1342991): Use BrowsingDataModel to avoid this
+                                    // TODO(crbug.com/40231223): Use BrowsingDataModel to avoid this
                                     // conversion.
                                     String origin = WebsiteAddress.create(address).getOrigin();
                                     findOrCreateSite(origin, null).addStorageInfo(info);
@@ -632,62 +634,63 @@ public class WebsitePermissionsFetcher {
             }
         }
 
-        private class FirstPartySetsInfoFetcher extends Task {
-            private boolean canDealWithFirstPartySetsInfo() {
+        private class RelatedWebsiteSetsInfoFetcher extends Task {
+            private boolean canDealWithRelatedWebsiteSetsInfo() {
                 return mSiteSettingsDelegate != null
                         && mSiteSettingsDelegate.isPrivacySandboxFirstPartySetsUIFeatureEnabled()
-                        && mSiteSettingsDelegate.isFirstPartySetsDataAccessEnabled();
+                        && mSiteSettingsDelegate.isRelatedWebsiteSetsDataAccessEnabled();
             }
 
             @Override
             public void run() {
-                if (canDealWithFirstPartySetsInfo()) {
-                    Map<String, List<Website>> fpsOwnerToMembers =
+                if (canDealWithRelatedWebsiteSetsInfo()) {
+                    Map<String, List<Website>> rwsOwnerToMembers =
                             buildOwnerToMembersMapFromFetchedSites();
 
-                    // For each {@link Website} sets its FirstPartySet info: the FPS Owner and the
-                    // number of members of that FPS.
+                    // For each {@link Website} sets its RelatedWebsiteSet info: the RWS Owner and
+                    // the
+                    // number of members of that RWS.
                     for (Website site : mSites.values()) {
-                        String fpsOwnerHostname =
-                                mSiteSettingsDelegate.getFirstPartySetOwner(
+                        String rwsOwnerHostname =
+                                mSiteSettingsDelegate.getRelatedWebsiteSetOwner(
                                         site.getAddress().getOrigin());
-                        if (fpsOwnerHostname == null
-                                || fpsOwnerToMembers.get(fpsOwnerHostname) == null) continue;
-                        site.setFPSCookieInfo(
-                                new FPSCookieInfo(
-                                        fpsOwnerHostname, fpsOwnerToMembers.get(fpsOwnerHostname)));
+                        if (rwsOwnerHostname == null
+                                || rwsOwnerToMembers.get(rwsOwnerHostname) == null) continue;
+                        site.setRWSCookieInfo(
+                                new RWSCookieInfo(
+                                        rwsOwnerHostname, rwsOwnerToMembers.get(rwsOwnerHostname)));
                     }
                 }
             }
 
             /**
-             * Builds a {@link Map<String, List <Website>>} of FPS Owner - Set of FPS Members from
+             * Builds a {@link Map<String, List <Website>>} of RWS Owner - Set of RWS Members from
              * the fetched websites.
              */
             @NonNull
             private Map<String, List<Website>> buildOwnerToMembersMapFromFetchedSites() {
                 // set to avoid equals implementation for Website object
                 Set<String> domainAndRegistryToWebsite = new HashSet<>();
-                Map<String, List<Website>> fpsOwnerToMember = new HashMap<>();
+                Map<String, List<Website>> rwsOwnerToMember = new HashMap<>();
 
                 for (Website site : mSites.values()) {
-                    String fpsMemberHostname = site.getAddress().getDomainAndRegistry();
-                    String fpsOwnerHostname =
-                            mSiteSettingsDelegate.getFirstPartySetOwner(
+                    String rwsMemberHostname = site.getAddress().getDomainAndRegistry();
+                    String rwsOwnerHostname =
+                            mSiteSettingsDelegate.getRelatedWebsiteSetOwner(
                                     site.getAddress().getOrigin());
-                    if (fpsOwnerHostname == null) continue;
-                    List<Website> members = fpsOwnerToMember.get(fpsOwnerHostname);
-                    if (!domainAndRegistryToWebsite.contains(fpsMemberHostname)) {
+                    if (rwsOwnerHostname == null) continue;
+                    List<Website> members = rwsOwnerToMember.get(rwsOwnerHostname);
+                    if (!domainAndRegistryToWebsite.contains(rwsMemberHostname)) {
                         if (members == null) {
                             members = new ArrayList<>();
                         }
                         members.add(site);
-                        domainAndRegistryToWebsite.add(fpsMemberHostname);
-                        fpsOwnerToMember.put(fpsOwnerHostname, members);
+                        domainAndRegistryToWebsite.add(rwsMemberHostname);
+                        rwsOwnerToMember.put(rwsOwnerHostname, members);
                     }
                 }
 
-                return fpsOwnerToMember;
+                return rwsOwnerToMember;
             }
         }
 
@@ -696,7 +699,9 @@ public class WebsitePermissionsFetcher {
             public void runAsync(final TaskQueue queue) {
                 mSiteSettingsDelegate.getBrowsingDataModel(
                         (model) -> {
-                            Map<Origin, BrowsingDataInfo> result = model.getBrowsingDataInfo();
+                            Map<Origin, BrowsingDataInfo> result =
+                                    model.getBrowsingDataInfo(
+                                            mBrowserContextHandle, mFetchSiteImportantInfo);
                             for (var entry : result.entrySet()) {
                                 Origin origin = entry.getKey();
                                 if (origin == null) continue;
@@ -712,6 +717,7 @@ public class WebsitePermissionsFetcher {
                                                 origin.getHost(),
                                                 /* type= */ 0,
                                                 info.getStorageSize()));
+                                website.setDomainImportant(info.isDomainImportant());
                             }
                             queue.next();
                         });

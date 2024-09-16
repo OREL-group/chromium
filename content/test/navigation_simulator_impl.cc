@@ -5,6 +5,7 @@
 #include "content/test/navigation_simulator_impl.h"
 
 #include <utility>
+
 #include "base/debug/stack_trace.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
@@ -29,6 +30,7 @@
 #include "mojo/public/cpp/bindings/pending_associated_remote.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "net/base/load_flags.h"
+#include "net/storage_access_api/status.h"
 #include "net/url_request/redirect_info.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
 #include "services/network/public/mojom/fetch_api.mojom.h"
@@ -91,10 +93,11 @@ int64_t g_unique_identifier = 0;
 FrameTreeNode* GetFrameTreeNodeForPendingEntry(
     NavigationControllerImpl& controller) {
   NavigationEntryImpl* pending_entry = controller.GetPendingEntry();
-  int frame_tree_node_id = pending_entry->frame_tree_node_id();
+  FrameTreeNodeId frame_tree_node_id = pending_entry->frame_tree_node_id();
   FrameTree& frame_tree = controller.frame_tree();
-  if (frame_tree_node_id == FrameTreeNode::kFrameTreeNodeInvalidId)
+  if (frame_tree_node_id.is_null()) {
     return frame_tree.root();
+  }
   return frame_tree.FindByID(frame_tree_node_id);
 }
 
@@ -701,8 +704,8 @@ void NavigationSimulatorImpl::Commit() {
 
   // Keep a pointer to the current RenderFrameHost that may be pending deletion
   // after commit.
-  RenderFrameHostImpl* previous_rfh =
-      render_frame_host_->frame_tree_node()->current_frame_host();
+  base::WeakPtr<RenderFrameHostImpl> previous_rfh =
+      render_frame_host_->frame_tree_node()->current_frame_host()->GetWeakPtr();
 
   // RenderDocument: Do not dispatch UnloadACK if the navigation was committed
   // in the same SiteInstance. This has already been dispatched during the
@@ -737,8 +740,10 @@ void NavigationSimulatorImpl::Commit() {
       request_, std::move(params),
       std::move(browser_interface_broker_receiver_), same_document_);
 
-  if (previous_rfh)
-    SimulateUnloadCompletionCallbackForPreviousFrameIfNeeded(previous_rfh);
+  if (previous_rfh) {
+    SimulateUnloadCompletionCallbackForPreviousFrameIfNeeded(
+        previous_rfh.get());
+  }
 
   loading_scenario_ =
       TestRenderFrameHost::LoadingScenario::NewDocumentNavigation;
@@ -949,7 +954,7 @@ void NavigationSimulatorImpl::SetInitiatorFrame(
   CHECK(!browser_initiated_);
 
   if (initiator_frame_host) {
-    // TODO(https://crbug.com/1072790): Support cross-process initiators here by
+    // TODO(crbug.com/40127276): Support cross-process initiators here by
     // using NavigationRequest::CreateBrowserInitiated() (like
     // RenderFrameProxyHost does) for the navigation.
     set_initiator_origin(initiator_frame_host->GetLastCommittedOrigin());
@@ -1362,7 +1367,7 @@ bool NavigationSimulatorImpl::SimulateRendererInitiatedStart() {
               : blink::mojom::NavigationInitiatorActivationAndAdStatus::
                     kDidNotStartWithTransientActivation,
           false /* is_container_initiated */,
-          false /* is_fullscreen_requested */, false /* has_storage_access */);
+          net::StorageAccessApiStatus::kNone, false /* has_rel_opener */);
   auto common_params = blink::CreateCommonNavigationParams();
   common_params->navigation_start =
       navigation_start_.is_null() ? base::TimeTicks::Now() : navigation_start_;
@@ -1575,7 +1580,7 @@ NavigationSimulatorImpl::BuildDidCommitProvisionalLoadParams(
   } else if (same_document) {
     params->should_update_history = true;
   } else {
-    // TODO(https://crbug.com/1158101): Reconsider how we calculate
+    // TODO(crbug.com/40161149): Reconsider how we calculate
     // should_update_history.
     params->should_update_history = response_headers_->response_code() != 404;
   }

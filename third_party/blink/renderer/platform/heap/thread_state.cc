@@ -34,13 +34,10 @@ namespace {
 // lazily.
 class BlinkRootsHandler final : public v8::EmbedderRootsHandler {
  public:
-  explicit BlinkRootsHandler(v8::Isolate* isolate)
-      : v8::EmbedderRootsHandler(v8::EmbedderRootsHandler::RootHandling::
-                                     kDontQueryEmbedderForAnyReference),
-        isolate_(isolate) {}
+  explicit BlinkRootsHandler(v8::Isolate* isolate) : isolate_(isolate) {}
 
   bool IsRoot(const v8::TracedReference<v8::Value>& handle) final {
-    NOTREACHED_NORETURN();
+    NOTREACHED();
   }
 
   // ResetRoot() clears references to V8 wrapper objects in all worlds. It is
@@ -49,7 +46,7 @@ class BlinkRootsHandler final : public v8::EmbedderRootsHandler {
   void ResetRoot(const v8::TracedReference<v8::Value>& handle) final {
     const v8::TracedReference<v8::Object>& traced = handle.As<v8::Object>();
     const bool success = DOMDataStore::ClearWrapperInAnyWorldIfEqualTo(
-        ToScriptWrappable(isolate_, traced), traced);
+        ToAnyScriptWrappable(isolate_, traced), traced);
     // Since V8 found a handle, Blink needs to find it as well when trying to
     // remove it. Note that this is even true for the case where a
     // DOMWrapperWorld and DOMDataStore are already unreachable as the internal
@@ -62,7 +59,7 @@ class BlinkRootsHandler final : public v8::EmbedderRootsHandler {
   bool TryResetRoot(const v8::TracedReference<v8::Value>& handle) final {
     const v8::TracedReference<v8::Object>& traced = handle.As<v8::Object>();
     return DOMDataStore::ClearInlineStorageWrapperIfEqualTo(
-        ToScriptWrappable(isolate_, traced), traced);
+        ToAnyScriptWrappable(isolate_, traced), traced);
   }
 
  private:
@@ -136,10 +133,7 @@ void ThreadState::DetachFromIsolate() {
 ThreadState::ThreadState(v8::Platform* platform)
     : cpp_heap_(v8::CppHeap::Create(
           platform,
-          {CustomSpaces::CreateCustomSpaces(),
-           v8::WrapperDescriptor(kV8DOMWrapperTypeIndex,
-                                 kV8DOMWrapperObjectIndex,
-                                 gin::GinEmbedder::kEmbedderBlink)})),
+          v8::CppHeapCreateParams(CustomSpaces::CreateCustomSpaces()))),
       heap_handle_(cpp_heap_->GetHeapHandle()),
       thread_id_(CurrentThread()) {}
 
@@ -265,6 +259,21 @@ void ThreadState::TakeHeapSnapshotForTesting(const char* filename) const {
   }
 
   const_cast<v8::HeapSnapshot*>(snapshot)->Delete();
+}
+
+bool ThreadState::IsTakingHeapSnapshot() const {
+  if (!isolate_) {
+    return false;
+  }
+  v8::HeapProfiler* profiler = isolate_->GetHeapProfiler();
+  return profiler && profiler->IsTakingSnapshot();
+}
+
+const char* ThreadState::CopyNameForHeapSnapshot(const char* name) const {
+  CHECK(isolate_);
+  v8::HeapProfiler* profiler = isolate_->GetHeapProfiler();
+  CHECK(profiler);
+  return profiler->CopyNameForHeapSnapshot(name);
 }
 
 }  // namespace blink

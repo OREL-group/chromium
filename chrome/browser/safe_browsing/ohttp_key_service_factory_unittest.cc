@@ -61,14 +61,18 @@ TEST_F(OhttpKeyServiceFactoryTest, EnabledForRegularProfiles) {
   EXPECT_NE(nullptr, OhttpKeyServiceFactory::GetForProfile(profile));
 }
 
+// Regression test requested in crbug.com/355577214.
 TEST_F(OhttpKeyServiceFactoryTest,
-       DisabledForRegularProfiles_HashRealTimeLookupsDisabled) {
+       EnabledForRegularProfiles_HashRealTimeLookupsDisabled) {
   feature_list_.Reset();
   feature_list_.InitWithFeatures(
       /*enabled_features=*/{},
       /*disabled_features=*/{kHashPrefixRealTimeLookups});
   TestingProfile* profile = profile_manager_->CreateTestingProfile("profile");
-  EXPECT_EQ(nullptr, OhttpKeyServiceFactory::GetForProfile(profile));
+  // The service should still be created even though HPRT lookups are disabled.
+  // Instead, the OHTTP key service disables itself if HPRT lookups are
+  // disabled.
+  EXPECT_NE(nullptr, OhttpKeyServiceFactory::GetForProfile(profile));
 }
 
 TEST_F(OhttpKeyServiceFactoryTest, DisabledForIncognitoMode) {

@@ -28,6 +28,7 @@
 #include "content/public/browser/web_contents.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/models/image_model.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/events/event_constants.h"
@@ -310,20 +311,20 @@ TEST_F(IntentPickerBubbleViewTest, ButtonLabels) {
                    BubbleType::kLinkCapturing,
                    /*initiating_origin=*/std::nullopt);
   EXPECT_EQ(l10n_util::GetStringUTF16(IDS_INTENT_PICKER_BUBBLE_VIEW_OPEN),
-            bubble_->GetDialogButtonLabel(ui::DIALOG_BUTTON_OK));
+            bubble_->GetDialogButtonLabel(ui::mojom::DialogButton::kOk));
   EXPECT_EQ(
       l10n_util::GetStringUTF16(IDS_INTENT_PICKER_BUBBLE_VIEW_STAY_IN_CHROME),
-      bubble_->GetDialogButtonLabel(ui::DIALOG_BUTTON_CANCEL));
+      bubble_->GetDialogButtonLabel(ui::mojom::DialogButton::kCancel));
 
   CreateBubbleView(/*use_icons=*/false, /*show_stay_in_chrome=*/false,
                    BubbleType::kClickToCall,
                    /*initiating_origin=*/std::nullopt);
   EXPECT_EQ(l10n_util::GetStringUTF16(
                 IDS_BROWSER_SHARING_CLICK_TO_CALL_DIALOG_CALL_BUTTON_LABEL),
-            bubble_->GetDialogButtonLabel(ui::DIALOG_BUTTON_OK));
+            bubble_->GetDialogButtonLabel(ui::mojom::DialogButton::kOk));
   EXPECT_EQ(
       l10n_util::GetStringUTF16(IDS_INTENT_PICKER_BUBBLE_VIEW_STAY_IN_CHROME),
-      bubble_->GetDialogButtonLabel(ui::DIALOG_BUTTON_CANCEL));
+      bubble_->GetDialogButtonLabel(ui::mojom::DialogButton::kCancel));
 }
 
 TEST_F(IntentPickerBubbleViewTest, InitiatingOriginView) {
@@ -454,7 +455,7 @@ TEST_P(IntentPickerBubbleViewLayoutTest, CloseDialog) {
             apps::IntentPickerCloseReason::DIALOG_DEACTIVATED);
 }
 
-// TODO(crbug.com/1330440): Fix flakiness on Windows.
+// TODO(crbug.com/40843230): Fix flakiness on Windows.
 #if BUILDFLAG(IS_WIN)
 #define MAYBE_KeyboardNavigation DISABLED_KeyboardNavigation
 #else
@@ -491,10 +492,10 @@ TEST_P(IntentPickerBubbleViewLayoutTest, DoubleClickToAccept) {
 
   views::test::ButtonTestApi button(GetButtonAtIndex(0));
 
-  button.NotifyClick(ui::MouseEvent(ui::ET_MOUSE_PRESSED, gfx::PointF(),
+  button.NotifyClick(ui::MouseEvent(ui::EventType::kMousePressed, gfx::PointF(),
                                     gfx::PointF(), ui::EventTimeForNow(),
                                     ui::EF_NONE, ui::EF_NONE));
-  button.NotifyClick(ui::MouseEvent(ui::ET_MOUSE_PRESSED, gfx::PointF(),
+  button.NotifyClick(ui::MouseEvent(ui::EventType::kMousePressed, gfx::PointF(),
                                     gfx::PointF(), ui::EventTimeForNow(),
                                     ui::EF_IS_DOUBLE_CLICK, ui::EF_NONE));
 
@@ -527,6 +528,29 @@ TEST_F(IntentPickerBubbleViewGridLayoutTest, DefaultSelectionOneApp) {
   ASSERT_EQ(bubble_->GetSelectedIndex(), 0u);
 }
 
+TEST_F(IntentPickerBubbleViewGridLayoutTest, AccessibilityCheckedStateChange) {
+  ui::AXNodeData data;
+  AddApp(apps::PickerEntryType::kWeb, "web_app_id", "Web App");
+  CreateBubbleView(/*use_icons=*/false, /*show_stay_in_chrome=*/false,
+                   BubbleType::kLinkCapturing,
+                   /*initiating_origin=*/std::nullopt);
+  // In case of 1 app, 1st view will be selected
+  bubble_->SelectDefaultItem();
+  auto* view = GetButtonAtIndex(0);
+  view->GetViewAccessibility().GetAccessibleNodeData(&data);
+  EXPECT_EQ(data.GetCheckedState(), ax::mojom::CheckedState::kTrue);
+
+  AddApp(apps::PickerEntryType::kWeb, "web_app_id", "Web App");
+  CreateBubbleView(/*use_icons=*/false, /*show_stay_in_chrome=*/false,
+                   BubbleType::kLinkCapturing,
+                   /*initiating_origin=*/std::nullopt);
+
+  data = ui::AXNodeData();
+  view = GetButtonAtIndex(1);
+  view->GetViewAccessibility().GetAccessibleNodeData(&data);
+  EXPECT_EQ(data.GetCheckedState(), ax::mojom::CheckedState::kFalse);
+}
+
 TEST_F(IntentPickerBubbleViewGridLayoutTest, DefaultSelectionTwoApps) {
   AddApp(apps::PickerEntryType::kWeb, "web_app_id_1", "Web App");
   AddApp(apps::PickerEntryType::kWeb, "web_app_id_2", "Web App");
@@ -538,7 +562,7 @@ TEST_F(IntentPickerBubbleViewGridLayoutTest, DefaultSelectionTwoApps) {
   ASSERT_FALSE(bubble_->GetSelectedIndex().has_value());
 }
 
-// TODO(crbug.com/1330440): Fix flakiness on Windows.
+// TODO(crbug.com/40843230): Fix flakiness on Windows.
 #if BUILDFLAG(IS_WIN)
 #define MAYBE_OpenWithReturnKey DISABLED_OpenWithReturnKey
 #else

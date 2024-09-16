@@ -138,7 +138,6 @@ x11::Atom DragOperationToAtom(DragOperation operation) {
       return x11::GetAtom(kXdndActionLink);
   }
   NOTREACHED();
-  return x11::Atom::None;
 }
 
 DragOperation AtomToDragOperation(x11::Atom atom) {
@@ -362,10 +361,7 @@ void XDragDropClient::OnXdndPosition(const x11::ClientMessageEvent& event) {
   x11::Time time_stamp = static_cast<x11::Time>(event.data.data32[3]);
   x11::Atom suggested_action = static_cast<x11::Atom>(event.data.data32[4]);
 
-  if (!target_current_context()) {
-    NOTREACHED();
-    return;
-  }
+  CHECK(target_current_context());
 
   target_current_context()->OnXdndPositionMessage(
       this, suggested_action, source_window, time_stamp,

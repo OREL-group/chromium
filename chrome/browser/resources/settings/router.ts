@@ -17,8 +17,10 @@ export interface SettingsRoutes {
   ADDRESSES: Route;
   ADVANCED: Route;
   AI: Route;
+  AI_TAB_ORGANIZATION: Route;
   APPEARANCE: Route;
   AUTOFILL: Route;
+  AUTOFILL_PREDICTION_IMPROVEMENTS: Route;
   BASIC: Route;
   CAPTIONS: Route;
   CERTIFICATES: Route;
@@ -29,10 +31,7 @@ export interface SettingsRoutes {
   DOWNLOADS: Route;
   EDIT_DICTIONARY: Route;
   FONTS: Route;
-  // <if expr="_google_chrome">
-  GET_MOST_CHROME: Route;
-  // </if>
-  IMPORT_DATA: Route;
+  HISTORY_SEARCH: Route;
   INCOMPATIBLE_APPLICATIONS: Route;
   LANGUAGES: Route;
   MANAGE_PROFILE: Route;
@@ -59,7 +58,6 @@ export interface SettingsRoutes {
   SECURITY: Route;
   SECURITY_KEYS: Route;
   SECURITY_KEYS_PHONES: Route;
-  SIGN_OUT: Route;
   SITE_SETTINGS: Route;
   SITE_SETTINGS_ADS: Route;
   SITE_SETTINGS_ALL: Route;
@@ -77,6 +75,7 @@ export interface SettingsRoutes {
   SITE_SETTINGS_COOKIES: Route;
   SITE_SETTINGS_FEDERATED_IDENTITY_API: Route;
   SITE_SETTINGS_HANDLERS: Route;
+  SITE_SETTINGS_HAND_TRACKING: Route;
   SITE_SETTINGS_HID_DEVICES: Route;
   SITE_SETTINGS_IDLE_DETECTION: Route;
   SITE_SETTINGS_IMAGES: Route;
@@ -93,17 +92,20 @@ export interface SettingsRoutes {
   SITE_SETTINGS_FILE_SYSTEM_WRITE: Route;
   SITE_SETTINGS_FILE_SYSTEM_WRITE_DETAILS: Route;
   SITE_SETTINGS_NOTIFICATIONS: Route;
+  SITE_SETTINGS_OFFER_WRITING_HELP: Route;
   SITE_SETTINGS_PAYMENT_HANDLER: Route;
   SITE_SETTINGS_PDF_DOCUMENTS: Route;
   SITE_SETTINGS_POINTER_LOCK: Route;
   SITE_SETTINGS_POPUPS: Route;
   SITE_SETTINGS_PROTECTED_CONTENT: Route;
   SITE_SETTINGS_SERIAL_PORTS: Route;
+  SITE_SETTINGS_SMART_CARD_READERS: Route;
   SITE_SETTINGS_SITE_DATA: Route;
   SITE_SETTINGS_SITE_DETAILS: Route;
   SITE_SETTINGS_STORAGE_ACCESS: Route;
   SITE_SETTINGS_USB_DEVICES: Route;
   SITE_SETTINGS_VR: Route;
+  SITE_SETTINGS_WEB_APP_INSTALLATION: Route;
   SITE_SETTINGS_WINDOW_MANAGEMENT: Route;
   SITE_SETTINGS_ZOOM_LEVELS: Route;
   SITE_SETTINGS_WEB_PRINTING: Route;
@@ -113,6 +115,11 @@ export interface SettingsRoutes {
   SYSTEM: Route;
   TRACKING_PROTECTION: Route;
   TRIGGERED_RESET_DIALOG: Route;
+
+  // <if expr="not chromeos_ash">
+  IMPORT_DATA: Route;
+  SIGN_OUT: Route;
+  // </if>
 }
 
 /** Class for navigable routes. */
@@ -234,7 +241,6 @@ export class Router {
     return routerInstance;
   }
 
-  /** @param instance */
   static setInstance(instance: Router) {
     assert(!routerInstance);
     routerInstance = instance;

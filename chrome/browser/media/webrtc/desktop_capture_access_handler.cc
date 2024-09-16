@@ -128,7 +128,7 @@ bool IsMediaTypeAllowed(AllowedScreenCaptureLevel allowed_capture_level,
                         content::DesktopMediaID::Type media_type) {
   switch (media_type) {
     case content::DesktopMediaID::TYPE_NONE:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
     case content::DesktopMediaID::TYPE_SCREEN:
       return allowed_capture_level >= AllowedScreenCaptureLevel::kDesktop;
     case content::DesktopMediaID::TYPE_WINDOW:
@@ -381,8 +381,9 @@ void DesktopCaptureAccessHandler::HandleRequest(
       return;
     }
 #if BUILDFLAG(IS_MAC)
-    if (system_media_permissions::CheckSystemScreenCapturePermission() !=
-        system_media_permissions::SystemPermission::kAllowed) {
+    if (system_media_permissions::ScreenCaptureNeedsSystemLevelPermissions() &&
+        system_media_permissions::CheckSystemScreenCapturePermission() !=
+            system_permission_settings::SystemPermission::kAllowed) {
       std::move(pending_request->callback)
           .Run(blink::mojom::StreamDevicesSet(),
                blink::mojom::MediaStreamRequestResult::SYSTEM_PERMISSION_DENIED,
@@ -437,7 +438,7 @@ void DesktopCaptureAccessHandler::HandleRequest(
 #if BUILDFLAG(IS_MAC)
   if (media_id.type != content::DesktopMediaID::TYPE_WEB_CONTENTS &&
       system_media_permissions::CheckSystemScreenCapturePermission() !=
-          system_media_permissions::SystemPermission::kAllowed) {
+          system_permission_settings::SystemPermission::kAllowed) {
     std::move(pending_request->callback)
         .Run(blink::mojom::StreamDevicesSet(),
              blink::mojom::MediaStreamRequestResult::SYSTEM_PERMISSION_DENIED,
@@ -680,7 +681,7 @@ void DesktopCaptureAccessHandler::AcceptRequest(
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DCHECK(web_contents);
 
-  // TODO(crbug.com/1300883): Generalize to multiple streams.
+  // TODO(crbug.com/40216442): Generalize to multiple streams.
   blink::mojom::StreamDevicesSet stream_devices_set;
   stream_devices_set.stream_devices.emplace_back(
       blink::mojom::StreamDevices::New());

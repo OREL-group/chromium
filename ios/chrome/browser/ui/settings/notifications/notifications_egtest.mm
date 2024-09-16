@@ -6,6 +6,7 @@
 
 #import "base/strings/sys_string_conversions.h"
 #import "components/commerce/core/commerce_feature_list.h"
+#import "components/variations/pref_names.h"
 #import "ios/chrome/browser/ui/push_notification/scoped_notification_auth_swizzler.h"
 #import "ios/chrome/browser/ui/settings/notifications/notifications_constants.h"
 #import "ios/chrome/grit/ios_branded_strings.h"
@@ -27,6 +28,12 @@ namespace {
 // Returns the matcher for the Tips Notifications switch.
 id<GREYMatcher> TipsSwitchMatcher() {
   NSString* title = l10n_util::GetNSString(IDS_IOS_SET_UP_LIST_TIPS_TITLE);
+  return grey_accessibilityID([NSString stringWithFormat:@"%@, switch", title]);
+}
+
+// Returns the matcher for the Safety Check Notifications switch.
+id<GREYMatcher> SafetyCheckSwitchMatcher() {
+  NSString* title = l10n_util::GetNSString(IDS_IOS_SAFETY_CHECK_TITLE);
   return grey_accessibilityID([NSString stringWithFormat:@"%@, switch", title]);
 }
 
@@ -65,10 +72,15 @@ id<GREYMatcher> NotificationsSettingsMatcher() {
   // enabled.
   if ([self isRunningTest:@selector
             (testNotificationsSwipeDown_WithUpdatedSettingsView)] ||
-      [self isRunningTest:@selector(testTipsSwitch)]) {
+      [self isRunningTest:@selector(testTipsSwitch)] ||
+      [self isRunningTest:@selector(testSafetyCheckSwitch)]) {
     config.additional_args.push_back("--enable-features=IOSTipsNotifications");
+    config.additional_args.push_back(
+        "--enable-features=SafetyCheckNotifications");
   } else {
     config.additional_args.push_back("--disable-features=IOSTipsNotifications");
+    config.additional_args.push_back(
+        "--disable-features=SafetyCheckNotifications");
   }
 
   return config;
@@ -78,6 +90,12 @@ id<GREYMatcher> NotificationsSettingsMatcher() {
 // TODO(crbug.com/326070899): remove this test when Tips Notifications is
 // enabled by default.
 - (void)testPriceNotificationsSwipeDown {
+  // Price tracking might only be enabled in certain countries, so it is
+  // overridden to ensure that it will be enabled.
+  [ChromeEarlGrey setStringValue:"us"
+               forLocalStatePref:variations::prefs::
+                                     kVariationsPermanentOverriddenCountry];
+
   // Opens price notifications setting.
   [ChromeEarlGreyUI openSettingsMenu];
   [ChromeEarlGreyUI tapSettingsMenuButton:SettingsMenuNotificationsButton()];
@@ -136,6 +154,45 @@ id<GREYMatcher> NotificationsSettingsMatcher() {
 
   // Toggle on the switch.
   [[EarlGrey selectElementWithMatcher:TipsSwitchMatcher()]
+      performAction:grey_turnSwitchOn(YES)];
+
+  // Tap Go To Settings action.
+  TapMenuItem(IDS_IOS_NOTIFICATIONS_ALERT_GO_TO_SETTINGS);
+
+  // Verify that settings has opened, then close it.
+  XCUIApplication* settingsApp = [[XCUIApplication alloc]
+      initWithBundleIdentifier:@"com.apple.Preferences"];
+  GREYAssertTrue([settingsApp waitForState:XCUIApplicationStateRunningForeground
+                                   timeout:5],
+                 @"The iOS Settings app should have opened.");
+  [settingsApp terminate];
+
+  // Reactivate the app.
+  [[[XCUIApplication alloc] init] activate];
+}
+
+// Tests that switching on Safety Check Notifications on the updated settings
+// page causes the alert prompt to appear when the user has disabled
+// notifications.
+- (void)testSafetyCheckSwitch {
+  // Swizzle in the "denied' auth status for notifications.
+  ScopedNotificationAuthSwizzler auth(UNAuthorizationStatusDenied, NO);
+  // Opens notifications setting.
+  [ChromeEarlGreyUI openSettingsMenu];
+  [ChromeEarlGreyUI tapSettingsMenuButton:SettingsMenuNotificationsButton()];
+
+  // Check that the TableView is presented.
+  [[EarlGrey selectElementWithMatcher:NotificationsSettingsMatcher()]
+      assertWithMatcher:grey_notNil()];
+  [[EarlGrey selectElementWithMatcher:SafetyCheckSwitchMatcher()]
+      assertWithMatcher:grey_notNil()];
+
+  // Toggle off the switch.
+  [[EarlGrey selectElementWithMatcher:SafetyCheckSwitchMatcher()]
+      performAction:grey_turnSwitchOn(NO)];
+
+  // Toggle on the switch.
+  [[EarlGrey selectElementWithMatcher:SafetyCheckSwitchMatcher()]
       performAction:grey_turnSwitchOn(YES)];
 
   // Tap Go To Settings action.

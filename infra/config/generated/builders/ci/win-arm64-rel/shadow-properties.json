@@ -1,7 +1,9 @@
 {
   "$build/reclient": {
+    "bootstrap_env": {
+      "RBE_depsscan_connect_timeout": "120s"
+    },
     "instance": "rbe-chromium-untrusted",
-    "jobs": 250,
     "metrics_project": "chromium-reclient-metrics",
     "scandeps_server": true
   },

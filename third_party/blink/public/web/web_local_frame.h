@@ -25,6 +25,7 @@
 #include "third_party/blink/public/common/tokens/tokens.h"
 #include "third_party/blink/public/mojom/back_forward_cache_not_restored_reasons.mojom-forward.h"
 #include "third_party/blink/public/mojom/blob/blob_url_store.mojom-shared.h"
+#include "third_party/blink/public/mojom/browser_interface_broker.mojom-shared.h"
 #include "third_party/blink/public/mojom/commit_result/commit_result.mojom-shared.h"
 #include "third_party/blink/public/mojom/context_menu/context_menu.mojom-shared.h"
 #include "third_party/blink/public/mojom/devtools/devtools_agent.mojom-shared.h"
@@ -42,6 +43,7 @@
 #include "third_party/blink/public/platform/cross_variant_mojo_util.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/public/platform/web_common.h"
+#include "third_party/blink/public/platform/web_content_settings_client.h"
 #include "third_party/blink/public/platform/web_url_error.h"
 #include "third_party/blink/public/platform/web_url_request.h"
 #include "third_party/blink/public/web/web_document.h"
@@ -78,6 +80,7 @@ namespace scheduler {
 class WebAgentGroupScheduler;
 }  // namespace scheduler
 
+class BrowserInterfaceBrokerProxy;
 class FrameScheduler;
 class InterfaceRegistry;
 class PageState;
@@ -133,6 +136,7 @@ class BLINK_EXPORT WebLocalFrame : public WebFrame {
       WebView*,
       WebLocalFrameClient*,
       blink::InterfaceRegistry*,
+      CrossVariantMojoRemote<mojom::BrowserInterfaceBrokerInterfaceBase>,
       const LocalFrameToken& frame_token,
       const DocumentToken& document_token,
       std::unique_ptr<blink::WebPolicyContainer> policy_container,
@@ -163,13 +167,15 @@ class BLINK_EXPORT WebLocalFrame : public WebFrame {
   //
   // Otherwise, if the load should not commit, call Detach() to discard the
   // frame.
-  static WebLocalFrame* CreateProvisional(WebLocalFrameClient*,
-                                          InterfaceRegistry*,
-                                          const LocalFrameToken& frame_token,
-                                          WebFrame* previous_web_frame,
-                                          const FramePolicy&,
-                                          const WebString& name,
-                                          WebView* web_view);
+  static WebLocalFrame* CreateProvisional(
+      WebLocalFrameClient*,
+      InterfaceRegistry*,
+      CrossVariantMojoRemote<mojom::BrowserInterfaceBrokerInterfaceBase>,
+      const LocalFrameToken& frame_token,
+      WebFrame* previous_web_frame,
+      const FramePolicy&,
+      const WebString& name,
+      WebView* web_view);
 
   // Creates a new local child of this frame. Similar to the other methods that
   // create frames, the returned frame should be freed by calling Close() when
@@ -205,6 +211,8 @@ class BLINK_EXPORT WebLocalFrame : public WebFrame {
 
   // Basic properties ---------------------------------------------------
 
+  virtual BrowserInterfaceBrokerProxy& GetBrowserInterfaceBroker() = 0;
+
   LocalFrameToken GetLocalFrameToken() const {
     return GetFrameToken().GetAs<LocalFrameToken>();
   }
@@ -231,6 +239,10 @@ class BLINK_EXPORT WebLocalFrame : public WebFrame {
   // available at the navigation commit timing.
   virtual void SetLCPPHint(
       const mojom::LCPCriticalPathPredictorNavigationTimeHintPtr&) = 0;
+
+  // Tests whether the policy-controlled feature is enabled in this frame.
+  virtual bool IsFeatureEnabled(
+      const mojom::PermissionsPolicyFeature&) const = 0;
 
   // Hierarchy ----------------------------------------------------------
 
@@ -441,6 +453,9 @@ class BLINK_EXPORT WebLocalFrame : public WebFrame {
                                     BackForwardCacheAware,
                                     mojom::WantResultOption,
                                     mojom::PromiseResultOption) = 0;
+
+  // Returns if devtools is connected to the frame.
+  virtual bool IsInspectorConnected() = 0;
 
   // Logs to the console associated with this frame. If |discard_duplicates| is
   // set, the message will only be added if it is unique (i.e. has not been
@@ -780,7 +795,7 @@ class BLINK_EXPORT WebLocalFrame : public WebFrame {
   virtual bool WillPrintSoon() = 0;
 
   // Prints one page.
-  virtual void PrintPage(uint32_t page_to_print, cc::PaintCanvas*) = 0;
+  virtual void PrintPage(uint32_t page_index, cc::PaintCanvas*) = 0;
 
   // Reformats the WebFrame for screen display.
   virtual void PrintEnd() = 0;
@@ -943,6 +958,9 @@ class BLINK_EXPORT WebLocalFrame : public WebFrame {
   // as well. The passed closure is invoked when queues of both threads have
   // been processed.
   virtual void FlushInputForTesting(base::OnceClosure) {}
+
+  virtual bool AllowStorageAccessSyncAndNotify(
+      WebContentSettingsClient::StorageType storage_type) = 0;
 
  protected:
   explicit WebLocalFrame(mojom::TreeScopeType scope,

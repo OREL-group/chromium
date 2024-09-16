@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_USER_EDUCATION_VIEWS_HELP_BUBBLE_FACTORY_VIEWS_H_
 #define COMPONENTS_USER_EDUCATION_VIEWS_HELP_BUBBLE_FACTORY_VIEWS_H_
 
+#include <memory>
+
 #include "base/callback_list.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
@@ -24,6 +26,7 @@
 namespace user_education {
 
 class HelpBubbleDelegate;
+class HelpBubbleEventRelay;
 class HelpBubbleView;
 
 namespace internal {
@@ -83,8 +86,7 @@ class HelpBubbleViews : public HelpBubble,
       scoped_observation_{this};
 
   // Track the anchor element to determine if/when it goes away.
-  raw_ptr<const ui::TrackedElement, AcrossTasksDanglingUntriaged>
-      anchor_element_;
+  raw_ptr<const ui::TrackedElement> anchor_element_ = nullptr;
 
   // Listens so that the bubble can be closed if the anchor element disappears.
   // The specific anchor view is not tracked because in a few cases (e.g. Mac
@@ -118,7 +120,8 @@ class HelpBubbleFactoryViews : public HelpBubbleFactory {
   std::unique_ptr<HelpBubble> CreateBubbleImpl(
       ui::TrackedElement* element,
       const internal::HelpBubbleAnchorParams& anchor,
-      HelpBubbleParams params);
+      HelpBubbleParams params,
+      std::unique_ptr<HelpBubbleEventRelay> event_relay);
 
  private:
   raw_ptr<const HelpBubbleDelegate> delegate_;

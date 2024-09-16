@@ -12,13 +12,8 @@ namespace blink {
 LayoutGrid::LayoutGrid(Element* element) : LayoutBlock(element) {}
 
 void LayoutGrid::Trace(Visitor* visitor) const {
-  visitor->Trace(cached_min_max_sizes_);
+  visitor->Trace(cached_subgrid_min_max_sizes_);
   LayoutBlock::Trace(visitor);
-}
-
-void LayoutGrid::AddChild(LayoutObject* new_child) {
-  NOT_DESTROYED();
-  AddChild(new_child, /*before_child=*/nullptr);
 }
 
 void LayoutGrid::AddChild(LayoutObject* new_child, LayoutObject* before_child) {
@@ -117,26 +112,26 @@ void LayoutGrid::SetCachedPlacementData(GridPlacementData&& placement_data) {
   SetGridPlacementDirty(false);
 }
 
-bool LayoutGrid::HasCachedMinMaxSizes() const {
-  return cached_min_max_sizes_ && !IsSubgridMinMaxSizesCacheDirty();
+bool LayoutGrid::HasCachedSubgridMinMaxSizes() const {
+  return cached_subgrid_min_max_sizes_ && !IsSubgridMinMaxSizesCacheDirty();
 }
 
-const MinMaxSizes& LayoutGrid::CachedMinMaxSizes() const {
-  DCHECK(HasCachedMinMaxSizes());
-  return **cached_min_max_sizes_;
+const MinMaxSizes& LayoutGrid::CachedSubgridMinMaxSizes() const {
+  DCHECK(HasCachedSubgridMinMaxSizes());
+  return **cached_subgrid_min_max_sizes_;
 }
 
-void LayoutGrid::SetMinMaxSizesCache(MinMaxSizes&& min_max_sizes,
-                                     const GridLayoutData& layout_data) {
-  cached_min_max_sizes_ = MakeGarbageCollected<SubgridMinMaxSizesCache>(
+void LayoutGrid::SetSubgridMinMaxSizesCache(MinMaxSizes&& min_max_sizes,
+                                            const GridLayoutData& layout_data) {
+  cached_subgrid_min_max_sizes_ = MakeGarbageCollected<SubgridMinMaxSizesCache>(
       std::move(min_max_sizes), layout_data);
   SetSubgridMinMaxSizesCacheDirty(false);
 }
 
-bool LayoutGrid::ShouldInvalidateMinMaxSizesCacheFor(
+bool LayoutGrid::ShouldInvalidateSubgridMinMaxSizesCacheFor(
     const GridLayoutData& layout_data) const {
-  return HasCachedMinMaxSizes() &&
-         !cached_min_max_sizes_->IsValidFor(layout_data);
+  return HasCachedSubgridMinMaxSizes() &&
+         !cached_subgrid_min_max_sizes_->IsValidFor(layout_data);
 }
 
 const GridLayoutData* LayoutGrid::LayoutData() const {

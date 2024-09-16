@@ -25,6 +25,7 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
+#include "base/test/task_environment.h"
 #include "base/test/test_future.h"
 #include "base/uuid.h"
 #include "build/build_config.h"
@@ -34,6 +35,7 @@
 #include "chrome/browser/download/download_item_model.h"
 #include "chrome/browser/download/download_prefs.h"
 #include "chrome/browser/download/insecure_download_blocking.h"
+#include "chrome/browser/tab_group_sync/tab_group_sync_tab_state.h"
 #include "chrome/common/buildflags.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_paths.h"
@@ -51,6 +53,7 @@
 #include "components/download/public/common/download_stats.h"
 #include "components/download/public/common/download_target_info.h"
 #include "components/download/public/common/mock_download_item.h"
+#include "components/enterprise/buildflags/buildflags.h"
 #include "components/policy/core/common/policy_pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/buildflags.h"
@@ -71,9 +74,11 @@
 #include "url/origin.h"
 
 #if BUILDFLAG(FULL_SAFE_BROWSING)
+#include "chrome/browser/policy/dm_token_utils.h"
 #include "chrome/browser/safe_browsing/download_protection/download_protection_service.h"
 #include "chrome/browser/safe_browsing/download_protection/download_protection_util.h"
 #include "chrome/browser/safe_browsing/test_safe_browsing_service.h"
+#include "components/enterprise/obfuscation/core/utils.h"
 #include "components/safe_browsing/core/common/features.h"
 #include "components/safe_browsing/core/common/proto/csd.pb.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
@@ -91,6 +96,10 @@
 #include "components/infobars/core/infobar_delegate.h"
 #include "components/infobars/core/infobar_manager.h"
 #endif
+
+#if BUILDFLAG(ENTERPRISE_CLOUD_CONTENT_ANALYSIS)
+#include "chrome/browser/enterprise/connectors/test/deep_scanning_test_utils.h"
+#endif  // BUILDFLAG(ENTERPRISE_CLOUD_CONTENT_ANALYSIS)
 
 using download::DownloadItem;
 using download::DownloadPathReservationTracker;
@@ -118,6 +127,12 @@ namespace {
 class MockWebContentsDelegate : public content::WebContentsDelegate {
  public:
   ~MockWebContentsDelegate() override {}
+  MOCK_METHOD(void,
+              CanDownload,
+              (const GURL&,
+               const std::string&,
+               base::OnceCallback<void(bool)> callback),
+              (override));
 };
 
 ACTION_P3(ScheduleCallback2, result0, result1) {
@@ -328,6 +343,10 @@ class ChromeDownloadManagerDelegateTest
       InsecureDownloadExtensions extension,
       download::DownloadInterruptReason interrupt_reason,
       download::DownloadItem::InsecureDownloadStatus insecure_download_status);
+
+  MockWebContentsDelegate* web_contents_delegate() {
+    return &web_contents_delegate_;
+  }
 
  private:
   base::FilePath test_download_dir_;
@@ -1487,6 +1506,30 @@ TEST_F(ChromeDownloadManagerDelegateTest,
       download::DOWNLOAD_INTERRUPT_REASON_NONE,
       download::DownloadItem::InsecureDownloadStatus::SAFE);
 }
+
+TEST_F(ChromeDownloadManagerDelegateTest, DownloadBlockedForSyncedTab) {
+  GURL download_url = GURL("http://test.com/abc");
+  EXPECT_CALL(*web_contents_delegate(), CanDownload(_, _, _))
+      .WillRepeatedly([](const GURL& url, const std::string& request_method,
+                         base::OnceCallback<void(bool)> callback) {
+        std::move(callback).Run(true);
+      });
+  delegate()->CheckDownloadAllowed(
+      base::BindRepeating(&RenderViewHostTestHarness::web_contents,
+                          base::Unretained(this)),
+      download_url, "GET", std::nullopt, false, false, "application/pdf",
+      std::nullopt, base::BindOnce([](bool allowed) { EXPECT_TRUE(allowed); }));
+  base::RunLoop().RunUntilIdle();
+
+  TabGroupSyncTabState::CreateForWebContents(web_contents());
+  delegate()->CheckDownloadAllowed(
+      base::BindRepeating(&RenderViewHostTestHarness::web_contents,
+                          base::Unretained(this)),
+      download_url, "GET", std::nullopt, false, false, "application/pdf",
+      std::nullopt,
+      base::BindOnce([](bool allowed) { EXPECT_FALSE(allowed); }));
+  base::RunLoop().RunUntilIdle();
+}
 #endif  // !BUILDFLAG(IS_ANDROID)
 
 TEST_F(ChromeDownloadManagerDelegateTest, InsecureDownloadsBlocked) {
@@ -1899,6 +1942,14 @@ class TestDownloadProtectionService
       base::optional_ref<const std::string> password) override {
     std::move(callback).Run(MockCheckClientDownload());
   }
+
+  bool MaybeCheckClientDownload(
+      download::DownloadItem* item,
+      safe_browsing::CheckDownloadRepeatingCallback callback) override {
+    std::move(callback).Run(MockCheckClientDownload());
+    return true;
+  }
+
   MOCK_METHOD0(MockCheckClientDownload, safe_browsing::DownloadCheckResult());
 };
 
@@ -1958,10 +2009,7 @@ class ChromeDownloadManagerDelegateTestWithSafeBrowsing
     : public ChromeDownloadManagerDelegateTest,
       public ::testing::WithParamInterface<SafeBrowsingTestParameters> {
  public:
-  ChromeDownloadManagerDelegateTestWithSafeBrowsing() {
-    feature_list_.InitAndEnableFeature(
-        safe_browsing::kDownloadReportWithoutUserDecision);
-  }
+  ChromeDownloadManagerDelegateTestWithSafeBrowsing() = default;
 
   void SetUp() override;
   void TearDown() override;
@@ -1990,7 +2038,6 @@ class ChromeDownloadManagerDelegateTestWithSafeBrowsing
   std::unique_ptr<TestDownloadProtectionService>
       test_download_protection_service_;
   scoped_refptr<FakeSafeBrowsingService> sb_service_;
-  base::test::ScopedFeatureList feature_list_;
 };
 
 void ChromeDownloadManagerDelegateTestWithSafeBrowsing::SetUp() {
@@ -2383,8 +2430,8 @@ TEST_F(ChromeDownloadManagerDelegateTestWithSafeBrowsing,
   run_loop.Run();
 }
 
-#if !BUILDFLAG(IS_WIN)
 // TODO(crbug.com/41328715) Add a Windows version of this test.
+#if !BUILDFLAG(IS_WIN)
 TEST_F(ChromeDownloadManagerDelegateTestWithSafeBrowsing,
        TrustedSourcesPolicyTrusted) {
   base::CommandLine* command_line(base::CommandLine::ForCurrentProcess());
@@ -2403,7 +2450,109 @@ TEST_F(ChromeDownloadManagerDelegateTestWithSafeBrowsing,
   EXPECT_TRUE(delegate()->ShouldCompleteDownload(download_item.get(),
                                                  base::OnceClosure()));
 }
+
+TEST_F(ChromeDownloadManagerDelegateTestWithSafeBrowsing,
+       TrustedSourcesDontExemptEnterpriseScans) {
+  base::CommandLine* command_line(base::CommandLine::ForCurrentProcess());
+  DCHECK(command_line);
+  command_line->AppendSwitchASCII(switches::kTrustedDownloadSources,
+                                  "trusted.com");
+
+  policy::SetDMTokenForTesting(policy::DMToken::CreateValidToken("dm_token"));
+  enterprise_connectors::test::SetAnalysisConnector(
+      pref_service(), enterprise_connectors::FILE_DOWNLOADED,
+      R"({
+        "service_provider": "google",
+        "enable": [
+          {
+            "url_list": ["*"],
+            "tags": ["malware"]
+          }
+        ],
+        "block_until_verdict": 1
+      })");
+
+  GURL download_url("http://trusted.com/best-download-ever.exe");
+  pref_service()->SetBoolean(prefs::kSafeBrowsingForTrustedSourcesEnabled,
+                             false);
+  std::unique_ptr<download::MockDownloadItem> download_item =
+      CreateActiveDownloadItem(0);
+  EXPECT_CALL(*download_item, GetURL()).WillRepeatedly(ReturnRef(download_url));
+  EXPECT_CALL(*download_item, RequireSafetyChecks())
+      .WillRepeatedly(Return(true));
+  EXPECT_CALL(*delegate(), GetDownloadProtectionService());
+  EXPECT_CALL(*download_protection_service(), MockCheckClientDownload())
+      .WillOnce(Return(safe_browsing::DownloadCheckResult::SAFE));
+  EXPECT_CALL(*download_item, GetDangerType())
+      .WillRepeatedly(Return(download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS));
+
+  base::RunLoop run_loop;
+  ASSERT_FALSE(delegate()->ShouldCompleteDownload(download_item.get(),
+                                                  run_loop.QuitClosure()));
+  run_loop.Run();
+  policy::SetDMTokenForTesting(policy::DMToken::CreateEmptyToken());
+}
 #endif  // !BUILDFLAG(IS_WIN)
+
+TEST_F(ChromeDownloadManagerDelegateTestWithSafeBrowsing,
+       ShouldObfuscateDownload) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(
+      enterprise_obfuscation::kEnterpriseFileObfuscation);
+
+  std::unique_ptr<download::MockDownloadItem> download_item =
+      CreateActiveDownloadItem(0);
+
+  // Chrome-initiated download
+  EXPECT_CALL(*download_item, RequireSafetyChecks())
+      .WillRepeatedly(Return(false));
+  EXPECT_FALSE(delegate()->ShouldObfuscateDownload(download_item.get()));
+
+  // User-initiated download, no matching connector policies
+  EXPECT_CALL(*download_item, RequireSafetyChecks())
+      .WillRepeatedly(Return(true));
+  EXPECT_CALL(*delegate(), GetDownloadProtectionService())
+      .WillRepeatedly(Return(nullptr));
+  EXPECT_FALSE(delegate()->ShouldObfuscateDownload(download_item.get()));
+
+  // User-initiated download, matching connector policies
+  auto mock_protection_service =
+      std::make_unique<::testing::StrictMock<TestDownloadProtectionService>>();
+  EXPECT_CALL(*delegate(), GetDownloadProtectionService())
+      .WillRepeatedly(Return(mock_protection_service.get()));
+
+  policy::SetDMTokenForTesting(policy::DMToken::CreateValidToken("dm_token"));
+  enterprise_connectors::test::SetAnalysisConnector(
+      pref_service(), enterprise_connectors::FILE_DOWNLOADED,
+      R"({
+        "service_provider": "google",
+        "enable": [
+          {
+            "url_list": ["*"],
+            "tags": ["malware", "dlp"]
+          }
+        ],
+        "block_until_verdict": 1
+      })");
+
+  EXPECT_TRUE(delegate()->ShouldObfuscateDownload(download_item.get()));
+
+  // User-initiated download, matching connector policies, but report-only
+  enterprise_connectors::test::SetAnalysisConnector(
+      pref_service(), enterprise_connectors::FILE_DOWNLOADED,
+      R"({
+        "service_provider": "google",
+        "enable": [
+          {
+            "url_list": ["*"],
+            "tags": ["malware", "dlp"]
+          }
+        ],
+        "block_until_verdict": 0
+      })");
+
+  EXPECT_FALSE(delegate()->ShouldObfuscateDownload(download_item.get()));
+}
 #endif  // FULL_SAFE_BROWSING
 
 #if BUILDFLAG(IS_ANDROID)

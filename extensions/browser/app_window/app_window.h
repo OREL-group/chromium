@@ -24,8 +24,7 @@
 #include "extensions/common/extension_id.h"
 #include "extensions/common/mojom/frame.mojom-forward.h"
 #include "third_party/blink/public/mojom/page/draggable_region.mojom-forward.h"
-#include "ui/base/ui_base_types.h"  // WindowShowState
-#include "ui/gfx/geometry/rect.h"
+#include "ui/base/mojom/window_show_state.mojom-forward.h"
 #include "ui/gfx/image/image.h"
 
 class GURL;
@@ -33,7 +32,12 @@ class SkRegion;
 
 namespace base {
 class Value;
-}
+}  // namespace base
+
+namespace gfx {
+class Rect;
+class RoundedCornersF;
+}  // namespace gfx
 
 namespace content {
 class BrowserContext;
@@ -171,7 +175,7 @@ class AppWindow : public content::WebContentsDelegate,
     int32_t creator_process_id;
 
     // Initial state of the window.
-    ui::WindowShowState state;
+    ui::mojom::WindowShowState state;
 
     // If true, don't show the window after creation.
     bool hidden;
@@ -203,15 +207,21 @@ class AppWindow : public content::WebContentsDelegate,
 
     // The API enables developers to specify content or window bounds. This
     // function combines them into a single, constrained window size.
-    gfx::Rect GetInitialWindowBounds(const gfx::Insets& frame_insets) const;
+    gfx::Rect GetInitialWindowBounds(
+        const gfx::Insets& frame_insets,
+        const gfx::RoundedCornersF& window_radii) const;
 
     // The API enables developers to specify content or window size constraints.
     // These functions combine them so that we can work with one set of
     // constraints.
     gfx::Size GetContentMinimumSize(const gfx::Insets& frame_insets) const;
     gfx::Size GetContentMaximumSize(const gfx::Insets& frame_insets) const;
-    gfx::Size GetWindowMinimumSize(const gfx::Insets& frame_insets) const;
-    gfx::Size GetWindowMaximumSize(const gfx::Insets& frame_insets) const;
+    gfx::Size GetWindowMinimumSize(
+        const gfx::Insets& frame_insets,
+        const gfx::RoundedCornersF& window_radii) const;
+    gfx::Size GetWindowMaximumSize(
+        const gfx::Insets& frame_insets,
+        const gfx::RoundedCornersF& window_radii) const;
   };
 
   // Convert draggable regions in raw format to SkRegion format. Caller is
@@ -434,19 +444,19 @@ class AppWindow : public content::WebContentsDelegate,
       const content::OpenURLParams& params,
       base::OnceCallback<void(content::NavigationHandle&)>
           navigation_handle_callback) override;
-  void AddNewContents(content::WebContents* source,
-                      std::unique_ptr<content::WebContents> new_contents,
-                      const GURL& target_url,
-                      WindowOpenDisposition disposition,
-                      const blink::mojom::WindowFeatures& window_features,
-                      bool user_gesture,
-                      bool* was_blocked) override;
+  content::WebContents* AddNewContents(
+      content::WebContents* source,
+      std::unique_ptr<content::WebContents> new_contents,
+      const GURL& target_url,
+      WindowOpenDisposition disposition,
+      const blink::mojom::WindowFeatures& window_features,
+      bool user_gesture,
+      bool* was_blocked) override;
   content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
       content::WebContents* source,
-      const content::NativeWebKeyboardEvent& event) override;
-  bool HandleKeyboardEvent(
-      content::WebContents* source,
-      const content::NativeWebKeyboardEvent& event) override;
+      const input::NativeWebKeyboardEvent& event) override;
+  bool HandleKeyboardEvent(content::WebContents* source,
+                           const input::NativeWebKeyboardEvent& event) override;
   void RequestPointerLock(content::WebContents* web_contents,
                           bool user_gesture,
                           bool last_unlocked_by_target) override;
@@ -546,6 +556,15 @@ class AppWindow : public content::WebContentsDelegate,
   // be fetched and set using this URL.
   GURL app_icon_url_;
 
+  // These callbacks are called when the navigation is finished on both browser
+  // and renderer sides.
+  std::vector<DidFinishFirstNavigationCallback>
+      on_did_finish_first_navigation_callbacks_;
+
+  // Whether the first navigation was completed in both browser and renderer
+  // processes.
+  bool did_finish_first_navigation_ = false;
+
   std::unique_ptr<NativeAppWindow> native_app_window_;
   std::unique_ptr<AppWindowContents> app_window_contents_;
   std::unique_ptr<AppDelegate> app_delegate_;
@@ -590,14 +609,6 @@ class AppWindow : public content::WebContentsDelegate,
   // Whether the app window is loaded and ready. It is used to resolve the
   // race condition of loading custom app icon and app content simultaneously.
   bool window_ready_ = false;
-
-  // These callbacks are called when the navigation is finished on both browser
-  // and renderer sides.
-  std::vector<DidFinishFirstNavigationCallback>
-      on_did_finish_first_navigation_callbacks_;
-  // Whether the first navigation was completed in both browser and renderer
-  // processes.
-  bool did_finish_first_navigation_ = false;
 
   // Allows tests to wait for draggable regions to be sent from the renderer.
   base::OnceClosure on_update_draggable_regions_callback_for_testing_;

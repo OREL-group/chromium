@@ -186,7 +186,6 @@ class VIEWS_EXPORT StyledLabel : public View {
   gfx::Size CalculatePreferredSize(
       const SizeBounds& available_size) const override;
   void OnBoundsChanged(const gfx::Rect& previous_bounds) override;
-  int GetHeightForWidth(int w) const override;
   void Layout(PassKey) override;
   void PreferredSizeChanged() override;
 
@@ -202,9 +201,6 @@ class VIEWS_EXPORT StyledLabel : public View {
 
   // Gets the first child that is a link. Returns nullptr if there isn't any.
   views::Link* GetFirstLinkForTesting();
-
- protected:
-  gfx::Size CalculatePreferredSize() const final;
 
  private:
   struct StyleRange {
@@ -265,6 +261,11 @@ class VIEWS_EXPORT StyledLabel : public View {
   // StyledLabel's child list. This list also holds the custom views during
   // layout.
   std::list<std::unique_ptr<View>> custom_views_;
+
+  // Temporarily owns the views to be deleted during layout. These views might
+  // still be referenced on the stack. If we delete them immediately, UaFs
+  // could happen when the stack unwinds.
+  std::vector<std::unique_ptr<View>> pending_delete_views_;
 
   // The ranges that should be linkified, sorted by start position.
   StyleRanges style_ranges_;

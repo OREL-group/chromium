@@ -23,6 +23,9 @@ class TabGroup;
 /// Tells the receiver to close the `item`.
 - (void)closeItem:(TabSwitcherItem*)item;
 
+/// Tells the receiver to remove the `item` from its group.
+- (void)removeItemFromGroup:(TabSwitcherItem*)item;
+
 /// Tells the receiver to close all items except `item`.
 - (void)closeAllItemsExcept:(TabSwitcherItem*)item;
 
@@ -49,11 +52,16 @@ class TabGroup;
     NS_SWIFT_NAME(addNewTabInGroup(_:));
 
 /// Tells the receiver to ungroup the tabs in the group associated with
-/// `tabGroupItem`.
-- (void)ungroupGroup:(TabGroupItem*)tabGroupItem;
+/// `tabGroupItem`. `sourceView` is the view that the delete action originated
+/// from.
+- (void)ungroupGroup:(TabGroupItem*)tabGroupItem sourceView:(UIView*)sourceView;
 
 /// Tells the receiver to delete the group associated with `tabGroupItem`.
-- (void)deleteGroup:(TabGroupItem*)tabGroupItem;
+/// `sourceView` is the view that the delete action originated from.
+- (void)deleteGroup:(TabGroupItem*)tabGroupItem sourceView:(UIView*)sourceView;
+
+/// Tells the receiver to close the group associated with `tabGroupItem`.
+- (void)closeGroup:(TabGroupItem*)tabGroupItem;
 
 @end
 

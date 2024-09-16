@@ -96,7 +96,7 @@ NSIndexPath* CreateIndexPath(NSInteger index) {
 
 - (instancetype)init {
   PinnedTabsLayout* layout = [[PinnedTabsLayout alloc] init];
-  if (self = [super initWithCollectionViewLayout:layout]) {
+  if ((self = [super initWithCollectionViewLayout:layout])) {
   }
   return self;
 }
@@ -131,9 +131,6 @@ NSIndexPath* CreateIndexPath(NSInteger index) {
   [self deselectAllCollectionViewItemsAnimated:NO];
   [self selectCollectionViewItemWithID:_selectedItemID animated:NO];
   [self scrollCollectionViewToSelectedItemAnimated:NO];
-
-  // Update the delegate, in case it wasn't set when `items` was populated.
-  [self.delegate pinnedTabsViewController:self didChangeItemCount:_items.count];
 
   _lastInsertedItemID = web::WebStateID();
   _contentAppeared = YES;
@@ -308,8 +305,6 @@ NSIndexPath* CreateIndexPath(NSInteger index) {
 
   [self updatePinnedTabsVisibility];
 
-  [self.delegate pinnedTabsViewController:self didChangeItemCount:items.count];
-
   [self.collectionView reloadData];
 
   [self deselectAllCollectionViewItemsAnimated:YES];
@@ -351,7 +346,7 @@ NSIndexPath* CreateIndexPath(NSInteger index) {
       completion:^(BOOL completed) {
         [weakSelf handleItemRemovalCompletion];
         [weakSelf.delegate pinnedTabsViewController:weakSelf
-                                didRemoveItemWIthID:removedItemID];
+                                didRemoveItemWithID:removedItemID];
       }];
 }
 
@@ -433,7 +428,7 @@ NSIndexPath* CreateIndexPath(NSInteger index) {
 - (UICollectionViewCell*)collectionView:(UICollectionView*)collectionView
                  cellForItemAtIndexPath:(NSIndexPath*)indexPath {
   NSUInteger itemIndex = base::checked_cast<NSUInteger>(indexPath.item);
-  // TODO(crbug.com/1068136): Remove this when the issue is closed.
+  // TODO(crbug.com/40683330): Remove this when the issue is closed.
   // This is a preventive fix related to the issue above.
   // Presumably this is a race condition where an item has been deleted at the
   // same time as the collection is doing layout. The assumption is that there
@@ -454,16 +449,6 @@ NSIndexPath* CreateIndexPath(NSInteger index) {
 #pragma mark - UICollectionViewDelegate
 
 - (void)collectionView:(UICollectionView*)collectionView
-    didSelectItemAtIndexPath:(NSIndexPath*)indexPath {
-  if (@available(iOS 16, *)) {
-    // This is handled by
-    // `collectionView:performPrimaryActionForItemAtIndexPath:` on iOS 16.
-  } else {
-    [self tappedItemAtIndexPath:indexPath];
-  }
-}
-
-- (void)collectionView:(UICollectionView*)collectionView
     performPrimaryActionForItemAtIndexPath:(NSIndexPath*)indexPath {
   [self tappedItemAtIndexPath:indexPath];
 }
@@ -471,6 +456,8 @@ NSIndexPath* CreateIndexPath(NSInteger index) {
 - (UIContextMenuConfiguration*)collectionView:(UICollectionView*)collectionView
     contextMenuConfigurationForItemAtIndexPath:(NSIndexPath*)indexPath
                                          point:(CGPoint)point {
+  [self.delegate pinnedViewControllerDidRequestContextMenu:self];
+
   PinnedCell* cell = base::apple::ObjCCastStrict<PinnedCell>(
       [self.collectionView cellForItemAtIndexPath:indexPath]);
   return [self.menuProvider
@@ -494,7 +481,6 @@ NSIndexPath* CreateIndexPath(NSInteger index) {
 
 - (void)collectionView:(UICollectionView*)collectionView
     dragSessionWillBegin:(id<UIDragSession>)session {
-  [self.dragDropHandler dragWillBeginForTabSwitcherItem:_draggedItem];
   _dragEndAtNewIndex = NO;
   _localDragActionInProgress = YES;
   base::UmaHistogramEnumeration(kUmaPinnedViewDragDropTabsEvent,
@@ -516,7 +502,6 @@ NSIndexPath* CreateIndexPath(NSInteger index) {
   }
   base::UmaHistogramEnumeration(kUmaPinnedViewDragDropTabsEvent, dragEvent);
 
-  [self.dragDropHandler dragSessionDidEnd];
   [self.delegate pinnedViewControllerDragSessionDidEnd:self];
   [self dragSessionEnabled:NO];
 }
@@ -551,9 +536,11 @@ NSIndexPath* CreateIndexPath(NSInteger index) {
 
 - (void)collectionView:(UICollectionView*)collectionView
     dropSessionDidEnter:(id<UIDropSession>)session {
-  _dropOverlayView.backgroundColor = [UIColor colorNamed:kBlueColor];
-  self.collectionView.backgroundColor = [UIColor colorNamed:kBlueColor];
-  self.collectionView.backgroundView.hidden = YES;
+  if (_dragSessionEnabled) {
+    _dropOverlayView.backgroundColor = [UIColor colorNamed:kBlueColor];
+    self.collectionView.backgroundColor = [UIColor colorNamed:kBlueColor];
+    self.collectionView.backgroundView.hidden = YES;
+  }
 }
 
 - (void)collectionView:(UICollectionView*)collectionView
@@ -729,7 +716,6 @@ NSIndexPath* CreateIndexPath(NSInteger index) {
   [_items insertObject:item atIndex:index];
   _selectedItemID = selectedItemID;
   _lastInsertedItemID = item.identifier;
-  [self.delegate pinnedTabsViewController:self didChangeItemCount:_items.count];
 
   [self.collectionView insertItemsAtIndexPaths:@[ CreateIndexPath(index) ]];
 }
@@ -742,7 +728,6 @@ NSIndexPath* CreateIndexPath(NSInteger index) {
                                       (web::WebStateID)selectedItemID {
   [_items removeObjectAtIndex:index];
   _selectedItemID = selectedItemID;
-  [self.delegate pinnedTabsViewController:self didChangeItemCount:_items.count];
 
   [self.collectionView deleteItemsAtIndexPaths:@[ CreateIndexPath(index) ]];
 }
@@ -750,13 +735,11 @@ NSIndexPath* CreateIndexPath(NSInteger index) {
 // Handles the completion of item insertion into the collection view.
 - (void)handleItemInsertionCompletion {
   [self updateCollectionViewAfterItemInsertion];
-  [self.delegate pinnedTabsViewController:self didChangeItemCount:_items.count];
 }
 
 // Handles the completion of item removal into the collection view.
 - (void)handleItemRemovalCompletion {
   [self updateCollectionViewAfterItemDeletion];
-  [self.delegate pinnedTabsViewController:self didChangeItemCount:_items.count];
 }
 
 // Configures the collectionView.

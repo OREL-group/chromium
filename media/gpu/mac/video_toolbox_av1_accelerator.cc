@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/gpu/mac/video_toolbox_av1_accelerator.h"
 
 #include "base/numerics/safe_conversions.h"
@@ -149,7 +154,7 @@ bool VideoToolboxAV1Accelerator::OutputPicture(const AV1Picture& pic) {
   }
 
   // Submit for decoding.
-  // TODO(crbug.com/1331597): Replace all const ref AV1Picture with
+  // TODO(crbug.com/40227557): Replace all const ref AV1Picture with
   // scoped_refptr.
   decode_cb_.Run(std::move(sample), session_metadata_,
                  base::WrapRefCounted(const_cast<AV1Picture*>(&pic)));
@@ -169,9 +174,8 @@ bool VideoToolboxAV1Accelerator::ProcessFormat(
   DVLOG(4) << __func__;
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  // TODO(crbug.com/1331597): Consider merging with CreateFormatExtensions() to
+  // TODO(crbug.com/40227557): Consider merging with CreateFormatExtensions() to
   // avoid converting back and forth.
-  // TODO(crbug.com/1331597): Extract from sequence header instead?
   VideoColorSpace color_space = pic.get_colorspace();
 
   VideoCodecProfile profile;
@@ -195,7 +199,7 @@ bool VideoToolboxAV1Accelerator::ProcessFormat(
     hdr_metadata = hdr_metadata_;
   }
 
-  // TODO(crbug.com/1493614): Should this be the current frame size, or the
+  // TODO(crbug.com/40936765): Should this be the current frame size, or the
   // sequence max frame size?
   gfx::Size coded_size(base::strict_cast<int>(pic.frame_header.width),
                        base::strict_cast<int>(pic.frame_header.height));

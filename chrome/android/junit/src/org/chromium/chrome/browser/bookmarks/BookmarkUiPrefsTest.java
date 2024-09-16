@@ -15,7 +15,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
@@ -26,12 +25,9 @@ import org.chromium.base.ContextUtils;
 import org.chromium.base.shared_preferences.SharedPreferencesManager;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Batch;
-import org.chromium.base.test.util.Features;
-import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.bookmarks.BookmarkUiPrefs.BookmarkRowDisplayPref;
 import org.chromium.chrome.browser.bookmarks.BookmarkUiPrefs.BookmarkRowSortOrder;
-import org.chromium.chrome.browser.commerce.ShoppingFeatures;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
 import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
@@ -43,7 +39,6 @@ import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
 @EnableFeatures({ChromeFeatureList.ANDROID_IMPROVED_BOOKMARKS})
 public class BookmarkUiPrefsTest {
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
-    @Rule public TestRule mFeaturesProcessorRule = new Features.JUnitProcessor();
 
     @Mock private BookmarkUiPrefs.Observer mObserver;
 
@@ -59,27 +54,6 @@ public class BookmarkUiPrefsTest {
     @After
     public void tearDown() {
         mSharedPreferencesManager.removeKey(ChromePreferenceKeys.BOOKMARKS_VISUALS_PREF);
-    }
-
-    @Test
-    @DisableFeatures({ChromeFeatureList.ANDROID_IMPROVED_BOOKMARKS})
-    public void legacyVisualFlags() {
-        ShoppingFeatures.setShoppingListEligibleForTesting(true);
-
-        Assert.assertEquals(
-                BookmarkRowDisplayPref.VISUAL, mBookmarkUiPrefs.getBookmarkRowDisplayPref());
-
-        ShoppingFeatures.setShoppingListEligibleForTesting(false);
-    }
-
-    @Test
-    @DisableFeatures({ChromeFeatureList.ANDROID_IMPROVED_BOOKMARKS})
-    public void legacyVisualFlags_noShopping() {
-        ShoppingFeatures.setShoppingListEligibleForTesting(false);
-
-        // Nothing has been written to shared prefs manager.
-        Assert.assertEquals(
-                BookmarkRowDisplayPref.COMPACT, mBookmarkUiPrefs.getBookmarkRowDisplayPref());
     }
 
     @Test

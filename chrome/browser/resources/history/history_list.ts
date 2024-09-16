@@ -110,6 +110,13 @@ export class HistoryListElement extends HistoryListElementBase {
         type: Object,
         observer: 'onScrollTargetChanged_',
       },
+      scrollOffset: Number,
+
+      isEmpty: {
+        type: Boolean,
+        reflectToAttribute: true,
+        computed: 'computeIsEmpty_(historyData_.length)',
+      },
     };
   }
 
@@ -118,12 +125,14 @@ export class HistoryListElement extends HistoryListElementBase {
       loadTimeData.getBoolean('allowDeletingHistory');
   private actionMenuModel_: ActionMenuModel|null = null;
   private resultLoadingDisabled_: boolean = false;
+  isEmpty: boolean;
   searchedTerm: string = '';
   selectedItems: Set<number> = new Set();
   pendingDelete: boolean = false;
   lastSelectedIndex: number;
   queryState: QueryState;
   scrollTarget: HTMLElement = document.documentElement;
+  scrollOffset: number = 0;
 
   override connectedCallback() {
     super.connectedCallback();
@@ -270,6 +279,11 @@ export class HistoryListElement extends HistoryListElementBase {
         this.shadowRoot!.querySelector<HTMLElement>('.action-button');
     assert(button);
     button.focus();
+  }
+
+  // Notifies the iron-list of this element being potentially resized.
+  notifyResize() {
+    this.$['infinite-list'].notifyResize();
   }
 
   /////////////////////////////////////////////////////////////////////////////
@@ -619,6 +633,10 @@ export class HistoryListElement extends HistoryListElementBase {
     // resize events to fire before the list is attached and can be measured.
     // Adding another resize here ensures it will get sized correctly.
     this.$['infinite-list'].notifyResize();
+  }
+
+  private computeIsEmpty_() {
+    return this.historyData_.length === 0;
   }
 }
 

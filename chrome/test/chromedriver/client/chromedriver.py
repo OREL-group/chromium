@@ -153,7 +153,7 @@ class ChromeDriver(object):
     assert type(chrome_switches) is list
     options['args'] = chrome_switches
 
-    # TODO(crbug.com/1011000): Work around a bug with headless on Mac.
+    # TODO(crbug.com/40101714): Work around a bug with headless on Mac.
     if (util.GetPlatformName() == 'mac' and
         browser_name == 'chrome-headless-shell' and
         debugger_address is None):
@@ -813,6 +813,20 @@ class ChromeDriver(object):
   def GetCastSinks(self, vendorId):
     params = {'vendorId': vendorId}
     return self.ExecuteCommand(Command.GET_CAST_SINKS, params)
+
+  def CreateVirtualPressureSource(self, type, metadata=None):
+    params = {'type': type}
+    if metadata is not None:
+      params.update(metadata)
+    return self.ExecuteCommand(Command.CREATE_VIRTUAL_PRESSURE_SOURCE, params)
+
+  def UpdateVirtualPressureSource(self, type, sample):
+    params = {'type': type, 'sample': sample}
+    return self.ExecuteCommand(Command.UPDATE_VIRTUAL_PRESSURE_SOURCE, params)
+
+  def RemoveVirtualPressureSource(self, type):
+    params = {'type': type}
+    return self.ExecuteCommand(Command.REMOVE_VIRTUAL_PRESSURE_SOURCE, params)
 
   def __enter__(self):
     return self

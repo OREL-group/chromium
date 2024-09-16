@@ -82,7 +82,12 @@ bool TabOrganization::IsValidForOrganizing() const {
     return false;
   }
 
-  // there must be at least 2 tabs that are valid for organization.
+  // There must be at least 1 tab that is new to the group.
+  if ((tab_datas_.size() - first_new_tab_index_) == 0) {
+    return false;
+  }
+
+  // There must be at least 2 tabs that are valid for organization.
   int valid_tab_count = 0;
   for (const std::unique_ptr<TabData>& tab_data : tab_datas_) {
     if (tab_data->IsValidForOrganizing(group_id_)) {
@@ -95,7 +100,7 @@ bool TabOrganization::IsValidForOrganizing() const {
   return false;
 }
 
-// TODO(1469128) Add UKM/UMA Logging on user add.
+// TODO(crbug.com/40925231) Add UKM/UMA Logging on user add.
 void TabOrganization::AddTabData(std::unique_ptr<TabData> new_tab_data) {
   // Guarantee uniqueness. early return and drop the new tab data if not unique.
   for (std::unique_ptr<TabData>& existing_tab_data : tab_datas_) {
@@ -109,7 +114,7 @@ void TabOrganization::AddTabData(std::unique_ptr<TabData> new_tab_data) {
   NotifyObserversOfUpdate();
 }
 
-// TODO(1469128) Add UKM/UMA Logging on user remove.
+// TODO(crbug.com/40925231) Add UKM/UMA Logging on user remove.
 void TabOrganization::RemoveTabData(TabData::TabID tab_id) {
   TabDatas::iterator position =
       std::find_if(tab_datas_.begin(), tab_datas_.end(),

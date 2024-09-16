@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/history/core/browser/history_types.h"
 
 #include <limits>
@@ -43,6 +48,26 @@ VisitRow::VisitRow(URLID arg_url_id,
 VisitRow::~VisitRow() = default;
 
 VisitRow::VisitRow(const VisitRow&) = default;
+
+// VisitedLinkRow --------------------------------------------------------------
+
+bool operator==(const VisitedLinkRow& lhs, const VisitedLinkRow& rhs) {
+  return std::tie(lhs.id, lhs.link_url_id, lhs.top_level_url, lhs.frame_url,
+                  lhs.visit_count) == std::tie(rhs.id, rhs.link_url_id,
+                                               rhs.top_level_url, rhs.frame_url,
+                                               rhs.visit_count);
+}
+
+bool operator!=(const VisitedLinkRow& lhs, const VisitedLinkRow& rhs) {
+  return !(lhs == rhs);
+}
+
+bool operator<(const VisitedLinkRow& lhs, const VisitedLinkRow& rhs) {
+  return std::tie(lhs.id, lhs.link_url_id, lhs.top_level_url, lhs.frame_url,
+                  lhs.visit_count) < std::tie(rhs.id, rhs.link_url_id,
+                                              rhs.top_level_url, rhs.frame_url,
+                                              rhs.visit_count);
+}
 
 // QueryResults ----------------------------------------------------------------
 
@@ -116,7 +141,7 @@ void QueryResults::DeleteRange(size_t begin, size_t end) {
   for (const auto& url : urls_modified) {
     auto found = url_to_results_.find(url);
     if (found == url_to_results_.end()) {
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       continue;
     }
 
@@ -449,6 +474,20 @@ DeletionInfo::~DeletionInfo() = default;
 DeletionInfo::DeletionInfo(DeletionInfo&& other) noexcept = default;
 
 DeletionInfo& DeletionInfo::operator=(DeletionInfo&& rhs) noexcept = default;
+
+// DeletedVisit ----------------------------------------------------------------
+
+DeletedVisit::DeletedVisit(VisitRow visit)
+    : visit_row(visit), deleted_visited_link(std::nullopt) {}
+
+DeletedVisit::DeletedVisit(VisitRow visit,
+                           DeletedVisitedLink deleted_visited_link)
+    : visit_row(visit), deleted_visited_link(deleted_visited_link) {}
+
+DeletedVisit::DeletedVisit(const DeletedVisit& other) = default;
+DeletedVisit& DeletedVisit::operator=(const DeletedVisit& other) = default;
+
+DeletedVisit::~DeletedVisit() = default;
 
 // Clusters --------------------------------------------------------------------
 

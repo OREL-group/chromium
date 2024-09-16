@@ -322,16 +322,12 @@
     },
     {
       "id": 68,
-      "description": "VMware Fusion 4 has corrupt rendering on Windows",
-      "cr_bugs": [169470],
+      "description": "Do not use GPU accelerated rendering with VMware on Windows",
+      "cr_bugs": [169470, 879098, 325159675],
       "os": {
         "type": "win"
       },
       "vendor_id": "0x15ad",
-      "driver_version": {
-        "op": "<=",
-        "value": "7.14.1.1134"
-      },
       "features": [
         "all"
       ]
@@ -1151,23 +1147,6 @@
       ]
     },
     {
-      "id": 157,
-      "description": "VMware can crash with older drivers and WebGL content",
-      "cr_bugs": [879098],
-      "os": {
-        "type": "win"
-      },
-      "vendor_id": "0x15ad",
-      "driver_version": {
-        "op": "<=",
-        "value": "7.14.1.1210"
-      },
-      "features": [
-        "accelerated_webgl",
-        "accelerated_webgl2"
-      ]
-    },
-    {
       "id": 161,
       "cr_bugs": [890688],
       "description": "Newer Mesa drivers experience visual corruption on very old hardware",
@@ -1439,18 +1418,6 @@
       ]
     },
     {
-      "id": 180,
-      "cr_bugs": [325123735],
-      "description": "QC GPUs have driver bugs preventing WebNN from working correctly",
-      "os": {
-        "type": "win"
-      },
-      "vendor_id": "0x4d4f4351",
-      "features": [
-        "webnn"
-      ]
-    },
-    {
       "id": 181,
       "cr_bugs": [329702368],
       "description": "Corrupted browser/webpage rendering on Win10/Intel HD Graphics 4400",
@@ -1478,6 +1445,22 @@
       "driver_version": {
         "op": "<",
         "value": "31.0.15.3623"
+      },
+      "features": [
+        "skia_graphite"
+      ]
+    },
+    {
+      "id": 183,
+      "cr_bugs": [335564846, 335640712],
+      "description": "Analytic clipping is not implemented in Graphite",
+      "os": {
+        "type": "win"
+      },
+      "vendor_id": "0x8086",
+      "intel_gpu_generation": {
+        "op": "<",
+        "value": "11"
       },
       "features": [
         "skia_graphite"

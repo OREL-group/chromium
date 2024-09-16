@@ -38,7 +38,7 @@ std::string GetErrorMessageName(PasswordStoreBackendErrorType error_type) {
     case PasswordStoreBackendErrorType::kUncategorized:
     case PasswordStoreBackendErrorType::kKeychainError:
       // Other error types aren't supported.
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -150,7 +150,7 @@ void PasswordManagerErrorMessageDelegate::MaybeDisplayErrorMessage(
     case PasswordStoreBackendErrorType::kUncategorized:
     case PasswordStoreBackendErrorType::kKeychainError:
       // Other error types aren't supported.
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 
   messages::MessageDispatcherBridge::Get()->EnqueueMessage(
@@ -173,7 +173,7 @@ bool PasswordManagerErrorMessageDelegate::ShouldShowErrorUI(
     case PasswordStoreBackendErrorType::kUncategorized:
     case PasswordStoreBackendErrorType::kKeychainError:
       // Other error types aren't supported.
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -226,6 +226,6 @@ void PasswordManagerErrorMessageDelegate::HandleActionButtonClicked(
     case PasswordStoreBackendErrorType::kUncategorized:
     case PasswordStoreBackendErrorType::kKeychainError:
       // Other error types aren't supported.
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 }

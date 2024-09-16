@@ -5,11 +5,13 @@
 #include "chrome/browser/ui/views/controls/hover_button.h"
 
 #include <algorithm>
+#include <string_view>
 
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/chrome_typography.h"
 #include "chrome/browser/ui/views/hover_button_controller.h"
@@ -19,6 +21,7 @@
 #include "ui/color/color_id.h"
 #include "ui/compositor/layer.h"
 #include "ui/events/event_constants.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/animation/ink_drop.h"
 #include "ui/views/animation/ink_drop_impl.h"
 #include "ui/views/background.h"
@@ -41,6 +44,12 @@ std::unique_ptr<views::Border> CreateBorderWithVerticalSpacing(
       views::DISTANCE_BUTTON_HORIZONTAL_PADDING);
   return views::CreateEmptyBorder(
       gfx::Insets::VH(vertical_spacing, horizontal_spacing));
+}
+
+int GetVerticalSpacing() {
+  return ChromeLayoutProvider::Get()->GetDistanceMetric(
+             DISTANCE_CONTROL_LIST_VERTICAL) /
+         2;
 }
 
 // Wrapper class for the icon that maintains consistent spacing for both badged
@@ -66,8 +75,9 @@ class IconWrapper : public views::View {
   }
 
   // views::View:
-  gfx::Size CalculatePreferredSize() const override {
-    const int icon_height = icon_->GetPreferredSize().height();
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override {
+    const int icon_height = icon_->GetPreferredSize(available_size).height();
     const int icon_label_spacing =
         ChromeLayoutProvider::Get()->GetDistanceMetric(
             views::DISTANCE_RELATED_LABEL_HORIZONTAL);
@@ -100,18 +110,17 @@ HoverButton::HoverButton(PressedCallback callback, const std::u16string& text)
   SetInstallFocusRingOnFocus(false);
   SetFocusBehavior(FocusBehavior::ALWAYS);
 
-  const int vert_spacing = ChromeLayoutProvider::Get()->GetDistanceMetric(
-                               DISTANCE_CONTROL_LIST_VERTICAL) /
-                           2;
-  SetBorder(CreateBorderWithVerticalSpacing(vert_spacing));
+  SetBorder(CreateBorderWithVerticalSpacing(GetVerticalSpacing()));
 
   views::InkDrop::Get(this)->SetMode(views::InkDropHost::InkDropMode::ON);
   views::InkDrop::UseInkDropForFloodFillRipple(views::InkDrop::Get(this),
                                                /*highlight_on_hover=*/false,
                                                /*highlight_on_focus=*/true);
-  views::InkDrop::Get(this)->SetBaseColorId(
-      views::TypographyProvider::Get().GetColorId(
-          views::style::CONTEXT_BUTTON, views::style::STYLE_SECONDARY));
+  views::InkDrop::Get(this)->SetBaseColorId(kColorHoverButtonBackgroundHovered);
+  // kColorHoverButtonBackgroundHovered has its own opacity.
+  // sets the opacity to 100% * opacity(kColorHoverButtonBackgroundHovered).
+  views::InkDrop::Get(this)->SetVisibleOpacity(1.0f);
+  views::InkDrop::Get(this)->SetHighlightOpacity(1.0f);
 
   SetTriggerableEventFlags(ui::EF_LEFT_MOUSE_BUTTON |
                            ui::EF_RIGHT_MOUSE_BUTTON);
@@ -146,13 +155,11 @@ HoverButton::HoverButton(PressedCallback callback,
   // The vertical space that must exist on the top and the bottom of the item
   // to ensure the proper spacing is maintained between items when stacking
   // vertically.
-  const int vertical_spacing = ChromeLayoutProvider::Get()->GetDistanceMetric(
-                                   DISTANCE_CONTROL_LIST_VERTICAL) /
-                               2;
+  const int vertical_spacing = GetVerticalSpacing();
   if (icon_view) {
-    icon_view_ = AddChildView(std::make_unique<IconWrapper>(
-                                  std::move(icon_view), vertical_spacing))
-                     ->icon();
+    icon_wrapper_ = AddChildView(
+        std::make_unique<IconWrapper>(std::move(icon_view), vertical_spacing));
+    icon_view_ = static_cast<IconWrapper*>(icon_wrapper_)->icon();
   }
 
   // |label_wrapper| will hold the title as well as subtitle and footer, if
@@ -189,8 +196,9 @@ HoverButton::HoverButton(PressedCallback callback,
       .SetMainAxisAlignment(views::LayoutAlignment::kCenter);
   label_wrapper->SetProperty(
       views::kFlexBehaviorKey,
-      views::FlexSpecification(views::MinimumFlexSizeRule::kScaleToZero,
-                               views::MaximumFlexSizeRule::kUnbounded));
+      views::FlexSpecification(views::LayoutOrientation::kHorizontal,
+                               views::MinimumFlexSizeRule::kScaleToZero,
+                               views::MaximumFlexSizeRule::kUnbounded, true));
   label_wrapper->SetCanProcessEventsWithinSubtree(false);
   label_wrapper->SetProperty(
       views::kMarginsKey,
@@ -226,6 +234,15 @@ HoverButton::HoverButton(PressedCallback callback,
 
 HoverButton::~HoverButton() = default;
 
+gfx::Size HoverButton::CalculatePreferredSize(
+    const views::SizeBounds& available_size) const {
+  if (label_wrapper_) {
+    return GetLayoutManager()->GetPreferredSize(this, available_size);
+  }
+
+  return views::LabelButton::CalculatePreferredSize(available_size);
+}
+
 void HoverButton::SetBorder(std::unique_ptr<views::Border> b) {
   LabelButton::SetBorder(std::move(b));
   PreferredSizeChanged();
@@ -237,8 +254,9 @@ void HoverButton::GetAccessibleNodeData(ui::AXNodeData* node_data) {
 
 void HoverButton::PreferredSizeChanged() {
   LabelButton::PreferredSizeChanged();
-  if (GetLayoutManager())
+  if (GetLayoutManager()) {
     SetMinSize(GetLayoutManager()->GetPreferredSize(this));
+  }
 }
 
 void HoverButton::OnViewBoundsChanged(View* observed_view) {
@@ -293,8 +311,15 @@ void HoverButton::SetFooterTextStyle(int text_content,
   PreferredSizeChanged();
 }
 
+void HoverButton::SetIconHorizontalMargins(int left, int right) {
+  int vertical_spacing = GetVerticalSpacing();
+  icon_wrapper_->SetProperty(
+      views::kMarginsKey,
+      gfx::Insets::TLBR(vertical_spacing, left, vertical_spacing, right));
+}
+
 void HoverButton::UpdateTooltipAndAccessibleName() {
-  std::vector<base::StringPiece16> texts = {title_->GetText()};
+  std::vector<std::u16string_view> texts = {title_->GetText()};
   if (subtitle_) {
     texts.push_back(subtitle_->GetText());
   }
@@ -310,7 +335,7 @@ void HoverButton::UpdateTooltipAndAccessibleName() {
   const bool needs_tooltip =
       label_wrapper_->GetPreferredSize().width() > label_wrapper_->width();
   SetTooltipText(needs_tooltip ? accessible_name : std::u16string());
-  SetAccessibleName(accessible_name);
+  GetViewAccessibility().SetName(accessible_name);
 }
 
 views::Button::KeyClickAction HoverButton::GetKeyClickActionForEvent(

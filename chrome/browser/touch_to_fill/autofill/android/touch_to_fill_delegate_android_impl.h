@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_TOUCH_TO_FILL_AUTOFILL_ANDROID_TOUCH_TO_FILL_DELEGATE_ANDROID_IMPL_H_
 #define CHROME_BROWSER_TOUCH_TO_FILL_AUTOFILL_ANDROID_TOUCH_TO_FILL_DELEGATE_ANDROID_IMPL_H_
 
+#include <vector>
+
 #include "base/memory/weak_ptr.h"
 #include "components/autofill/core/browser/autofill_manager.h"
 #include "components/autofill/core/browser/data_model/credit_card.h"
@@ -126,7 +128,10 @@ class TouchToFillDelegateAndroidImpl : public TouchToFillDelegate {
   void ScanCreditCard() override;
   void OnCreditCardScanned(const CreditCard& card) override;
   void ShowPaymentMethodSettings() override;
-  void SuggestionSelected(std::string unique_id, bool is_virtual) override;
+  void CreditCardSuggestionSelected(std::string unique_id,
+                                    bool is_virtual) override;
+  void IbanSuggestionSelected(
+      absl::variant<Iban::Guid, Iban::InstrumentId> backend_id) override;
   void OnDismissed(bool dismissed_by_user) override;
 
   void LogMetricsAfterSubmission(const FormStructure& submitted_form) override;
@@ -155,11 +160,11 @@ class TouchToFillDelegateAndroidImpl : public TouchToFillDelegate {
   };
 
   // Checks all preconditions for showing the TTF, that is, for calling
-  // AutofillClient::ShowTouchToFillCreditCard().
+  // PaymentsAutofillClient::ShowTouchToFillCreditCard().
   //
   // If the DryRunResult::outcome is TriggerOutcome::kShow, the
   // DryRun::cards_to_suggest contains the cards; otherwise it is empty.
-  // TODO(crbug.com/1485693): Remove received FormData. received_form is the
+  // TODO(crbug.com/40282650): Remove received FormData. received_form is the
   // form received from the renderer, so it contains the current values. This is
   // needed for the non-empty checks.
   DryRunResult DryRun(FormGlobalId form_id,
@@ -190,9 +195,16 @@ class TouchToFillDelegateAndroidImpl : public TouchToFillDelegate {
   // considered to be filled if the credit card number field is non-empty. The
   // expiration date fields are not checked because they might have arbitrary
   // placeholders.
-  // TODO(crbug.com/1331312): FormData is used here to ensure that we check the
+  // TODO(crbug.com/40227496): FormData is used here to ensure that we check the
   // most recent form values. FormStructure knows only about the initial values.
   bool IsFormPrefilled(const FormData& form);
+
+  // Creates a list of booleans which denotes if credit cards are acceptable by
+  // the merchant. The list will be the same size as `credit_cards`, and the
+  // indices will match (the acceptability of credit_cards[i] ==
+  // card_acceptability[i]).
+  std::vector<bool> GetCardAcceptabilities(
+      base::span<const CreditCard> credit_cards);
 
   TouchToFillState ttf_payment_method_state_ = TouchToFillState::kShouldShow;
 

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 // This has to be included first.
 // See http://code.google.com/p/googletest/issues/detail?id=371
 #include <drm_fourcc.h>
@@ -163,7 +168,8 @@ const std::string VARTFormatToString(unsigned int va_rt_format) {
     case VA_RT_FORMAT_YUV420_10:
       return "VA_RT_FORMAT_YUV420_10";
   }
-  NOTREACHED() << "Unknown VA_RT_FORMAT 0x" << std::hex << va_rt_format;
+  NOTREACHED_IN_MIGRATION()
+      << "Unknown VA_RT_FORMAT 0x" << std::hex << va_rt_format;
   return "Unknown VA_RT_FORMAT";
 }
 
@@ -181,7 +187,7 @@ const char* VAProfileToString(VAProfile profile) {
     TOSTR(VAProfileMPEG4AdvancedSimple);
     TOSTR(VAProfileMPEG4Main);
     case VAProfileH264Baseline:
-      NOTREACHED() << "VAProfileH264Baseline is deprecated";
+      NOTREACHED_IN_MIGRATION() << "VAProfileH264Baseline is deprecated";
       return "Deprecated VAProfileH264Baseline";
     TOSTR(VAProfileH264Main);
     TOSTR(VAProfileH264High);
@@ -217,6 +223,10 @@ const char* VAProfileToString(VAProfile profile) {
 #endif
 #if VA_MAJOR_VERSION >= 2 || VA_MINOR_VERSION >= 18
     TOSTR(VAProfileH264High10);
+#endif
+#if VA_MAJOR_VERSION >= 2 || VA_MINOR_VERSION >= 22
+    TOSTR(VAProfileVVCMain10);
+    TOSTR(VAProfileVVCMultilayerMain10);
 #endif
   }
   // clang-format on
@@ -574,6 +584,7 @@ TEST_F(VaapiTest, LowQualityEncodingSetting) {
       VAConfigAttrib attrib{};
       attrib.type = VAConfigAttribEncQualityRange;
       {
+        VAAPI_CHECK_CALLED_ON_VALID_SEQUENCE(wrapper->sequence_checker_);
         base::AutoLockMaybe auto_lock(wrapper->va_lock_.get());
         VAStatus va_res = vaGetConfigAttributes(
             wrapper->va_display_, va_profile, entrypoint, &attrib, 1);
@@ -592,15 +603,17 @@ TEST_F(VaapiTest, LowQualityEncodingSetting) {
       // |pending_va_buffers_| that, when mapped, looks correct. That buffer
       // should be created by CreateContext().
       ASSERT_TRUE(wrapper->CreateContext(gfx::Size(640, 368)));
+      VAAPI_CHECK_CALLED_ON_VALID_SEQUENCE(wrapper->sequence_checker_);
       ASSERT_EQ(wrapper->pending_va_buffers_.size(), 1u);
       {
         base::AutoLockMaybe auto_lock(wrapper->va_lock_.get());
-        ScopedVABufferMapping mapping(wrapper->va_lock_, wrapper->va_display_,
-                                      wrapper->pending_va_buffers_.front());
-        ASSERT_TRUE(mapping.IsValid());
 
+        auto mapping = ScopedVABufferMapping::Create(
+            wrapper->va_lock_, wrapper->va_display_,
+            wrapper->pending_va_buffers_.front());
+        ASSERT_TRUE(mapping);
         auto* const va_buffer =
-            reinterpret_cast<VAEncMiscParameterBuffer*>(mapping.data());
+            reinterpret_cast<VAEncMiscParameterBuffer*>(mapping->data());
         EXPECT_EQ(va_buffer->type, VAEncMiscParameterTypeQualityLevel);
 
         auto* const enc_quality =
@@ -745,15 +758,9 @@ TEST_P(VaapiVppTest, BlitWithVAAllocatedSurfaces) {
   std::unique_ptr<ScopedVASurface> scoped_surface_out =
       std::move(scoped_surfaces[0]);
 
-  scoped_refptr<VASurface> surface_in = base::MakeRefCounted<VASurface>(
-      scoped_surface_in->id(), kInputSize, va_rt_format_in, base::DoNothing());
-  scoped_refptr<VASurface> surface_out =
-      base::MakeRefCounted<VASurface>(scoped_surface_out->id(), kOutputSize,
-                                      va_rt_format_out, base::DoNothing());
-
-  ASSERT_TRUE(wrapper->BlitSurface(*surface_in, *surface_out,
-                                   gfx::Rect(kInputSize),
-                                   gfx::Rect(kOutputSize)));
+  ASSERT_TRUE(wrapper->BlitSurface(
+      scoped_surface_in->id(), kInputSize, scoped_surface_out->id(),
+      kOutputSize, gfx::Rect(kInputSize), gfx::Rect(kOutputSize)));
   ASSERT_TRUE(wrapper->SyncSurface(scoped_surface_out->id()));
   wrapper->DestroyContext();
 }
@@ -859,6 +866,7 @@ TEST_P(VaapiMinigbmTest, AllocateAndCompareWithMinigbm) {
   // Request the underlying DRM metadata for |scoped_va_surface|.
   VADRMPRIMESurfaceDescriptor va_descriptor{};
   {
+    VAAPI_CHECK_CALLED_ON_VALID_SEQUENCE(wrapper->sequence_checker_);
     base::AutoLockMaybe auto_lock(wrapper->va_lock_.get());
     VAStatus va_res =
         vaSyncSurface(wrapper->va_display_, scoped_va_surface->id());
@@ -894,6 +902,7 @@ TEST_P(VaapiMinigbmTest, AllocateAndCompareWithMinigbm) {
               base::checked_cast<uint32_t>(2 * uv_width * uv_height));
   }
 
+  VAAPI_CHECK_CALLED_ON_VALID_SEQUENCE(wrapper->sequence_checker_);
   base::AutoLockMaybe auto_lock(wrapper->va_lock_.get());
   const std::string va_vendor_string
          = vaQueryVendorString(wrapper->va_display_);

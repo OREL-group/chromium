@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/media/webrtc/webrtc_event_log_manager.h"
 
 #include <algorithm>
@@ -150,7 +155,7 @@ bool CreateRemoteBoundLogFile(const base::FilePath& dir,
       dir.AsEndingWithSeparator()
           .InsertBeforeExtensionASCII(kRemoteBoundWebRtcEventLogFileNamePrefix)
           .InsertBeforeExtensionASCII("_")
-          .InsertBeforeExtensionASCII(std::to_string(web_app_id))
+          .InsertBeforeExtensionASCII(base::NumberToString(web_app_id))
           .InsertBeforeExtensionASCII("_")
           .InsertBeforeExtensionASCII(CreateWebRtcEventLogId())
           .AddExtension(extension);
@@ -302,6 +307,10 @@ class WebRtcEventLogManagerTestBase : public ::testing::Test {
 
     // Guard against unexpected state changes.
     EXPECT_TRUE(webrtc_state_change_instructions_.empty());
+
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS_ASH)
+    TestingBrowserProcess::GetGlobal()->ShutdownBrowserPolicyConnector();
+#endif
   }
 
   void SetUp() override {
@@ -312,12 +321,6 @@ class WebRtcEventLogManagerTestBase : public ::testing::Test {
     LoadMainTestProfile();
 #if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS_ASH)
     policy::BrowserPolicyConnectorBase::SetPolicyProviderForTesting(&provider_);
-#endif
-  }
-
-  void TearDown() override {
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS_ASH)
-    TestingBrowserProcess::GetGlobal()->ShutdownBrowserPolicyConnector();
 #endif
   }
 
@@ -652,7 +655,7 @@ class WebRtcEventLogManagerTestBase : public ::testing::Test {
     // If profile name not specified, select a unique name.
     if (profile_name.empty()) {
       static size_t index = 0;
-      profile_name = std::to_string(++index);
+      profile_name = base::NumberToString(++index);
     }
 
     // Set a directory for the profile, derived from its name, so that
@@ -787,14 +790,15 @@ class WebRtcEventLogManagerTestBase : public ::testing::Test {
           compression::GzipUncompress(file_contents, &uncompressed_log));
       EXPECT_EQ(uncompressed_log, expected_event_log);
     } else {
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
     }
   }
 
   // When the peer connection's ID is not the focus of the test, this allows
   // us to conveniently assign unique IDs to peer connections.
   std::string GetUniqueId(int render_process_id, int lid) {
-    return std::to_string(render_process_id) + "_" + std::to_string(lid);
+    return base::NumberToString(render_process_id) + "_" +
+           base::NumberToString(lid);
   }
   std::string GetUniqueId(const PeerConnectionKey& key) {
     return GetUniqueId(key.render_process_id, key.lid);
@@ -1162,7 +1166,7 @@ class WebRtcEventLogManagerTestUploadDelay
 
     scoped_command_line_.GetProcessCommandLine()->AppendSwitchASCII(
         ::switches::kWebRtcRemoteEventLogUploadDelayMs,
-        std::to_string(upload_delay_ms));
+        base::NumberToString(upload_delay_ms));
 
     CreateWebRtcEventLogManager();
 
@@ -1362,7 +1366,7 @@ class FileListExpectingWebRtcEventLogUploader : public WebRtcEventLogUploader {
   }
 
   void Cancel() override {
-    NOTREACHED() << "Incompatible with this kind of test.";
+    NOTREACHED_IN_MIGRATION() << "Incompatible with this kind of test.";
   }
 
  private:
@@ -1794,7 +1798,8 @@ TEST_F(WebRtcEventLogManagerTest, LocalLogMultipleActiveFiles) {
 
   std::vector<std::string> logs;
   for (size_t i = 0; i < keys.size(); ++i) {
-    logs.emplace_back(std::to_string(rph_->GetID()) + std::to_string(kLid));
+    logs.emplace_back(base::NumberToString(rph_->GetID()) +
+                      base::NumberToString(kLid));
     ASSERT_EQ(OnWebRtcEventLogWrite(keys[i], logs[i]),
               std::make_pair(true, false));
   }
@@ -2244,7 +2249,7 @@ TEST_F(WebRtcEventLogManagerTest,
 
   const std::string expected_filename =
       std::string(kRemoteBoundWebRtcEventLogFileNamePrefix) + "_" +
-      std::to_string(kWebAppId) + "_" + log_id;
+      base::NumberToString(kWebAppId) + "_" + log_id;
   EXPECT_EQ(filename, expected_filename);
 
   // Compare extension.
@@ -2492,7 +2497,8 @@ TEST_F(WebRtcEventLogManagerTest,
 
   std::vector<std::string> logs;
   for (size_t i = 0; i < keys.size(); ++i) {
-    logs.emplace_back(std::to_string(rph_->GetID()) + std::to_string(i));
+    logs.emplace_back(base::NumberToString(rph_->GetID()) +
+                      base::NumberToString(i));
     ASSERT_EQ(OnWebRtcEventLogWrite(keys[i], logs[i]),
               std::make_pair(false, true));
   }
@@ -2537,7 +2543,8 @@ TEST_F(WebRtcEventLogManagerTest,
 
   std::vector<std::string> logs;
   for (size_t i = 0; i < keys.size(); ++i) {
-    logs.emplace_back(std::to_string(rph_->GetID()) + std::to_string(i));
+    logs.emplace_back(base::NumberToString(rph_->GetID()) +
+                      base::NumberToString(i));
     ASSERT_EQ(OnWebRtcEventLogWrite(keys[i], logs[i]),
               std::make_pair(false, true));
   }
@@ -2600,7 +2607,7 @@ TEST_F(WebRtcEventLogManagerTest, RemoteLogFileClosedWhenCapacityReached) {
 }
 
 #if BUILDFLAG(IS_POSIX)
-// TODO(crbug.com/775415): Add unit tests for lacking read permissions when
+// TODO(crbug.com/40545136): Add unit tests for lacking read permissions when
 // looking to upload the file.
 TEST_F(WebRtcEventLogManagerTest,
        FailureToCreateRemoteLogsDirHandledGracefully) {
@@ -3056,9 +3063,9 @@ TEST_F(WebRtcEventLogManagerTest, ExpiredFilesArePrunedRatherThanUploaded) {
   }
 }
 
-// TODO(crbug.com/775415): Add a test showing that a file expiring while another
-// is being uploaded, is not uploaded after the current upload is completed.
-// This is significant because Chrome might stay up for a long time.
+// TODO(crbug.com/40545136): Add a test showing that a file expiring while
+// another is being uploaded, is not uploaded after the current upload is
+// completed. This is significant because Chrome might stay up for a long time.
 
 TEST_F(WebRtcEventLogManagerTest, RemoteLogEmptyStringHandledGracefully) {
   const auto key = GetPeerConnectionKey(rph_.get(), kLid);
@@ -4951,7 +4958,7 @@ TEST_F(WebRtcEventLogManagerTestHistory,
 // to check that the correct result is returned for GetHistory() for either
 // a successful or an unsuccessful upload from the WebRtcEventLogManager level.
 // Instead, this is checked by WebRtcEventLogUploaderImplTest.
-// TODO(crbug.com/775415): Add the tests mention in the comment above.
+// TODO(crbug.com/40545136): Add the tests mention in the comment above.
 
 TEST_F(WebRtcEventLogManagerTestHistory, ClearingCacheRemovesHistoryFiles) {
   const auto key = GetPeerConnectionKey(rph_.get(), kLid);
@@ -5026,7 +5033,7 @@ TEST_F(WebRtcEventLogManagerTestHistory,
   EXPECT_EQ(history.size(), 0u);
 }
 
-// TODO(crbug.com/775415): Add a test for the limit on the number of history
+// TODO(crbug.com/40545136): Add a test for the limit on the number of history
 // files allowed to remain on disk.
 
 #else  // BUILDFLAG(IS_ANDROID)

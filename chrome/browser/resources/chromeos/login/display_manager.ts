@@ -7,7 +7,7 @@
  */
 
 import {$, ensureTransitionEndEvent} from '//resources/ash/common/util.js';
-import {assert} from '//resources/js/assert.js';
+import {assert, assertInstanceof} from '//resources/js/assert.js';
 import {afterNextRender} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {DisplayType, OobeUiState, SCREEN_DEVICE_DISABLED, SCREEN_WELCOME} from './components/display_manager_types.js';
@@ -32,54 +32,12 @@ const MAX_SCREEN_TRANSITION_DURATION = 1200;
 const TRIGGERDOWN_FALLBACK_DELAY = 10000;
 
 /**
- * As Polymer behaviors do not provide true inheritance, when two behaviors
- * would declare same method one of them will be hidden. Also, if element
- * re-declares the method it needs explicitly iterate over behaviors and call
- * method on them. This function simplifies such interaction by calling
- * method on element and all behaviors in the same order as lifecycle
- * callbacks are called.
- * @param name function name
- * @param args arguments for the function
- */
-export function invokePolymerMethod(
-    element: HTMLElement, name: string, ...args: any[]) {
-  const method = element[name as keyof typeof element];
-  if (!method || typeof method !== 'function') {
-    return;
-  }
-  (method as any).apply(element, args);
-  if (!('behaviors' in element)) {
-    return;
-  }
-  if (!Array.isArray(element.behaviors)) {
-    return;
-  }
-
-  // If element has behaviors call functions on them in reverse order,
-  // ignoring case when method on element was derived from behavior.
-  for (let i = element.behaviors.length - 1; i >= 0; i--) {
-    const behavior = element.behaviors[i];
-    if (!(name in behavior)) {
-      continue;
-    }
-    const behaviorMethod = behavior[name];
-    if (!behaviorMethod || typeof behaviorMethod !== 'function') {
-      continue;
-    }
-    if (behaviorMethod === method) {
-      continue;
-    }
-    behaviorMethod.apply(element, args);
-  }
-}
-
-/**
  * A display manager that manages initialization of screens,
  * transitions, error messages display.
  */
 export class DisplayManager {
-  private screens: string[];
-  private currentStep: null|number;
+  screens: string[];
+  private currentStepId: null|string;
   private keyboardFlowOn: boolean;
   private virtualKeyboardShown: boolean;
   private displayType: DisplayType;
@@ -93,9 +51,9 @@ export class DisplayManager {
     this.screens = [];
 
     /**
-     * Current OOBE step, index in the screens array.
+     * Current OOBE step id.
      */
-    this.currentStep = null;
+    this.currentStepId = null;
 
     /**
      * Whether keyboard navigation flow is enforced.
@@ -137,10 +95,10 @@ export class DisplayManager {
    * Gets current screen element.
    */
   get currentScreen(): HTMLElement|null {
-    if (this.currentStep === null) {
+    if (this.currentStepId === null) {
       return null;
     }
-    return $(this.screens[this.currentStep]);
+    return $(this.currentStepId);
   }
 
   /**
@@ -213,20 +171,27 @@ export class DisplayManager {
    * Switches to the next OOBE step.
    * @param nextStepIndex Index of the next step.
    */
-  toggleStep(nextStepIndex: number, screenData: any): void {
-    const nextStepId = this.screens[nextStepIndex];
+  private toggleStep(nextStepId: string, screenData: any): void {
     const oldStep = this.currentScreen;
     const newStep = $(nextStepId);
+    assertInstanceof(
+        newStep, HTMLElement, 'No screen with such id: ' + nextStepId);
     const innerContainer = $('inner-container');
     const oobeContainer = $('oobe');
     const isBootAnimationEnabled =
         loadTimeData.getBoolean('isBootAnimationEnabled');
 
     if (oldStep) {
-      invokePolymerMethod(oldStep, 'onBeforeHide');
+      if ('onBeforeHide' in oldStep &&
+          typeof oldStep.onBeforeHide === 'function') {
+        oldStep.onBeforeHide();
+      }
+
       if ('defaultControl' in oldStep &&
-          oldStep.defaultControl instanceof HTMLElement) {
-        invokePolymerMethod(oldStep.defaultControl, 'onBeforeHide');
+          oldStep.defaultControl instanceof HTMLElement &&
+          'onBeforeHide' in oldStep.defaultControl &&
+          typeof oldStep.defaultControl.onBeforeHide === 'function') {
+        oldStep.defaultControl.onBeforeHide();
       }
     }
 
@@ -243,12 +208,17 @@ export class DisplayManager {
       this.setOobeUiState(OobeUiState.HIDDEN);
     }
 
-    invokePolymerMethod(newStep, 'onBeforeShow', screenData);
+    if ('onBeforeShow' in newStep &&
+        typeof newStep.onBeforeShow === 'function') {
+      newStep.onBeforeShow(screenData);
+    }
 
     // Default control to be focused (if specified).
     if ('defaultControl' in newStep &&
-        newStep.defaultControl instanceof HTMLElement) {
-      invokePolymerMethod(newStep.defaultControl, 'onBeforeShow', screenData);
+        newStep.defaultControl instanceof HTMLElement &&
+        'onBeforeShow' in newStep.defaultControl &&
+        typeof newStep.defaultControl.onBeforeShow === 'function') {
+      newStep.defaultControl.onBeforeShow(screenData);
     }
 
     newStep.classList.remove('hidden');
@@ -262,7 +232,7 @@ export class DisplayManager {
         newStep.defaultControl instanceof HTMLElement) {
       defaultControl = newStep.defaultControl;
     }
-    if (this.currentStep !== nextStepIndex && oldStep &&
+    if (this.currentStepId !== nextStepId && oldStep &&
         !oldStep.classList.contains('hidden')) {
       oldStep.classList.add('hidden');
       oldStep.hidden = true;
@@ -284,11 +254,7 @@ export class DisplayManager {
         }
       }
     }
-    this.currentStep = nextStepIndex;
-
-    // Call onAfterShow after currentStep so that the step can have a
-    // post-set hook.
-    invokePolymerMethod(newStep, 'onAfterShow', screenData);
+    this.currentStepId = nextStepId;
 
     const currentScreen = this.currentScreen;
     assert(currentScreen, 'currentScreen must exist at this point');
@@ -321,26 +287,7 @@ export class DisplayManager {
       return;
     }
 
-    const screenId = screen.id;
-
-    const data = screen.data;
-    const index = this.getScreenIndex(screenId);
-    if (index >= 0) {
-      this.toggleStep(index, data);
-    }
-  }
-
-  /**
-   * Gets index of given screen id in screens.
-   * @param screenId Id of the screen to look up.
-   */
-  private getScreenIndex(screenId: string): number {
-    for (let i = 0; i < this.screens.length; ++i) {
-      if (this.screens[i] === screenId) {
-        return i;
-      }
-    }
-    return -1;
+    this.toggleStep(screen.id, screen.data);
   }
 
   /**
@@ -384,8 +331,6 @@ export class DisplayManager {
         child.i18nUpdateLocale();
       }
     }
-    const isInTabletMode = loadTimeData.getBoolean('isInTabletMode');
-    this.setTabletModeState(isInTabletMode);
   }
 
   /**
@@ -400,22 +345,6 @@ export class DisplayManager {
       if ('updateOobeConfiguration' in screen &&
           typeof screen.updateOobeConfiguration === 'function') {
         screen.updateOobeConfiguration(configuration);
-      }
-    }
-  }
-
-  /**
-   * Updates "device in tablet mode" state when tablet mode is changed.
-   * @param isInTabletMode True when in tablet mode.
-   */
-  setTabletModeState(isInTabletMode: boolean): void {
-    document.documentElement.toggleAttribute('tablet', isInTabletMode);
-    for (let i = 0; i < this.screens.length; ++i) {
-      const screenId = this.screens[i];
-      const screen = $(screenId);
-      if ('setTabletModeState' in screen &&
-          typeof screen.setTabletModeState === 'function') {
-        screen.setTabletModeState(isInTabletMode);
       }
     }
   }

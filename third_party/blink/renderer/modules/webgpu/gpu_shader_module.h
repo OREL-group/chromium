@@ -8,23 +8,20 @@
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/modules/webgpu/dawn_object.h"
-
-#include <dawn/webgpu.h>
+#include "third_party/blink/renderer/platform/graphics/gpu/webgpu_cpp.h"
 
 namespace blink {
 class GPUCompilationInfo;
 class GPUShaderModuleDescriptor;
-class ExceptionState;
 
-class GPUShaderModule : public DawnObject<WGPUShaderModule> {
+class GPUShaderModule : public DawnObject<wgpu::ShaderModule> {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
   static GPUShaderModule* Create(GPUDevice* device,
-                                 const GPUShaderModuleDescriptor* webgpu_desc,
-                                 ExceptionState& exception_state);
+                                 const GPUShaderModuleDescriptor* webgpu_desc);
   explicit GPUShaderModule(GPUDevice* device,
-                           WGPUShaderModule shader_module,
+                           wgpu::ShaderModule shader_module,
                            const String& label);
 
   GPUShaderModule(const GPUShaderModule&) = delete;
@@ -37,12 +34,12 @@ class GPUShaderModule : public DawnObject<WGPUShaderModule> {
  private:
   void OnCompilationInfoCallback(
       ScriptPromiseResolver<GPUCompilationInfo>* resolver,
-      WGPUCompilationInfoRequestStatus status,
-      const WGPUCompilationInfo* info);
+      wgpu::CompilationInfoRequestStatus status,
+      const wgpu::CompilationInfo* info);
 
   void setLabelImpl(const String& value) override {
     std::string utf8_label = value.Utf8();
-    GetProcs().shaderModuleSetLabel(GetHandle(), utf8_label.c_str());
+    GetHandle().SetLabel(utf8_label.c_str());
   }
 
   // Holds an estimate of the memory used by Tint for this shader module.

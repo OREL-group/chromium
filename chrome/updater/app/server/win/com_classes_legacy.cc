@@ -372,6 +372,11 @@ class AppWebImpl : public IDispatchImpl<IAppWeb> {
     ap_ = base::WideToUTF8(ap);
     policy_same_version_update_ = policy_same_version_update;
 
+    if (!is_install_) {
+      VLOG(1) << __func__ << ": !is_install_, app not pre-registered";
+      return S_OK;
+    }
+
     // Holds the result of the IPC to register an app.
     struct RegisterAppResult
         : public base::RefCountedThreadSafe<RegisterAppResult> {
@@ -425,9 +430,10 @@ class AppWebImpl : public IDispatchImpl<IAppWeb> {
   // For backward-compatibility purposes, the `CheckForUpdate` call assumes
   // foreground priority and disallows same version updates.
   HRESULT CheckForUpdate() {
+    current_operation_ = CurrentOperation::kCheckingForUpdates;
     AppWebImplPtr obj(this);
-    UpdateService::StateChangeCallback state_change_callback =
-        base::BindRepeating(
+    base::RepeatingCallback<void(const UpdateService::UpdateState&)>
+        state_change_callback = base::BindRepeating(
             [](AppWebImplPtr obj,
                const UpdateService::UpdateState& state_update) {
               obj->task_runner_->PostTask(
@@ -435,16 +441,19 @@ class AppWebImpl : public IDispatchImpl<IAppWeb> {
                                             obj, state_update));
             },
             obj);
-    UpdateService::Callback complete_callback = base::BindOnce(
-        [](AppWebImplPtr obj, UpdateService::Result result) {
-          obj->task_runner_->PostTask(
-              FROM_HERE,
-              base::BindOnce(&AppWebImpl::UpdateResultCallback, obj, result));
-        },
-        obj);
+    base::OnceCallback<void(UpdateService::Result)> complete_callback =
+        base::BindOnce(
+            [](AppWebImplPtr obj, UpdateService::Result result) {
+              obj->task_runner_->PostTask(
+                  FROM_HERE, base::BindOnce(&AppWebImpl::UpdateResultCallback,
+                                            obj, result));
+            },
+            obj);
     AppServerWin::PostRpcTask(base::BindOnce(
-        [](UpdateService::StateChangeCallback state_change_callback,
-           UpdateService::Callback complete_callback, AppWebImplPtr obj) {
+        [](base::RepeatingCallback<void(const UpdateService::UpdateState&)>
+               state_change_callback,
+           base::OnceCallback<void(UpdateService::Result)> complete_callback,
+           AppWebImplPtr obj) {
           scoped_refptr<UpdateService> update_service =
               GetAppServerWinInstance()->update_service();
           if (!update_service) {
@@ -461,12 +470,15 @@ class AppWebImpl : public IDispatchImpl<IAppWeb> {
     return S_OK;
   }
 
-  HRESULT UpdateOrInstall() { return is_install_ ? Install() : Update(); }
+  HRESULT UpdateOrInstall() {
+    current_operation_ = CurrentOperation::kUpdatingOrInstalling;
+    return is_install_ ? Install() : Update();
+  }
 
   HRESULT Install() {
     AppWebImplPtr obj(this);
-    UpdateService::StateChangeCallback state_change_callback =
-        base::BindRepeating(
+    base::RepeatingCallback<void(const UpdateService::UpdateState&)>
+        state_change_callback = base::BindRepeating(
             [](AppWebImplPtr obj,
                const UpdateService::UpdateState& state_update) {
               obj->task_runner_->PostTask(
@@ -474,17 +486,20 @@ class AppWebImpl : public IDispatchImpl<IAppWeb> {
                                             obj, state_update));
             },
             obj);
-    UpdateService::Callback complete_callback = base::BindOnce(
-        [](AppWebImplPtr obj, UpdateService::Result result) {
-          obj->task_runner_->PostTask(
-              FROM_HERE,
-              base::BindOnce(&AppWebImpl::UpdateResultCallback, obj, result));
-        },
-        obj);
+    base::OnceCallback<void(UpdateService::Result)> complete_callback =
+        base::BindOnce(
+            [](AppWebImplPtr obj, UpdateService::Result result) {
+              obj->task_runner_->PostTask(
+                  FROM_HERE, base::BindOnce(&AppWebImpl::UpdateResultCallback,
+                                            obj, result));
+            },
+            obj);
 
     AppServerWin::PostRpcTask(base::BindOnce(
-        [](UpdateService::StateChangeCallback state_change_callback,
-           UpdateService::Callback complete_callback, AppWebImplPtr obj) {
+        [](base::RepeatingCallback<void(const UpdateService::UpdateState&)>
+               state_change_callback,
+           base::OnceCallback<void(UpdateService::Result)> complete_callback,
+           AppWebImplPtr obj) {
           scoped_refptr<UpdateService> update_service =
               GetAppServerWinInstance()->update_service();
           if (!update_service) {
@@ -510,8 +525,8 @@ class AppWebImpl : public IDispatchImpl<IAppWeb> {
 
   HRESULT Update() {
     AppWebImplPtr obj(this);
-    UpdateService::StateChangeCallback state_change_callback =
-        base::BindRepeating(
+    base::RepeatingCallback<void(const UpdateService::UpdateState&)>
+        state_change_callback = base::BindRepeating(
             [](AppWebImplPtr obj,
                const UpdateService::UpdateState& state_update) {
               obj->task_runner_->PostTask(
@@ -519,16 +534,19 @@ class AppWebImpl : public IDispatchImpl<IAppWeb> {
                                             obj, state_update));
             },
             obj);
-    UpdateService::Callback complete_callback = base::BindOnce(
-        [](AppWebImplPtr obj, UpdateService::Result result) {
-          obj->task_runner_->PostTask(
-              FROM_HERE,
-              base::BindOnce(&AppWebImpl::UpdateResultCallback, obj, result));
-        },
-        obj);
+    base::OnceCallback<void(UpdateService::Result)> complete_callback =
+        base::BindOnce(
+            [](AppWebImplPtr obj, UpdateService::Result result) {
+              obj->task_runner_->PostTask(
+                  FROM_HERE, base::BindOnce(&AppWebImpl::UpdateResultCallback,
+                                            obj, result));
+            },
+            obj);
     AppServerWin::PostRpcTask(base::BindOnce(
-        [](UpdateService::StateChangeCallback state_change_callback,
-           UpdateService::Callback complete_callback, AppWebImplPtr obj) {
+        [](base::RepeatingCallback<void(const UpdateService::UpdateState&)>
+               state_change_callback,
+           base::OnceCallback<void(UpdateService::Result)> complete_callback,
+           AppWebImplPtr obj) {
           scoped_refptr<UpdateService> update_service =
               GetAppServerWinInstance()->update_service();
           if (!update_service) {
@@ -669,8 +687,12 @@ class AppWebImpl : public IDispatchImpl<IAppWeb> {
           state_value = STATE_CHECKING_FOR_UPDATE;
           break;
         case UpdateService::UpdateState::State::kUpdateAvailable:
-          state_value = set_ready_to_install_ ? STATE_READY_TO_INSTALL
-                                              : STATE_UPDATE_AVAILABLE;
+          state_value =
+              set_ready_to_install_ ? STATE_READY_TO_INSTALL
+              : current_operation_ == CurrentOperation::kCheckingForUpdates
+                  ? (result_ ? STATE_UPDATE_AVAILABLE
+                             : STATE_CHECKING_FOR_UPDATE)
+                  : STATE_UPDATE_AVAILABLE;
           break;
         case UpdateService::UpdateState::State::kDownloading:
           state_value = STATE_DOWNLOADING;
@@ -679,10 +701,10 @@ class AppWebImpl : public IDispatchImpl<IAppWeb> {
           state_value = STATE_INSTALLING;
           break;
         case UpdateService::UpdateState::State::kUpdated:
-          state_value = STATE_INSTALL_COMPLETE;
+          state_value = result_ ? STATE_INSTALL_COMPLETE : STATE_INSTALLING;
           break;
         case UpdateService::UpdateState::State::kNoUpdate:
-          state_value = STATE_NO_UPDATE;
+          state_value = result_ ? STATE_NO_UPDATE : STATE_CHECKING_FOR_UPDATE;
           break;
         case UpdateService::UpdateState::State::kUpdateError:
           state_value = STATE_ERROR;
@@ -754,6 +776,16 @@ class AppWebImpl : public IDispatchImpl<IAppWeb> {
  private:
   using AppWebImplPtr = Microsoft::WRL::ComPtr<AppWebImpl>;
 
+  enum class CurrentOperation {
+    kUnknown = 0,
+
+    // The COM client has started an update check.
+    kCheckingForUpdates = 1,
+
+    // The COM client has started an update or install.
+    kUpdatingOrInstalling = 2,
+  };
+
   ~AppWebImpl() override {
     // If a new install has not happened, the app id registered in
     // `RuntimeClassInitialize` needs to be removed here. Otherwise
@@ -789,7 +821,7 @@ class AppWebImpl : public IDispatchImpl<IAppWeb> {
               GetAppServerWinInstance()->config()->GetUpdaterPersistedData();
           const base::Version version =
               persisted_data->GetProductVersion(app_id);
-          if (!version.IsValid() || version != base::Version(kNullVersion)) {
+          if (version.IsValid() && version != base::Version(kNullVersion)) {
             return;
           }
           persisted_data->RemoveApp(app_id);
@@ -829,6 +861,7 @@ class AppWebImpl : public IDispatchImpl<IAppWeb> {
   mutable base::Lock lock_;
   std::optional<UpdateService::UpdateState> state_update_;
   std::optional<UpdateService::Result> result_;
+  CurrentOperation current_operation_ = CurrentOperation::kUnknown;
 };
 
 // This class implements the legacy Omaha3 IAppBundleWeb interface as expected
@@ -982,7 +1015,8 @@ LegacyProcessLauncherImpl::LegacyProcessLauncherImpl() = default;
 LegacyProcessLauncherImpl::~LegacyProcessLauncherImpl() = default;
 
 STDMETHODIMP LegacyProcessLauncherImpl::LaunchCmdLine(const WCHAR* cmd_line) {
-  return LaunchCmdLineEx(cmd_line, nullptr, nullptr, nullptr);
+  LOG(ERROR) << "Reached unimplemented COM method: " << __func__;
+  return E_NOTIMPL;
 }
 
 STDMETHODIMP LegacyProcessLauncherImpl::LaunchBrowser(DWORD browser_type,
@@ -1040,15 +1074,13 @@ STDMETHODIMP LegacyProcessLauncherImpl::LaunchCmdElevated(
   return S_OK;
 }
 
-// Launches a process at medium integrity. The `server_proc_id`, `proc_handle`,
-// and `stdout_handle` provided by the caller are not populated on return, so
-// the caller will not be able to monitor the progress. See crbug.com/1523813.
 STDMETHODIMP LegacyProcessLauncherImpl::LaunchCmdLineEx(
     const WCHAR* cmd_line,
     DWORD* /*server_proc_id*/,
     ULONG_PTR* /*proc_handle*/,
     ULONG_PTR* /*stdout_handle*/) {
-  return RunDeElevatedCmdLine(cmd_line);
+  LOG(ERROR) << "Reached unimplemented COM method: " << __func__;
+  return E_NOTIMPL;
 }
 
 LegacyAppCommandWebImpl::LegacyAppCommandWebImpl()
@@ -1214,13 +1246,17 @@ void LegacyAppCommandWebImpl::SendPing(UpdaterScope scope,
 }
 
 PolicyStatusImpl::PolicyStatusImpl()
-    : IDispatchImpl<IPolicyStatus3, IPolicyStatus2, IPolicyStatus>(
-          {IID_MAP_ENTRY_USER(IPolicyStatus3),
-           IID_MAP_ENTRY_USER(IPolicyStatus2),
-           IID_MAP_ENTRY_USER(IPolicyStatus)},
-          {IID_MAP_ENTRY_SYSTEM(IPolicyStatus3),
-           IID_MAP_ENTRY_SYSTEM(IPolicyStatus2),
-           IID_MAP_ENTRY_SYSTEM(IPolicyStatus)}),
+    : IDispatchImpl<IPolicyStatus4,
+                    IPolicyStatus3,
+                    IPolicyStatus2,
+                    IPolicyStatus>({IID_MAP_ENTRY_USER(IPolicyStatus4),
+                                    IID_MAP_ENTRY_USER(IPolicyStatus3),
+                                    IID_MAP_ENTRY_USER(IPolicyStatus2),
+                                    IID_MAP_ENTRY_USER(IPolicyStatus)},
+                                   {IID_MAP_ENTRY_SYSTEM(IPolicyStatus4),
+                                    IID_MAP_ENTRY_SYSTEM(IPolicyStatus3),
+                                    IID_MAP_ENTRY_SYSTEM(IPolicyStatus2),
+                                    IID_MAP_ENTRY_SYSTEM(IPolicyStatus)}),
       policy_service_(GetAppServerWinInstance()->config()->GetPolicyService()) {
 }
 PolicyStatusImpl::~PolicyStatusImpl() = default;
@@ -1644,6 +1680,16 @@ STDMETHODIMP PolicyStatusImpl::get_forceInstallApps(
   auto policy_status =
       PolicyStatusResult<std::vector<std::string>>::Get(base::BindRepeating(
           &PolicyService::GetForceInstallApps, policy_service_));
+  return policy_status.has_value()
+             ? PolicyStatusValueImpl::Create(*policy_status, value)
+             : E_FAIL;
+}
+
+STDMETHODIMP PolicyStatusImpl::get_cloudPolicyOverridesPlatformPolicy(
+    IPolicyStatusValue** value) {
+  CHECK(value);
+  auto policy_status = PolicyStatusResult<bool>::Get(base::BindRepeating(
+      &PolicyService::CloudPolicyOverridesPlatformPolicy, policy_service_));
   return policy_status.has_value()
              ? PolicyStatusValueImpl::Create(*policy_status, value)
              : E_FAIL;

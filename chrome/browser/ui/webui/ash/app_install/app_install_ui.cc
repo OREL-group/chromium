@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ui/webui/ash/app_install/app_install_ui.h"
 
 #include "ash/webui/common/trusted_types_util.h"
@@ -42,8 +47,12 @@ AppInstallDialogUI::AppInstallDialogUI(content::WebUI* web_ui)
       {"appInstalled", IDS_APP_INSTALL_DIALOG_APP_INSTALLED_TITLE},
       {"appAlreadyInstalled",
        IDS_APP_INSTALL_DIALOG_APP_ALREADY_INSTALLED_TITLE},
-      {"noAppDataTitle", IDS_APP_INSTALL_DIALOG_NO_APP_DATA_TITLE},
-      {"noAppDataDescription", IDS_APP_INSTALL_DIALOG_NO_APP_DATA_DESCRIPTION},
+      {"noAppErrorTitle", IDS_APP_INSTALL_DIALOG_NO_APP_ERROR_TITLE},
+      {"noAppErrorDescription",
+       IDS_APP_INSTALL_DIALOG_NO_APP_ERROR_DESCRIPTION},
+      {"connectionErrorTitle", IDS_APP_INSTALL_DIALOG_CONNECTION_ERROR_TITLE},
+      {"connectionErrorDescription",
+       IDS_APP_INSTALL_DIALOG_CONNECTION_ERROR_DESCRIPTION},
       {"tryAgain", IDS_APP_INSTALL_DIALOG_TRY_AGAIN_BUTTON_LABEL},
       {"failedInstall", IDS_APP_INSTALL_DIALOG_FAILED_INSTALL_TITLE},
       {"iconAlt", IDS_APP_INSTALL_DIALOG_APP_ICON_ALT},
@@ -69,22 +78,12 @@ AppInstallDialogUI::AppInstallDialogUI(content::WebUI* web_ui)
 
 AppInstallDialogUI::~AppInstallDialogUI() = default;
 
-void AppInstallDialogUI::SetDialogArgs(mojom::DialogArgsPtr args) {
-  dialog_args_ = std::move(args);
-}
-
-void AppInstallDialogUI::SetPackageId(apps::PackageId package_id) {
-  package_id_ = std::move(package_id);
-}
-
-void AppInstallDialogUI::SetDialogCallback(
-    base::OnceCallback<void(bool accepted)> dialog_accepted_callback) {
-  dialog_accepted_callback_ = std::move(dialog_accepted_callback);
-}
-
-void AppInstallDialogUI::SetTryAgainCallback(
-    base::OnceClosure try_again_callback) {
-  try_again_callback_ = std::move(try_again_callback);
+void AppInstallDialogUI::SetDialogArgs(AppInstallDialogArgs dialog_args) {
+  if (page_handler_) {
+    page_handler_->SetDialogArgs(std::move(dialog_args));
+  } else {
+    dialog_args_ = std::move(dialog_args);
+  }
 }
 
 void AppInstallDialogUI::SetInstallComplete(
@@ -114,9 +113,8 @@ void AppInstallDialogUI::CreatePageHandler(
     mojo::PendingReceiver<mojom::PageHandler> receiver) {
   page_handler_ = std::make_unique<AppInstallPageHandler>(
       Profile::FromWebUI(web_ui()), std::move(dialog_args_),
-      std::move(package_id_), std::move(dialog_accepted_callback_),
       base::BindOnce(&AppInstallDialogUI::CloseDialog, base::Unretained(this)),
-      std::move(try_again_callback_), std::move(receiver));
+      std::move(receiver));
 }
 
 void AppInstallDialogUI::CloseDialog() {
@@ -124,11 +122,6 @@ void AppInstallDialogUI::CloseDialog() {
 }
 
 WEB_UI_CONTROLLER_TYPE_IMPL(AppInstallDialogUI)
-
-bool AppInstallDialogUIConfig::IsWebUIEnabled(
-    content::BrowserContext* browser_context) {
-  return AppInstallDialog::IsEnabled();
-}
 
 AppInstallDialogUIConfig::AppInstallDialogUIConfig()
     : DefaultWebUIConfig(content::kChromeUIScheme,

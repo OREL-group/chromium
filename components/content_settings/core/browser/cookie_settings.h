@@ -24,7 +24,7 @@
 #include "components/prefs/pref_change_registrar.h"
 #include "components/privacy_sandbox/tracking_protection_settings.h"
 #include "components/privacy_sandbox/tracking_protection_settings_observer.h"
-#include "components/tpcd/metadata/manager.h"
+#include "components/tpcd/metadata/browser/manager.h"
 #include "third_party/abseil-cpp/absl/types/variant.h"
 
 class GURL;
@@ -45,7 +45,8 @@ enum class CookieControlsMode {
   kOff = 0,
   kBlockThirdParty = 1,
   kIncognitoOnly = 2,
-  kMaxValue = kIncognitoOnly,
+  kLimited = 3,
+  kMaxValue = kLimited,
 };
 
 // Default value for |extension_scheme|.
@@ -96,7 +97,7 @@ class CookieSettings
   //
   // This may be called on any thread.
   ContentSetting GetDefaultCookieSetting(
-      std::string* provider_id = nullptr) const;
+      content_settings::ProviderType* provider_id = nullptr) const;
 
   // Returns all patterns with a non-default cookie setting, mapped to their
   // actual settings, in the precedence order of the setting rules.
@@ -157,7 +158,7 @@ class CookieSettings
   // - Cases like WebUIs, allowlisted internal apps, and extension iframes are
   // usually being exempted from storage partitioning or are allowlisted. Thus,
   // not covered by user bypass at this state of art.
-  bool IsStoragePartitioningBypassEnabled(const GURL& first_party_url);
+  bool IsStoragePartitioningBypassEnabled(const GURL& first_party_url) const;
 
   const ContentSettingsForOneType GetTpcdMetadataGrants() const {
     return tpcd_metadata_manager_ ? tpcd_metadata_manager_->GetGrants()
@@ -168,6 +169,12 @@ class CookieSettings
   //
   // This should only be called on the UI thread.
   void ResetCookieSetting(const GURL& primary_url);
+
+  // Returns true if third party cookies should be limited (blocked with
+  // mitigations).
+  //
+  // This should only be called on the UI thread.
+  bool AreThirdPartyCookiesLimited() const;
 
   // Returns true if cookies are allowed for *most* third parties on |url|.
   // There might be rules allowing or blocking specific third parties from
@@ -208,9 +215,6 @@ class CookieSettings
   // This method may be called on any thread. Virtual for testing.
   bool MitigationsEnabledFor3pcd() const override;
 
-  // Returns true iff tracking protection for 3PCD (prefs + UX) is enabled.
-  bool TrackingProtectionEnabledFor3pcd() const;
-
   // Returns true if there is an active storage access exception with
   // |first_party_url| as the secondary pattern.
   bool HasAnyFrameRequestedStorageAccess(const GURL& first_party_url) const;
@@ -242,13 +246,16 @@ class CookieSettings
  private:
   // Evaluates if third-party cookies are blocked. Should only be called
   // when the preference changes to update the internal state.
-  bool ShouldBlockThirdPartyCookiesInternal();
+  bool ShouldBlockThirdPartyCookiesInternal() const;
 
   // Evaluates whether third party cookies deprecation mitigations should be
   // enabled.
-  bool MitigationsEnabledFor3pcdInternal();
+  bool MitigationsEnabledFor3pcdInternal() const;
 
   void OnCookiePreferencesChanged();
+
+  // Updates the status of cookies deprecation mitigations.
+  void OnMitigationsEnabledChanged();
 
   // content_settings::CookieSettingsBase:
   bool ShouldAlwaysAllowCookies(const GURL& url,

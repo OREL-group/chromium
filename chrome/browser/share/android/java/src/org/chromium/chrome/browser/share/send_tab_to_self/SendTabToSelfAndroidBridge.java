@@ -13,7 +13,6 @@ import org.jni_zero.NativeMethods;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.content_public.browser.WebContents;
 
-import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 
@@ -24,7 +23,7 @@ import java.util.Optional;
  */
 @JNINamespace("send_tab_to_self")
 public class SendTabToSelfAndroidBridge {
-    // TODO(https://crbug.com/942549): Add logic back in to track whether model is loaded.
+    // TODO(crbug.com/40618597): Add logic back in to track whether model is loaded.
     private boolean mIsNativeSendTabToSelfModelLoaded;
 
     /**
@@ -37,7 +36,7 @@ public class SendTabToSelfAndroidBridge {
      */
     public static boolean addEntry(
             Profile profile, String url, String title, String targetDeviceSyncCacheGuid) {
-        // TODO(https://crbug.com/942549): Add this assertion back in once the code to load is in
+        // TODO(crbug.com/40618597): Add this assertion back in once the code to load is in
         // place. assert mIsNativeSendTabToSelfModelLoaded;
         return SendTabToSelfAndroidBridgeJni.get()
                 .addEntry(profile, url, title, targetDeviceSyncCacheGuid);
@@ -68,14 +67,10 @@ public class SendTabToSelfAndroidBridge {
      * @return All {@link TargetDeviceInfo} for the user, or an empty list if the model isn't ready.
      */
     public static List<TargetDeviceInfo> getAllTargetDeviceInfos(Profile profile) {
-        // TODO(https://crbug.com/942549): Add this assertion back in once the
+        // TODO(crbug.com/40618597): Add this assertion back in once the
         // code to load is in place.
         // assert mIsNativeSendTabToSelfModelLoaded;
-        return (List<TargetDeviceInfo>)
-                (List<?>)
-                        Arrays.asList(
-                                SendTabToSelfAndroidBridgeJni.get()
-                                        .getAllTargetDeviceInfos(profile));
+        return SendTabToSelfAndroidBridgeJni.get().getAllTargetDeviceInfos(profile);
     }
 
     /**
@@ -107,7 +102,7 @@ public class SendTabToSelfAndroidBridge {
         void dismissEntry(@JniType("Profile*") Profile profile, String guid);
 
         @JniType("std::vector")
-        Object[] getAllTargetDeviceInfos(@JniType("Profile*") Profile profile);
+        List<TargetDeviceInfo> getAllTargetDeviceInfos(@JniType("Profile*") Profile profile);
 
         void updateActiveWebContents(WebContents webContents);
 

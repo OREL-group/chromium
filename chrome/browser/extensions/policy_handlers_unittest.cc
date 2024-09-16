@@ -42,6 +42,8 @@
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
+#include "ash/constants/ash_switches.h"
+#include "base/test/scoped_command_line.h"
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #endif
 
@@ -324,7 +326,7 @@ TEST(ExtensionInstallForceListPolicyHandlerTest, ApplyPolicySettings) {
   handler.ApplyPolicySettings(policy_map, &prefs);
   EXPECT_FALSE(prefs.GetValue(pref_names::kInstallForceList, &value));
   EXPECT_FALSE(value);
-  EXPECT_EQ(base::Value::Dict(), handler.GetPolicyDict(policy_map));
+  EXPECT_EQ(std::nullopt, handler.GetPolicyDict(policy_map));
 
   // Set the policy to an empty value. This shouldn't affect the pref.
   policy_map.Set(policy::key::kExtensionInstallForcelist,
@@ -332,7 +334,7 @@ TEST(ExtensionInstallForceListPolicyHandlerTest, ApplyPolicySettings) {
                  policy::POLICY_SOURCE_CLOUD, base::Value(policy.Clone()),
                  nullptr);
   handler.ApplyPolicySettings(policy_map, &prefs);
-  EXPECT_TRUE(prefs.GetValue(pref_names::kInstallForceList, &value));
+  ASSERT_TRUE(prefs.GetValue(pref_names::kInstallForceList, &value));
   EXPECT_EQ(expected, *value);
   EXPECT_EQ(expected, handler.GetPolicyDict(policy_map));
 
@@ -346,7 +348,7 @@ TEST(ExtensionInstallForceListPolicyHandlerTest, ApplyPolicySettings) {
                  policy::POLICY_SOURCE_CLOUD, base::Value(policy.Clone()),
                  nullptr);
   handler.ApplyPolicySettings(policy_map, &prefs);
-  EXPECT_TRUE(prefs.GetValue(pref_names::kInstallForceList, &value));
+  ASSERT_TRUE(prefs.GetValue(pref_names::kInstallForceList, &value));
   EXPECT_EQ(expected, *value);
   EXPECT_EQ(expected, handler.GetPolicyDict(policy_map));
 
@@ -644,6 +646,8 @@ class PolicyHandlerAshTest : public ::testing::Test {
     feature_list_.InitWithFeatures(
         /*enabled_features=*/ash::standalone_browser::GetFeatureRefs(),
         /*disabled_features=*/{});
+    scoped_command_line_.GetProcessCommandLine()->AppendSwitch(
+        ash::switches::kEnableLacrosForTesting);
   }
 
   void DisableLacros() {
@@ -656,6 +660,7 @@ class PolicyHandlerAshTest : public ::testing::Test {
   user_manager::TypedScopedUserManager<ash::FakeChromeUserManager>
       scoped_user_manager_;
   base::test::ScopedFeatureList feature_list_;
+  base::test::ScopedCommandLine scoped_command_line_;
 };
 
 class ExtensionInstallBlockListPolicyHandlerAshTest

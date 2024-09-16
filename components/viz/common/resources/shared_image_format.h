@@ -21,7 +21,6 @@
 
 namespace viz {
 
-class LegacyMultiPlaneFormat;
 class SinglePlaneFormat;
 
 namespace mojom {
@@ -114,6 +113,23 @@ class COMPONENT_EXPORT(VIZ_SHARED_IMAGE_FORMAT) SharedImageFormat final {
   }
 #endif
 
+  // Clears this format as needing external sampling. Note that with MappableSI,
+  // the type of underlying buffer (native or shared memory) is not known until
+  // the shared image is created. This is problematic for clients which needs to
+  // call SharedImageFormat::SetPrefersExternalSampler() before creating a
+  // shared image. In those cases clients will unconditionally call
+  // SharedImageFormat::SetPrefersExternalSampler() before creating a
+  // mappableSI. SI will internally take care of clearing it back to false by
+  // using this method in case it is determined that the it's backed by shared
+  // memory. https://issues.chromium.org/339546249.
+  void ClearPrefersExternalSampler() {
+#if BUILDFLAG(IS_OZONE)
+    CHECK(is_multi_plane() &&
+          format_.multiplanar_format.prefers_external_sampler);
+    format_.multiplanar_format.prefers_external_sampler = false;
+#endif
+  }
+
   // Returns whether the resource format can be used as a software bitmap for
   // export to the display compositor.
   bool IsBitmapFormatSupported() const;
@@ -163,12 +179,7 @@ class COMPONENT_EXPORT(VIZ_SHARED_IMAGE_FORMAT) SharedImageFormat final {
   // Returns true if the format is ETC1 compressed.
   bool IsCompressed() const;
 
-  // Returns true if format is legacy multiplanar SingleplanarFormat i.e.
-  // YUV_420_BIPLANAR, YVU_420, YUVA_420_TRIPLANAR, P010.
-  bool IsLegacyMultiplanar() const;
-
-  // NOTE: Supported only for true single-plane formats (i.e., formats for
-  // which is_single_plane() is true and IsLegacyMultiplanar() is false).
+  // NOTE: Supported only for true single-plane formats.
   int BitsPerPixel() const;
 
   bool operator==(const SharedImageFormat& o) const;
@@ -214,7 +225,6 @@ class COMPONENT_EXPORT(VIZ_SHARED_IMAGE_FORMAT) SharedImageFormat final {
     MultiplanarFormat multiplanar_format;
   };
 
-  friend class LegacyMultiPlaneFormat;
   friend class SinglePlaneFormat;
   friend struct mojo::UnionTraits<mojom::SharedImageFormatDataView,
                                   SharedImageFormat>;
@@ -300,32 +310,6 @@ class SinglePlaneFormat {
       kBGRX_8888,     kRGBA_1010102, kBGRA_1010102, kR_F16};
 };
 
-// Constants for legacy single-plane representations of multiplanar formats.
-// NOTE: This is a class rather than a namespace so that SharedImageFormat can
-// friend it to give it access to the private constructor needed for creating
-// these constants.
-// TODO(crbug.com/40239769): Eliminate these once the codebase is completely
-// converted to using MultiplanarSharedImage.
-class LegacyMultiPlaneFormat {
- public:
-  static constexpr SharedImageFormat kYV12 =
-      SharedImageFormat(mojom::SingleplanarFormat::YV12_LEGACY);
-  static constexpr SharedImageFormat kNV12 =
-      SharedImageFormat(mojom::SingleplanarFormat::NV12_LEGACY);
-  static constexpr SharedImageFormat kNV12A =
-      SharedImageFormat(mojom::SingleplanarFormat::NV12A_LEGACY);
-  static constexpr SharedImageFormat kP010 =
-      SharedImageFormat(mojom::SingleplanarFormat::P010_LEGACY);
-
-  // All known legacy multiplanar formats.
-  static constexpr SharedImageFormat kAll[4] = {kYV12, kNV12, kNV12A, kP010};
-
-  // The number of singleplanar and legacy multiplanar formats should
-  // correspond exactly to the number of SingleplanarFormat types.
-  static_assert(std::size(SinglePlaneFormat::kAll) + std::size(kAll) ==
-                static_cast<int>(mojom::SingleplanarFormat::kMaxValue) + 1);
-};
-
 // Constants for common multi-planar formats.
 namespace MultiPlaneFormat {
 inline constexpr SharedImageFormat kYV12 =
@@ -346,6 +330,22 @@ inline constexpr SharedImageFormat kP010 =
                                   SharedImageFormat::ChannelFormat::k10);
 // NOTE: These formats do not have an equivalent BufferFormat as they are not
 // used with GpuMemoryBuffers.
+inline constexpr SharedImageFormat kNV16 =
+    SharedImageFormat::MultiPlane(SharedImageFormat::PlaneConfig::kY_UV,
+                                  SharedImageFormat::Subsampling::k422,
+                                  SharedImageFormat::ChannelFormat::k8);
+inline constexpr SharedImageFormat kNV24 =
+    SharedImageFormat::MultiPlane(SharedImageFormat::PlaneConfig::kY_UV,
+                                  SharedImageFormat::Subsampling::k444,
+                                  SharedImageFormat::ChannelFormat::k8);
+inline constexpr SharedImageFormat kP210 =
+    SharedImageFormat::MultiPlane(SharedImageFormat::PlaneConfig::kY_UV,
+                                  SharedImageFormat::Subsampling::k422,
+                                  SharedImageFormat::ChannelFormat::k10);
+inline constexpr SharedImageFormat kP410 =
+    SharedImageFormat::MultiPlane(SharedImageFormat::PlaneConfig::kY_UV,
+                                  SharedImageFormat::Subsampling::k444,
+                                  SharedImageFormat::ChannelFormat::k10);
 inline constexpr SharedImageFormat kI420 =
     SharedImageFormat::MultiPlane(SharedImageFormat::PlaneConfig::kY_U_V,
                                   SharedImageFormat::Subsampling::k420,

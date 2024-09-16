@@ -49,18 +49,19 @@ from blinkpy.web_tests.port.base import Port
 from blinkpy.web_tests.port.driver import TestURIMapper
 from blinkpy.web_tests.models import test_failures
 from blinkpy.web_tests.models.testharness_results import (
-    ABBREVIATED_ALL_PASS,
+    format_testharness_baseline,
     LineType,
+    make_all_pass_baseline,
+    parse_testharness_baseline,
     Status,
     TestharnessLine,
-    format_testharness_baseline,
-    parse_testharness_baseline,
 )
 from blinkpy.web_tests.models.test_expectations import TestExpectations
 from blinkpy.web_tests.models.test_run_results import convert_to_hierarchical_view
 from blinkpy.web_tests.models.typ_types import (
     Artifacts,
     Expectation,
+    ExpectationType,
     Result,
     ResultSinkReporter,
     ResultType,
@@ -155,7 +156,7 @@ class WPTResult(Result):
     def __init__(self,
                  *args,
                  test_type: Optional[str] = None,
-                 exp_line: Optional[Expectation] = None,
+                 exp_line: Optional[ExpectationType] = None,
                  baseline: Optional[List[TestharnessLine]] = None,
                  **kwargs):
         kwargs.setdefault('expected', exp_line.results)
@@ -205,8 +206,9 @@ class WPTResult(Result):
     def update_from_test(self, status: str, message: Optional[str] = None):
         self._maybe_add_testharness_result(status, message)
         self.actual = wptrunner_to_chromium_status(status)
-        if self.can_have_subtests and self.actual not in {
-                ResultType.Timeout, ResultType.Crash
+        if self.can_have_subtests and self.actual in {
+                ResultType.Pass,
+                ResultType.Failure,
         }:
             if self._baseline_matches():
                 self.actual = ResultType.Pass
@@ -275,18 +277,18 @@ class WPTResult(Result):
         return harness_error, subtests_by_name
 
     def format_baseline(self) -> str:
-        if all(result.statuses <= {Status.PASS}
-               for result in self.testharness_results):
-            return ABBREVIATED_ALL_PASS
         header = (LineType.TESTHARNESS_HEADER if self.test_type
                   == 'testharness' else LineType.WDSPEC_HEADER)
+        if all(result.statuses <= {Status.PASS}
+               for result in self.testharness_results):
+            return make_all_pass_baseline(header)
         return format_testharness_baseline([
             TestharnessLine(header),
             *self.testharness_results,
             TestharnessLine(LineType.FOOTER),
         ])
 
-    def summarize(self) -> Optional[str]:
+    def summarize(self, product: str) -> Optional[str]:
         """Generate a summary of this test result as sanitized HTML.
 
         See [1] for ResultDB-specific markup features.
@@ -298,14 +300,14 @@ class WPTResult(Result):
         # TODO(crbug.com/1521922): Unify result sink reporting with
         # `blinkpy.web_tests.*`.
         summary = textwrap.dedent(f"""\
-            <p><strong>This WPT was run against <code>chrome</code> using
+            <p><strong>This WPT was run against <code>{product}</code> using
             <code>chromedriver</code>. See <a href="{_WPT_DOC_URL}">these
             instructions</a> about running these tests locally and triaging
             failures.</strong></p>""").replace('\n', ' ')
         url = wpt_fyi_url(self.name)
         if url:
             summary += f'<p><a href="{url}">Latest wpt.fyi results</a></p>'
-        for name in ['command', 'stderr', 'crash_log']:
+        for name in ['stderr', 'crash_log']:
             if name in self.artifacts:
                 summary += f'<h3>{name}</h3>'
                 summary += f'<p><text-artifact artifact-id="{name}"/></p>'
@@ -318,6 +320,18 @@ class Event(NamedTuple):
     thread: str
     pid: int
     source: str
+
+    @classmethod
+    def make_raw_event(cls, action: str, **extra: Any) -> Dict[str, Any]:
+        """Create a raw synthetic `mozlog` event."""
+        return {
+            'action': action,
+            'time': time.time() * 1000,  # Time since epoch in ms
+            'thread': threading.current_thread().name,
+            'pid': os.getpid(),
+            'source': __name__,
+            **extra,  # Action-specific fields
+        }
 
 
 class EventProcessingError(ValueError):
@@ -340,6 +354,10 @@ class ReftestScreenshot(TypedDict):
     """
     url: str
     screenshot: str
+
+    @staticmethod
+    def decode_image(screenshot: 'ReftestScreenshot') -> bytes:
+        return base64.b64decode(screenshot['screenshot'].strip())
 
 
 @dataclass
@@ -377,18 +395,17 @@ class WPTResultsProcessor:
                  failure_threshold: Optional[int] = None,
                  crash_timeout_threshold: Optional[int] = None,
                  reset_results: bool = False,
+                 repeat_each: int = 1,
                  processes: Optional[int] = None):
         self.fs = fs
         self.port = port
         self.artifacts_dir = artifacts_dir
-        self.sink = sink or ResultSinkReporter()
+        self.sink = sink or ResultSinkReporter(host=port.typ_host())
         # This prefix does not actually exist on disk and only affects how the
         # results are reported.
         if test_name_prefix and not test_name_prefix.endswith('/'):
             test_name_prefix += '/'
         self.test_name_prefix = test_name_prefix
-        self.wpt_manifest = self.port.wpt_manifest('external/wpt')
-        self.internal_manifest = self.port.wpt_manifest('wpt_internal')
         self.path_finder = path_finder.PathFinder(self.fs)
         self._test_uri_mapper = TestURIMapper(self.port)
         # Provide placeholder properties until the `suite_start` events are
@@ -419,6 +436,7 @@ class WPTResultsProcessor:
         self.failure_threshold = failure_threshold or math.inf
         self.crash_timeout_threshold = crash_timeout_threshold or math.inf
         self.reset_results = reset_results
+        self.repeat_each = repeat_each
         assert self.failure_threshold > 0
         assert self.crash_timeout_threshold > 0
 
@@ -438,11 +456,6 @@ class WPTResultsProcessor:
         ]
         return sum(self._num_failures_by_status[status]
                    for status in failure_statuses)
-
-    @property
-    def num_regressions(self) -> int:
-        return sum(final_result.is_regression
-                   for *_, final_result in self._results_by_name.values())
 
     def copy_results_viewer(self):
         files_to_copy = ['results.html', 'results.html.version']
@@ -490,10 +503,12 @@ class WPTResultsProcessor:
             dest.write('ADD_RESULTS(')
             json.dump(final_result, dest)
             dest.write(');')
+        return final_result
 
     @contextlib.contextmanager
-    def stream_results(self,
-                       timeout: float = 3) -> Iterator[queue.SimpleQueue]:
+    def stream_results(
+            self,
+            timeout: Optional[float] = None) -> Iterator[queue.SimpleQueue]:
         """Asynchronously handle wptrunner test results.
 
         This context manager starts and cleans up a worker thread to write
@@ -509,6 +524,7 @@ class WPTResultsProcessor:
                 before this manager exited; a well-behaved caller should avoid
                 this.
         """
+        assert timeout is None or timeout >= 0, timeout
         events = queue.SimpleQueue()
         worker = threading.Thread(target=self._consume_events,
                                   args=(events, ),
@@ -517,12 +533,26 @@ class WPTResultsProcessor:
         worker.start()
         try:
             yield events
+        except KeyboardInterrupt:
+            # Use a greater default timeout on CI so that the processor has
+            # enough time to report all incomplete tests. Slow exit is less of a
+            # concern.
+            if timeout is None and self.sink.resultdb_supported:
+                timeout = 15
+            raise
         finally:
+            # Keep the default exit fast for local or completed runs.
+            if timeout is None:
+                timeout = 3
             # Send a shutdown event, if one has not been sent already, to tell
             # the worker to exit.
-            _log.info('Sending shutdown event to stop the worker...')
-            events.put({'action': 'shutdown'}, timeout=timeout)
-            worker.join(timeout=timeout)
+            deadline = time.time() + timeout
+            events.put(Event.make_raw_event('shutdown'), timeout=timeout)
+            worker.join(timeout=max(0, deadline - time.time()))
+            if worker.is_alive():
+                _log.warning('Results stream worker did not stop.')
+            else:
+                _log.info('Stopped results stream worker.')
 
     def _consume_events(self, events: queue.SimpleQueue):
         while True:
@@ -530,7 +560,6 @@ class WPTResultsProcessor:
             try:
                 self.process_event(event)
             except StreamShutdown:
-                _log.info('Stopping results stream worker thread.')
                 return
             except Exception as error:
                 _log.exception('Unable to process event %r: %s', event, error)
@@ -540,15 +569,9 @@ class WPTResultsProcessor:
         event = Event(raw_event.pop('action'), raw_event.pop('time'),
                       raw_event.pop('thread'), raw_event.pop('pid'),
                       raw_event.pop('source'))
-        if (event.action in ['test_start', 'test_status', 'test_end']
-                and self.run_info.get('used_upstream')):
-            # Do not process test related events when run with
-            # --use-upstream-wpt. Only Wpt report is needed for such case.
-            return
         test = raw_event.pop('test', None)
         subsuite = raw_event.pop('subsuite', '')
         if test:
-            test = test[1:] if test.startswith('/') else test
             test = self._get_chromium_test_name(test, subsuite)
             raw_event['test'] = test
         status = raw_event.get('status')
@@ -567,15 +590,27 @@ class WPTResultsProcessor:
     def suite_start(self,
                     event: Event,
                     run_info: Optional[RunInfo] = None,
+                    tests: Optional[Dict[str, List[str]]] = None,
                     **_):
         if run_info:
             self.run_info.update(run_info)
+        if self._iteration > 0:
+            return
+        # Register tests that will run so that they can be reported as
+        # "unexpectedly skipped" if they have no results on shutdown.
+        for group_key, group_tests in (tests or {}).items():
+            subsuite, _, _ = group_key.rpartition(':')
+            for test_url in group_tests:
+                test = self._get_chromium_test_name(test_url, subsuite)
+                self._results_by_name[test] = []
 
     def suite_end(self, event: Event, **_):
         self._iteration += 1
 
-    def _get_chromium_test_name(self, test: str, subsuite: str):
-        if not self.path_finder.is_wpt_internal_path(test):
+    def _get_chromium_test_name(self, test: str, subsuite: str) -> str:
+        test = test[1:] if test.startswith('/') else test
+        wpt_dir, _ = self.port.split_wpt_dir(test)
+        if wpt_dir != 'wpt_internal':
             test = self.path_finder.wpt_prefix() + test
         if subsuite:
             test = f'virtual/{subsuite}/{test}'
@@ -601,14 +636,9 @@ class WPTResultsProcessor:
             baseline=baseline)
 
     def get_path_from_test_root(self, test: str) -> str:
-        if self.path_finder.is_wpt_internal_path(test):
-            path_from_test_root = self.internal_manifest.file_path_for_test_url(
-                test[len('wpt_internal/'):])
-        else:
-            test = self.path_finder.strip_wpt_path(test)
-            path_from_test_root = self.wpt_manifest.file_path_for_test_url(
-                test)
-        return path_from_test_root
+        wpt_dir, url_from_wpt_dir = self.port.split_wpt_dir(test)
+        manifest = self.port.wpt_manifest(wpt_dir)
+        return manifest.file_path_for_test_url(url_from_wpt_dir)
 
     @memoized
     def _file_path_for_test(self, test: str) -> str:
@@ -617,20 +647,15 @@ class WPTResultsProcessor:
         if not path_from_test_root:
             raise EventProcessingError(
                 'Test ID %r does not exist in the manifest' % test)
-        if self.path_finder.is_wpt_internal_path(test):
-            prefix = 'wpt_internal'
-        else:
-            prefix = self.fs.join('external', 'wpt')
-        return self.path_finder.path_from_web_tests(prefix,
+        wpt_dir, _ = self.port.split_wpt_dir(test)
+        return self.path_finder.path_from_web_tests(*posixpath.split(wpt_dir),
                                                     path_from_test_root)
 
     def get_test_type(self, test: str) -> str:
         _, test = self.port.get_suite_name_and_base_test(test)
-        test_path = self.get_path_from_test_root(test)
-        if self.path_finder.is_wpt_internal_path(test):
-            return self.internal_manifest.get_test_type(test_path)
-        else:
-            return self.wpt_manifest.get_test_type(test_path)
+        wpt_dir, url_from_wpt_dir = self.port.split_wpt_dir(test)
+        manifest = self.port.wpt_manifest(wpt_dir)
+        return manifest.get_test_type(url_from_wpt_dir)
 
     def test_status(self,
                     event: Event,
@@ -660,18 +685,19 @@ class WPTResultsProcessor:
         result.pid = (extra or {}).get('browser_pid', 0)
         result.update_from_test(status, message)
         artifacts, image_diff_stats = self._extract_artifacts(
-            result, message, extra)
+            result, message, extra or {})
         result.artifacts = artifacts.artifacts
         result.image_diff_stats = image_diff_stats
         if result.unexpected:
             self._handle_unexpected_result(result)
+        product = self.port.get_option('product', '(unknown)')
         self.sink.report_individual_test_result(
             test_name_prefix=self.test_name_prefix,
             result=result,
             artifact_output_dir=self.fs.dirname(self.artifacts_dir),
             expectations=None,
             test_file_location=result.file_path,
-            html_summary=result.summarize())
+            html_summary=result.summarize(product))
         _log.debug(
             'Reported result for %s, iteration %d (actual: %s, '
             'expected: %s, artifacts: %s)', result.name, self._iteration,
@@ -699,16 +725,33 @@ class WPTResultsProcessor:
             os.kill(os.getpid(), signum)
 
     def shutdown(self, event: Event, **_):
-        if self._results:
-            _log.warning('Some tests have unreported results:')
-            for test in sorted(self._results):
-                _log.warning('  %s', test)
+        incomplete_tests = {
+            test
+            for test, results in self._results_by_name.items() if not results
+        }
+        if incomplete_tests:
+            _log.warning(f'{len(incomplete_tests)} test(s) never completed.')
+            with self.sink.batch_results():
+                # Using the same timestamp for both events produces the desired
+                # test duration of zero.
+                start_event = Event(**Event.make_raw_event('test_start'))
+                end_event = Event('test_end', *start_event[1:])
+                for test in incomplete_tests:
+                    expected = chromium_to_wptrunner_statuses(
+                        self._expectations.get_expectations(test).results,
+                        self.get_test_type(test))
+                    self.test_start(start_event, test)
+                    self.test_end(end_event, test, 'SKIP', expected)
+
+        for test, results in self._results_by_name.items():
+            assert results, test
         raise StreamShutdown
 
     def create_final_results(self):
         # compute the tests dict
         tests = {}
-        num_passes = 0
+        num_passes = num_regressions = 0
+        shard_index = self.port.get_option('shard_index')
         for test_name, results in self._results_by_name.items():
             # TODO: the expected result calculated this way could change each time
             expected = ' '.join(results[0].expected)
@@ -720,12 +763,13 @@ class WPTResultsProcessor:
             test_dict = {}
             test_dict['expected'] = expected
             test_dict['actual'] = ' '.join(actual)
-            test_dict['shard'] = self.port.get_option('shard_index')
 
             # Fields below are optional. To avoid bloating the output results json
             # too much, only add them when they are True or non-empty.
             if len(set(actual)) > 1:
                 test_dict['is_flaky'] = True
+            if shard_index is not None:
+                test_dict['shard'] = shard_index
 
             rounded_run_time = round(results[0].took, 1)
             if rounded_run_time:
@@ -737,6 +781,7 @@ class WPTResultsProcessor:
                 test_dict['is_unexpected'] = True
             if results[-1].is_regression:
                 test_dict['is_regression'] = True
+                num_regressions += 1
             if results[0].image_diff_stats:
                 test_dict['image_diff_stats'] = results[0].image_diff_stats
 
@@ -766,7 +811,7 @@ class WPTResultsProcessor:
             'num_failures_by_type': self._num_failures_by_status,
             'num_passes': num_passes,
             'skipped': self._num_failures_by_status[ResultType.Skip],
-            'num_regressions': self.num_regressions,
+            'num_regressions': num_regressions,
             'tests': tests,
         }
         return final_results
@@ -859,8 +904,9 @@ class WPTResultsProcessor:
             artifacts.CreateArtifact('expected_text', expected_subpath,
                                      expected_text.encode())
 
-        if not actual_text or not expected_text:
+        if not actual_text:
             return
+        expected_text = expected_text or ''
         diff_content = unified_diff(expected_text, actual_text,
                                     expected_subpath, actual_subpath)
         diff_subpath = self.port.output_filename(
@@ -874,51 +920,80 @@ class WPTResultsProcessor:
                                  html_diff_content.encode())
 
     def _write_screenshots(self, test_name: str, artifacts: Artifacts,
-                           screenshots: List[ReftestScreenshot]):
+                           screenshot1: ReftestScreenshot,
+                           screenshot2: ReftestScreenshot):
         """Write actual, expected, and diff screenshots to disk, if possible.
 
         Arguments:
-            test_name: Web test name (a path).
+            test_name: Web test name (a URL whose path is relative to
+                `web_tests/`).
             artifacts: Artifact manager.
-            screenshots: Each element represents a screenshot of either the test
-                result or one of its references.
+            screenshot1: A screenshot of either the test page or one of its
+                references that failed comparison.
+            screenshot2: The screenshot compared against `screenshot1`.
+
+        The screenshots may be in either order and may represent any compatible
+        comparison (test against reference, or match ref against mismatch ref).
 
         Returns:
             The diff stats if the screenshots are different.
         """
-        # Remember the two images so we can diff them later.
-        _, test_url = self.port.get_suite_name_and_base_test(test_name)
-        test_url = self.path_finder.strip_wpt_path(test_url)
-        actual_image_bytes = b''
-        expected_image_bytes = b''
+        _, base_test = self.port.get_suite_name_and_base_test(test_name)
+        test_url = self.path_finder.strip_wpt_path(base_test)
 
-        for screenshot in screenshots:
-            if not isinstance(screenshot, dict):
-                # Skip the relation string, like '!=' or '=='.
-                continue
-            # The URL produced by wptrunner will have a leading "/", which we
-            # trim away for easier comparison to the WPT name below.
-            url = screenshot['url']
-            if url.startswith('/'):
-                url = url[1:]
-            image_bytes = base64.b64decode(screenshot['screenshot'].strip())
+        # `test_url` is the globally mounted URL (i.e., its canonical ID),
+        # whereas `url_from_wpt_dir`'s path part is relative to the test root
+        # (i.e., `external/wpt` or `wpt_internal`). These URLs happen to be
+        # identical for `external/wpt`, which wptserve mounts to `/`.
+        wpt_dir, url_from_wpt_dir = self.port.split_wpt_dir(base_test)
+        assert wpt_dir, f'{base_test!r} is not a WPT'
+        manifest = self.port.wpt_manifest(wpt_dir)
+        references = manifest.extract_reference_list(url_from_wpt_dir)
+        relation_by_ref = {url: relation for relation, url in references}
+        assert set(relation_by_ref.values()) <= {'==', '!='}
 
-            screenshot_key = 'expected_image'
-            file_suffix = test_failures.FILENAME_SUFFIX_EXPECTED
-            if url == test_url:
-                screenshot_key = 'actual_image'
-                file_suffix = test_failures.FILENAME_SUFFIX_ACTUAL
-                actual_image_bytes = image_bytes
+        test_screenshot = match_screenshot = mismatch_screenshot = None
+        for screenshot in [screenshot1, screenshot2]:
+            # Compare URLs with a leading `/` to follow the convention
+            # wptrunner uses. There can only be up to one of each type of
+            # screenshot.
+            if screenshot['url'] == f'/{test_url}':
+                assert not test_screenshot
+                test_screenshot = screenshot
+            elif relation_by_ref[screenshot['url']] == '==':
+                assert not match_screenshot
+                match_screenshot = screenshot
             else:
-                expected_image_bytes = image_bytes
+                assert not mismatch_screenshot
+                mismatch_screenshot = screenshot
 
-            screenshot_subpath = self.port.output_filename(
-                test_name, file_suffix, '.png')
-            artifacts.CreateArtifact(screenshot_key, screenshot_subpath,
-                                     image_bytes)
+        # Because fuzzy rules allow matches without pixel-by-pixel equality,
+        # the screenshots in a mismatch failure may be slightly different, so we
+        # still extract both.
+        if mismatch_screenshot:
+            expected = mismatch_screenshot
+            # For tests with both match and mismatch references, the references
+            # may be compared if the match reference is found to be equivalent
+            # to the test page.
+            actual = test_screenshot or match_screenshot
+        else:
+            expected, actual = match_screenshot, test_screenshot
+
+        assert expected
+        expected_image = ReftestScreenshot.decode_image(expected)
+        expected_subpath = self.port.output_filename(
+            test_name, test_failures.FILENAME_SUFFIX_EXPECTED, '.png')
+        artifacts.CreateArtifact('expected_image', expected_subpath,
+                                 expected_image)
+
+        assert actual
+        actual_image = ReftestScreenshot.decode_image(actual)
+        actual_subpath = self.port.output_filename(
+            test_name, test_failures.FILENAME_SUFFIX_ACTUAL, '.png')
+        artifacts.CreateArtifact('actual_image', actual_subpath, actual_image)
 
         diff_bytes, stats, error = self.port.diff_image(
-            expected_image_bytes, actual_image_bytes)
+            expected_image, actual_image)
         if error:
             _log.error(
                 'Error creating diff image for %s '
@@ -937,7 +1012,7 @@ class WPTResultsProcessor:
         artifacts.CreateArtifact(artifact_id, log_subpath, contents.encode())
 
     def _extract_artifacts(self, result: WPTResult, message: Optional[str],
-                           extra) -> Tuple[Artifacts, str]:
+                           extra: Dict[str, Any]) -> Tuple[Artifacts, str]:
         # Ensure `artifacts_base_dir` (i.e., `layout-test-results`) is prepended
         # to `full_results_jsonp.js` paths so that `results.html` can correctly
         # fetch artifacts.
@@ -945,21 +1020,30 @@ class WPTResultsProcessor:
                               self.sink.host,
                               iteration=self._iteration,
                               artifacts_base_dir=self.fs.basename(
-                                  self.artifacts_dir))
+                                  self.artifacts_dir),
+                              repeat_tests=(self.repeat_each > 1))
         image_diff_stats = None
         # Dump output for `--reset-results`, even if the test passes, as the
         # current port may fall back to a failing port.
         if self.reset_results or result.actual == ResultType.Failure:
             if result.can_have_subtests:
                 self._write_text_results(result, artifacts)
-            screenshots = (extra or {}).get('reftest_screenshots') or []
+            screenshots = extra.get('reftest_screenshots') or []
             if screenshots:
+                # Remove the relation operator `==` or `!=` between the
+                # screenshot objects.
+                screenshot1, _, screenshot2 = screenshots
                 image_diff_stats = self._write_screenshots(
-                    result.name, artifacts, screenshots)
+                    result.name, artifacts, screenshot1, screenshot2)
 
         if message:
             self._write_log(result.name, artifacts, 'crash_log',
                             test_failures.FILENAME_SUFFIX_CRASH_LOG, message)
+
+        if leak_counters := extra.get('leak_counters'):
+            leak_log = json.dumps(leak_counters, separators=(',', ':'))
+            self._write_log(result.name, artifacts, 'leak_log',
+                            test_failures.FILENAME_SUFFIX_LEAK_LOG, leak_log)
 
         # If the browser process isn't restarted, it's possible for that process
         # to continue producing stdio that will be dumped into the log for the
@@ -972,7 +1056,9 @@ class WPTResultsProcessor:
             output.log = io.StringIO()
 
         if output and output.command:
-            uri = self._test_uri_mapper.test_to_uri(result.name)
+            test_name = (self.port.lookup_virtual_test_base(result.name)
+                         or result.name)
+            uri = self._test_uri_mapper.test_to_uri(test_name)
             command = shlex.join([*output.command, uri])
             self._write_log(result.name, artifacts, 'command',
                             test_failures.FILENAME_SUFFIX_CMD, command)

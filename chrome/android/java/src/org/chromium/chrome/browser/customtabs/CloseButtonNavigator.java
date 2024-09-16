@@ -8,9 +8,9 @@ import static org.chromium.chrome.browser.customtabs.content.CustomTabActivityNa
 
 import androidx.annotation.Nullable;
 
-import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.base.Callback;
 import org.chromium.chrome.browser.browserservices.intents.BrowserServicesIntentDataProvider;
-import org.chromium.chrome.browser.customtabs.content.CustomTabActivityNavigationController.FinishHandler;
+import org.chromium.chrome.browser.customtabs.content.CustomTabActivityNavigationController.FinishReason;
 import org.chromium.chrome.browser.customtabs.content.CustomTabActivityTabController;
 import org.chromium.chrome.browser.customtabs.content.CustomTabActivityTabProvider;
 import org.chromium.chrome.browser.customtabs.features.minimizedcustomtab.CustomTabMinimizationManagerHolder;
@@ -77,7 +77,7 @@ public class CloseButtonNavigator {
     }
 
     /** Handles navigation and Tab closures that should occur when the close button is pressed. */
-    public void navigateOnClose(FinishHandler finishActivity) {
+    public void navigateOnClose(Callback<@FinishReason Integer> finishCallback) {
         // If the tab is a child tab and |mButtonClosesChildTab| == true, close the child tab.
         Tab currentTab = mTabProvider.getTab();
         boolean isFromChildTab =
@@ -89,7 +89,6 @@ public class CloseButtonNavigator {
 
         // Search for a landing page in the history of the current Tab and then close if if none
         // found. Continue until a landing page is found or all Tabs are closed.
-        int numTabsClosed = 0;
         while (mTabProvider.getTab() != null) {
             // See if there's a close button navigation in our current Tab.
             NavigationController navigationController = getNavigationController();
@@ -106,12 +105,10 @@ public class CloseButtonNavigator {
             if (mTabController.onlyOneTabRemaining() && !isMinimized) {
                 // If we call mTabController.closeTab() and wait for the Activity to close as a
                 // result, we have a blank screen flashing before closing. https://crbug.com/1518767
-                finishActivity.onFinish(USER_NAVIGATION);
-                ++numTabsClosed;
+                finishCallback.onResult(USER_NAVIGATION);
                 break;
             }
             mTabController.closeTab();
-            ++numTabsClosed;
 
             // Check whether the close button navigation would have stopped on the newly revealed
             // Tab. We don't check this at the start of the loop (or make navigateSingleTab
@@ -121,11 +118,6 @@ public class CloseButtonNavigator {
             if (nextTab != null && isLandingPage(nextTab.getUrl().getSpec())) {
                 return;
             }
-        }
-
-        if (numTabsClosed > 0) {
-            RecordHistogram.recordCount100Histogram(
-                    "CustomTabs.TabCounts.OnClosingAllTabs", numTabsClosed);
         }
     }
 

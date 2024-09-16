@@ -20,12 +20,12 @@
 #include "base/strings/stringprintf.h"
 #include "base/system/sys_info.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "chrome/browser/ash/crosapi/fake_migration_progress_tracker.h"
 #include "chrome/browser/extensions/extension_keeplist_chromeos.h"
 #include "chrome/common/chrome_constants.h"
-#include "components/sync/base/model_type.h"
+#include "chromeos/ash/components/standalone_browser/fake_migration_progress_tracker.h"
+#include "components/sync/base/data_type.h"
 #include "components/sync/base/storage_type.h"
-#include "components/sync/model/blocking_model_type_store_impl.h"
+#include "components/sync/model/blocking_data_type_store_impl.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/leveldatabase/env_chromium.h"
 #include "third_party/leveldatabase/src/include/leveldb/write_batch.h"
@@ -53,11 +53,12 @@ std::string_view GetBothChromesExtensionId() {
   return extensions::GetExtensionsAndAppsRunInOSAndStandaloneBrowser()[0];
 }
 
-constexpr syncer::ModelType kAshSyncDataType =
-    browser_data_migrator_util::kAshOnlySyncDataTypes[0];
-constexpr syncer::ModelType kLacrosSyncDataType = syncer::ModelType::WEB_APPS;
-static_assert(!base::Contains(browser_data_migrator_util::kAshOnlySyncDataTypes,
-                              kLacrosSyncDataType));
+constexpr syncer::DataType kAshSyncDataType =
+    browser_data_migrator_util::kAshOnlySyncDataTypesForLacrosMigration[0];
+constexpr syncer::DataType kLacrosSyncDataType = syncer::DataType::WEB_APPS;
+static_assert(!base::Contains(
+    browser_data_migrator_util::kAshOnlySyncDataTypesForLacrosMigration,
+    kLacrosSyncDataType));
 
 struct TargetItemComparator {
   bool operator()(const TargetItem& t1, const TargetItem& t2) const {
@@ -528,7 +529,7 @@ TEST(BrowserDataMigratorUtilTest, CopyDirectory) {
 
   // Test `CopyDirectory()`.
   scoped_refptr<CancelFlag> cancelled = base::MakeRefCounted<CancelFlag>();
-  FakeMigrationProgressTracker progress_tracker;
+  standalone_browser::FakeMigrationProgressTracker progress_tracker;
   const base::FilePath copy_to = scoped_temp_dir.GetPath().Append("copy_to");
   ASSERT_TRUE(
       CopyDirectory(copy_from, copy_to, cancelled.get(), &progress_tracker));
@@ -580,7 +581,7 @@ TEST(BrowserDataMigratorUtilTest, EstimatedExtraBytesCreated) {
 
 TEST(BrowserDataMigratorUtilTest, IsAshOnlySyncDataType) {
   // The types that should be recognized as Ash-only are stored in
-  // `browser_data_migrator_util::kAshOnlySyncDataTypes`.
+  // `browser_data_migrator_util::kAshOnlySyncDataTypesForLacrosMigration`.
   // Then any of the following can be suffixed to the type name:
   // - `kDataPrefix` = "-dt-"
   // - `kMetadataPrefix` = "-md-"

@@ -39,7 +39,7 @@ ChromeOSResultToLocalApprovalResult(
       return supervised_user::WebContentHandler::LocalApprovalResult::kError;
     case crosapi::mojom::ParentAccessResult::Tag::kDisabled:
       // Disabled is not a possible result for Local Web Approvals.
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -60,7 +60,7 @@ void HandleChromeOSErrorResult(
       LOG(ERROR) << "Unknown error in ParentAccess UI";
       return;
     case crosapi::mojom::ParentAccessErrorResult::Type::kNone:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return;
   }
 }
@@ -87,7 +87,7 @@ SupervisedUserWebContentHandlerImpl::SupervisedUserWebContentHandlerImpl(
     content::WebContents* web_contents,
     const GURL& url,
     favicon::LargeIconService& large_icon_service,
-    int frame_id,
+    content::FrameTreeNodeId frame_id,
     int64_t interstitial_navigation_id)
     : ChromeSupervisedUserWebContentHandlerBase(web_contents,
                                                 frame_id,
@@ -134,7 +134,10 @@ void SupervisedUserWebContentHandlerImpl::RequestLocalApproval(
   // across platforms.
   parent_access->GetWebsiteParentApproval(
       target_url.GetWithEmptyPath(), child_display_name,
-      favicon_handler_->GetFaviconOrFallback(),
+      // Receiver does not need multi-resolution image. Pass single-resolution
+      // ImageSkia for compatibility with mojo interface.
+      gfx::ImageSkia::CreateFrom1xBitmap(
+          favicon_handler_->GetFaviconOrFallback()),
       base::BindOnce(
           &SupervisedUserWebContentHandlerImpl::OnLocalApprovalRequestCompleted,
           weak_ptr_factory_.GetWeakPtr(), std::ref(*settings_service),

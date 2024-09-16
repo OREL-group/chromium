@@ -15,7 +15,6 @@
 #include "chrome/browser/ui/views/web_apps/pwa_confirmation_bubble_view.h"
 #include "chrome/browser/ui/views/web_apps/web_app_icon_name_and_origin_view.h"
 #include "chrome/browser/ui/views/web_apps/web_app_info_image_source.h"
-#include "chrome/browser/ui/views/web_apps/web_app_install_dialog_coordinator.h"
 #include "chrome/browser/ui/views/web_apps/web_app_install_dialog_delegate.h"
 #include "chrome/browser/ui/web_applications/web_app_dialogs.h"
 #include "chrome/browser/web_applications/web_app_constants.h"
@@ -26,19 +25,22 @@
 #include "components/feature_engagement/public/tracker.h"
 #include "components/prefs/pref_service.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "components/webapps/browser/installable/ml_install_operation_tracker.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/bubble/bubble_dialog_model_host.h"
 #include "ui/views/view.h"
 #include "ui/views/view_class_properties.h"
 #include "ui/views/view_utils.h"
+#include "ui/views/widget/widget.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
-#include "chrome/browser/metrics/structured/event_logging_features.h"
 #include "chrome/browser/web_applications/web_app_helpers.h"
-// TODO(crbug/1125897): Enable gn check once it learns about conditional
+// TODO(crbug.com/40147906): Enable gn check once it learns about conditional
 // includes.
 #include "components/metrics/structured/structured_events.h"  // nogncheck
 #include "components/metrics/structured/structured_metrics_client.h"  // nogncheck
@@ -68,10 +70,11 @@ void ShowSimpleInstallDialogForWebApps(
     return;
   }
 
-  WebAppInstallDialogCoordinator* dialog_coordinator =
-      WebAppInstallDialogCoordinator::GetOrCreateForBrowser(browser);
-  if (dialog_coordinator->IsShowing()) {
-    std::move(callback).Run(false, nullptr);
+  // Do not show the dialog if it is already being shown.
+  const web_modal::WebContentsModalDialogManager* manager =
+      web_modal::WebContentsModalDialogManager::FromWebContents(web_contents);
+  if (!manager || manager->IsDialogActive()) {
+    std::move(callback).Run(/*is_accepted=*/false, nullptr);
     return;
   }
 
@@ -86,13 +89,11 @@ void ShowSimpleInstallDialogForWebApps(
   PrefService* prefs = Profile::FromBrowserContext(browser_context)->GetPrefs();
 
 #if BUILDFLAG(IS_CHROMEOS)
-  if (base::FeatureList::IsEnabled(metrics::structured::kAppDiscoveryLogging)) {
-    webapps::AppId app_id =
-        web_app::GenerateAppIdFromManifestId(web_app_info->manifest_id);
-    metrics::structured::StructuredMetricsClient::Record(
-        cros_events::AppDiscovery_Browser_AppInstallDialogShown().SetAppId(
-            app_id));
-  }
+  webapps::AppId app_id =
+      web_app::GenerateAppIdFromManifestId(web_app_info->manifest_id());
+  metrics::structured::StructuredMetricsClient::Record(
+      cros_events::AppDiscovery_Browser_AppInstallDialogShown().SetAppId(
+          app_id));
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
   feature_engagement::Tracker* tracker =
@@ -105,7 +106,7 @@ void ShowSimpleInstallDialogForWebApps(
                                   kIconSize, web_app_info->icon_bitmaps.any),
                               gfx::Size(kIconSize, kIconSize));
     auto app_name = web_app_info->title;
-    GURL start_url = web_app_info->start_url;
+    GURL start_url = web_app_info->start_url();
 
     auto delegate = std::make_unique<web_app::WebAppInstallDialogDelegate>(
         web_contents, std::move(web_app_info), std::move(install_tracker),
@@ -126,8 +127,8 @@ void ShowSimpleInstallDialogForWebApps(
             .SetCloseActionCallback(base::BindOnce(
                 &WebAppInstallDialogDelegate::OnClose, delegate_weak_ptr))
             .SetDialogDestroyingCallback(base::BindOnce(
-                &WebAppInstallDialogDelegate::OnClose, delegate_weak_ptr))
-            .OverrideDefaultButton(ui::DialogButton::DIALOG_BUTTON_NONE)
+                &WebAppInstallDialogDelegate::OnDestroyed, delegate_weak_ptr))
+            .OverrideDefaultButton(ui::mojom::DialogButton::kCancel)
             .AddCustomField(
                 std::make_unique<views::BubbleDialogModelHost::CustomView>(
                     WebAppIconNameAndOriginView::Create(icon_image, app_name,
@@ -135,7 +136,7 @@ void ShowSimpleInstallDialogForWebApps(
                     views::BubbleDialogModelHost::FieldType::kControl))
             .Build();
     auto dialog = views::BubbleDialogModelHost::CreateModal(
-        std::move(dialog_model), ui::MODAL_TYPE_CHILD);
+        std::move(dialog_model), ui::mojom::ModalType::kChild);
 
     if (g_dont_close_on_deactivate) {
       dialog->set_close_on_deactivate(false);
@@ -144,9 +145,9 @@ void ShowSimpleInstallDialogForWebApps(
     if (icon) {
       dialog_delegate->SetAnchorView(icon);
     }
-
-    constrained_window::ShowWebModalDialogViews(dialog.release(), web_contents);
-    dialog_coordinator->StartTracking(dialog_delegate);
+    views::Widget* modal_widget = constrained_window::ShowWebModalDialogViews(
+        dialog.release(), web_contents);
+    delegate_weak_ptr->StartObservingForPictureInPictureOcclusion(modal_widget);
   } else {
     auto* dialog_view = new PWAConfirmationBubbleView(
         anchor_view, web_contents->GetWeakPtr(), icon, std::move(web_app_info),
@@ -158,7 +159,6 @@ void ShowSimpleInstallDialogForWebApps(
 
     views::BubbleDialogDelegateView::CreateBubble(dialog_view)->Show();
     dialog_delegate = dialog_view->AsBubbleDialogDelegate();
-    dialog_coordinator->StartTracking(dialog_delegate);
     if (icon) {
       icon->Update();
       DCHECK(icon->GetVisible());

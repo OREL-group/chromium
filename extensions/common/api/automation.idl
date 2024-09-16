@@ -79,7 +79,7 @@
     mediaStoppedPlaying,
     menuEnd,
     menuItemSelected,
-    menuListValueChanged,
+    menuListValueChangedDeprecated,
     menuPopupEnd,
     menuPopupStart,
     menuStart,
@@ -95,7 +95,6 @@
     orientationChanged,
     parentChanged,
     placeholderChanged,
-    portalActivated,
     positionInSetChanged,
     rangeValueChanged,
     rangeValueMaxChanged,
@@ -174,7 +173,7 @@
     desktop,
     details,
     dialog,
-    directory,
+    directoryDeprecated,
     disclosureTriangle,
     disclosureTriangleGrouped,
     // --------------------------------------------------------------
@@ -230,7 +229,6 @@
     figcaption,
     figure,
     footer,
-    footerAsNonLandmark,
     form,
     genericContainer,
     // --------------------------------------------------------------
@@ -242,9 +240,9 @@
     // End ARIA Graphics module roles.
     // --------------------------------------------------------------
     grid,
+    gridCell,
     group,
     header,
-    headerAsNonLandmark,
     heading,
     iframe,
     iframePresentational,
@@ -309,7 +307,7 @@
     pdfRoot,
     pluginObject,
     popUpButton,
-    portal,
+    portalDeprecated,
     preDeprecated,
     progressIndicator,
     radioButton,
@@ -326,6 +324,9 @@
     search,
     searchBox,
     section,
+    sectionFooter,
+    sectionHeader,
+    sectionWithoutName,
     slider,
     spinButton,
     splitter,
@@ -474,8 +475,11 @@
     attributeExplicitlyEmpty,
     caption,
     contents,
+    cssAltText,
     placeholder,
     popoverAttribute,
+    prohibited,
+    prohibitedAndRedundant,
     relatedElement,
     title,
     value
@@ -486,6 +490,7 @@
     attributeExplicitlyEmpty,
     buttonLabel,
     popoverAttribute,
+    prohibitedNameRepair,
     relatedElement,
     rubyAnnotation,
     summary,
@@ -944,6 +949,9 @@ enum PositionType {
     // The value for this node: for example the <code>value</code> attribute of
     // an <code>&lt;input&gt; element.
     DOMString? value;
+
+    // The HTML id for this element, if this node is an HTML element.
+    DOMString? htmlId;
 
     // The HTML tag for this element, if this node is an HTML element.
     DOMString? htmlTag;

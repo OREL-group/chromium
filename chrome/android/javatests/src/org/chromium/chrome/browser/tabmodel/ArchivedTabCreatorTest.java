@@ -9,7 +9,6 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.fail;
 
 import static org.chromium.base.ThreadUtils.runOnUiThreadBlocking;
-import static org.chromium.base.ThreadUtils.runOnUiThreadBlockingNoException;
 
 import androidx.test.filters.MediumTest;
 
@@ -43,7 +42,10 @@ import org.chromium.net.test.EmbeddedTestServerRule;
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 @Batch(Batch.PER_CLASS)
-@EnableFeatures(ChromeFeatureList.ANDROID_TAB_DECLUTTER)
+@EnableFeatures({
+    ChromeFeatureList.ANDROID_TAB_DECLUTTER,
+    ChromeFeatureList.ANDROID_TAB_DECLUTTER_RESCUE_KILLSWITCH
+})
 public class ArchivedTabCreatorTest {
     @ClassRule
     public static ChromeTabbedActivityTestRule sActivityTestRule =
@@ -74,7 +76,7 @@ public class ArchivedTabCreatorTest {
                                     .get()
                                     .getOriginalProfile();
                     mOrchestrator = ArchivedTabModelOrchestrator.getForProfile(mProfile);
-                    mTabCreator = mOrchestrator.getArchivedTabCreator();
+                    mTabCreator = mOrchestrator.getArchivedTabCreatorForTesting();
                 });
     }
 
@@ -90,10 +92,16 @@ public class ArchivedTabCreatorTest {
                 sActivityTestRule.loadUrlInNewTab(
                         mTestServer.getURL(TEST_PATH), /* incognito= */ false);
         Tab frozenTab =
-                runOnUiThreadBlockingNoException(
+                runOnUiThreadBlocking(
                         () -> {
                             TabState state = TabStateExtractor.from(tab);
-                            sActivityTestRule.getActivity().getCurrentTabModel().closeTab(tab);
+                            sActivityTestRule
+                                    .getActivity()
+                                    .getCurrentTabModel()
+                                    .closeTabs(
+                                            TabClosureParams.closeTab(tab)
+                                                    .allowUndo(false)
+                                                    .build());
                             return mTabCreator.createFrozenTab(state, tab.getId(), /* index= */ 0);
                         });
         assertNotNull(frozenTab);

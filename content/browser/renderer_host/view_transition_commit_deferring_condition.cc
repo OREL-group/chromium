@@ -5,6 +5,7 @@
 #include "content/browser/renderer_host/view_transition_commit_deferring_condition.h"
 
 #include "base/memory/ptr_util.h"
+#include "content/browser/renderer_host/frame_tree.h"
 #include "content/browser/renderer_host/frame_tree_node.h"
 #include "content/browser/renderer_host/navigation_request.h"
 #include "content/browser/renderer_host/view_transition_opt_in_state.h"
@@ -23,16 +24,55 @@ ViewTransitionCommitDeferringCondition::MaybeCreate(
     return nullptr;
   }
 
-  if (!navigation_request.IsInPrimaryMainFrame())
+  // If we already have a transition animation, we should skip the view
+  // transition.
+  if (navigation_request.was_initiated_by_animated_transition()) {
     return nullptr;
+  }
+
+  switch (navigation_request.frame_tree_node()->frame_tree().type()) {
+    case FrameTree::Type::kPrerender:
+      // Pre-rendered frame trees don't render any frames until activation. It's
+      // not feasible to run transitions in a frame which has no lifecycle
+      // updates.
+      return nullptr;
+    case FrameTree::Type::kPrimary:
+      break;
+    case FrameTree::Type::kFencedFrame:
+      // TODO(khushalsagar): Enable for fenced frames with a WPT.
+      return nullptr;
+  };
+
+  RenderFrameHostImpl* old_rfh =
+      navigation_request.frame_tree_node()->current_frame_host();
+
+  if (!navigation_request.IsInMainFrame()) {
+    if (!base::FeatureList::IsEnabled(
+            blink::features::kViewTransitionOnNavigationForIframes)) {
+      return nullptr;
+    }
+
+    // We will not have a RFH if this navigation is not committing a new
+    // Document.
+    auto* new_rfh = navigation_request.GetRenderFrameHost();
+    if (!new_rfh) {
+      return nullptr;
+    }
+
+    // We don't have paint holding support for navigations from in-process to
+    // out-of-process iframes (or vice versa). Since ViewTransition requires
+    // paint holding, disable them for such navigations. This should be
+    // extremely rare for same-origin navigations.
+    if (old_rfh->is_local_root() != new_rfh->is_local_root()) {
+      return nullptr;
+    }
+  }
 
   if (!navigation_request.ShouldDispatchPageSwapEvent()) {
     return nullptr;
   }
 
-  RenderFrameHostImpl* rfh =
-      navigation_request.frame_tree_node()->current_frame_host();
-  if (ViewTransitionOptInState::GetOrCreateForCurrentDocument(rfh)
+  if (ViewTransitionOptInState::GetOrCreateForCurrentDocument(old_rfh)
           ->same_origin_opt_in() ==
       blink::mojom::ViewTransitionSameOriginOptIn::kDisabled) {
     return nullptr;
@@ -42,7 +82,7 @@ ViewTransitionCommitDeferringCondition::MaybeCreate(
     return nullptr;
   }
 
-  const url::Origin& current_request_origin = rfh->GetLastCommittedOrigin();
+  const url::Origin& current_request_origin = old_rfh->GetLastCommittedOrigin();
   const url::Origin& new_request_origin =
       navigation_request.is_running_potential_prerender_activation_checks()
           ? navigation_request.GetTentativeOriginAtRequestTime()
@@ -74,7 +114,7 @@ ViewTransitionCommitDeferringCondition::MaybeCreate(
     case blink::mojom::NavigationType::HISTORY_SAME_DOCUMENT:
       // Same document navigations should already be excluded by
       // `ShouldDispatchPageSwapEvent`.
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 
   return base::WrapUnique(
@@ -113,8 +153,9 @@ ViewTransitionCommitDeferringCondition::WillCommitNavigation(
       navigation_request->WillDispatchPageSwap();
   CHECK(page_swap_event_params);
 
-  auto navigation_id = viz::NavigationId::Create();
-  resources_ = std::make_unique<ScopedViewTransitionResources>(navigation_id);
+  blink::ViewTransitionToken transition_token;
+  resources_ =
+      std::make_unique<ScopedViewTransitionResources>(transition_token);
   resume_navigation_ = std::move(resume);
   old_rfh_ = render_frame_host->GetWeakPtr();
 
@@ -124,7 +165,7 @@ ViewTransitionCommitDeferringCondition::WillCommitNavigation(
   // renderer process.
   render_frame_host->GetAssociatedLocalFrame()
       ->SnapshotDocumentForViewTransition(
-          navigation_id, std::move(page_swap_event_params),
+          transition_token, std::move(page_swap_event_params),
           base::BindOnce(&ViewTransitionCommitDeferringCondition::
                              OnSnapshotAckFromRenderer,
                          weak_factory_.GetWeakPtr()));
@@ -158,12 +199,37 @@ void ViewTransitionCommitDeferringCondition::OnSnapshotAckFromRenderer(
     return;
   }
 
-  if (view_transition_state.HasElements()) {
+  base::ScopedClosureRunner runner(std::move(resume_navigation_));
+
+  if (view_transition_state.HasSubframeSnapshot()) {
+    if (!old_rfh_) {
+      return;
+    }
+
+    // The subframe snapshot is only used for in-process iframes which don't own
+    // a widget.
+    if (old_rfh_->is_local_root()) {
+      return;
+    }
+
+    auto* new_rfh =
+        NavigationRequest::From(&GetNavigationHandle())->GetRenderFrameHost();
+
+    // We shouldn't send a snapshot request unless the new RFH is also an
+    // in-process subframe.
+    CHECK(!new_rfh->is_local_root());
+    CHECK(!old_rfh_->is_main_frame()) << "Main frames must be local roots";
+    CHECK(!new_rfh->is_main_frame()) << "Main frames must be local roots";
+    CHECK_EQ(old_rfh_->GetProcess(), new_rfh->GetProcess())
+        << "Navigation between 2 non-local roots must be in the ancestor "
+           "frame's process";
+  }
+
+  if (view_transition_state.IsValid()) {
     NavigationRequest::From(&GetNavigationHandle())
         ->SetViewTransitionState(std::move(resources_),
                                  std::move(view_transition_state));
   }
-  std::move(resume_navigation_).Run();
 }
 
 }  // namespace content

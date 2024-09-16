@@ -28,6 +28,7 @@
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
 
 #include "base/memory/scoped_refptr.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/trace_event/typed_macros.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "services/metrics/public/cpp/mojo_ukm_recorder.h"
@@ -44,6 +45,7 @@
 #include "third_party/blink/renderer/core/css/font_face_set_worker.h"
 #include "third_party/blink/renderer/core/css/offscreen_font_selector.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
+#include "third_party/blink/renderer/core/event_type_names.h"
 #include "third_party/blink/renderer/core/events/error_event.h"
 #include "third_party/blink/renderer/core/events/message_event.h"
 #include "third_party/blink/renderer/core/execution_context/agent.h"
@@ -63,6 +65,7 @@
 #include "third_party/blink/renderer/core/script/classic_script.h"
 #include "third_party/blink/renderer/core/trustedtypes/trusted_script_url.h"
 #include "third_party/blink/renderer/core/trustedtypes/trusted_type_policy_factory.h"
+#include "third_party/blink/renderer/core/workers/custom_event_message.h"
 #include "third_party/blink/renderer/core/workers/global_scope_creation_params.h"
 #include "third_party/blink/renderer/core/workers/installed_scripts_manager.h"
 #include "third_party/blink/renderer/core/workers/worker_classic_script_loader.h"
@@ -72,6 +75,7 @@
 #include "third_party/blink/renderer/core/workers/worker_thread.h"
 #include "third_party/blink/renderer/platform/bindings/exception_messages.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/source_location.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/instrumentation/instance_counters.h"
@@ -132,14 +136,11 @@ scoped_refptr<SecurityOrigin> CreateSecurityOrigin(
   if (KURL(creation_params->script_url).ProtocolIsData()) {
     // Workers with data: URL should use a new, unique opaque origin per spec:
     // https://html.spec.whatwg.org/multipage/workers.html#script-settings-for-workers:concept-settings-object-origin-2
-    // We derive the new opaque origin from the starter origin because of a bug
-    // where the browser thinks the worker's origin is the starter origin (see
-    // https://crbug.com/1058759). With `DeriveNewOpaqueOrigin()`, the precursor
-    // origin of the new opaque origin will be the starter origin. This way, if
-    // the browser needs to verify that the browser and renderer origin matches,
-    // it can just compare the browser-side origin with the precursor of the
-    // renderer-side origin.
-    security_origin = creation_params->starter_origin->DeriveNewOpaqueOrigin();
+    // We use the `origin_to_use`, which is pre-calculated and passed down from
+    // the browser process instead of newly calculated here, since the browser
+    // side needs to know the exact opaque origin used in the renderer.
+    CHECK(creation_params->origin_to_use);
+    security_origin = creation_params->origin_to_use->IsolatedCopy();
   } else {
     // TODO(https://crbug.com/1058305) Inherit |agent_cluster_id_| for dedicated
     // workers. DO NOT inherit for shared workers and service workers.
@@ -243,12 +244,8 @@ void WorkerGlobalScope::importScripts(const Vector<String>& urls) {
 
 namespace {
 
-String NetworkErrorMessageAtImportScript(const char* const property_name,
-                                         const char* const interface_name,
-                                         const KURL& url) {
-  return ExceptionMessages::FailedToExecute(
-      property_name, interface_name,
-      "The script at '" + url.ElidedString() + "' failed to load.");
+String NetworkErrorMessageAtImportScript(const KURL& url) {
+  return "The script at '" + url.ElidedString() + "' failed to load.";
 }
 
 }  // namespace
@@ -260,19 +257,11 @@ void WorkerGlobalScope::ImportScriptsInternal(const Vector<String>& urls) {
   DCHECK(GetExecutionContext());
   v8::Isolate* isolate = GetThread()->GetIsolate();
 
-  // Previously, exceptions here were thrown via ExceptionState but now are
-  // thrown via V8ThrowException. To keep the existing error messages,
-  // ExceptionMessages::FailedToExecute() is called directly (crbug/1114610).
-  const char* const property_name = "importScripts";
-  const char* const interface_name = "WorkerGlobalScope";
-
   // Step 1: "If worker global scope's type is "module", throw a TypeError
   // exception."
   if (script_type_ == mojom::blink::ScriptType::kModule) {
     V8ThrowException::ThrowTypeError(
-        isolate, ExceptionMessages::FailedToExecute(
-                     property_name, interface_name,
-                     "Module scripts don't support importScripts()."));
+        isolate, "Module scripts don't support importScripts().");
     return;
   }
 
@@ -292,9 +281,7 @@ void WorkerGlobalScope::ImportScriptsInternal(const Vector<String>& urls) {
       V8ThrowException::ThrowException(
           isolate, V8ThrowDOMException::CreateOrEmpty(
                        isolate, DOMExceptionCode::kSyntaxError,
-                       ExceptionMessages::FailedToExecute(
-                           property_name, interface_name,
-                           "The URL '" + url_string + "' is invalid.")));
+                       "The URL '" + url_string + "' is invalid."));
       return;
     }
     if (!GetContentSecurityPolicy()->AllowScriptFromSource(
@@ -303,8 +290,7 @@ void WorkerGlobalScope::ImportScriptsInternal(const Vector<String>& urls) {
       V8ThrowException::ThrowException(
           isolate, V8ThrowDOMException::CreateOrEmpty(
                        isolate, DOMExceptionCode::kNetworkError,
-                       NetworkErrorMessageAtImportScript(property_name,
-                                                         interface_name, url)));
+                       NetworkErrorMessageAtImportScript(url)));
       return;
     }
     completed_urls.push_back(url);
@@ -315,8 +301,8 @@ void WorkerGlobalScope::ImportScriptsInternal(const Vector<String>& urls) {
     KURL response_url;
     String source_code;
     std::unique_ptr<Vector<uint8_t>> cached_meta_data;
-    const String error_message = NetworkErrorMessageAtImportScript(
-        property_name, interface_name, complete_url);
+    const String error_message =
+        NetworkErrorMessageAtImportScript(complete_url);
 
     // Step 5.1: "Fetch a classic worker-imported script given url and settings
     // object, passing along any custom perform the fetch steps provided. If
@@ -433,7 +419,7 @@ CoreProbeSink* WorkerGlobalScope::GetProbeSink() {
   return nullptr;
 }
 
-const BrowserInterfaceBrokerProxy&
+const BrowserInterfaceBrokerProxyImpl&
 WorkerGlobalScope::GetBrowserInterfaceBroker() const {
   return browser_interface_broker_proxy_;
 }
@@ -465,6 +451,7 @@ void WorkerGlobalScope::WorkerScriptFetchFinished(
     Script& worker_script,
     std::optional<v8_inspector::V8StackTraceId> stack_id) {
   DCHECK(IsContextThread());
+  TRACE_EVENT("blink.worker", "WorkerGlobalScope::WorkerScriptFetchFinished");
 
   DCHECK_NE(ScriptEvalState::kEvaluated, script_eval_state_);
   DCHECK(!worker_script_);
@@ -495,12 +482,16 @@ void WorkerGlobalScope::RunWorkerScript() {
   DCHECK(!IsContextPaused());
   CHECK(GetExecutionContext()) << "crbug.com/1045818: attempted to evaluate "
                                   "script but no execution context";
-  CHECK(!GetExecutionContext()->IsContextDestroyed())
-      << "crbug.com/1045818: attempted to evaluate script but worker global "
-         "scope was already destroyed";
+  // If the context has already been destroyed, it should be a orphan worker.
+  // It should be fine to close the worker.
+  if (GetExecutionContext()->IsContextDestroyed()) {
+    close();
+    return;
+  }
 
   DCHECK(worker_script_);
   DCHECK_EQ(script_eval_state_, ScriptEvalState::kReadyToEvaluate);
+  TRACE_EVENT("blink.worker", "WorkerGlobalScope::RunWorkerScript");
 
   WorkerThreadDebugger* debugger =
       WorkerThreadDebugger::From(GetThread()->GetIsolate());
@@ -545,7 +536,7 @@ void WorkerGlobalScope::RunWorkerScript() {
               is_success = false;
               break;
             case v8::Promise::kPending:
-              NOTREACHED();
+              NOTREACHED_IN_MIGRATION();
               is_success = false;
               break;
           }
@@ -562,6 +553,8 @@ void WorkerGlobalScope::RunWorkerScript() {
     debugger->ExternalAsyncTaskFinished(*stack_id_);
 
   script_eval_state_ = ScriptEvalState::kEvaluated;
+  TRACE_EVENT_NESTABLE_ASYNC_END0("blink.worker", "WorkerGlobalScope setup",
+                                  TRACE_ID_LOCAL(this));
 }
 
 void WorkerGlobalScope::ReceiveMessage(BlinkTransferableMessage message) {
@@ -597,6 +590,44 @@ void WorkerGlobalScope::ReceiveMessage(BlinkTransferableMessage message) {
 
   if (debugger)
     debugger->ExternalAsyncTaskFinished(message.sender_stack_trace_id);
+}
+
+Event* WorkerGlobalScope::ReceiveCustomEventInternal(
+    CrossThreadFunction<Event*(ScriptState*, CustomEventMessage)>
+        event_factory_callback,
+    CrossThreadFunction<Event*(ScriptState* script_state)>
+        event_factory_error_callback,
+    CustomEventMessage message) {
+  if (!message.message || message.message->CanDeserializeIn(this)) {
+    return event_factory_callback.Run(ScriptController()->GetScriptState(),
+                                      std::move(message));
+  } else if (event_factory_error_callback) {
+    return event_factory_error_callback.Run(
+        ScriptController()->GetScriptState());
+  }
+  return nullptr;
+}
+
+void WorkerGlobalScope::ReceiveCustomEvent(
+    CrossThreadFunction<Event*(ScriptState*, CustomEventMessage)>
+        event_factory_callback,
+    CrossThreadFunction<Event*(ScriptState* script_state)>
+        event_factory_error_callback,
+    CustomEventMessage message) {
+  CHECK(!IsContextPaused());
+  auto* debugger = WorkerThreadDebugger::From(GetThread()->GetIsolate());
+  if (debugger) {
+    debugger->ExternalAsyncTaskStarted(message.sender_stack_trace_id);
+  }
+  Event* event = ReceiveCustomEventInternal(
+      std::move(event_factory_callback),
+      std::move(event_factory_error_callback), std::move(message));
+  if (event) {
+    DispatchEvent(*event);
+  }
+  if (debugger) {
+    debugger->ExternalAsyncTaskFinished(message.sender_stack_trace_id);
+  }
 }
 
 WorkerGlobalScope::WorkerGlobalScope(
@@ -635,12 +666,16 @@ WorkerGlobalScope::WorkerGlobalScope(
           creation_params->agent_group_scheduler_compositor_task_runner)),
       time_origin_(time_origin),
       font_selector_(MakeGarbageCollected<OffscreenFontSelector>(this)),
+      browser_interface_broker_proxy_(this),
       script_eval_state_(ScriptEvalState::kPauseAfterFetch),
       ukm_source_id_(creation_params->ukm_source_id),
       top_level_frame_security_origin_(
           std::move(creation_params->top_level_frame_security_origin)) {
   // Workers should always maintain the default world of an isolate.
   CHECK(creation_params->is_default_world_of_isolate);
+  TRACE_EVENT("blink.worker", "WorkerGlobalScope::WorkerGlobalScope");
+  TRACE_EVENT_NESTABLE_ASYNC_BEGIN0("blink.worker", "WorkerGlobalScope setup",
+                                    TRACE_ID_LOCAL(this));
 
   InstanceCounters::IncrementCounter(
       InstanceCounters::kWorkerGlobalScopeCounter);
@@ -767,6 +802,7 @@ void WorkerGlobalScope::Trace(Visitor* visitor) const {
   visitor->Trace(font_selector_);
   visitor->Trace(trusted_types_);
   visitor->Trace(worker_script_);
+  visitor->Trace(browser_interface_broker_proxy_);
   WorkerOrWorkletGlobalScope::Trace(visitor);
   Supplementable<WorkerGlobalScope>::Trace(visitor);
 }

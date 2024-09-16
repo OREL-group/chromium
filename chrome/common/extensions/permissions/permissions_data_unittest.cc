@@ -859,12 +859,12 @@ TEST_F(ExtensionScriptAndCaptureVisibleTest, TabSpecific) {
 TEST_F(ExtensionScriptAndCaptureVisibleTest, CaptureChromeURLs) {
   const int kTabId = 42;
   scoped_refptr<const Extension> all_urls =
-      ExtensionBuilder("all urls").AddPermission("<all_urls>").Build();
+      ExtensionBuilder("all urls").AddHostPermission("<all_urls>").Build();
   EXPECT_EQ(DISALLOWED,
             GetExtensionAccess(all_urls.get(), settings_url, kTabId));
 
   scoped_refptr<const Extension> active_tab =
-      ExtensionBuilder("active tab").AddPermission("activeTab").Build();
+      ExtensionBuilder("active tab").AddAPIPermission("activeTab").Build();
   EXPECT_EQ(DISALLOWED,
             GetExtensionAccess(active_tab.get(), settings_url, kTabId));
   {
@@ -887,12 +887,12 @@ TEST_F(ExtensionScriptAndCaptureVisibleTest, CaptureChromeURLs) {
 TEST_F(ExtensionScriptAndCaptureVisibleTest, CaptureChromeUntrustedURLs) {
   const int kTabId = 42;
   scoped_refptr<const Extension> all_urls =
-      ExtensionBuilder("all urls").AddPermission("<all_urls>").Build();
+      ExtensionBuilder("all urls").AddHostPermission("<all_urls>").Build();
   EXPECT_EQ(DISALLOWED,
             GetExtensionAccess(all_urls.get(), chrome_untrusted_url, kTabId));
 
   scoped_refptr<const Extension> active_tab =
-      ExtensionBuilder("active tab").AddPermission("activeTab").Build();
+      ExtensionBuilder("active tab").AddAPIPermission("activeTab").Build();
   EXPECT_EQ(DISALLOWED,
             GetExtensionAccess(active_tab.get(), chrome_untrusted_url, kTabId));
 
@@ -918,13 +918,13 @@ TEST_F(ExtensionScriptAndCaptureVisibleTest, CaptureChromeUntrustedURLs) {
 TEST_F(ExtensionScriptAndCaptureVisibleTest, CaptureFileURLs) {
   const int kTabId = 42;
   scoped_refptr<const Extension> all_urls =
-      ExtensionBuilder("all urls").AddPermission("<all_urls>").Build();
+      ExtensionBuilder("all urls").AddHostPermission("<all_urls>").Build();
   // Currently, the extension has not been granted file access, so it should
   // not have access to a file:// URL.
   EXPECT_EQ(DISALLOWED, GetExtensionAccess(all_urls.get(), file_url, kTabId));
 
   scoped_refptr<const Extension> active_tab =
-      ExtensionBuilder("active tab").AddPermission("activeTab").Build();
+      ExtensionBuilder("active tab").AddAPIPermission("activeTab").Build();
   EXPECT_EQ(DISALLOWED, GetExtensionAccess(active_tab.get(), file_url, kTabId));
   {
     APIPermissionSet tab_api_permissions;
@@ -986,7 +986,7 @@ TEST(PermissionsDataTest, ChromeWebstoreUrl) {
 
       // Unintuitively, the script blocking also applies to deeper subdomains
       // and other paths on chrome.google.com.
-      // TODO(crbug.com/1355623): We probably want to adjust the logic so these
+      // TODO(crbug.com/40235977): We probably want to adjust the logic so these
       // are not the case, but it's better to have the current behavior
       // explicitly documented in tests for now.
       GURL("https://foo.chrome.google.com/webstore"),
@@ -1470,16 +1470,16 @@ class CaptureVisiblePageTest : public testing::Test {
  private:
   void SetUp() override {
     all_urls_ = ExtensionBuilder("all urls")
-                    .AddPermission("<all_urls>")
+                    .AddHostPermission("<all_urls>")
                     .SetID(std::string(32, 'a'))
                     .Build();
     active_tab_ = ExtensionBuilder("active tab")
-                      .AddPermission("activeTab")
+                      .AddAPIPermission("activeTab")
                       .SetID(std::string(32, 'b'))
                       .Build();
     page_capture_ = ExtensionBuilder("page capture")
-                        .AddPermission("pageCapture")
-                        .AddPermission("activeTab")
+                        .AddAPIPermission("pageCapture")
+                        .AddAPIPermission("activeTab")
                         .SetID(std::string(32, 'd'))
                         .Build();
   }
@@ -1504,12 +1504,12 @@ TEST_F(CaptureVisiblePageTest, URLsCapturableWithEitherActiveTabOrAllURLs) {
       GURL("http://[2607:f8b0:4005:805::200e]"),
 
       // filesystem: urls with web origins should behave like normal web pages.
-      // TODO(https://crbug.com/853392): filesystem: URLs don't work with
+      // TODO(crbug.com/40581025): filesystem: URLs don't work with
       // activeTab.
       // GURL("filesystem:http://example.com/foo"),
 
       // blob: urls with web origins should behave like normal web pages.
-      // TODO(https://crbug.com/853392): blob: URLs don't work with activeTab.
+      // TODO(crbug.com/40581025): blob: URLs don't work with activeTab.
       // GURL("blob:http://example.com/bar"),
   };
 
@@ -1599,7 +1599,7 @@ TEST_F(CaptureVisiblePageTest, URLsCapturableOnlyWithActiveTab) {
   }
 }
 
-// TODO(crbug.com/1041309): Add support for capturing chrome-untrusted://.
+// TODO(crbug.com/40667841): Add support for capturing chrome-untrusted://.
 TEST_F(CaptureVisiblePageTest, ChromeUntrustedSchemeNotCaptured) {
   const GURL chrome_untrusted_url(kChromeUntrustedURL);
 

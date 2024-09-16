@@ -5,9 +5,15 @@
 #include "ui/views/view.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <cstdlib>
 #include <iomanip>
+#include <iterator>
 #include <memory>
 #include <optional>
+#include <sstream>
+#include <string_view>
 #include <utility>
 
 #include "base/auto_reset.h"
@@ -15,56 +21,64 @@
 #include "base/command_line.h"
 #include "base/containers/adapters.h"
 #include "base/containers/contains.h"
+#include "base/containers/flat_set.h"
 #include "base/debug/crash_logging.h"
 #include "base/debug/dump_without_crashing.h"
+#include "base/debug/stack_trace.h"
 #include "base/feature_list.h"
 #include "base/functional/callback_helpers.h"
 #include "base/i18n/rtl.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/not_fatal_until.h"
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/observer_list.h"
 #include "base/ranges/algorithm.h"
 #include "base/scoped_observation.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/trace_event/base_tracing.h"
+#include "base/trace_event/common/trace_event_common.h"
 #include "base/trace_event/trace_event.h"
+#include "base/tracing/protos/chrome_track_event.pbzero.h"
 #include "build/build_config.h"
-#include "third_party/skia/include/core/SkRect.h"
+#include "cc/paint/paint_flags.h"
+#include "third_party/perfetto/include/perfetto/tracing/event_context.h"
+#include "third_party/perfetto/include/perfetto/tracing/track_event.h"
+#include "third_party/skia/include/core/SkPath.h"
+#include "third_party/skia/include/core/SkScalar.h"
 #include "ui/accessibility/ax_action_data.h"
-#include "ui/accessibility/ax_enums.mojom.h"
-#include "ui/accessibility/ax_node_id_forward.h"
 #include "ui/actions/actions.h"
+#include "ui/base/accelerators/accelerator_manager.h"
 #include "ui/base/cursor/cursor.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
 #include "ui/base/dragdrop/mojom/drag_drop_types.mojom.h"
-#include "ui/base/ime/input_method.h"
+#include "ui/base/dragdrop/os_exchange_data.h"
+#include "ui/base/interaction/element_identifier.h"
+#include "ui/base/metadata/base_type_conversion.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
-#include "ui/base/ui_base_features.h"
-#include "ui/color/color_provider_manager.h"
+#include "ui/color/color_provider.h"
 #include "ui/compositor/clip_recorder.h"
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/layer.h"
-#include "ui/compositor/layer_animator.h"
 #include "ui/compositor/paint_context.h"
 #include "ui/compositor/paint_recorder.h"
 #include "ui/compositor/transform_recorder.h"
 #include "ui/display/screen.h"
 #include "ui/events/base_event_utils.h"
+#include "ui/events/event.h"
+#include "ui/events/event_constants.h"
 #include "ui/events/event_target_iterator.h"
 #include "ui/gfx/canvas.h"
-#include "ui/gfx/geometry/point3_f.h"
 #include "ui/gfx/geometry/point_conversions.h"
+#include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/geometry/skia_conversions.h"
 #include "ui/gfx/geometry/transform.h"
-#include "ui/gfx/interpolated_transform.h"
 #include "ui/gfx/scoped_canvas.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/views/accessibility/accessibility_paint_checks.h"
 #include "ui/views/accessibility/ax_event_manager.h"
+#include "ui/views/accessibility/ax_virtual_view.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/actions/action_view_interface.h"
 #include "ui/views/background.h"
@@ -73,6 +87,7 @@
 #include "ui/views/context_menu_controller.h"
 #include "ui/views/controls/scroll_view.h"
 #include "ui/views/drag_controller.h"
+#include "ui/views/focus/focus_manager.h"
 #include "ui/views/interaction/element_tracker_views.h"
 #include "ui/views/layout/fill_layout.h"
 #include "ui/views/layout/layout_provider.h"
@@ -82,8 +97,6 @@
 #include "ui/views/view_utils.h"
 #include "ui/views/views_features.h"
 #include "ui/views/views_switches.h"
-#include "ui/views/widget/native_widget_private.h"
-#include "ui/views/widget/root_view.h"
 #include "ui/views/widget/tooltip_manager.h"
 #include "ui/views/widget/widget.h"
 
@@ -91,6 +104,11 @@
 #include "base/win/scoped_gdi_object.h"
 #include "ui/native_theme/native_theme_win.h"
 #endif
+
+namespace ui {
+class ClipboardFormatType;
+enum class PropertyChangeReason;
+}  // namespace ui
 
 namespace views {
 
@@ -220,8 +238,6 @@ View::View() {
     SetProperty(kViewStackTraceKey,
                 std::make_unique<base::debug::StackTrace>());
   }
-
-  ax_node_data_ = std::make_unique<ui::AXNodeData>();
 }
 
 View::~View() {
@@ -438,7 +454,7 @@ void View::SetBoundsRect(const gfx::Rect& bounds) {
   }
 
   OnBoundsChanged(prev);
-  NotifyAccessibilityEvent(ax::mojom::Event::kLocationChanged, false);
+  GetViewAccessibility().SetBounds(gfx::RectF(bounds_));
 
   if (needs_layout_ || is_size_changed) {
     needs_layout_ = false;
@@ -466,16 +482,24 @@ void View::SetBoundsRect(const gfx::Rect& bounds) {
   // The property effects have already been taken into account above. No need to
   // redo them here.
   if (prev.x() != bounds_.x()) {
-    OnPropertyChanged(&bounds_ + kXChangedKey, kPropertyEffectsNone);
+    OnPropertyChanged(
+        ui::metadata::MakeUniquePropertyKey(&bounds_, kXChangedKey),
+        kPropertyEffectsNone);
   }
   if (prev.y() != bounds_.y()) {
-    OnPropertyChanged(&bounds_ + kYChangedKey, kPropertyEffectsNone);
+    OnPropertyChanged(
+        ui::metadata::MakeUniquePropertyKey(&bounds_, kYChangedKey),
+        kPropertyEffectsNone);
   }
   if (prev.width() != bounds_.width()) {
-    OnPropertyChanged(&bounds_ + kWidthChangedKey, kPropertyEffectsNone);
+    OnPropertyChanged(
+        ui::metadata::MakeUniquePropertyKey(&bounds_, kWidthChangedKey),
+        kPropertyEffectsNone);
   }
   if (prev.height() != bounds_.height()) {
-    OnPropertyChanged(&bounds_ + kHeightChangedKey, kPropertyEffectsNone);
+    OnPropertyChanged(
+        ui::metadata::MakeUniquePropertyKey(&bounds_, kHeightChangedKey),
+        kPropertyEffectsNone);
   }
 }
 
@@ -592,9 +616,6 @@ gfx::Size View::GetMaximumSize() const {
 }
 
 int View::GetHeightForWidth(int w) const {
-  if (HasLayoutManager()) {
-    return GetLayoutManager()->GetPreferredHeightForWidth(this, w);
-  }
   return GetPreferredSize(SizeBounds(w, {})).height();
 }
 
@@ -619,6 +640,11 @@ void View::SetVisible(bool visible) {
     }
 
     visible_ = visible;
+    // The visible state of a view can affect both its own focusability and that
+    // of its descendants.
+    GetViewAccessibility().UpdateFocusableStateRecursive();
+    GetViewAccessibility().UpdateInvisibleState();
+
     AdvanceFocusIfNecessary();
 
     // Notify the parent.
@@ -908,6 +934,17 @@ void View::Layout(PassKey) {
       child->LayoutImmediately();
     }
   }
+}
+
+void View::SetLayoutManagerUseConstrainedSpace(
+    bool layout_manager_use_constrained_space) {
+  if (layout_manager_use_constrained_space ==
+      layout_manager_use_constrained_space_) {
+    return;
+  }
+
+  layout_manager_use_constrained_space_ = layout_manager_use_constrained_space;
+  InvalidateLayout();
 }
 
 void View::InvalidateLayout() {
@@ -1604,8 +1641,9 @@ bool View::OnMouseWheel(const ui::MouseWheelEvent& event) {
 }
 
 void View::OnKeyEvent(ui::KeyEvent* event) {
-  bool consumed = (event->type() == ui::ET_KEY_PRESSED) ? OnKeyPressed(*event)
-                                                        : OnKeyReleased(*event);
+  bool consumed = (event->type() == ui::EventType::kKeyPressed)
+                      ? OnKeyPressed(*event)
+                      : OnKeyReleased(*event);
   if (consumed) {
     event->StopPropagation();
   }
@@ -1613,13 +1651,13 @@ void View::OnKeyEvent(ui::KeyEvent* event) {
 
 void View::OnMouseEvent(ui::MouseEvent* event) {
   switch (event->type()) {
-    case ui::ET_MOUSE_PRESSED:
+    case ui::EventType::kMousePressed:
       if (ProcessMousePressed(*event)) {
         event->SetHandled();
       }
       return;
 
-    case ui::ET_MOUSE_MOVED:
+    case ui::EventType::kMouseMoved:
       if ((event->flags() &
            (ui::EF_LEFT_MOUSE_BUTTON | ui::EF_RIGHT_MOUSE_BUTTON |
             ui::EF_MIDDLE_MOUSE_BUTTON)) == 0) {
@@ -1627,28 +1665,28 @@ void View::OnMouseEvent(ui::MouseEvent* event) {
         return;
       }
       [[fallthrough]];
-    case ui::ET_MOUSE_DRAGGED:
+    case ui::EventType::kMouseDragged:
       ProcessMouseDragged(event);
       return;
 
-    case ui::ET_MOUSE_RELEASED:
+    case ui::EventType::kMouseReleased:
       ProcessMouseReleased(*event);
       return;
 
-    case ui::ET_MOUSEWHEEL:
+    case ui::EventType::kMousewheel:
       if (OnMouseWheel(*event->AsMouseWheelEvent())) {
         event->SetHandled();
       }
       break;
 
-    case ui::ET_MOUSE_ENTERED:
+    case ui::EventType::kMouseEntered:
       if (event->flags() & ui::EF_TOUCH_ACCESSIBILITY) {
         NotifyAccessibilityEvent(ax::mojom::Event::kHover, true);
       }
       OnMouseEntered(*event);
       break;
 
-    case ui::ET_MOUSE_EXITED:
+    case ui::EventType::kMouseExited:
       OnMouseExited(*event);
       break;
 
@@ -1660,12 +1698,12 @@ void View::OnMouseEvent(ui::MouseEvent* event) {
 void View::OnScrollEvent(ui::ScrollEvent* event) {}
 
 void View::OnTouchEvent(ui::TouchEvent* event) {
-  NOTREACHED_NORETURN() << "Views should not receive touch events.";
+  NOTREACHED() << "Views should not receive touch events.";
 }
 
 void View::OnGestureEvent(ui::GestureEvent* event) {}
 
-base::StringPiece View::GetLogContext() const {
+std::string_view View::GetLogContext() const {
   return GetClassName();
 }
 
@@ -1922,6 +1960,11 @@ void View::SetFocusBehavior(FocusBehavior focus_behavior) {
   }
 
   focus_behavior_ = focus_behavior;
+  // We don't have to update the focusable state here recursively because a
+  // view's focus behavior does not affect its children's focus behavior. For
+  // example, a container view may have a focus behavior of NEVER, but its
+  // children may still be focusable.
+  GetViewAccessibility().UpdateFocusableState();
   AdvanceFocusIfNecessary();
 
   OnPropertyChanged(&focus_behavior_, kPropertyEffectsNone);
@@ -1973,6 +2016,11 @@ std::u16string View::GetTooltipText(const gfx::Point& p) const {
 }
 
 // Context menus ---------------------------------------------------------------
+
+void View::set_context_menu_controller(ContextMenuController* menu_controller) {
+  context_menu_controller_ = menu_controller;
+  GetViewAccessibility().SetShowContextMenu(menu_controller != nullptr);
+}
 
 void View::ShowContextMenu(const gfx::Point& p,
                            ui::MenuSourceType source_type) {
@@ -2036,212 +2084,54 @@ ViewAccessibility& View::GetViewAccessibility() const {
   return *view_accessibility_;
 }
 
-void View::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  // `ViewAccessibility::GetAccessibleNodeData` populates the id and classname
-  // values prior to asking the View for its data. We don't want to stomp on
-  // those values.
-  ax_node_data_->id = node_data->id;
-  ax_node_data_->AddStringAttribute(
-      ax::mojom::StringAttribute::kClassName,
-      node_data->GetStringAttribute(ax::mojom::StringAttribute::kClassName));
-
-  // Copy everything set by the property setters.
-  *node_data = *ax_node_data_;
-}
-
-void View::SetAccessibilityProperties(
-    std::optional<ax::mojom::Role> role,
-    std::optional<std::u16string> name,
-    std::optional<std::u16string> description,
-    std::optional<std::u16string> role_description,
-    std::optional<ax::mojom::NameFrom> name_from,
-    std::optional<ax::mojom::DescriptionFrom> description_from) {
-  base::AutoReset<bool> initializing(&pause_accessibility_events_, true);
-  if (role.has_value()) {
-    if (role_description.has_value()) {
-      SetAccessibleRole(role.value(), role_description.value());
-    } else {
-      SetAccessibleRole(role.value());
-    }
-  }
-
-  // Defining the NameFrom value without specifying the name doesn't make much
-  // sense. The only exception might be if the NameFrom is setting the name to
-  // explicitly empty. In order to prevent surprising/confusing behavior, we
-  // only use the NameFrom value if we have an explicit name. As a result, any
-  // caller setting the name to explicitly empty must set the name to an empty
-  // string.
-  if (name.has_value()) {
-    if (name_from.has_value()) {
-      SetAccessibleName(name.value(), name_from.value());
-    } else {
-      SetAccessibleName(name.value());
-    }
-  }
-
-  // See the comment above regarding the NameFrom value.
-  if (description.has_value()) {
-    if (description_from.has_value()) {
-      GetViewAccessibility().SetDescription(description.value(),
-                                            description_from.value());
-    } else {
-      GetViewAccessibility().SetDescription(description.value());
-    }
-  }
-}
-
 void View::SetAccessibleName(const std::u16string& name) {
-  SetAccessibleName(
-      name, static_cast<ax::mojom::NameFrom>(ax_node_data_->GetIntAttribute(
-                ax::mojom::IntAttribute::kNameFrom)));
+  SetAccessibleName(name, GetViewAccessibility().GetCachedNameFrom());
 }
 
 void View::SetAccessibleName(std::u16string name,
                              ax::mojom::NameFrom name_from) {
-  // Allow subclasses to adjust the name.
-  AdjustAccessibleName(name, name_from);
-
-  // Ensure we have a current `name_from` value. For instance, the name might
-  // still be an empty string, but a view is now indicating that this is by
-  // design by setting `NameFrom::kAttributeExplicitlyEmpty`.
-  ax_node_data_->SetNameFrom(name_from);
-
-  if (name == accessible_name_) {
-    return;
-  }
-
-  if (name.empty()) {
-    ax_node_data_->RemoveStringAttribute(ax::mojom::StringAttribute::kName);
-  } else if (ax_node_data_->role != ax::mojom::Role::kUnknown &&
-             ax_node_data_->role != ax::mojom::Role::kNone) {
-    // TODO(accessibility): This is to temporarily work around the DCHECK
-    // in `AXNodeData` that wants to have a role to calculate a name-from.
-    // If we don't have a role yet, don't add it to the data until we do.
-    // See `SetAccessibleRole` where we check for and handle this condition.
-    // Also note that the `SetAccessibilityProperties` function allows view
-    // authors to set the role and name at once, if all views use it, we can
-    // remove this workaround.
-    ax_node_data_->SetName(name);
-  }
-
-  accessible_name_ = name;
-  OnPropertyChanged(&accessible_name_, kPropertyEffectsNone);
-  OnAccessibleNameChanged(name);
-  NotifyAccessibilityEvent(ax::mojom::Event::kTextChanged, true);
+  GetViewAccessibility().SetName(name, name_from);
 }
 
 void View::SetAccessibleName(View* naming_view) {
   DCHECK(naming_view);
-  DCHECK_NE(this, naming_view);
-
-  const std::u16string& name = naming_view->GetAccessibleName();
-  DCHECK(!name.empty());
-
-  SetAccessibleName(name, ax::mojom::NameFrom::kRelatedElement);
-  ax_node_data_->AddIntListAttribute(
-      ax::mojom::IntListAttribute::kLabelledbyIds,
-      {naming_view->GetViewAccessibility().GetUniqueId().Get()});
+  GetViewAccessibility().SetName(*naming_view);
 }
 
-const std::u16string& View::GetAccessibleName() const {
-  return accessible_name_;
+std::u16string View::GetAccessibleName() const {
+  return GetViewAccessibility().GetCachedName();
 }
 
 void View::SetAccessibleRole(const ax::mojom::Role role) {
-  if (role == accessible_role_) {
-    return;
-  }
-
-  ax_node_data_->role = role;
-  if (role != ax::mojom::Role::kUnknown && role != ax::mojom::Role::kNone) {
-    if (ax_node_data_->GetStringAttribute(ax::mojom::StringAttribute::kName)
-            .empty() &&
-        !accessible_name_.empty()) {
-      // TODO(accessibility): This is to temporarily work around the DCHECK
-      // that wants to have a role to calculate a name-from. If we have a
-      // name in our properties but not in our `AXNodeData`, the name was
-      // set prior to the role. Now that we have a valid role, we can set
-      // the name. See `SetAccessibleName` for where we delayed setting it.
-      ax_node_data_->SetName(accessible_name_);
-    }
-  }
-
-  accessible_role_ = role;
-  OnPropertyChanged(&accessible_role_, kPropertyEffectsNone);
+  GetViewAccessibility().SetRole(role);
 }
 
 void View::SetAccessibleRole(const ax::mojom::Role role,
                              const std::u16string& role_description) {
-  if (!role_description.empty()) {
-    ax_node_data_->AddStringAttribute(
-        ax::mojom::StringAttribute::kRoleDescription,
-        base::UTF16ToUTF8(role_description));
-  } else {
-    ax_node_data_->RemoveStringAttribute(
-        ax::mojom::StringAttribute::kRoleDescription);
-  }
-
-  SetAccessibleRole(role);
+  GetViewAccessibility().SetRole(role, role_description);
 }
 
 ax::mojom::Role View::GetAccessibleRole() const {
-  return accessible_role_;
+  return GetViewAccessibility().GetCachedRole();
 }
 
 void View::SetAccessibleDescription(const std::u16string& description) {
-  if (description.empty()) {
-    ax_node_data_->RemoveStringAttribute(
-        ax::mojom::StringAttribute::kDescription);
-    ax_node_data_->RemoveIntAttribute(
-        ax::mojom::IntAttribute::kDescriptionFrom);
-    accessible_description_ = description;
-    return;
-  }
-
-  SetAccessibleDescription(description,
-                           ax::mojom::DescriptionFrom::kAriaDescription);
+  GetViewAccessibility().SetDescription(description);
 }
 
 void View::SetAccessibleDescription(
     const std::u16string& description,
     ax::mojom::DescriptionFrom description_from) {
-  // Ensure we have a current `description_from` value. For instance, the
-  // description might still be an empty string, but a view is now indicating
-  // that this is by design by setting
-  // `DescriptionFrom::kAttributeExplicitlyEmpty`.
-  ax_node_data_->SetDescriptionFrom(description_from);
-
-  if (description == accessible_description_) {
-    return;
-  }
-
-  // `AXNodeData::SetDescription` DCHECKs that the description is not empty
-  // unless it has `DescriptionFrom::kAttributeExplicitlyEmpty`.
-  if (!description.empty() ||
-      ax_node_data_->GetDescriptionFrom() ==
-          ax::mojom::DescriptionFrom::kAttributeExplicitlyEmpty) {
-    ax_node_data_->SetDescription(description);
-  }
-
-  accessible_description_ = description;
-  OnPropertyChanged(&accessible_description_, kPropertyEffectsNone);
+  GetViewAccessibility().SetDescription(description, description_from);
 }
 
 void View::SetAccessibleDescription(View* describing_view) {
   DCHECK(describing_view);
-  DCHECK_NE(this, describing_view);
-
-  const std::u16string& name = describing_view->GetAccessibleName();
-  DCHECK(!name.empty());
-
-  SetAccessibleDescription(name, ax::mojom::DescriptionFrom::kRelatedElement);
-  ax_node_data_->AddIntListAttribute(
-      ax::mojom::IntListAttribute::kDescribedbyIds,
-      {describing_view->GetViewAccessibility().GetUniqueId().Get()});
+  GetViewAccessibility().SetDescription(*describing_view);
 }
 
-const std::u16string& View::GetAccessibleDescription() const {
-  return accessible_description_;
+std::u16string View::GetAccessibleDescription() const {
+  return GetViewAccessibility().GetCachedDescription();
 }
 
 bool View::HandleAccessibleAction(const ui::AXActionData& action_data) {
@@ -2254,11 +2144,11 @@ bool View::HandleAccessibleAction(const ui::AXActionData& action_data) {
       break;
     case ax::mojom::Action::kDoDefault: {
       const gfx::Point center = GetLocalBounds().CenterPoint();
-      ui::MouseEvent press(ui::ET_MOUSE_PRESSED, center, center,
+      ui::MouseEvent press(ui::EventType::kMousePressed, center, center,
                            ui::EventTimeForNow(), ui::EF_LEFT_MOUSE_BUTTON,
                            ui::EF_LEFT_MOUSE_BUTTON);
       OnEvent(&press);
-      ui::MouseEvent release(ui::ET_MOUSE_RELEASED, center, center,
+      ui::MouseEvent release(ui::EventType::kMouseReleased, center, center,
                              ui::EventTimeForNow(), ui::EF_LEFT_MOUSE_BUTTON,
                              ui::EF_LEFT_MOUSE_BUTTON);
       OnEvent(&release);
@@ -2291,27 +2181,7 @@ gfx::NativeViewAccessible View::GetNativeViewAccessible() {
 
 void View::NotifyAccessibilityEvent(ax::mojom::Event event_type,
                                     bool send_native_event) {
-  // If it belongs to a widget but its native widget is already destructed, do
-  // not send such accessibility event as it's unexpected to send such events
-  // during destruction, and is likely to lead to crashes/problems.
-  if (GetWidget() && !GetWidget()->GetNativeView()) {
-    return;
-  }
-
-  // If `pause_accessibility_events_` is true, it means we are initializing
-  // property values. In this specific case, we do not want to notify platform
-  // assistive technologies that a property has changed.
-  if (pause_accessibility_events_) {
-    return;
-  }
-
-  AXEventManager::Get()->NotifyViewEvent(this, event_type);
-
-  if (send_native_event && GetWidget()) {
-    GetViewAccessibility().NotifyAccessibilityEvent(event_type);
-  }
-
-  OnAccessibilityEvent(event_type);
+  GetViewAccessibility().NotifyEvent(event_type, send_native_event);
 }
 
 void View::OnAccessibilityEvent(ax::mojom::Event event_type) {}
@@ -2346,15 +2216,13 @@ bool View::HasObserver(const ViewObserver* observer) const {
 
 // Size and disposition --------------------------------------------------------
 
-gfx::Size View::CalculatePreferredSize() const {
+gfx::Size View::CalculatePreferredSize(const SizeBounds& available_size) const {
   if (HasLayoutManager()) {
-    return GetLayoutManager()->GetPreferredSize(this);
+    return GetLayoutManager()->GetPreferredSize(
+        this,
+        layout_manager_use_constrained_space_ ? available_size : SizeBounds());
   }
   return gfx::Size();
-}
-
-gfx::Size View::CalculatePreferredSize(const SizeBounds& available_size) const {
-  return CalculatePreferredSize();
 }
 
 void View::PreferredSizeChanged() {
@@ -2613,6 +2481,8 @@ void View::OnDeviceScaleFactorChanged(float old_device_scale_factor,
   } else {
     SnapLayerToPixelBoundary(LayerOffsetData());
   }
+
+  GetViewAccessibility().SetChildTreeScaleFactor(new_device_scale_factor);
 }
 
 void View::CreateOrDestroyLayer() {
@@ -2744,11 +2614,6 @@ void View::OnBlur() {}
 void View::Focus() {
   OnFocus();
 
-#if !BUILDFLAG(IS_CHROMEOS_LACROS)
-  // TODO(crbug.com/40285437) - Get this working on Lacros as well.
-  UpdateTooltipForFocus();
-#endif
-
   // TODO(pbos): Investigate if parts of this can run unconditionally.
   if (!suppress_default_focus_handling_) {
     // Clear the native focus. This ensures that no visible native view has the
@@ -2777,6 +2642,11 @@ void View::Focus() {
   } else {
     ScrollViewToVisible();
   }
+
+  // Update tooltip after scrolling view to place tooltip according to the new
+  // position.
+  // TODO(crbug.com/40285437) - Get this working on Lacros as well.
+  UpdateTooltipForFocus();
 
   for (ViewObserver& observer : observers_) {
     observer.OnViewFocused(this);
@@ -3054,7 +2924,7 @@ void View::PaintDebugRects(const PaintInfo& parent_paint_info) {
   ui::PaintRecorder recorder(context, paint_info.paint_recording_size(),
                              paint_info.paint_recording_scale_x(),
                              paint_info.paint_recording_scale_y(),
-                             &paint_cache_);
+                             /*cache*/ nullptr);
   gfx::Canvas* canvas = recorder.canvas();
   const float scale = canvas->UndoDeviceScaleFactor();
   gfx::RectF outline_rect(ScaleToEnclosedRect(GetLocalBounds(), scale));
@@ -3118,6 +2988,30 @@ void View::AddChildViewAtImpl(View* view, size_t index) {
   // inherit the visibility of the owner View.
   view->UpdateLayerVisibility();
 
+  // TODO(https://crbug.com/325137417): We should only complete the
+  // initialization of the accessible cache when we know an accessibility API
+  // client fetches information from the browser. Add a condition for the
+  // kNativeAPIs mode after doing some testing.
+  view->GetViewAccessibility().CompleteCacheInitialization();
+
+  // Make sure that the accessible focusable state of the descendants of the
+  // `view` is correct, and make sure they are ready to send event
+  // notifications.
+  //
+  // TODO(https://crbug.com/325137417): This function and
+  // `CompleteCacheInitialization` called above both walk the views hierarchy.
+  // Their responsibilities are also similar. Investigate whether we can prevent
+  // events from being fired until accessibility is fully initialized, and if we
+  // need to update the accessible focusable state before the cache is fully
+  // initialized. If so, let's merge these two functions.
+  view->GetViewAccessibility().UpdateStatesForViewAndDescendants();
+
+  if (widget) {
+    // There are scenarios where we might be reparenting a view from a widget
+    // that was closed to a widget that is not closed.
+    view->GetViewAccessibility().OnWidgetUpdated(widget, old_widget);
+  }
+
   // Need to notify the layout manager because one of the callbacks below might
   // want to know the view's new preferred size, minimum size, etc.
   if (HasLayoutManager()) {
@@ -3179,13 +3073,6 @@ void View::DoRemoveChildView(View* view,
     }
   }
 
-  // Make sure the layers belonging to the subtree rooted at |view| get
-  // removed.
-  view->OrphanLayers();
-  if (widget) {
-    widget->LayerTreeChanged();
-  }
-
   // Need to notify the layout manager because one of the callbacks below might
   // want to know the view's new preferred size, minimum size, etc.
   if (HasLayoutManager()) {
@@ -3193,6 +3080,14 @@ void View::DoRemoveChildView(View* view,
   }
 
   view->PropagateRemoveNotifications(this, new_parent, is_removed_from_widget);
+
+  // Make sure the layers belonging to the subtree rooted at |view| get
+  // removed. Only do this after all the removal notifications have gone out.
+  view->OrphanLayers();
+  if (widget) {
+    widget->LayerTreeChanged();
+  }
+
   view->parent_ = nullptr;
 
   if (delete_removed_view && !view->owned_by_client_) {
@@ -3386,7 +3281,7 @@ void View::AddDescendantToNotify(View* view) {
 void View::RemoveDescendantToNotify(View* view) {
   DCHECK(view && descendants_to_notify_);
   auto i = base::ranges::find(*descendants_to_notify_, view);
-  DCHECK(i != descendants_to_notify_->end());
+  CHECK(i != descendants_to_notify_->end(), base::NotFatalUntil::M130);
   descendants_to_notify_->erase(i);
   if (descendants_to_notify_->empty()) {
     descendants_to_notify_.reset();
@@ -3800,7 +3695,8 @@ void View::AdvanceFocusIfNecessary() {
   // unfocusable. If the view is still focusable or is not focused, we can
   // return early avoiding further unnecessary checks. Focusability check is
   // performed first as it tends to be faster.
-  if (GetViewAccessibility().IsAccessibilityFocusable() || !HasFocus()) {
+  if (GetViewAccessibility().ViewAccessibility::IsAccessibilityFocusable() ||
+      !HasFocus()) {
     return;
   }
 
@@ -3855,7 +3751,12 @@ void View::PropagateDeviceScaleFactorChanged(float old_device_scale_factor,
   if (!layer()) {
     OnDeviceScaleFactorChanged(old_device_scale_factor,
                                new_device_scale_factor);
+    return;
   }
+
+  // `OnDeviceScaleFactor` calls `SetChildTreeScaleFactor`, so we only need to
+  // call it if we don't go into the block above.
+  GetViewAccessibility().SetChildTreeScaleFactor(new_device_scale_factor);
 }
 
 // Tooltips --------------------------------------------------------------------

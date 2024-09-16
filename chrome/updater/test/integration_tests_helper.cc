@@ -32,8 +32,8 @@
 #include "chrome/updater/constants.h"
 #include "chrome/updater/ipc/ipc_support.h"
 #include "chrome/updater/test/integration_tests_impl.h"
+#include "chrome/updater/test/unit_test_util.h"
 #include "chrome/updater/updater_scope.h"
-#include "chrome/updater/util/unit_test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -42,8 +42,7 @@
 #include "chrome/updater/util/win_util.h"
 #endif
 
-namespace updater {
-namespace test {
+namespace updater::test {
 namespace {
 
 using ::testing::EmptyTestEventListener;
@@ -310,6 +309,9 @@ void AppTestHelper::FirstTaskRun() {
           {"expect_app_tag",
            WithSwitch("tag", WithSwitch("app_id",
                                         WithSystemScope(Wrap(&ExpectAppTag))))},
+          {"set_app_tag",
+           WithSwitch("tag",
+                      WithSwitch("app_id", WithSystemScope(Wrap(&SetAppTag))))},
           {"expect_app_version",
            WithSwitch(
                "app_version",
@@ -364,18 +366,23 @@ void AppTestHelper::FirstTaskRun() {
           {"install", WithSwitch("switches", WithSystemScope(Wrap(&Install)))},
           {"install_updater_and_app",
            WithSwitch(
-               "verify_app_logo_loaded",
+               "wait_for_the_installer",
                WithSwitch(
-                   "always_launch_cmd",
+                   "expect_success",
                    WithSwitch(
-                       "child_window_text_to_find",
+                       "verify_app_logo_loaded",
                        WithSwitch(
-                           "tag",
+                           "always_launch_cmd",
                            WithSwitch(
-                               "is_silent_install",
-                               WithSwitch("app_id",
-                                          WithSystemScope(Wrap(
-                                              &InstallUpdaterAndApp))))))))},
+                               "child_window_text_to_find",
+                               WithSwitch(
+                                   "tag",
+                                   WithSwitch(
+                                       "is_silent_install",
+                                       WithSwitch(
+                                           "app_id",
+                                           WithSystemScope(Wrap(
+                                               &InstallUpdaterAndApp))))))))))},
           {"print_log", WithSystemScope(Wrap(&PrintLog))},
           {"run_wake",
            WithSwitch("exit_code", WithSystemScope(Wrap(&RunWake)))},
@@ -389,6 +396,9 @@ void AppTestHelper::FirstTaskRun() {
           {"update",
            WithSwitch("install_data_index",
                       (WithSwitch("app_id", WithSystemScope(Wrap(&Update)))))},
+          {"register_app",
+           WithSwitch("registration",
+                      WithSystemScope(Wrap(&RegisterAppByValue)))},
           {"check_for_update",
            (WithSwitch("app_id", WithSystemScope(Wrap(&CheckForUpdate))))},
           {"update_all", WithSystemScope(Wrap(&UpdateAll))},
@@ -467,6 +477,11 @@ void AppTestHelper::FirstTaskRun() {
            WithSwitch("enrollment_token", Wrap(DMPushEnrollmentToken))},
           {"dm_deregister_device", WithSystemScope(Wrap(&DMDeregisterDevice))},
           {"dm_cleanup", WithSystemScope(Wrap(&DMCleanup))},
+          {"install_enterprise_companion_app",
+           WithSwitch("external_overrides",
+                      Wrap(&InstallEnterpriseCompanionApp))},
+          {"uninstall_enterprise_companion_app",
+           Wrap(&UninstallEnterpriseCompanionApp)},
       };
 
   const base::CommandLine* command_line =
@@ -560,8 +575,7 @@ TEST(TestHelperCommandRunner, Run) {
 }
 
 }  // namespace
-}  // namespace test
-}  // namespace updater
+}  // namespace updater::test
 
 // Wraps the execution of one integration test command in a unit test. The test
 // commands contain gtest assertions, therefore the invocation of test commands

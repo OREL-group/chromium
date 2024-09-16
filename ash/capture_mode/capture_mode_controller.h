@@ -185,8 +185,11 @@ class ASH_EXPORT CaptureModeController
   void StartForGameDashboard(aura::Window* game_window);
 
   // Starts recording a pre-selected game window as soon as possible without
-  // starting a countdown by using a null session.
+  // starting a countdown by using a null session. Currently unused.
   void StartRecordingInstantlyForGameDashboard(aura::Window* game_window);
+
+  // Starts a new sunfish session. Currently only invoked via a debug command.
+  void StartSunfishSession();
 
   // Stops an existing capture session.
   void Stop();
@@ -247,6 +250,9 @@ class ASH_EXPORT CaptureModeController
   // the capture session.
   void PerformCapture();
 
+  // Called by a capture session behavior to perform an image capture search.
+  void PerformImageSearch();
+
   void EndVideoRecording(EndRecordingReason reason);
 
   // Posts a task to the blocking pool to check the availability of the given
@@ -270,17 +276,6 @@ class ASH_EXPORT CaptureModeController
   // protection.
   void RefreshContentProtection();
 
-  // Toggles the recording overlay on or off. When on, the recording overlay
-  // widget's window will be shown and can consume all the events targeting the
-  // window being recorded. Otherwise, it's hidden and cannot accept any events.
-  // This can only be called while recording is in progress for a Projector
-  // session.
-  void ToggleRecordingOverlayEnabled();
-
-  // Returns a new instance of the concrete view that will be used as the
-  // content view of the recording overlay widget.
-  std::unique_ptr<RecordingOverlayView> CreateRecordingOverlayView();
-
   // Returns true if the given `path` is the root folder of DriveFS, false
   // otherwise.
   bool IsRootDriveFsPath(const base::FilePath& path) const;
@@ -296,6 +291,9 @@ class ASH_EXPORT CaptureModeController
   // Returns true if the given `path` is the root folder of OneDrive, false
   // otherwise.
   bool IsRootOneDriveFilesPath(const base::FilePath& path) const;
+
+  // Calls the delegate to instantiate `SearchResultsView`.
+  std::unique_ptr<AshWebView> CreateSearchResultsView() const;
 
   // Returns the current parent window for the on-capture-surface widgets such
   // as `CaptureModeCameraController::camera_preview_widget_` and
@@ -322,6 +320,14 @@ class ASH_EXPORT CaptureModeController
   // should not continue.
   void CheckScreenCaptureDlpRestrictions(
       OnCaptureModeDlpRestrictionChecked callback);
+
+  // Returns true if the video recording is in progress and annotating is
+  // supported.
+  bool ShouldAllowAnnotating() const;
+
+  // Returns true is annotating should be supported for the current capture mode
+  // behavior.
+  bool IsAnnotatingSupported() const;
 
   // recording::mojom::RecordingServiceClient:
   void OnRecordingEnded(recording::mojom::RecordingStatus status,
@@ -465,6 +471,12 @@ class ASH_EXPORT CaptureModeController
                        const CaptureModeBehavior* behavior,
                        scoped_refptr<base::RefCountedMemory> png_bytes);
 
+  // Called back when an image has been captured to trigger a search request.
+  // `jpeg_bytes` is the buffer containing the captured image in a JPEG format.
+  void OnImageCapturedForSearch(
+      bool was_cursor_originally_blocked,
+      scoped_refptr<base::RefCountedMemory> jpeg_bytes);
+
   // Called back when an attempt to save the image file has been completed, with
   // `file_saved_path` indicating whether the attempt succeeded or failed. If
   // `file_saved_path` is empty, the attempt failed. `png_bytes` is the buffer
@@ -476,6 +488,14 @@ class ASH_EXPORT CaptureModeController
                         const CaptureModeBehavior* behavior,
                         const base::FilePath& file_saved_path);
 
+  // Called back after the image file was saved to the final location.
+  // Parameters are same as for `OnImageFileSaved()` with `success` indicating
+  // the result of finalizing the file.
+  void OnImageFileFinalized(const gfx::Image& image,
+                            const CaptureModeBehavior* behavior,
+                            bool success,
+                            const base::FilePath& file_saved_path);
+
   // Called back when the check for custom folder's availability is done in
   // `CheckFolderAvailability`, with `available` indicating whether the custom
   // folder is available or not.
@@ -486,10 +506,12 @@ class ASH_EXPORT CaptureModeController
   // an RGB image provided by the recording service that can be used as a
   // thumbnail of the video in the notification. `behavior` will decide whether
   // the recording will not be shown in tote or notification.
-  void OnVideoFileSaved(const base::FilePath& saved_video_file_path,
-                        const gfx::ImageSkia& video_thumbnail,
+  // `saved_video_file_path` indicates whether the attempt succeeded or failed.
+  // If `saved_video_file_path` is empty, the attempt failed.
+  void OnVideoFileSaved(const gfx::ImageSkia& video_thumbnail,
+                        const CaptureModeBehavior* behavior,
                         bool success,
-                        const CaptureModeBehavior* behavior);
+                        const base::FilePath& saved_video_file_path);
 
   // Shows a preview notification of the newly taken screenshot or screen
   // recording. Customized notification view will be decided based on the
@@ -555,6 +577,11 @@ class ASH_EXPORT CaptureModeController
   // should be aborted.
   void OnDlpRestrictionCheckedAtPerformingCapture(bool proceed);
 
+  // Called after the video recording was written to the final file location.
+  // `should_delete_file` indicates if the file was deleted due to an error.
+  void OnVideoFileFinalized(bool should_delete_file,
+                            const gfx::ImageSkia& video_thumbnail);
+
   // Called by the DLP manager when it's checked again for any on-screen content
   // restriction at the time when the video capture 3-second countdown ends.
   // `proceed` will be set to true if video recording should begin, or false if
@@ -585,7 +612,9 @@ class ASH_EXPORT CaptureModeController
   // Encapsulates the policy check and calls into DLP manager to do DLP check.
   // `instant_screenshot_callback` will be moved and invoked in
   // `OnDlpRestrictionCheckedAtCaptureScreenshot()` to perform the instant
-  // screenshot.
+  // screenshot. This is invoked via the screenshot accelerator commands and
+  // will end capture mode session if it is active (only if the session was
+  // started by the same behavior).
   void CaptureInstantScreenshot(CaptureModeEntryType entry_type,
                                 CaptureModeSource source,
                                 base::OnceClosure instant_screenshot_callback,
@@ -608,6 +637,8 @@ class ASH_EXPORT CaptureModeController
   // Takes a screenshot of the `given_window` and save it to disk.
   void PerformScreenshotOfGivenWindow(aura::Window* given_window,
                                       BehaviorType behavior_type);
+
+  bool ShouldClearCaptureRegion(BehaviorType behavior_type) const;
 
   // Gets the corresponding `SaveLocation` enum value on the given `path`.
   CaptureModeSaveToLocation GetSaveToOption(const base::FilePath& path);
@@ -704,6 +735,8 @@ class ASH_EXPORT CaptureModeController
 
   base::OnceClosure on_video_recording_started_callback_for_test_;
 
+  base::OnceClosure on_image_captured_for_search_callback_for_test_;
+
   // Timers used to schedule recording of the number of screenshots taken.
   base::RepeatingTimer num_screenshots_taken_in_last_day_scheduler_;
   base::RepeatingTimer num_screenshots_taken_in_last_week_scheduler_;
@@ -737,7 +770,12 @@ class ASH_EXPORT CaptureModeController
   // to false, ensuring that this is an opt-in feature.
   bool enable_demo_tools_ = false;
 
-  // Maps an instance of the `CaptureModeBehavior` by `BehaviorType`.
+  // Maps an instance of the `CaptureModeBehavior` by `BehaviorType`. This is a
+  // map because a user session may start multiple different behaviors, during
+  // which we don't need to instantiate the behavior again. We also want to keep
+  // the behavior alive for the rest of the session until the user signs out or
+  // shuts down. This is because the behaviors are the ones that cache the
+  // settings.
   base::flat_map<BehaviorType, std::unique_ptr<CaptureModeBehavior>>
       behaviors_map_;
 

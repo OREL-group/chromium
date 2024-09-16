@@ -59,10 +59,12 @@ extern const char kValueRequestDeviceAttributeUpdate[];
 extern const char kValueRequestGcmIdUpdate[];
 extern const char kValueRequestCheckAndroidManagement[];
 extern const char kValueRequestCertBasedRegister[];
+extern const char kValueRequestTokenBasedRegister[];
 extern const char kValueRequestActiveDirectoryEnrollPlayUser[];
 extern const char kValueRequestActiveDirectoryPlayActivity[];
 extern const char kValueRequestAppInstallReport[];
-extern const char kValueRequestTokenEnrollment[];
+extern const char kValueRequestRegisterBrowser[];
+extern const char kValueRequestRegisterPolicyAgent[];
 extern const char kValueRequestChromeDesktopReport[];
 extern const char kValueRequestInitialEnrollmentStateRetrieval[];
 extern const char kValueRequestUploadPolicyValidationReport[];
@@ -70,6 +72,7 @@ extern const char kValueRequestPublicSamlUser[];
 extern const char kValueRequestChromeOsUserReport[];
 extern const char kValueRequestCertProvisioningRequest[];
 extern const char kValueRequestChromeProfileReport[];
+extern const char kValueRequestFmRegistrationTokenUpload[];
 
 // Policy type strings for the policy_type field in PolicyFetchRequest.
 extern const char kChromeDevicePolicyType[];
@@ -80,6 +83,8 @@ extern const char kChromeSigninExtensionPolicyType[];
 extern const char kChromeMachineLevelUserCloudPolicyType[];
 extern const char kChromeMachineLevelExtensionCloudPolicyType[];
 extern const char kChromeRemoteCommandPolicyType[];
+extern const char kGoogleUpdateMachineLevelAppsPolicyType[];
+extern const char kGoogleUpdateMachineLevelOmahaPolicyType[];
 
 // Remote command type for `type` field in DeviceRemoteCommandRequest.
 // Command for Chrome OS Ash user.
@@ -180,9 +185,13 @@ enum DeviceMode {
   DEPRECATED_DEVICE_MODE_LEGACY_RETAIL_MODE = 5,  // The device is enrolled as a
                                                   // retail kiosk device. This
                                                   // is deprecated.
-  DEVICE_MODE_CONSUMER_KIOSK_AUTOLAUNCH = 6,  // The device is locally owned as
-                                              // consumer kiosk with ability to
-                                              // auto launch a kiosk webapp.
+  DEPRECATED_DEVICE_MODE_CONSUMER_KIOSK_AUTOLAUNCH = 6,  // The device is
+                                                         // locally owned as
+                                                         // consumer kiosk with
+                                                         // ability to auto
+                                                         // launch a kiosk
+                                                         // webapp. This is
+                                                         // deprecated.
   DEVICE_MODE_DEMO = 7,  // The device is in demo mode. It was
                          // either enrolled online or setup
                          // offline into demo mode domain -
@@ -219,7 +228,7 @@ enum class MarketSegment {
 
 // Sender ID of FCM (Firebase Cloud Messaging)
 // Policy Invalidation sender coming from the Firebase console.
-extern const char kPolicyFCMInvalidationSenderID[];
+inline constexpr char kPolicyFCMInvalidationSenderID[] = "1013309121859";
 
 // Kiosk SKU name. This is the constant of the enrollment license type that
 // exists on the server side.

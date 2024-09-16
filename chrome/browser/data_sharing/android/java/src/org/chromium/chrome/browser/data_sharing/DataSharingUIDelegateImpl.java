@@ -11,16 +11,17 @@ import android.view.ViewGroup;
 import androidx.annotation.NonNull;
 
 import org.chromium.base.Callback;
-import org.chromium.base.UserData;
-import org.chromium.chrome.browser.data_sharing.configs.AvatarConfig;
-import org.chromium.chrome.browser.data_sharing.configs.GroupMemberConfig;
-import org.chromium.chrome.browser.data_sharing.configs.MemberPickerConfig;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.components.data_sharing.DataSharingUIDelegate;
+import org.chromium.components.data_sharing.configs.AvatarConfig;
+import org.chromium.components.data_sharing.configs.GroupMemberConfig;
+import org.chromium.components.data_sharing.configs.MemberPickerConfig;
+import org.chromium.url.GURL;
 
 import java.util.List;
 
 /** Implementation of {@link DataSharingUIDelegate}. */
-class DataSharingUIDelegateImpl implements DataSharingUIDelegate, UserData {
+class DataSharingUIDelegateImpl implements DataSharingUIDelegate {
 
     private final Profile mProfile;
 
@@ -57,4 +58,7 @@ class DataSharingUIDelegateImpl implements DataSharingUIDelegate, UserData {
             String groupId,
             String tokenSecret,
             GroupMemberConfig config) {}
+
+    @Override
+    public void handleShareURLIntercepted(GURL url) {}
 }

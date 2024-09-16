@@ -189,5 +189,23 @@
     "nofullscreen",
     "noplaybackrate",
     "noremoteplayback",
+
+    // <meta> name attribute
+    // https://html.spec.whatwg.org/C/#standard-metadata-names
+    "color-scheme",
+
+    // Some values of KeyboardEvent.key.
+    // https://developer.mozilla.org/en-US/docs/Web/API/UI_Events/Keyboard_event_key_values
+    "ArrowDown",
+    "ArrowLeft",
+    "ArrowRight",
+    "ArrowUp",
+    "End",
+    "Home",
+    "PageDown",
+    "PageUp",
+    {name: "Enter", Symbol: "kCapitalEnter"},
+    "Escape",
+    "Tab",
   ],
 }

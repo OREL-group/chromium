@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/extensions/api/notifications/notifications_api.h"
 
 #include <stddef.h>
@@ -408,7 +413,7 @@ bool NotificationsApiFunction::UpdateNotification(
       *error = kUnableToDecodeIconError;
       return false;
     }
-    notification->set_small_image(app_icon_mask);
+    notification->SetSmallImage(app_icon_mask);
     notification->set_small_image_needs_additional_masking(true);
   }
 
@@ -458,7 +463,7 @@ bool NotificationsApiFunction::UpdateNotification(
       *error = kExtraImageProvided;
       return false;
     }
-    notification->set_image(image);
+    notification->SetImage(image);
   }
 
   if (options->progress) {

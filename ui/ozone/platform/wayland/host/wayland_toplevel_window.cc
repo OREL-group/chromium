@@ -19,6 +19,7 @@
 #include "ui/base/hit_test.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/display/types/display_constants.h"
+#include "ui/events/base_event_utils.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/native_widget_types.h"
@@ -33,6 +34,7 @@
 #include "ui/ozone/platform/wayland/host/wayland_event_source.h"
 #include "ui/ozone/platform/wayland/host/wayland_output.h"
 #include "ui/ozone/platform/wayland/host/wayland_output_manager.h"
+#include "ui/ozone/platform/wayland/host/wayland_popup.h"
 #include "ui/ozone/platform/wayland/host/wayland_window.h"
 #include "ui/ozone/platform/wayland/host/wayland_window_drag_controller.h"
 #include "ui/ozone/platform/wayland/host/wayland_zaura_shell.h"
@@ -148,7 +150,8 @@ void WaylandToplevelWindow::DispatchHostWindowDragMovement(
   connection()->Flush();
 #if !BUILDFLAG(IS_CHROMEOS_LACROS)
   // TODO(crbug.com/40917147): Revisit to resolve the correct impl.
-  connection()->event_source()->ResetPointerFlags();
+  connection()->event_source()->ReleasePressedPointerButtons(this,
+                                                             EventTimeForNow());
 #endif
 }
 
@@ -163,9 +166,6 @@ void WaylandToplevelWindow::Show(bool inactive) {
 
   UpdateWindowScale(false);
 
-  if (auto* drag_controller = connection()->window_drag_controller())
-    drag_controller->OnToplevelWindowCreated(this);
-
   if (inactive)
     Deactivate();
 
@@ -176,9 +176,9 @@ void WaylandToplevelWindow::Hide() {
   if (!shell_toplevel_)
     return;
 
-  if (child_window()) {
-    child_window()->Hide();
-    set_child_window(nullptr);
+  if (child_popup()) {
+    child_popup()->Hide();
+    set_child_popup(nullptr);
   }
   for (auto bubble : child_bubbles()) {
     bubble->Hide();
@@ -227,6 +227,16 @@ void WaylandToplevelWindow::SetFullscreen(bool fullscreen,
 
   // The `target_display_id` must be invalid if not going into fullscreen.
   DCHECK(fullscreen || target_display_id == display::kInvalidDisplayId);
+
+  if (base::FeatureList::IsEnabled(features::kAsyncFullscreenWindowState)) {
+    if (fullscreen) {
+      shell_toplevel_->SetFullscreen(
+          GetWaylandOutputForDisplayId(target_display_id));
+    } else {
+      shell_toplevel_->UnSetFullscreen();
+    }
+    return;
+  }
 
   // We must track the previous state to correctly say our state as long as it
   // can be the maximized instead of normal one.
@@ -292,23 +302,22 @@ void WaylandToplevelWindow::Restore() {
   // handled at compositor side, just like in xdg_toplevel_surface::move. So
   // skip it if there's a window drag session running.
   auto* drag_controller = connection()->window_drag_controller();
-  if (drag_controller &&
-      drag_controller->state() != WaylandWindowDragController::State::kIdle) {
+  if (drag_controller && drag_controller->IsDragInProgress()) {
     return;
   }
 
   SetWindowState(PlatformWindowState::kNormal, display::kInvalidDisplayId);
 }
 
-std::optional<std::string> WaylandToplevelWindow::TakeActivationToken() const {
-  if (!connection()->xdg_activation() ||
-      // xdg-activation implementation in some compositors is still buggy and
-      // Mutter crashes were observed when windows are activated during window
-      // dragging sessions. See https://crbug.com/1366504.
-      connection()->IsDragInProgress()) {
-    return std::nullopt;
+void WaylandToplevelWindow::ActivateWithToken(std::string token) {
+  DCHECK(connection()->xdg_activation());
+  // xdg-activation implementation in some compositors is still buggy and
+  // Mutter crashes were observed when windows are activated during window
+  // dragging sessions. See https://crbug.com/1366504.
+  if (connection()->IsDragInProgress()) {
+    return;
   }
-  return base::nix::TakeXdgActivationToken();
+  connection()->xdg_activation()->Activate(root_surface()->surface(), token);
 }
 
 void WaylandToplevelWindow::Activate() {
@@ -324,8 +333,14 @@ void WaylandToplevelWindow::Activate() {
     shell_toplevel_->Activate();
   } else if (zaura_surface && zaura_surface->SupportsActivate()) {
     zaura_surface->Activate();
-  } else if (auto token = TakeActivationToken()) {
-    connection()->xdg_activation()->Activate(root_surface()->surface(), *token);
+  } else if (connection()->xdg_activation()) {
+    if (auto token = base::nix::TakeXdgActivationToken()) {
+      ActivateWithToken(token.value());
+    } else {
+      connection()->xdg_activation()->RequestNewToken(
+          base::BindOnce(&WaylandToplevelWindow::ActivateWithToken,
+                         weak_ptr_factory_.GetWeakPtr()));
+    }
   } else if (gtk_surface1_) {
     gtk_surface1_->RequestFocus();
   }
@@ -346,6 +361,20 @@ void WaylandToplevelWindow::Deactivate() {
     connection()->Flush();
   }
   WaylandWindow::Deactivate();
+}
+
+void WaylandToplevelWindow::SetWindowIcons(const gfx::ImageSkia& window_icon,
+                                           const gfx::ImageSkia& app_icon) {
+  if (!shell_toplevel_) {
+    return;
+  }
+  // Let the app icon take precedence over the window icon.
+  if (!app_icon.isNull()) {
+    shell_toplevel_->SetIcon(app_icon);
+  } else {
+    shell_toplevel_->SetIcon(window_icon);
+  }
+  root_surface()->Commit(/*flush=*/true);
 }
 
 void WaylandToplevelWindow::SizeConstraintsChanged() {
@@ -574,6 +603,8 @@ void WaylandToplevelWindow::HandleAuraToplevelConfigure(
     window_state = PlatformWindowState::kSnappedSecondary;
   } else if (window_states.is_floated) {
     window_state = PlatformWindowState::kFloated;
+  } else if (window_states.is_pip) {
+    window_state = PlatformWindowState::kPip;
   } else {
     window_state = PlatformWindowState::kNormal;
   }
@@ -707,7 +738,7 @@ bool WaylandToplevelWindow::OnInitialize(
 #else
   app_id_ = properties.wayland_app_id;
 #endif
-  SetWaylandExtension(this, static_cast<WaylandExtension*>(this));
+  SetWaylandToplevelExtension(this, this);
   SetWmMoveLoopHandler(this, static_cast<WmMoveLoopHandler*>(this));
   SetWorkspaceExtension(this, static_cast<WorkspaceExtension*>(this));
   SetWorkspaceExtensionDelegate(properties.workspace_extension_delegate);
@@ -795,6 +826,10 @@ void WaylandToplevelWindow::PropagateBufferScale(float new_scale) {
   }
 }
 
+base::WeakPtr<WaylandWindow> WaylandToplevelWindow::AsWeakPtr() {
+  return weak_ptr_factory_.GetWeakPtr();
+}
+
 void WaylandToplevelWindow::ShowTooltip(
     const std::u16string& text,
     const gfx::Point& position,
@@ -823,7 +858,8 @@ void WaylandToplevelWindow::HideTooltip() {
 bool WaylandToplevelWindow::IsClientControlledWindowMovementSupported() const {
   auto* window_drag_controller = connection()->window_drag_controller();
   DCHECK(window_drag_controller);
-  return window_drag_controller->IsExtendedDragAvailable();
+  return window_drag_controller->IsExtendedDragAvailable() ||
+         window_drag_controller->IsXdgToplevelDragAvailable();
 }
 
 bool WaylandToplevelWindow::ShouldReleaseCaptureForDrag(
@@ -847,11 +883,11 @@ void WaylandToplevelWindow::StartWindowDraggingSessionIfNeeded(
     ui::mojom::DragEventSource event_source,
     bool allow_system_drag) {
   DCHECK(connection()->window_drag_controller());
-  // If extended drag is not available and |allow_system_drag| is set, this is
-  // no-op and WaylandDataDragController is assumed to be used instead. i.e:
-  // Fallback to a simpler window drag UX based on regular system drag-and-drop.
-  if (!connection()->window_drag_controller()->IsExtendedDragAvailable() &&
-      allow_system_drag) {
+  // If extended-drag and xdg-toplevel-drag are not available and
+  // |allow_system_drag| is set, this is no-op and WaylandDataDragController is
+  // assumed to be used instead. i.e: Fallback to a simpler window drag UX based
+  // on regular system drag-and-drop.
+  if (!IsClientControlledWindowMovementSupported() && allow_system_drag) {
     return;
   }
   connection()->window_drag_controller()->StartDragSession(this, event_source);
@@ -889,29 +925,6 @@ void WaylandToplevelWindow::SetShadowCornersRadii(
 }
 
 #endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
-
-void WaylandToplevelWindow::RoundTripQueue() {
-  connection()->RoundTripQueue();
-}
-
-bool WaylandToplevelWindow::HasInFlightRequestsForState() const {
-  CHECK(UseTestConfigForPlatformWindows());
-  return WaylandWindow::HasInFlightRequestsForStateForTesting();
-}
-
-int64_t WaylandToplevelWindow::GetVizSequenceIdForAppliedState() const {
-  CHECK(UseTestConfigForPlatformWindows());
-  return latest_applied_viz_seq_for_testing_;
-}
-
-int64_t WaylandToplevelWindow::GetVizSequenceIdForLatchedState() const {
-  CHECK(UseTestConfigForPlatformWindows());
-  return latest_latched_viz_seq_for_testing_;
-}
-
-void WaylandToplevelWindow::SetLatchImmediately(bool latch_immediately) {
-  latch_immediately_for_testing_ = latch_immediately;
-}
 
 void WaylandToplevelWindow::ShowSnapPreview(
     WaylandWindowSnapDirection snap_direction,

@@ -33,7 +33,6 @@
 #include "content/browser/service_worker/service_worker_host.h"
 #include "content/browser/service_worker/service_worker_script_loader_factory.h"
 #include "content/browser/storage_partition_impl.h"
-#include "content/browser/url_loader_factory_getter.h"
 #include "content/browser/url_loader_factory_params_helper.h"
 #include "content/browser/usb/web_usb_service_impl.h"
 #include "content/common/content_switches_internal.h"
@@ -65,7 +64,7 @@
 #include "content/browser/hid/hid_service.h"
 #endif
 
-// TODO(crbug.com/824858): Much of this file, which dealt with thread hops
+// TODO(crbug.com/40568315): Much of this file, which dealt with thread hops
 // between UI and IO, can likely be simplified when the service worker core
 // thread moves to the UI thread.
 
@@ -94,7 +93,7 @@ bool HasSentStartWorker(EmbeddedWorkerInstance::StartingPhase phase) {
     case EmbeddedWorkerInstance::SCRIPT_EVALUATION:
       return true;
     case EmbeddedWorkerInstance::STARTING_PHASE_MAX_VALUE:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
   return false;
 }
@@ -118,7 +117,7 @@ void NotifyForegroundServiceWorker(bool added, int process_id) {
 // when the worker stops, and this proxies notifications to DevToolsManager.
 // Owned by EmbeddedWorkerInstance.
 //
-// TODO(https://crbug.com/1138155): Remove this because we no longer need
+// TODO(crbug.com/40725202): Remove this because we no longer need
 // proxying the notifications because there's no thread hopping thanks to
 // ServiceWorkerOnUI.
 class EmbeddedWorkerInstance::DevToolsProxy {
@@ -173,7 +172,7 @@ class EmbeddedWorkerInstance::DevToolsProxy {
 
 // A handle for a renderer process managed by ServiceWorkerProcessManager.
 //
-// TODO(https://crbug.com/1138155): Remove this as a clean up of
+// TODO(crbug.com/40725202): Remove this as a clean up of
 // ServiceWorkerOnUI.
 class EmbeddedWorkerInstance::WorkerProcessHandle {
  public:
@@ -224,6 +223,7 @@ struct EmbeddedWorkerInstance::StartInfo {
 
 EmbeddedWorkerInstance::~EmbeddedWorkerInstance() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  in_dtor_ = true;
   ReleaseProcess();
 }
 
@@ -255,7 +255,7 @@ void EmbeddedWorkerInstance::Start(
   params->subresource_loader_updater =
       subresource_loader_updater_.BindNewPipeAndPassReceiver();
 
-  // TODO(https://crbug.com/978694): Consider a reset flow since new mojo types
+  // TODO(crbug.com/41467868): Consider a reset flow since new mojo types
   // check is_bound strictly.
   client_.reset();
 
@@ -304,6 +304,10 @@ void EmbeddedWorkerInstance::Start(
   {
     auto* storage_partition =
         static_cast<StoragePartitionImpl*>(rph->GetStoragePartition());
+
+    params->cors_exempt_header_list =
+        storage_partition->cors_exempt_header_list();
+
     // Create COEP reporter if COEP value is already available (= this worker is
     // not a worker which is going to be newly registered). The Mojo remote
     // `coep_reporter_` has the onwership of the instance. The `coep_reporter`
@@ -386,8 +390,8 @@ void EmbeddedWorkerInstance::Start(
   CHECK(params->forced_enabled_runtime_features.empty() ||
         rph->GetProcessLock().is_locked_to_site());
 
-  // TODO(crbug.com/862854): Support changes to blink::RendererPreferences while
-  // the worker is running.
+  // TODO(crbug.com/40584626): Support changes to blink::RendererPreferences
+  // while the worker is running.
   DCHECK(context_->wrapper()->browser_context() ||
          process_manager->IsShutdown());
   params->renderer_preferences = blink::RendererPreferences();
@@ -436,13 +440,11 @@ void EmbeddedWorkerInstance::Start(
 
   // Create cache storage now as an optimization, so the service worker can
   // use the Cache Storage API immediately on startup.
-  if (base::FeatureList::IsEnabled(
-          blink::features::kEagerCacheStorageSetupForServiceWorkers) &&
-      // Without COEP, BindCacheStorage won't bind the cache storage,
-      // which make cache storage set up in the install handler get stuck.
-      // Since this is a performance improvement feature, fallback to the slow
-      // path should be better than making the execution get stuck.
-      owner_version_->cross_origin_embedder_policy()) {
+  // Without COEP, BindCacheStorage won't bind the cache storage,
+  // which make cache storage set up in the install handler get stuck.
+  // Since this is a performance improvement feature, fallback to the slow
+  // path should be better than making the execution get stuck.
+  if (owner_version_->cross_origin_embedder_policy()) {
     BindCacheStorage(
         params->provider_info->cache_storage.InitWithNewPipeAndPassReceiver(),
         storage::BucketLocator::ForDefaultBucket(owner_version_->key()));
@@ -470,7 +472,12 @@ void EmbeddedWorkerInstance::Stop() {
   // been sent.
   if (status_ == blink::EmbeddedWorkerStatus::kStarting &&
       !HasSentStartWorker(starting_phase())) {
+    base::WeakPtr<EmbeddedWorkerInstance> weak_this =
+        weak_factory_.GetWeakPtr();
     ReleaseProcess();
+    if (!weak_this) {
+      return;
+    }
     for (auto& observer : listener_list_)
       observer.OnStopped(
           blink::EmbeddedWorkerStatus::kStarting /* old_status */);
@@ -704,7 +711,11 @@ void EmbeddedWorkerInstance::OnStarted(
 void EmbeddedWorkerInstance::OnStopped() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   blink::EmbeddedWorkerStatus old_status = status_;
+  base::WeakPtr<EmbeddedWorkerInstance> weak_this = weak_factory_.GetWeakPtr();
   ReleaseProcess();
+  if (!weak_this) {
+    return;
+  }
   for (auto& observer : listener_list_)
     observer.OnStopped(old_status);
 }
@@ -716,7 +727,11 @@ void EmbeddedWorkerInstance::Detach() {
   }
 
   blink::EmbeddedWorkerStatus old_status = status_;
+  base::WeakPtr<EmbeddedWorkerInstance> weak_this = weak_factory_.GetWeakPtr();
   ReleaseProcess();
+  if (!weak_this) {
+    return;
+  }
   for (auto& observer : listener_list_)
     observer.OnDetached(old_status);
 }
@@ -993,6 +1008,13 @@ void EmbeddedWorkerInstance::OnNetworkAccessedForScriptLoad() {
 }
 
 void EmbeddedWorkerInstance::ReleaseProcess() {
+  // Keeps alive `owner_version_` and `this` during the method.
+  // We don't have to protect `owner_version_` during the destruction because
+  // there should no remaining `scoped_refptr` to `*owner_version_` that could
+  // trigger re-entering `~EmbeddedWorkerInstance()`.
+  scoped_refptr<ServiceWorkerVersion> protect =
+      !in_dtor_ ? owner_version_.get() : nullptr;
+
   // Abort an inflight start task.
   inflight_start_info_.reset();
   // NotifyForegroundServiceWorkerRemoved() may trigger a call to
@@ -1020,8 +1042,8 @@ void EmbeddedWorkerInstance::OnSetupFailed(
     StatusCallback callback,
     blink::ServiceWorkerStatusCode status) {
   blink::EmbeddedWorkerStatus old_status = status_;
-  ReleaseProcess();
   base::WeakPtr<EmbeddedWorkerInstance> weak_this = weak_factory_.GetWeakPtr();
+  ReleaseProcess();
   std::move(callback).Run(status);
   if (weak_this && old_status != blink::EmbeddedWorkerStatus::kStopped) {
     for (auto& observer : weak_this->listener_list_)
@@ -1042,7 +1064,7 @@ std::string EmbeddedWorkerInstance::StatusToString(
     case blink::EmbeddedWorkerStatus::kStopping:
       return "STOPPING";
   }
-  NOTREACHED() << static_cast<int>(status);
+  NOTREACHED_IN_MIGRATION() << static_cast<int>(status);
   return std::string();
 }
 
@@ -1064,9 +1086,9 @@ std::string EmbeddedWorkerInstance::StartingPhaseToString(StartingPhase phase) {
     case SCRIPT_EVALUATION:
       return "Script evaluation";
     case STARTING_PHASE_MAX_VALUE:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
-  NOTREACHED() << phase;
+  NOTREACHED_IN_MIGRATION() << phase;
   return std::string();
 }
 
@@ -1113,12 +1135,18 @@ void EmbeddedWorkerInstance::BindCacheStorageInternal() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   const network::CrossOriginEmbedderPolicy* coep =
       owner_version_->cross_origin_embedder_policy();
-
-  // Without PlzServiceWorker, the COEP header might not be known initially.
-  // The in-flight CacheStorage requests are kept until the main script has
-  // loaded the headers and the COEP one is known.
-  if (!coep)
+  const network::DocumentIsolationPolicy* dip =
+      owner_version_->document_isolation_policy();
+  // Prior to PlzServiceWorker launch, the COEP and/or DIP headers might not be
+  // known initially.  The in-flight CacheStorage requests are kept until the
+  // main script has loaded the headers and the COEP one is known.
+  // Now that PlzServiceWorker is fully launched, this _should_ no longer be
+  // necessary, but crbug.com/352690275 suggests otherwise.
+  // TODO(crbug.com/352690275): Replace with CHECK once behavior causing missing
+  //    headers is better understood.
+  if (!coep || !dip) {
     return;
+  }
 
   for (auto& request : pending_cache_storage_requests_) {
     mojo::PendingRemote<network::mojom::CrossOriginEmbedderPolicyReporter>
@@ -1132,7 +1160,7 @@ void EmbeddedWorkerInstance::BindCacheStorageInternal() {
     if (!rph)
       return;
 
-    rph->BindCacheStorage(*coep, std::move(coep_reporter_remote),
+    rph->BindCacheStorage(*coep, std::move(coep_reporter_remote), *dip,
                           request.bucket, std::move(request.receiver));
   }
   pending_cache_storage_requests_.clear();

@@ -9,15 +9,18 @@
 #include <optional>
 
 #include "base/component_export.h"
+#include "base/features.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "chromeos/ash/components/growth/action_performer.h"
 
 namespace base {
 class Time;
+class Version;
 }  // namespace base
 
 namespace gfx {
+class Image;
 struct VectorIcon;
 }  // namespace gfx
 
@@ -29,24 +32,62 @@ namespace growth {
 
 // Entries should not be renumbered and numeric values should never be reused
 // as it is used for logging metrics as well. Please keep in sync with
-// "CampaignSlot" in src/tools/metrics/histograms/enums.xml.
+// "CampaignSlot" in tools/metrics/histograms/metadata/ash_growth/enums.xml.
 enum class Slot {
   kDemoModeApp = 0,
   kDemoModeFreePlayApps = 1,
   kNudge = 2,
   kNotification = 3,
-  kMaxValue = kNotification
+  kOobePerkDiscovery = 4,
+  kMaxValue = kOobePerkDiscovery
 };
 
 // These values are deserialized from Growth Campaign, so entries should not
 // be renumbered and numeric values should never be reused.
-enum class BuiltInIcon { kRedeem, kContainerApp };
+enum class BuiltInVectorIcon { kRedeem = 0, kMaxValue = kRedeem };
+
+// These values are deserialized from Growth Campaign, so entries should not
+// be renumbered and numeric values should never be reused.
+enum class BuiltInImage {
+  kContainerApp = 0,
+  kG1 = 1,
+  kSparkRebuy = 2,
+  kSpark1PApp = 3,
+  kSparkV2 = 4,
+  kG1Notification = 5,
+  kMaxValue = kG1Notification
+};
 
 // Supported window anchor element.
 // These values are deserialized from Growth Campaign, so entries should not
 // be renumbered and numeric values should never be reused.
 enum class WindowAnchorType {
   kCaptionButtonContainer = 0,
+  kWindowBounds = 1,
+  kMaxValue = kWindowBounds
+};
+
+// These values are deserialized from Growth Campaign, so entries should not
+// be renumbered and numeric values should never be reused.
+enum class TriggerType {
+  // TODO: b/340950978 - Remove when pass the trigger in GetCampaignsBySlot().
+  kUnSpecified = -1,
+  kAppOpened = 0,
+  kCampaignsLoaded = 1,
+  kEvent = 2,
+  kDelayedOneShotTimer = 3,
+  kMaxValue = kDelayedOneShotTimer
+};
+
+class COMPONENT_EXPORT(CHROMEOS_ASH_COMPONENTS_GROWTH) Trigger {
+ public:
+  explicit Trigger(TriggerType type);
+
+  TriggerType type;
+
+  // `event` is only used for `kEvent` trigger, which needs to be matched with
+  // one of the event name in the `triggerEvents` in the `TriggerTargeting`.
+  std::string event;
 };
 
 // Dictionary of supported targetings. For example:
@@ -89,7 +130,14 @@ COMPONENT_EXPORT(CHROMEOS_ASH_COMPONENTS_GROWTH)
 std::optional<int> GetCampaignId(const Campaign* campaign);
 
 COMPONENT_EXPORT(CHROMEOS_ASH_COMPONENTS_GROWTH)
+std::optional<int> GetCampaignGroupId(const Campaign* campaign);
+
+COMPONENT_EXPORT(CHROMEOS_ASH_COMPONENTS_GROWTH)
 std::optional<int> GetStudyId(const Campaign* campaign);
+
+COMPONENT_EXPORT(CHROMEOS_ASH_COMPONENTS_GROWTH)
+std::optional<bool> ShouldRegisterTrialWithTriggerEventName(
+    const Campaign* campaign);
 
 // Lists of campaigns keyed by the targeted slot. The key is the slot ID in
 // string. For example:
@@ -98,6 +146,9 @@ std::optional<int> GetStudyId(const Campaign* campaign);
 //   "1": [...]
 // }
 using CampaignsPerSlot = base::Value::Dict;
+
+Campaigns* GetMutableCampaignsBySlot(CampaignsPerSlot* campaigns_per_slot,
+                                     Slot slot);
 
 const Campaigns* GetCampaignsBySlot(const CampaignsPerSlot* campaigns_per_slot,
                                     Slot slot);
@@ -155,8 +206,8 @@ class DemoModeTargeting : public TargetingBase {
   const base::Value::List* GetStoreIds() const;
   const base::Value::List* GetRetailers() const;
   const base::Value::List* GetCountries() const;
-  const std::string* GetAppMinVersion() const;
-  const std::string* GetAppMaxVersion() const;
+  const std::optional<base::Version> GetAppMinVersion() const;
+  const std::optional<base::Version> GetAppMaxVersion() const;
   const std::optional<bool> TargetCloudGamingDevice() const;
   const std::optional<bool> TargetFeatureAwareDevice() const;
 };
@@ -184,6 +235,27 @@ class TimeWindowTargeting {
   raw_ptr<const base::Value::Dict> time_window_dict_;
 };
 
+// Wrapper around number range targeting dictionary.
+//
+// The structure looks like:
+// {
+//   "start": 3,
+//   "end": 5
+// }
+class NumberRangeTargeting {
+ public:
+  explicit NumberRangeTargeting(const base::Value::Dict* number_range_dict);
+  NumberRangeTargeting(const NumberRangeTargeting&) = delete;
+  NumberRangeTargeting& operator=(const NumberRangeTargeting) = delete;
+  ~NumberRangeTargeting();
+
+  const std::optional<int> GetStart() const;
+  const std::optional<int> GetEnd() const;
+
+ private:
+  raw_ptr<const base::Value::Dict> number_range_dict_;
+};
+
 // Wrapper around Device targeting dictionary. The structure looks like:
 // {
 //   "locales": ["en-US", "zh-CN"];
@@ -200,10 +272,16 @@ class DeviceTargeting : public TargetingBase {
   ~DeviceTargeting();
 
   const base::Value::List* GetLocales() const;
+  const base::Value::List* GetUserLocales() const;
+  const base::Value::List* GetIncludedCountries() const;
+  const base::Value::List* GetExcludedCountries() const;
   const std::optional<int> GetMinMilestone() const;
   const std::optional<int> GetMaxMilestone() const;
+  const std::optional<base::Version> GetMinVersion() const;
+  const std::optional<base::Version> GetMaxVersion() const;
   const std::optional<bool> GetFeatureAwareDevice() const;
   std::unique_ptr<TimeWindowTargeting> GetRegisteredTime() const;
+  const std::unique_ptr<NumberRangeTargeting> GetDeviceAge() const;
 };
 
 // Wrapper around session targeting dictionary.
@@ -221,9 +299,11 @@ class SessionTargeting : public TargetingBase {
   SessionTargeting& operator=(const SessionTargeting) = delete;
   ~SessionTargeting();
 
+  std::optional<const base::Feature*> GetFeature() const;
   const base::Value::List* GetExperimentTags() const;
 
   std::optional<bool> GetMinorUser() const;
+  std::optional<bool> GetIsOwner() const;
 };
 
 // Wrapper around app targeting dictionary.
@@ -275,10 +355,33 @@ class EventsTargeting {
 
   int GetImpressionCap() const;
   int GetDismissalCap() const;
+  std::optional<int> GetGroupImpressionCap() const;
+  std::optional<int> GetGroupDismissalCap() const;
   const base::Value::List* GetEventsConditions() const;
 
  private:
   raw_ptr<const base::Value::Dict> config_dict_;
+};
+
+// Wrapper around trigger targeting dictionary.
+//
+// The structure looks like:
+// {
+//   "triggerType": 0,
+//   "triggerEvents": ["a", "b"]
+// }
+class TriggerTargeting {
+ public:
+  explicit TriggerTargeting(const base::Value::Dict* app);
+  TriggerTargeting(const TriggerTargeting&) = delete;
+  TriggerTargeting& operator=(const TriggerTargeting) = delete;
+  ~TriggerTargeting();
+
+  std::optional<int> GetTriggerType() const;
+  const base::Value::List* GetTriggerEvents() const;
+
+ private:
+  raw_ptr<const base::Value::Dict> trigger_dict_;
 };
 
 // Wrapper around runtime targeting dictionary.
@@ -288,6 +391,7 @@ class EventsTargeting {
 //   "runtime": {
 //      "schedulings": [...]
 //      "appsOpend": [...]
+//      "triggers": [...]
 //   }
 // }
 class RuntimeTargeting : public TargetingBase {
@@ -299,11 +403,18 @@ class RuntimeTargeting : public TargetingBase {
 
   const std::vector<std::unique_ptr<TimeWindowTargeting>> GetSchedulings()
       const;
+
   // Returns a list of apps to be matched against the current opened app.
   const std::vector<std::unique_ptr<AppTargeting>> GetAppsOpened() const;
+
   const std::vector<std::string> GetActiveUrlRegexes() const;
 
   std::unique_ptr<EventsTargeting> GetEventsConfig() const;
+
+  // Returns a list of triggers against the current trigger, e.g. `kAppOpened`.
+  const std::vector<std::unique_ptr<TriggerTargeting>> GetTriggers() const;
+
+  const base::Value::List* GetUserPrefTargetings() const;
 };
 
 // Wrapper around the action dictionary for performing an action, including
@@ -357,7 +468,7 @@ class COMPONENT_EXPORT(CHROMEOS_ASH_COMPONENTS_GROWTH) Anchor {
 //
 // The structure looks like:
 // {
-//   "builtInImage": 0
+//  "builtInImage": 0
 // }
 class COMPONENT_EXPORT(CHROMEOS_ASH_COMPONENTS_GROWTH) Image {
  public:
@@ -366,14 +477,63 @@ class COMPONENT_EXPORT(CHROMEOS_ASH_COMPONENTS_GROWTH) Image {
   Image& operator=(const Image) = delete;
   ~Image();
 
-  const gfx::VectorIcon* GetVectorIcon() const;
-  const std::optional<ui::ImageModel> GetImage() const;
+  const gfx::Image* GetImage() const;
 
  private:
   // Get built in icon based on the given image data.
-  const std::optional<ui::ImageModel> GetBuiltInIcon() const;
+  const gfx::Image* GetBuiltInImage() const;
 
   raw_ptr<const base::Value::Dict> image_dict_;
+};
+
+// Wrapper around vector icon dictionary.
+//
+// The structure looks like:
+// {
+//  "builtVectorIcon": 0
+// }
+class COMPONENT_EXPORT(CHROMEOS_ASH_COMPONENTS_GROWTH) VectorIcon {
+ public:
+  explicit VectorIcon(const base::Value::Dict* vector_icon_dict);
+  VectorIcon(const VectorIcon&) = delete;
+  VectorIcon& operator=(const VectorIcon) = delete;
+  ~VectorIcon();
+
+  const gfx::VectorIcon* GetVectorIcon() const;
+
+ private:
+  // Get built in icon based on the given image data.
+  const gfx::VectorIcon* GetBuiltInVectorIcon() const;
+
+  raw_ptr<const base::Value::Dict> vector_icon_dict_;
+};
+
+// Wrapper around image model dictionary.
+//
+// The structure looks like:
+// {
+//   "image": {
+//    "builtInImage": 0
+//   }
+// }
+class COMPONENT_EXPORT(CHROMEOS_ASH_COMPONENTS_GROWTH) ImageModel {
+ public:
+  explicit ImageModel(const base::Value::Dict* image_model_dict);
+  ImageModel(const Image&) = delete;
+  ImageModel& operator=(const ImageModel) = delete;
+  ~ImageModel();
+
+  const std::optional<ui::ImageModel> GetImageModel() const;
+
+ private:
+  // Get built in icon based on the given image data.
+  // If given data is referring to an image, the image will be resized to 60 *
+  // 60 so it can be used in the nudge.
+  // TODO: b/340945779 - consider moving the resize logic to
+  // `ShowNudgeActionPerformer`.
+  const std::optional<ui::ImageModel> GetBuiltInImageModel() const;
+
+  raw_ptr<const base::Value::Dict> image_model_dict_;
 };
 
 }  // namespace growth

@@ -29,7 +29,7 @@
 #include "skia/ext/image_operations.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/models/image_model.h"
-#include "ui/base/models/simple_combobox_model.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/color/color_id.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/color_utils.h"
@@ -37,9 +37,9 @@
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/image/canvas_image_source.h"
 #include "ui/gfx/image/image_skia.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/button/image_button_factory.h"
-#include "ui/views/controls/editable_combobox/editable_combobox.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/layout/flex_layout.h"
@@ -55,13 +55,6 @@ namespace autofill {
 namespace {
 
 constexpr int kIconSize = 16;
-
-int ComboboxIconSize() {
-  // Use the line height of the body small text. This allows the icons to adapt
-  // if the user changes the font size.
-  return views::TypographyProvider::Get().GetLineHeight(
-      views::style::CONTEXT_MENU, views::style::STYLE_PRIMARY);
-}
 
 std::unique_ptr<views::ImageView> CreateAddressSectionIcon(
     const gfx::VectorIcon& icon) {
@@ -95,7 +88,7 @@ void AddAddressSection(views::View* parent_view,
                        int a11y_label_string_id) {
   auto text_label =
       std::make_unique<views::Label>(text, views::style::CONTEXT_LABEL);
-  text_label->SetAccessibleName(
+  text_label->GetViewAccessibility().SetName(
       l10n_util::GetStringFUTF16(a11y_label_string_id, text));
   text_label->SetMultiLine(true);
   text_label->SetHorizontalAlignment(gfx::HorizontalAlignment::ALIGN_LEFT);
@@ -116,39 +109,6 @@ std::unique_ptr<views::View> CreateStreetAddressView(
       .Build();
 }
 
-std::unique_ptr<views::EditableCombobox> CreateNicknameEditableCombobox() {
-  // TODO(crbug.com/1167060): Update the icons
-  // TODO(crbug.com/1167060): Use internationalized string.
-  ui::SimpleComboboxModel::Item home(
-      /*text=*/u"Home",
-      /*dropdown_secondary_text=*/std::u16string(),
-      /*icon=*/
-      ui::ImageModel::FromVectorIcon(kNavigateHomeIcon, ui::kColorIcon,
-                                     ComboboxIconSize()));
-
-  ui::SimpleComboboxModel::Item work(
-      /*text=*/u"Work",
-      /*dropdown_secondary_text=*/std::u16string(),
-      /*icon=*/
-      ui::ImageModel::FromVectorIcon(vector_icons::kBusinessIcon,
-                                     ui::kColorIcon, ComboboxIconSize()));
-
-  std::vector<ui::SimpleComboboxModel::Item> nicknames{std::move(home),
-                                                       std::move(work)};
-
-  auto combobox = std::make_unique<views::EditableCombobox>(
-      std::make_unique<ui::SimpleComboboxModel>(std::move(nicknames)),
-      /*filter_on_edit=*/true);
-
-  combobox->SetProperty(
-      views::kFlexBehaviorKey,
-      views::FlexSpecification(views::MinimumFlexSizeRule::kScaleToZero,
-                               views::MaximumFlexSizeRule::kUnbounded));
-  // TODO(crbug.com/1167060): Use internationalized string.
-  combobox->SetAccessibleName(u"Address Label");
-  return combobox;
-}
-
 }  // namespace
 
 SaveAddressProfileView::SaveAddressProfileView(
@@ -157,7 +117,7 @@ SaveAddressProfileView::SaveAddressProfileView(
     content::WebContents* web_contents)
     : AddressBubbleBaseView(anchor_view, web_contents),
       controller_(std::move(controller)) {
-  // TODO(crbug.com/1167060): Accept action should consider the selected
+  // TODO(crbug.com/40164487): Accept action should consider the selected
   // nickname when saving the address.
   SetAcceptCallback(base::BindOnce(
       &SaveAddressBubbleController::OnUserDecision,
@@ -170,8 +130,8 @@ SaveAddressProfileView::SaveAddressProfileView(
 
   SetProperty(views::kElementIdentifierKey, kTopViewId);
   SetTitle(controller_->GetWindowTitle());
-  SetButtonLabel(ui::DIALOG_BUTTON_OK, controller_->GetOkButtonLabel());
-  SetButtonLabel(ui::DIALOG_BUTTON_CANCEL,
+  SetButtonLabel(ui::mojom::DialogButton::kOk, controller_->GetOkButtonLabel());
+  SetButtonLabel(ui::mojom::DialogButton::kCancel,
                  l10n_util::GetStringUTF16(
                      IDS_AUTOFILL_SAVE_ADDRESS_PROMPT_CANCEL_BUTTON_LABEL));
 
@@ -186,6 +146,10 @@ SaveAddressProfileView::SaveAddressProfileView(
         views::Builder<views::Label>()
             .SetText(description)
             .SetTextStyle(views::style::STYLE_SECONDARY)
+            // The preferred size is set to prevent the long description text
+            // from affecting the bubble width. Using `set_fixed_width()` for
+            // the popup doesn't work as the popup should accommodate
+            // potentially long user input nicely.
             .SetPreferredSize(
                 gfx::Size(views::LayoutProvider::Get()->GetDistanceMetric(
                               views::DISTANCE_BUBBLE_PREFERRED_WIDTH) -
@@ -253,15 +217,6 @@ SaveAddressProfileView::SaveAddressProfileView(
     AddAddressSection(
         /*parent_view=*/address_components_view_, std::move(icon), email,
         IDS_AUTOFILL_SAVE_PROMPT_EMAIL_SECTION_A11Y_LABEL);
-  }
-
-  if (base::FeatureList::IsEnabled(
-          features::kAutofillAddressProfileSavePromptNicknameSupport)) {
-    // TODO(crbug.com/1167060): Make sure the icon is vertically centered with
-    // the editable combobox.
-    AddAddressSection(/*parent_view=*/address_components_view_,
-                      CreateAddressSectionIcon(vector_icons::kExtensionIcon),
-                      CreateNicknameEditableCombobox());
   }
 
   std::u16string footer_message = controller_->GetFooterMessage();

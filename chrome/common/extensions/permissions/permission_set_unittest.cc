@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <stddef.h>
 
 #include <memory>
@@ -1311,7 +1316,7 @@ TEST(PermissionsTest, GetWarningMessages_PlatformAppHosts) {
 
 testing::AssertionResult ShowsAllHostsWarning(const std::string& pattern) {
   scoped_refptr<const Extension> extension =
-      ExtensionBuilder("TLDWildCardTest").AddPermission(pattern).Build();
+      ExtensionBuilder("TLDWildCardTest").AddHostPermission(pattern).Build();
 
   return VerifyHasPermissionMessage(
       extension->permissions_data(),
@@ -1673,7 +1678,7 @@ TEST(PermissionsTest, IsHostPrivilegeIncrease) {
        false,
        true},
       // Test expanding from any .com host to any host in any TLD.
-      // TODO(crbug.com/849906): Should this really be a permissions increase?
+      // TODO(crbug.com/40579475): Should this really be a permissions increase?
       {{{URLPattern::SCHEME_HTTP | URLPattern::SCHEME_HTTPS, "*://*.com/*"}},
        {{URLPattern::SCHEME_HTTP | URLPattern::SCHEME_HTTPS, "*://*/*"}},
        Manifest::TYPE_EXTENSION,

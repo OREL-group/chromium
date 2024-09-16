@@ -29,6 +29,7 @@
 #include "third_party/blink/renderer/core/inspector/inspector_animation_agent.h"
 #include "third_party/blink/renderer/core/inspector/inspector_network_agent.h"
 #include "third_party/blink/renderer/core/inspector/inspector_page_agent.h"
+#include "third_party/blink/renderer/core/inspector/invalidation_set_to_selector_map.h"
 #include "third_party/blink/renderer/core/layout/hit_test_location.h"
 #include "third_party/blink/renderer/core/layout/hit_test_result.h"
 #include "third_party/blink/renderer/core/layout/layout_image.h"
@@ -169,14 +170,14 @@ void InspectorTraceEvents::DidReceiveResourceResponse(
                                         loader, identifier, frame, response);
 }
 
-void InspectorTraceEvents::DidReceiveData(uint64_t identifier,
-                                          DocumentLoader* loader,
-                                          const char* data,
-                                          uint64_t encoded_data_length) {
+void InspectorTraceEvents::DidReceiveData(
+    uint64_t identifier,
+    DocumentLoader* loader,
+    base::SpanOrSize<const char> encoded_data) {
   LocalFrame* frame = loader ? loader->GetFrame() : nullptr;
   DEVTOOLS_TIMELINE_TRACE_EVENT_INSTANT(
       "ResourceReceivedData", inspector_receive_data_event::Data, loader,
-      identifier, frame, encoded_data_length);
+      identifier, frame, encoded_data.size());
 }
 
 void InspectorTraceEvents::DidFinishLoading(uint64_t identifier,
@@ -328,6 +329,7 @@ const char* PseudoTypeToString(CSSSelector::PseudoType pseudo_type) {
     DEFINE_STRING_MAPPING(PseudoFocusWithin)
     DEFINE_STRING_MAPPING(PseudoActive)
     DEFINE_STRING_MAPPING(PseudoChecked)
+    DEFINE_STRING_MAPPING(PseudoCurrent)
     DEFINE_STRING_MAPPING(PseudoEnabled)
     DEFINE_STRING_MAPPING(PseudoFullPageMedia)
     DEFINE_STRING_MAPPING(PseudoDefault)
@@ -362,7 +364,10 @@ const char* PseudoTypeToString(CSSSelector::PseudoType pseudo_type) {
     DEFINE_STRING_MAPPING(PseudoScrollbarTrack)
     DEFINE_STRING_MAPPING(PseudoScrollbarTrackPiece)
     DEFINE_STRING_MAPPING(PseudoScrollMarker)
-    DEFINE_STRING_MAPPING(PseudoScrollMarkers)
+    DEFINE_STRING_MAPPING(PseudoScrollMarkerGroup)
+    DEFINE_STRING_MAPPING(PseudoScrollNextButton)
+    DEFINE_STRING_MAPPING(PseudoScrollPrevButton)
+    DEFINE_STRING_MAPPING(PseudoColumn)
     DEFINE_STRING_MAPPING(PseudoWindowInactive)
     DEFINE_STRING_MAPPING(PseudoCornerPresent)
     DEFINE_STRING_MAPPING(PseudoDecrement)
@@ -404,14 +409,17 @@ const char* PseudoTypeToString(CSSSelector::PseudoType pseudo_type) {
     DEFINE_STRING_MAPPING(PseudoMultiSelectFocus)
     DEFINE_STRING_MAPPING(PseudoOpen)
     DEFINE_STRING_MAPPING(PseudoClosed)
-    DEFINE_STRING_MAPPING(PseudoSelectDatalist)
+    DEFINE_STRING_MAPPING(PseudoSelectFallbackButton)
+    DEFINE_STRING_MAPPING(PseudoSelectFallbackButtonText)
+    DEFINE_STRING_MAPPING(PseudoPicker)
     DEFINE_STRING_MAPPING(PseudoDialogInTopLayer)
     DEFINE_STRING_MAPPING(PseudoPopoverInTopLayer)
     DEFINE_STRING_MAPPING(PseudoPopoverOpen)
-    DEFINE_STRING_MAPPING(PseudoHostHasAppearance)
+    DEFINE_STRING_MAPPING(PseudoHostHasNonAutoAppearance)
     DEFINE_STRING_MAPPING(PseudoVideoPersistent)
     DEFINE_STRING_MAPPING(PseudoVideoPersistentAncestor)
     DEFINE_STRING_MAPPING(PseudoXrOverlay)
+    DEFINE_STRING_MAPPING(PseudoSearchText)
     DEFINE_STRING_MAPPING(PseudoTargetText)
     DEFINE_STRING_MAPPING(PseudoSelectorFragmentAnchor)
     DEFINE_STRING_MAPPING(PseudoModal)
@@ -498,7 +506,7 @@ const char* NotStreamedReasonString(ScriptStreamer::NotStreamingReason reason) {
     case ScriptStreamer::NotStreamingReason::kDidntTryToStartStreaming:
     case ScriptStreamer::NotStreamingReason::kAlreadyLoaded:
     case ScriptStreamer::NotStreamingReason::kInvalid:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -610,6 +618,11 @@ const char
     inspector_style_invalidator_invalidate_event::kInvalidateCustomPseudo[] =
         "Invalidate custom pseudo element";
 const char inspector_style_invalidator_invalidate_event::
+    kInvalidationSetInvalidatesSelf[] = "Invalidation set invalidates self";
+const char inspector_style_invalidator_invalidate_event::
+    kInvalidationSetInvalidatesSubtree[] =
+        "Invalidation set invalidates subtree";
+const char inspector_style_invalidator_invalidate_event::
     kInvalidationSetMatchedAttribute[] = "Invalidation set matched attribute";
 const char inspector_style_invalidator_invalidate_event::
     kInvalidationSetMatchedClass[] = "Invalidation set matched class";
@@ -629,6 +642,22 @@ void FillCommonPart(perfetto::TracedDictionary& dict,
   SetNodeInfo(dict, &node, "nodeId", "nodeName");
   dict.Add("reason", reason);
 }
+void FillSelectors(
+    perfetto::TracedDictionary& dict,
+    const InvalidationSet& invalidation_set,
+    InvalidationSetToSelectorMap::SelectorFeatureType feature_type,
+    const AtomicString& feature_value) {
+  const InvalidationSetToSelectorMap::IndexedSelectorList* selectors =
+      InvalidationSetToSelectorMap::Lookup(&invalidation_set, feature_type,
+                                           feature_value);
+  if (selectors != nullptr && selectors->size() > 0) {
+    dict.Add("selectorCount", selectors->size());
+    auto array = dict.AddArray("selectors");
+    for (auto selector : *selectors) {
+      array.Append(selector->GetSelectorText());
+    }
+  }
+}
 }  // namespace inspector_style_invalidator_invalidate_event
 
 void inspector_style_invalidator_invalidate_event::Data(
@@ -644,9 +673,29 @@ void inspector_style_invalidator_invalidate_event::SelectorPart(
     Element& element,
     const char* reason,
     const InvalidationSet& invalidation_set,
-    const String& selector_part) {
+    const AtomicString& selector_part) {
   auto dict = std::move(context).WriteDictionary();
   FillCommonPart(dict, element, reason);
+  InvalidationSetToSelectorMap::SelectorFeatureType feature_type =
+      InvalidationSetToSelectorMap::SelectorFeatureType::kUnknown;
+  if (reason == kInvalidationSetMatchedClass) {
+    feature_type = InvalidationSetToSelectorMap::SelectorFeatureType::kClass;
+  } else if (reason == kInvalidationSetMatchedId) {
+    feature_type = InvalidationSetToSelectorMap::SelectorFeatureType::kId;
+  } else if (reason == kInvalidationSetMatchedTagName) {
+    feature_type = InvalidationSetToSelectorMap::SelectorFeatureType::kTagName;
+  } else if (reason == kInvalidationSetMatchedAttribute) {
+    feature_type =
+        InvalidationSetToSelectorMap::SelectorFeatureType::kAttribute;
+  } else if (reason == kInvalidationSetInvalidatesSubtree) {
+    feature_type =
+        InvalidationSetToSelectorMap::SelectorFeatureType::kWholeSubtree;
+  }
+  if (feature_type !=
+      InvalidationSetToSelectorMap::SelectorFeatureType::kUnknown) {
+    FillSelectors(dict, invalidation_set, feature_type, selector_part);
+  }
+
   {
     auto array = dict.AddArray("invalidationList");
     array.Append(invalidation_set);
@@ -989,6 +1038,8 @@ void inspector_receive_response_event::Data(perfetto::TracedValue context,
 
   auto dict = std::move(context).WriteDictionary();
   dict.Add("requestId", request_id);
+  dict.Add("connectionId", response.ConnectionID());
+  dict.Add("connectionReused", response.ConnectionReused());
   dict.Add("frame", IdentifiersFactory::FrameId(frame));
   dict.Add("statusCode", response.HttpStatusCode());
   dict.Add("mimeType", response.MimeType().GetString());
@@ -1033,6 +1084,7 @@ void inspector_receive_response_event::Data(perfetto::TracedValue context,
   }
 
   SetHeaders(dict.AddItem("headers"), response.HttpHeaderFields());
+  dict.Add("protocol", InspectorNetworkAgent::GetProtocolAsString(response));
 }
 
 void inspector_receive_data_event::Data(perfetto::TracedValue context,
@@ -1287,6 +1339,43 @@ void inspector_evaluate_script_event::Data(perfetto::TracedValue context,
   FillLocation(dict, url, text_position);
   dict.Add("frame", IdentifiersFactory::FrameId(frame));
   SetCallStack(isolate, dict);
+}
+
+void inspector_target_rundown_event::Data(perfetto::TracedValue context,
+                                          ExecutionContext* execution_context,
+                                          v8::Isolate* isolate,
+                                          ScriptState* scriptState,
+                                          int scriptId) {
+  // Target related info
+  LocalDOMWindow* window = DynamicTo<LocalDOMWindow>(execution_context);
+  LocalFrame* frame = window ? window->GetFrame() : nullptr;
+  if (!frame) {
+    return;
+  }
+  auto dict = std::move(context).WriteDictionary();
+  String frameType = "page";
+  if (frame->Parent() || frame->IsFencedFrameRoot()) {
+    frameType = "iframe";
+  }
+  dict.Add("frame", IdentifiersFactory::FrameId(frame));
+  dict.Add("frameType", frameType);
+  dict.Add("url", window->Url().GetString());
+  dict.Add("isolate", base::NumberToString(reinterpret_cast<size_t>(isolate)));
+
+  // ExecutionContext related info
+  DOMWrapperWorld& world = scriptState->World();
+  String executionContextType = "default";
+  const SecurityOrigin* origin = frame->DomWindow()->GetSecurityOrigin();
+  if (world.IsIsolatedWorld()) {
+    executionContextType = "isolated";
+  } else if (world.IsWorkerOrWorkletWorld()) {
+    executionContextType = "worker";
+  }
+  dict.Add("v8context", scriptState->GetToken().ToString());
+  dict.Add("isDefault", world.IsMainWorld());
+  dict.Add("contextType", executionContextType);
+  dict.Add("origin", origin ? origin->ToRawString() : String());
+  dict.Add("scriptId", scriptId);
 }
 
 void inspector_parse_script_event::Data(perfetto::TracedValue context,

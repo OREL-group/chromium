@@ -45,6 +45,7 @@
 #include "ui/base/models/simple_menu_model.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/theme_provider.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/base/window_open_disposition_utils.h"
 #include "ui/color/color_id.h"
@@ -109,8 +110,9 @@ class BookmarkModelDropObserver : public bookmarks::BaseBookmarkModelObserver {
       return;
 
     bool copy = event.source_operations() == ui::DragDropTypes::DRAG_COPY;
-    output_drag_op = chrome::DropBookmarks(profile_, drop_data_, drop_parent_,
-                                           index_to_drop_at_, copy);
+    output_drag_op = chrome::DropBookmarks(
+        profile_, drop_data_, drop_parent_, index_to_drop_at_, copy,
+        chrome::BookmarkReorderDropTarget::kBookmarkMenu);
   }
 
  private:
@@ -181,10 +183,7 @@ void BookmarkMenuDelegate::Init(views::MenuDelegate* real_delegate,
         !parent->GetSubmenu()->GetMenuItems().empty()) {
       parent->AppendSeparator();
       // Add a "Bookmarks" title.
-      if (features::IsChromeRefresh2023()) {
-        parent->AppendTitle(
-            l10n_util::GetStringUTF16(IDS_BOOKMARKS_LIST_TITLE));
-      }
+      parent->AppendTitle(l10n_util::GetStringUTF16(IDS_BOOKMARKS_LIST_TITLE));
     }
 
     if (show_managed)
@@ -234,8 +233,8 @@ std::u16string BookmarkMenuDelegate::GetTooltipText(
 
 bool BookmarkMenuDelegate::IsTriggerableEvent(views::MenuItemView* menu,
                                               const ui::Event& e) {
-  return e.type() == ui::ET_GESTURE_TAP ||
-         e.type() == ui::ET_GESTURE_TAP_DOWN ||
+  return e.type() == ui::EventType::kGestureTap ||
+         e.type() == ui::EventType::kGestureTapDown ||
          event_utils::IsPossibleDispositionEvent(e);
 }
 
@@ -260,6 +259,14 @@ void BookmarkMenuDelegate::ExecuteCommand(int id, int mouse_event_flags) {
 bool BookmarkMenuDelegate::ShouldExecuteCommandWithoutClosingMenu(
     int id,
     const ui::Event& event) {
+  if (!event.IsMouseEvent()) {
+    // Restore pre https://crrev.com/c/3820263 behavior, which started calling
+    // `ShouldExecuteCommandWithoutClosingMenu` for gesture events and caused
+    // https://crbug.com/1498716 regression.
+    // Gesture events will be handled via `MenuController::Accept()` -> ... ->
+    // `BookmarkMenuDelegate::ExecuteCommand()` instead (as it was before).
+    return false;
+  }
   if (id == IDC_SHOW_BOOKMARK_SIDE_PANEL) {
     return false;
   }
@@ -633,12 +640,9 @@ void BookmarkMenuDelegate::BuildMenu(const BookmarkNode* parent,
                                      MenuItemView* menu) {
   DCHECK_LE(start_child_index, parent->children().size());
   if (parent == GetBookmarkModel()->other_node()) {
-    ui::ImageModel bookmarks_side_panel_icon =
-        features::IsSidePanelPinningEnabled()
-            ? ui::ImageModel::FromVectorIcon(
-                  kBookmarksSidePanelIcon, ui::kColorMenuIcon,
-                  ui::SimpleMenuModel::kDefaultIconSize)
-            : ui::ImageModel();
+    ui::ImageModel bookmarks_side_panel_icon = ui::ImageModel::FromVectorIcon(
+        kBookmarksSidePanelIcon, ui::kColorMenuIcon,
+        ui::SimpleMenuModel::kDefaultIconSize);
     menu->AppendMenuItem(
         IDC_SHOW_BOOKMARK_SIDE_PANEL,
         l10n_util::GetStringUTF16(IDS_BOOKMARKS_ALL_BOOKMARKS_OPEN_SIDE_PANEL),

@@ -49,8 +49,13 @@ void OnDevtoolsTestAddressesAccepted(const std::u16string_view country) {
         "Autofill.TestAddressSelected",
         AutofillInDevtoolsAvailableTestAddressesCountries::kIndia);
     return;
+  } else if (country == u"Germany") {
+    base::UmaHistogramEnumeration(
+        "Autofill.TestAddressSelected",
+        AutofillInDevtoolsAvailableTestAddressesCountries::kGermany);
+    return;
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 }  // namespace autofill::autofill_metrics

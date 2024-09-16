@@ -16,7 +16,25 @@ bool IsInstalled(apps::Readiness readiness) {
     case apps::Readiness::kDisabledByPolicy:
     case apps::Readiness::kDisabledByUser:
     case apps::Readiness::kTerminated:
+    case apps::Readiness::kDisabledByLocalSettings:
       return true;
+    case apps::Readiness::kUninstalledByUser:
+    case apps::Readiness::kUninstalledByNonUser:
+    case apps::Readiness::kRemoved:
+    case apps::Readiness::kUnknown:
+      return false;
+  }
+}
+
+bool IsDisabled(apps::Readiness readiness) {
+  switch (readiness) {
+    case apps::Readiness::kDisabledByPolicy:
+    case apps::Readiness::kDisabledByLocalSettings:
+      return true;
+    case apps::Readiness::kReady:
+    case apps::Readiness::kDisabledByBlocklist:
+    case apps::Readiness::kDisabledByUser:
+    case apps::Readiness::kTerminated:
     case apps::Readiness::kUninstalledByUser:
     case apps::Readiness::kUninstalledByNonUser:
     case apps::Readiness::kRemoved:
@@ -54,6 +72,7 @@ bool IsHumanLaunch(apps::LaunchSource launch_source) {
     case apps::LaunchSource::kFromSysTrayCalendar:
     case apps::LaunchSource::kFromInstaller:
     case apps::LaunchSource::kFromWelcomeTour:
+    case apps::LaunchSource::kFromFocusMode:
       return true;
     case apps::LaunchSource::kUnknown:
     case apps::LaunchSource::kFromChromeInternal:
@@ -68,9 +87,10 @@ bool IsHumanLaunch(apps::LaunchSource launch_source) {
     case apps::LaunchSource::kFromProtocolHandler:
     case apps::LaunchSource::kFromUrlHandler:
     case apps::LaunchSource::kFromFirstRun:
+    case apps::LaunchSource::kFromSparky:
       return false;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 bool AppTypeUsesWebContents(apps::AppType app_type) {
@@ -93,7 +113,7 @@ bool AppTypeUsesWebContents(apps::AppType app_type) {
     case apps::AppType::kStandaloneBrowserExtension:
       return false;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 }  // namespace apps_util

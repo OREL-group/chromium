@@ -5,16 +5,16 @@
 #ifndef IOS_CHROME_BROWSER_BOOKMARKS_MODEL_BOOKMARK_CLIENT_IMPL_H_
 #define IOS_CHROME_BROWSER_BOOKMARKS_MODEL_BOOKMARK_CLIENT_IMPL_H_
 
-#include <set>
-#include <string>
-#include <vector>
+#import <set>
+#import <string>
+#import <vector>
 
-#include "base/memory/raw_ptr.h"
-#include "base/task/deferred_sequenced_task_runner.h"
-#include "components/power_bookmarks/core/bookmark_client_base.h"
+#import "base/memory/raw_ptr.h"
+#import "base/task/deferred_sequenced_task_runner.h"
+#import "components/power_bookmarks/core/bookmark_client_base.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios_forward.h"
 
 class BookmarkUndoService;
-class ChromeBrowserState;
 class GURL;
 
 namespace bookmarks {
@@ -41,6 +41,8 @@ class BookmarkClientImpl : public power_bookmarks::BookmarkClientBase {
 
   ~BookmarkClientImpl() override;
 
+  void SetIsSyncFeatureEnabledIncludingBookmarksForTest();
+
   // bookmarks::BookmarkClient:
   void Init(bookmarks::BookmarkModel* model) override;
   void RequiredRecoveryToLoad(
@@ -66,7 +68,6 @@ class BookmarkClientImpl : public power_bookmarks::BookmarkClientBase {
       const std::string& metadata_str,
       const base::RepeatingClosure& schedule_save_closure) override;
   void OnBookmarkNodeRemovedUndoable(
-      bookmarks::BookmarkModel* model,
       const bookmarks::BookmarkNode* parent,
       size_t index,
       std::unique_ptr<bookmarks::BookmarkNode> node) override;
@@ -91,6 +92,8 @@ class BookmarkClientImpl : public power_bookmarks::BookmarkClientBase {
   const raw_ptr<BookmarkUndoService> bookmark_undo_service_;
 
   raw_ptr<bookmarks::BookmarkModel> model_ = nullptr;
+
+  bool is_sync_feature_enabled_including_bookmarks_for_test_ = false;
 };
 
 #endif  // IOS_CHROME_BROWSER_BOOKMARKS_MODEL_BOOKMARK_CLIENT_IMPL_H_

@@ -12,6 +12,7 @@
 #include "gpu/command_buffer/client/client_shared_image.h"
 #include "gpu/command_buffer/client/shared_image_interface.h"
 #include "gpu/command_buffer/common/command_buffer_id.h"
+#include "gpu/command_buffer/common/shared_image_usage.h"
 #include "gpu/gpu_gles2_export.h"
 #include "gpu/ipc/common/gpu_memory_buffer_handle_info.h"
 #include "ui/gfx/gpu_memory_buffer.h"
@@ -39,6 +40,9 @@ struct SyncToken;
 class GPU_GLES2_EXPORT SharedImageInterfaceInProcess
     : public SharedImageInterface {
  public:
+  // Specifies which thread owns this class.
+  enum class OwnerThread { kGpu, kCompositor };
+
   // The callers must guarantee that the instances passed via pointers are kept
   // alive for as long as the instance of this class is alive. This can be
   // achieved by ensuring that the ownership of the created
@@ -52,14 +56,20 @@ class GPU_GLES2_EXPORT SharedImageInterfaceInProcess
   // achieved by ensuring that the ownership of the created
   // SharedImageInterfaceInProcess is the same as the ownership of the passed in
   // pointers.
-  SharedImageInterfaceInProcess(SingleTaskSequence* task_sequence,
-                                SyncPointManager* sync_point_manager,
-                                const GpuPreferences& gpu_preferences,
-                                const GpuDriverBugWorkarounds& gpu_workarounds,
-                                const GpuFeatureInfo& gpu_feature_info,
-                                gpu::SharedContextState* context_state,
-                                SharedImageManager* shared_image_manager,
-                                bool is_for_display_compositor);
+  // The owner thread parameter specifies which thread owns this class. Note
+  // that parts of the initialization and destruction must take place on the
+  // gpu thread, so this enum determines whether a ScheduleTask is required in
+  // order to complete construction/destruction.
+  SharedImageInterfaceInProcess(
+      SingleTaskSequence* task_sequence,
+      SyncPointManager* sync_point_manager,
+      const GpuPreferences& gpu_preferences,
+      const GpuDriverBugWorkarounds& gpu_workarounds,
+      const GpuFeatureInfo& gpu_feature_info,
+      gpu::SharedContextState* context_state,
+      SharedImageManager* shared_image_manager,
+      bool is_for_display_compositor,
+      OwnerThread owner_thread = OwnerThread::kCompositor);
 
   SharedImageInterfaceInProcess(const SharedImageInterfaceInProcess&) = delete;
   SharedImageInterfaceInProcess& operator=(
@@ -86,11 +96,6 @@ class GPU_GLES2_EXPORT SharedImageInterfaceInProcess
       gfx::GpuMemoryBufferHandle buffer_handle) override;
   SharedImageInterface::SharedImageMapping CreateSharedImage(
       const SharedImageInfo& si_info) override;
-  scoped_refptr<ClientSharedImage> CreateSharedImage(
-      gfx::GpuMemoryBuffer* gpu_memory_buffer,
-      GpuMemoryBufferManager* gpu_memory_buffer_manager,
-      gfx::BufferPlane plane,
-      const SharedImageInfo& si_info) override;
   void UpdateSharedImage(const SyncToken& sync_token,
                          const Mailbox& mailbox) override;
   void UpdateSharedImage(const SyncToken& sync_token,
@@ -108,13 +113,13 @@ class GPU_GLES2_EXPORT SharedImageInterfaceInProcess
                                         const gfx::ColorSpace& color_space,
                                         GrSurfaceOrigin surface_origin,
                                         SkAlphaType alpha_type,
-                                        uint32_t usage) override;
+                                        SharedImageUsageSet usage) override;
   void PresentSwapChain(const SyncToken& sync_token,
                         const Mailbox& mailbox) override;
 #if BUILDFLAG(IS_FUCHSIA)
   void RegisterSysmemBufferCollection(zx::eventpair service_handle,
                                       zx::channel sysmem_token,
-                                      gfx::BufferFormat format,
+                                      const viz::SharedImageFormat& format,
                                       gfx::BufferUsage usage,
                                       bool register_with_image_pipe) override;
 #endif  // BUILDFLAG(IS_FUCHSIA)
@@ -181,18 +186,9 @@ class GPU_GLES2_EXPORT SharedImageInterfaceInProcess
       SharedImageInfo si_info,
       gfx::GpuMemoryBufferHandle buffer_handle,
       const SyncToken& sync_token);
-  void CreateGMBSharedImageOnGpuThread(const Mailbox& mailbox,
-                                       gfx::GpuMemoryBufferHandle handle,
-                                       gfx::BufferFormat format,
-                                       gfx::BufferPlane plane,
-                                       const gfx::Size& size,
-                                       SharedImageInfo si_info,
-                                       const SyncToken& sync_token);
   void UpdateSharedImageOnGpuThread(const Mailbox& mailbox,
                                     const SyncToken& sync_token);
   void DestroySharedImageOnGpuThread(const Mailbox& mailbox);
-  void DestroyClientSharedImageOnGpuThread(
-      scoped_refptr<ClientSharedImage> client_shared_image);
   void WaitSyncTokenOnGpuThread(const SyncToken& sync_token);
   void WrapTaskWithGpuUrl(base::OnceClosure task);
   void GetCapabilitiesOnGpu(base::WaitableEvent* completion,
@@ -229,6 +225,8 @@ class GPU_GLES2_EXPORT SharedImageInterfaceInProcess
   scoped_refptr<SyncPointClientState> sync_point_client_state_;
   std::unique_ptr<SharedImageFactory> shared_image_factory_;
   std::unique_ptr<SharedImageCapabilities> shared_image_capabilities_;
+  // Specifies which thread owns this object.
+  const OwnerThread owner_thread_;
 };
 
 }  // namespace gpu

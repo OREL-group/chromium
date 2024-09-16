@@ -58,7 +58,7 @@
 //
 //   Note: This has changed from `GURL origin` to StorageKey but the name will
 //   be updated in the future to avoid a migration.
-//   TODO(crbug.com/1199077): Update name during a migration to Version 3.
+//   TODO(crbug.com/40177656): Update name during a migration to Version 3.
 //   See StorageKey::Deserialize() for more information on the format.
 //   key: "INITDATA_UNIQUE_ORIGIN:" + <StorageKey>
 //   value: <empty>
@@ -68,7 +68,7 @@
 //
 //   Note: This has changed from `GURL origin` to StorageKey but the name will
 //   be updated in the future to avoid a migration.
-//   TODO(crbug.com/1199077): Update name during a migration to Version 3.
+//   TODO(crbug.com/40177656): Update name during a migration to Version 3.
 //   See StorageKey::Deserialize() for more information on the format.
 //   key: "REG:" + <StorageKey> + '\x00' + <int64_t 'registration_id'>
 //    (ex. "REG:https://example.com/\x00123456")
@@ -95,7 +95,7 @@
 //
 //   Note: This has changed from `GURL origin` to StorageKey but the name will
 //   be updated in the future to avoid a migration.
-//   TODO(crbug.com/1199077): Update name during a migration to Version 3.
+//   TODO(crbug.com/40177656): Update name during a migration to Version 3.
 //   See StorageKey::Deserialize() for more information on the format.
 //   key: "REGID_TO_ORIGIN:" + <int64_t 'registration_id'>
 //   value: <StorageKey>
@@ -378,7 +378,7 @@ void ConvertToProtoParts(
         break;
       }
       case liburlpattern::PartType::kRegex:
-        NOTREACHED_NORETURN() << "should not see regexp URLPattern";
+        NOTREACHED() << "should not see regexp URLPattern";
       case liburlpattern::PartType::kSegmentWildcard: {
         ServiceWorkerRegistrationData::RouterRules::RuleV1::Condition::
             URLPattern::Part::WildcardPattern* ptn =
@@ -1105,7 +1105,7 @@ const char* ServiceWorkerDatabase::StatusToString(
     case ServiceWorkerDatabase::Status::kErrorStorageDisconnected:
       return "Storage is disconnected";
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return "Database unknown error";
 }
 
@@ -2413,7 +2413,7 @@ ServiceWorkerDatabase::Status ServiceWorkerDatabase::LazyOpen(
       return Status::kOk;
     default:
       // Other cases should be handled in ReadDatabaseVersion.
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return Status::kErrorCorrupted;
   }
 }
@@ -2918,7 +2918,7 @@ void ServiceWorkerDatabase::WriteRegistrationDataInBatch(
             ServiceWorkerRegistrationData::SKIPPABLE_EMPTY_FETCH_HANDLER);
         break;
       case blink::mojom::ServiceWorkerFetchHandlerType::kNoHandler:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
     }
   }
   data.set_last_update_check_time(

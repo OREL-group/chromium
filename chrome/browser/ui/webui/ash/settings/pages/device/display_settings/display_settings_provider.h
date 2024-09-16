@@ -13,6 +13,7 @@
 #include "ash/system/brightness_control_delegate.h"
 #include "base/memory/raw_ptr.h"
 #include "base/scoped_observation.h"
+#include "base/timer/timer.h"
 #include "base/types/id_type.h"
 #include "chrome/browser/ui/webui/ash/settings/pages/device/display_settings/display_settings_provider.mojom.h"
 #include "chromeos/dbus/power/power_manager_client.h"
@@ -60,6 +61,21 @@ class DisplaySettingsProvider : public mojom::DisplaySettingsProvider,
     kMaxValue = kOverrideScaling,
   };
 
+  // Note that these values are persisted to histograms so existing values
+  // should remain unchanged and new values should be added to the end.
+  enum class UserInitiatedDisplayAmbientLightSensorDisabledCause {
+    // The ambient light sensor was disabled directly through the settings
+    // app by the user.
+    kUserRequestSettingsApp = 0,
+    // The ambient light sensor was disabled as a result of the user manually
+    // adjusting the brightness.
+    kBrightnessUserRequest = 1,
+    // The ambient light sensor was disabled as a result of the user adjusting
+    // the brightness through the settings app.
+    kBrightnessUserRequestSettingsApp = 2,
+    kMaxValue = kBrightnessUserRequestSettingsApp,
+  };
+
   // The UMA histogram that records display settings usage.
   static constexpr char kDisplaySettingsHistogramName[] =
       "ChromeOS.Settings.Display";
@@ -90,6 +106,10 @@ class DisplaySettingsProvider : public mojom::DisplaySettingsProvider,
       mojo::PendingRemote<mojom::DisplayBrightnessSettingsObserver> observer,
       ObserveDisplayBrightnessSettingsCallback callback) override;
 
+  void ObserveAmbientLightSensor(
+      mojo::PendingRemote<mojom::AmbientLightSensorObserver> observer,
+      ObserveAmbientLightSensorCallback callback) override;
+
   void RecordChangingDisplaySettings(
       mojom::DisplaySettingsType type,
       mojom::DisplaySettingsValuePtr value) override;
@@ -101,6 +121,8 @@ class DisplaySettingsProvider : public mojom::DisplaySettingsProvider,
   void SetInternalDisplayAmbientLightSensorEnabled(bool enabled) override;
 
   void HasAmbientLightSensor(HasAmbientLightSensorCallback callback) override;
+
+  void StartNativeTouchscreenMappingExperience() override;
 
   // TabletModeObserver:
   void OnTabletModeEventsBlockingChanged() override;
@@ -115,6 +137,8 @@ class DisplaySettingsProvider : public mojom::DisplaySettingsProvider,
   // PowerManagerClient::Observer:
   void ScreenBrightnessChanged(
       const power_manager::BacklightBrightnessChange& change) override;
+  void AmbientLightSensorEnabledChanged(
+      const power_manager::AmbientLightSensorChange& change) override;
 
   // ash::ShellObserver:
   void OnShellDestroying() override;
@@ -128,8 +152,14 @@ class DisplaySettingsProvider : public mojom::DisplaySettingsProvider,
   void OnGetInitialBrightness(ObserveDisplayBrightnessSettingsCallback callback,
                               std::optional<double> percent);
 
+  void OnGetAmbientLightSensorEnabled(
+      ObserveAmbientLightSensorCallback callback,
+      std::optional<bool> is_ambient_light_sensor_enabled);
+
   void OnGetHasAmbientLightSensor(HasAmbientLightSensorCallback callback,
                                   std::optional<bool> has_ambient_light_sensor);
+
+  void RecordBrightnessSliderAdjusted();
 
   base::ScopedObservation<ash::Shell, ash::ShellObserver> shell_observation_{
       this};
@@ -146,11 +176,21 @@ class DisplaySettingsProvider : public mojom::DisplaySettingsProvider,
   mojo::RemoteSet<mojom::DisplayBrightnessSettingsObserver>
       display_brightness_settings_observers_;
 
+  mojo::RemoteSet<mojom::AmbientLightSensorObserver>
+      ambient_light_sensor_observers_;
+
   // A map between display id and the timestamp this display is connected. Only
   // add those displays that are connected for the first time. Used to record
   // the time elapsed between users changing the display default settings and
   // the display is connected.
   std::map<DisplayId, base::TimeTicks> displays_connection_timestamp_map_;
+
+  // The last display brightness percentage set by the user. Used for metrics.
+  double last_set_brightness_percent_;
+
+  // Times used to prevent the brightness slider metrics from recording each
+  // time the user moves the slider while setting the desired brightness.
+  base::DelayTimer brightness_slider_metric_delay_timer_;
 
   mojo::Receiver<mojom::DisplaySettingsProvider> receiver_{this};
 

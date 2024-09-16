@@ -2,11 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <stdint.h>
 
 #include <optional>
 #include <string>
 
+#include "base/containers/span.h"
 #include "base/run_loop.h"
 #include "base/strings/strcat.h"
 #include "base/test/bind.h"
@@ -40,7 +46,7 @@
 #include "services/network/public/mojom/network_context.mojom.h"
 #include "services/network/public/mojom/tcp_socket.mojom.h"
 #include "testing/gmock/include/gmock/gmock-matchers.h"
-#include "third_party/blink/public/common/features_generated.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/permissions_policy/permissions_policy.h"
 #include "url/gurl.h"
 
@@ -125,10 +131,9 @@ class ReadWriteWaiter {
     while (true) {
       DCHECK(receive_stream_.is_valid());
       DCHECK_LT(bytes_received_, required_receive_bytes_);
-      const void* buffer = nullptr;
-      size_t num_bytes = 0;
-      MojoResult mojo_result = receive_stream_->BeginReadData(
-          &buffer, &num_bytes, MOJO_READ_DATA_FLAG_NONE);
+      base::span<const uint8_t> buffer;
+      MojoResult mojo_result =
+          receive_stream_->BeginReadData(MOJO_READ_DATA_FLAG_NONE, buffer);
       if (mojo_result == MOJO_RESULT_SHOULD_WAIT) {
         read_watcher_->ArmOrNotify();
         return;
@@ -136,17 +141,14 @@ class ReadWriteWaiter {
       DCHECK_EQ(mojo_result, MOJO_RESULT_OK);
 
       // This is guaranteed by Mojo.
-      DCHECK_GT(num_bytes, 0u);
+      DCHECK_GT(buffer.size(), 0u);
 
-      const unsigned char* current = static_cast<const unsigned char*>(buffer);
-      const unsigned char* const end = current + num_bytes;
-      while (current < end) {
-        EXPECT_EQ(*current, bytes_received_ % 256);
-        ++current;
+      for (uint8_t current : buffer) {
+        EXPECT_EQ(current, bytes_received_ % 256);
         ++bytes_received_;
       }
 
-      mojo_result = receive_stream_->EndReadData(num_bytes);
+      mojo_result = receive_stream_->EndReadData(buffer.size());
       DCHECK_EQ(mojo_result, MOJO_RESULT_OK);
 
       if (bytes_received_ == required_receive_bytes_) {
@@ -162,10 +164,10 @@ class ReadWriteWaiter {
     while (true) {
       DCHECK(send_stream_.is_valid());
       DCHECK_LT(bytes_sent_, required_send_bytes_);
-      void* buffer = nullptr;
-      size_t num_bytes = required_send_bytes_ - bytes_sent_;
+      base::span<uint8_t> buffer;
+      size_t size_hint = required_send_bytes_ - bytes_sent_;
       MojoResult mojo_result = send_stream_->BeginWriteData(
-          &buffer, &num_bytes, MOJO_WRITE_DATA_FLAG_NONE);
+          size_hint, MOJO_WRITE_DATA_FLAG_NONE, buffer);
       if (mojo_result == MOJO_RESULT_SHOULD_WAIT) {
         write_watcher_->ArmOrNotify();
         return;
@@ -173,19 +175,17 @@ class ReadWriteWaiter {
       DCHECK_EQ(mojo_result, MOJO_RESULT_OK);
 
       // This is guaranteed by Mojo.
-      DCHECK_GT(num_bytes, 0u);
+      DCHECK_GT(buffer.size(), 0u);
 
-      num_bytes = std::min(num_bytes, required_send_bytes_ - bytes_sent_);
+      buffer = buffer.first(
+          std::min(buffer.size(), required_send_bytes_ - bytes_sent_));
 
-      unsigned char* current = static_cast<unsigned char*>(buffer);
-      unsigned char* const end = current + num_bytes;
-      while (current != end) {
-        *current = bytes_sent_ % 256;
-        ++current;
+      for (char& c : base::as_writable_chars(buffer)) {
+        c = bytes_sent_ % 256;
         ++bytes_sent_;
       }
 
-      mojo_result = send_stream_->EndWriteData(num_bytes);
+      mojo_result = send_stream_->EndWriteData(buffer.size());
       DCHECK_EQ(mojo_result, MOJO_RESULT_OK);
 
       if (bytes_sent_ == required_send_bytes_) {
@@ -268,8 +268,7 @@ class DirectSocketsTcpBrowserTest : public ContentBrowserTest {
   void SetUpOnMainThread() override {
     ContentBrowserTest::SetUpOnMainThread();
 
-    client_ = std::make_unique<test::IsolatedWebAppContentBrowserClient>(
-        url::Origin::Create(GetTestPageURL()));
+    client_ = CreateContentBrowserClient();
     runner_ =
         std::make_unique<content::test::AsyncJsRunner>(shell()->web_contents());
 
@@ -282,6 +281,11 @@ class DirectSocketsTcpBrowserTest : public ContentBrowserTest {
     ContentBrowserTest::SetUp();
   }
 
+  virtual std::unique_ptr<ContentBrowserClient> CreateContentBrowserClient() {
+    return std::make_unique<test::IsolatedWebAppContentBrowserClient>(
+        url::Origin::Create(GetTestPageURL()));
+  }
+
  private:
   BrowserContext* browser_context() {
     return shell()->web_contents()->GetBrowserContext();
@@ -291,7 +295,7 @@ class DirectSocketsTcpBrowserTest : public ContentBrowserTest {
   base::test::ScopedFeatureList feature_list_{blink::features::kDirectSockets};
   mojo::Remote<network::mojom::TCPServerSocket> tcp_server_socket_;
 
-  std::unique_ptr<test::IsolatedWebAppContentBrowserClient> client_;
+  std::unique_ptr<ContentBrowserClient> client_;
   std::unique_ptr<content::test::AsyncJsRunner> runner_;
 };
 
@@ -803,6 +807,63 @@ IN_PROC_BROWSER_TEST_F(DirectSocketsTcpBrowserTest, NotInCrossOriginIframe) {
   EXPECT_EQ(cross_origin_corp_url, iframe_rfh->GetLastCommittedURL());
   EXPECT_EQ(true, EvalJs(iframe_rfh, "self.crossOriginIsolated"));
   EXPECT_TRUE(ExecJs(shell(), "TCPSocket === undefined"));
+}
+
+class IsolatedContextContentBrowserClient
+    : public ContentBrowserTestContentBrowserClient {
+ public:
+  bool IsIsolatedContextAllowedForUrl(BrowserContext* browser_context,
+                                      const GURL& lock_url) override {
+    return lock_url.is_valid();
+  }
+};
+
+class DirectSocketsIsolatedContextTcpBrowserTest
+    : public DirectSocketsTcpBrowserTest {
+ protected:
+  std::unique_ptr<ContentBrowserClient> CreateContentBrowserClient() override {
+    return std::make_unique<IsolatedContextContentBrowserClient>();
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_{
+      blink::features::kIsolateSandboxedIframes};
+};
+
+IN_PROC_BROWSER_TEST_F(DirectSocketsIsolatedContextTcpBrowserTest,
+                       NotAvailableInSandboxedIframes) {
+  ASSERT_TRUE(NavigateToURL(shell(), GetTestOpenPageURL()));
+
+  ASSERT_EQ(true, EvalJs(shell(), "'TCPSocket' in window"));
+
+  // Verify that non-sandboxed iframes have TCPSocket.
+  ASSERT_TRUE(ExecJs(shell(), content::JsReplace(R"(
+      new Promise(resolve => {
+        let f = document.createElement('iframe');
+        f.src = $1;
+        f.addEventListener('load', () => resolve());
+        document.body.appendChild(f);
+      });
+  )",
+                                                 GetTestOpenPageURL())));
+  content::RenderFrameHost* iframe1_rfh = content::ChildFrameAt(shell(), 0);
+
+  ASSERT_EQ(true, EvalJs(iframe1_rfh, "'TCPSocket' in window"));
+
+  // Verify that sandboxed iframes don't have TCPSocket.
+  ASSERT_TRUE(ExecJs(shell(), content::JsReplace(R"(
+      new Promise(resolve => {
+        let f = document.createElement('iframe');
+        f.src = $1;
+        f.sandbox = 'allow-scripts';
+        f.addEventListener('load', () => resolve());
+        document.body.appendChild(f);
+      });
+  )",
+                                                 GetTestOpenPageURL())));
+  content::RenderFrameHost* iframe2_rfh = content::ChildFrameAt(shell(), 1);
+
+  ASSERT_EQ(false, EvalJs(iframe2_rfh, "'TCPSocket' in window"));
 }
 
 }  // namespace content

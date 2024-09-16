@@ -46,7 +46,11 @@ class MEDIA_EXPORT VideoDecoderConfig {
                      const gfx::Size& natural_size,
                      const std::vector<uint8_t>& extra_data,
                      EncryptionScheme encryption_scheme);
+
   VideoDecoderConfig(const VideoDecoderConfig& other);
+  VideoDecoderConfig(VideoDecoderConfig&& other);
+  VideoDecoderConfig& operator=(const VideoDecoderConfig& other);
+  VideoDecoderConfig& operator=(VideoDecoderConfig&& other);
 
   ~VideoDecoderConfig();
 
@@ -103,7 +107,7 @@ class MEDIA_EXPORT VideoDecoderConfig {
   }
 
   // DEPRECATED: Use aspect_ratio().GetNaturalSize().
-  // TODO(crbug.com/1214061): Remove.
+  // TODO(crbug.com/40769111): Remove.
   // Final visible width and height of a video frame with aspect ratio taken
   // into account. Image data in the visible_rect() should be scaled to this
   // size for display.

@@ -35,9 +35,11 @@
 #include "base/memory/weak_ptr.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
+#include "base/types/optional_ref.h"
 #include "base/types/pass_key.h"
 #include "base/unguessable_token.h"
 #include "build/build_config.h"
+#include "cc/input/browser_controls_offset_tags_info.h"
 #include "cc/input/event_listener_properties.h"
 #include "cc/input/overscroll_behavior.h"
 #include "cc/trees/layer_tree_host.h"
@@ -80,7 +82,7 @@
 #include "third_party/blink/renderer/platform/widget/widget_base_client.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
 #include "ui/base/dragdrop/mojom/drag_drop_types.mojom-shared.h"
-#include "ui/base/ui_base_types.h"
+#include "ui/base/mojom/window_show_state.mojom-blink-forward.h"
 #include "ui/gfx/ca_layer_result.h"
 
 namespace gfx {
@@ -169,12 +171,8 @@ class CORE_EXPORT WebFrameWidgetImpl
   // If this widget is for the top most main frame. This is different than
   // |ForMainFrame| because |ForMainFrame| could return true but this method
   // returns false. If this widget is a MainFrame widget embedded in another
-  // widget, for example embedding a portal.
+  // widget, for example embedding a <webview>.
   bool ForTopMostMainFrame() const;
-
-  // Adjusts whether the widget is nested or not. This is called during portal
-  // transitions.
-  void SetIsNestedMainFrameWidget(bool is_nested);
 
   // Returns true if this widget is for a local root that is a child frame,
   // false otherwise.
@@ -235,32 +233,27 @@ class CORE_EXPORT WebFrameWidgetImpl
   void RequestBeginMainFrameNotExpected(bool request) final;
   int GetLayerTreeId() final;
   const cc::LayerTreeSettings* GetLayerTreeSettings() final;
-  void UpdateBrowserControlsState(cc::BrowserControlsState constraints,
-                                  cc::BrowserControlsState current,
-                                  bool animate) final;
+  void UpdateBrowserControlsState(
+      cc::BrowserControlsState constraints,
+      cc::BrowserControlsState current,
+      bool animate,
+      base::optional_ref<const cc::BrowserControlsOffsetTagsInfo>
+          offset_tags_info) final;
   void SetEventListenerProperties(cc::EventListenerClass,
                                   cc::EventListenerProperties) final;
   cc::EventListenerProperties EventListenerProperties(
       cc::EventListenerClass) const final;
   mojom::blink::DisplayMode DisplayMode() const override;
-  ui::WindowShowState WindowShowState() const override;
+  ui::mojom::blink::WindowShowState WindowShowState() const override;
   bool Resizable() const override;
   const WebVector<gfx::Rect>& ViewportSegments() const override;
   void SetDelegatedInkMetadata(
       std::unique_ptr<gfx::DelegatedInkMetadata> metadata) final;
-  void DidOverscroll(const gfx::Vector2dF& overscroll_delta,
-                     const gfx::Vector2dF& accumulated_overscroll,
-                     const gfx::PointF& position,
-                     const gfx::Vector2dF& velocity) override;
   void InjectScrollbarGestureScroll(const gfx::Vector2dF& delta,
                                     ui::ScrollGranularity granularity,
                                     cc::ElementId scrollable_area_element_id,
                                     WebInputEvent::Type injected_type) override;
   void DidChangeCursor(const ui::Cursor&) override;
-#if BUILDFLAG(IS_ANDROID)
-  void PassImeRenderWidgetHost(
-      mojo::PendingRemote<mojom::blink::ImeRenderWidgetHost>) override;
-#endif
   void GetCompositionCharacterBoundsInWindow(
       Vector<gfx::Rect>* bounds_in_dips) override;
   // Return the last calculated line bounds.
@@ -379,6 +372,8 @@ class CORE_EXPORT WebFrameWidgetImpl
   void ClearEditCommands() override;
   bool IsPasting() override;
   bool HandlingSelectRange() override;
+  void CalculateSelectionBounds(gfx::Rect& anchor_in_root_frame,
+                                gfx::Rect& focus_in_root_frame) override;
   void ReleaseMouseLockAndPointerCaptureForTesting() override;
   const viz::FrameSinkId& GetFrameSinkId() override;
   WebHitTestResult HitTestResultAt(const gfx::PointF&) override;
@@ -387,6 +382,7 @@ class CORE_EXPORT WebFrameWidgetImpl
   void SetDeviceScaleFactorForTesting(float factor) override;
   FrameWidgetTestHelper* GetFrameWidgetTestHelperForTesting() override;
   void PrepareForFinalLifecyclUpdateForTesting() override;
+  void ApplyLocalSurfaceIdUpdate(const viz::LocalSurfaceId& id) override;
 
   // Called when a drag-n-drop operation should begin.
   virtual void StartDragging(LocalFrame* source_frame,
@@ -417,6 +413,7 @@ class CORE_EXPORT WebFrameWidgetImpl
       const cc::LayerTreeSettings* settings,
       WebFrameWidget& previous_widget) override;
   void SetCompositorVisible(bool visible) override;
+  void WarmUpCompositor() override;
   gfx::Size Size() override;
   void Resize(const gfx::Size& size_with_dsf) override;
   void SetCursor(const ui::Cursor& cursor) override;
@@ -424,6 +421,8 @@ class CORE_EXPORT WebFrameWidgetImpl
   void SetHandlingInputEvent(bool handling) override;
   void ProcessInputEventSynchronouslyForTesting(
       const WebCoalescedInputEvent&) override;
+  void DispatchNonBlockingEventForTesting(
+      std::unique_ptr<WebCoalescedInputEvent> event) override;
   WebInputEventResult DispatchBufferedTouchEvents() override;
   WebInputEventResult HandleInputEvent(const WebCoalescedInputEvent&) override;
   void UpdateTextInputState() override;
@@ -470,6 +469,10 @@ class CORE_EXPORT WebFrameWidgetImpl
                          ui::mojom::blink::DragOperation,
                          base::OnceClosure callback) override;
   void OnStartStylusWriting(OnStartStylusWritingCallback callback) override;
+#if BUILDFLAG(IS_ANDROID)
+  void PassImeRenderWidgetHost(
+      mojo::PendingRemote<mojom::blink::ImeRenderWidgetHost>) override;
+#endif
   void NotifyClearedDisplayedGraphics() override;
 
   // mojom::blink::FrameWidgetInputHandler overrides:
@@ -482,7 +485,7 @@ class CORE_EXPORT WebFrameWidgetImpl
   void SetDisplayMode(mojom::blink::DisplayMode);
 
   // Sets the window show state.
-  void SetWindowShowState(ui::WindowShowState);
+  void SetWindowShowState(ui::mojom::blink::WindowShowState);
 
   void SetResizable(bool);
 
@@ -499,7 +502,9 @@ class CORE_EXPORT WebFrameWidgetImpl
   // Called when the FrameView for this Widget's local root is created.
   void DidCreateLocalRootView();
 
-  void SetZoomLevel(double zoom_level);
+  double GetZoomLevel() override;
+  void SetZoomLevel(double zoom_level) override;
+  double GetCSSZoomFactor() const override;
 
   // Called when the View has auto resized.
   virtual void DidAutoResize(const gfx::Size& size);
@@ -642,11 +647,11 @@ class CORE_EXPORT WebFrameWidgetImpl
   ScreenMetricsEmulator* DeviceEmulator();
 
   // Calculates the selection bounds in the root frame. Returns bounds unchanged
-  // when there is no focused frame or no selection.
-  void CalculateSelectionBounds(
-      gfx::Rect& anchor_in_root_frame,
-      gfx::Rect& focus_in_root_frame,
-      gfx::Rect* bounding_box_in_root_frame = nullptr);
+  // when there is no focused frame. Returns the caret bounds if the selection
+  // range is empty.
+  void CalculateSelectionBounds(gfx::Rect& anchor_in_root_frame,
+                                gfx::Rect& focus_in_root_frame,
+                                gfx::Rect* bounding_box_in_root_frame);
 
   // Returns if auto resize mode is enabled.
   bool AutoResizeMode();
@@ -693,8 +698,16 @@ class CORE_EXPORT WebFrameWidgetImpl
   // Return if there is a pending scale animation.
   bool HasPendingPageScaleAnimation();
 
-  // Set the source URL for the compositor.
-  void SetSourceURLForCompositor(ukm::SourceId source_id, const KURL& url);
+  // Set the source URL (if the compositor is rendering the primary main frame).
+  // Also propagates the history sequence number (equivalent to a
+  // `PropagateHistorySequenceNumberToCompositor()` call).
+  void UpdateNavigationStateForCompositor(ukm::SourceId source_id,
+                                          const KURL& url);
+
+  // Propagates the HistoryItem's ItemSequenceNumber to the compositor. This is
+  // used as part of a RenderFrameMetadata which is sent to the browser when the
+  // compositor submits a frame.
+  void PropagateHistorySequenceNumberToCompositor();
 
   // Ask compositor to create the shared memory for smoothness ukm region.
   base::ReadOnlySharedMemoryRegion CreateSharedMemoryForSmoothnessUkm();
@@ -709,6 +722,12 @@ class CORE_EXPORT WebFrameWidgetImpl
   bool WillBeDestroyed() const;
 
   bool IsScrollGestureActive() const;
+
+  // Request the compositor thread to tell the GPU process to generate a
+  // screenshot of the current viewport. The screenshot is tagged with `token`.
+  // The caller must have requested a new `viz::LocalSurfaceID` before making
+  // this request.
+  void RequestViewportScreenshot(const base::UnguessableToken& token);
 
   // Request a new `viz::LocalSurfaceId` on the compositor thread.
   void RequestNewLocalSurfaceId();
@@ -753,7 +772,6 @@ class CORE_EXPORT WebFrameWidgetImpl
       cc::ActiveFrameSequenceTrackers trackers) override;
   std::unique_ptr<cc::BeginMainFrameMetrics> GetBeginMainFrameMetrics()
       override;
-  std::unique_ptr<cc::WebVitalMetrics> GetWebVitalMetrics() override;
   void BeginUpdateLayers() override;
   void EndUpdateLayers() override;
   void DidCommitAndDrawCompositorFrame() override;
@@ -898,6 +916,8 @@ class CORE_EXPORT WebFrameWidgetImpl
                                        const WebMouseWheelEvent&) override;
   WebInputEventResult HandleCharEvent(const WebKeyboardEvent&) override;
 
+  void SetZoomInternal(double zoom_level, double css_zoom_factor);
+
   WebInputEventResult HandleCapturedMouseEvent(const WebCoalescedInputEvent&);
   void MouseContextMenu(const WebMouseEvent&);
   void CancelDrag();
@@ -912,7 +932,7 @@ class CORE_EXPORT WebFrameWidgetImpl
   void SendEndOfScrollEvents(bool affects_outer_viewport,
                              bool affects_inner_viewport,
                              cc::ElementId scroll_latched_element_id);
-  void SendSnapChangingEventIfNeeded(
+  void SendScrollSnapChangingEventIfNeeded(
       const cc::CompositorCommitData& commit_data);
   void RecordManipulationTypeCounts(cc::ManipulationInfo info);
 
@@ -998,8 +1018,6 @@ class CORE_EXPORT WebFrameWidgetImpl
   bool DidChangeFullscreenState(
       const VisualProperties& visual_properties) const;
 
-  void NotifyZoomLevelChanged(LocalFrame* root);
-
   // Satisfy the render blocking condition for cross-document view transitions.
   void NotifyViewTransitionRenderingHasBegun();
 
@@ -1067,7 +1085,7 @@ class CORE_EXPORT WebFrameWidgetImpl
   Member<WebLocalFrameImpl> local_root_;
 
   mojom::blink::DisplayMode display_mode_;
-  ui::WindowShowState window_show_state_;
+  ui::mojom::blink::WindowShowState window_show_state_;
   bool resizable_;
 
   WebVector<gfx::Rect> viewport_segments_;
@@ -1179,8 +1197,8 @@ class CORE_EXPORT WebFrameWidgetImpl
     // Last background color sent to the browser. Only set for main frames.
     std::optional<SkColor> last_background_color;
     // This bit is used to tell if this is a nested widget (an "inner web
-    // contents") like a <webview> or <portal> widget. If false, the widget is
-    // the top level widget.
+    // contents") like a <webview>. If false, the widget is the top level
+    // widget.
     bool is_for_nested_main_frame = false;
   } main_frame_data_;
 
@@ -1200,7 +1218,7 @@ class CORE_EXPORT WebFrameWidgetImpl
   // all embedded scenarios).
   const bool is_for_child_local_root_;
 
-  // Whether this widget is for a portal, guest view, or top level frame.
+  // Whether this widget is for a guest view, or top level frame.
   // These may have a page scale node, so it is important to plumb this
   // information through to avoid breaking assumptions.
   const bool is_for_scalable_page_;
@@ -1215,6 +1233,9 @@ class CORE_EXPORT WebFrameWidgetImpl
 
   base::WeakPtrFactory<mojom::blink::FrameWidgetInputHandler>
       input_handler_weak_ptr_factory_{this};
+
+  double zoom_level_ = 0;
+  double css_zoom_factor_ = 1;
 };
 
 }  // namespace blink

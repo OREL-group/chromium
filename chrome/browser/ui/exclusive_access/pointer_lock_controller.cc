@@ -99,8 +99,7 @@ void PointerLockController::NotifyTabExclusiveAccessLost() {
     UnlockPointer();
     SetTabWithExclusiveAccess(nullptr);
     pointer_lock_state_ = POINTERLOCK_UNLOCKED;
-    exclusive_access_manager()->UpdateExclusiveAccessExitBubbleContent(
-        ExclusiveAccessBubbleHideCallback());
+    exclusive_access_manager()->UpdateBubble(base::NullCallback());
   }
 }
 
@@ -132,8 +131,7 @@ void PointerLockController::ExitExclusiveAccessToPreviousState() {
   SetTabWithExclusiveAccess(nullptr);
 
   if (!ShouldSuppressBubbleReshowForStateChange()) {
-    exclusive_access_manager()->UpdateExclusiveAccessExitBubbleContent(
-        ExclusiveAccessBubbleHideCallback());
+    exclusive_access_manager()->UpdateBubble(base::NullCallback());
   }
 }
 
@@ -183,7 +181,7 @@ void PointerLockController::LockPointer(
   }
 
   if (!ShouldSuppressBubbleReshowForStateChange()) {
-    exclusive_access_manager()->UpdateExclusiveAccessExitBubbleContent(
+    exclusive_access_manager()->UpdateBubble(
         base::BindOnce(&PointerLockController::OnBubbleHidden,
                        weak_ptr_factory_.GetWeakPtr(), web_contents.get()));
   }
@@ -217,8 +215,11 @@ void PointerLockController::OnBubbleHidden(
 
   // Allow silent pointer lock if the bubble has been display for a period of
   // time and dismissed due to timeout.
-  if (reason == ExclusiveAccessBubbleHideReason::kTimeout)
+  if (reason == ExclusiveAccessBubbleHideReason::kTimeout) {
     web_contents_granted_silent_pointer_lock_permission_ = web_contents;
+  } else {
+    web_contents_granted_silent_pointer_lock_permission_ = nullptr;
+  }
 }
 
 bool PointerLockController::ShouldSuppressBubbleReshowForStateChange() {

@@ -18,7 +18,6 @@ import androidx.annotation.VisibleForTesting;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.metrics.TimingMetric;
 import org.chromium.chrome.browser.omnibox.MatchClassificationStyle;
-import org.chromium.chrome.browser.omnibox.OmniboxFeatures;
 import org.chromium.chrome.browser.omnibox.OmniboxMetrics;
 import org.chromium.chrome.browser.omnibox.R;
 import org.chromium.chrome.browser.omnibox.styles.OmniboxDrawableState;
@@ -29,6 +28,7 @@ import org.chromium.chrome.browser.omnibox.suggestions.SuggestionProcessor;
 import org.chromium.chrome.browser.omnibox.suggestions.base.BaseSuggestionViewProperties.Action;
 import org.chromium.components.omnibox.AutocompleteMatch;
 import org.chromium.components.omnibox.AutocompleteMatch.MatchClassification;
+import org.chromium.components.omnibox.OmniboxFeatures;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.url.GURL;
 
@@ -217,6 +217,13 @@ public abstract class BaseSuggestionViewProcessor implements SuggestionProcessor
                 BaseSuggestionViewProperties.ON_FOCUS_VIA_SELECTION,
                 () -> mSuggestionHost.setOmniboxEditingText(suggestion.getFillIntoEdit()));
         setActionButtons(model, null);
+
+        model.set(BaseSuggestionViewProperties.USE_LARGE_DECORATION, false);
+        model.set(BaseSuggestionViewProperties.SHOW_DECORATION, true);
+        model.set(
+                BaseSuggestionViewProperties.ACTION_CHIP_LEAD_IN_SPACING,
+                OmniboxResourceProvider.getSuggestionDecorationIconSizeWidth(mContext));
+        model.set(BaseSuggestionViewProperties.TOP_PADDING, 0);
 
         if (OmniboxFeatures.isTouchDownTriggerForPrefetchEnabled()
                 && !OmniboxFeatures.isLowMemoryDevice()

@@ -36,6 +36,7 @@
 #include "components/signin/public/base/account_consistency_method.h"
 #include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/base/list_accounts_test_utils.h"
+#include "components/signin/public/base/signin_prefs.h"
 #include "components/signin/public/base/signin_switches.h"
 #include "components/signin/public/base/test_signin_client.h"
 #include "components/signin/public/identity_manager/access_token_info.h"
@@ -240,7 +241,7 @@ class TestIdentityManagerDiagnosticsObserver
   void OnAccessTokenRequestCompleted(const CoreAccountId& account_id,
                                      const std::string& consumer_id,
                                      const ScopeSet& scopes,
-                                     GoogleServiceAuthError error,
+                                     const GoogleServiceAuthError& error,
                                      base::Time expiration_time) override {
     access_token_request_completed_account_id_ = account_id;
     access_token_request_completed_consumer_id_ = consumer_id;
@@ -276,6 +277,8 @@ class IdentityManagerTest : public testing::Test {
   IdentityManagerTest()
       : signin_client_(&pref_service_, &test_url_loader_factory_) {
     IdentityManager::RegisterProfilePrefs(pref_service_.registry());
+    SigninPrefs::RegisterProfilePrefs(pref_service_.registry());
+
     IdentityManager::RegisterLocalStatePrefs(pref_service_.registry());
 
     RecreateIdentityManager(
@@ -411,8 +414,6 @@ class IdentityManagerTest : public testing::Test {
     // the account id stored in prefs::kGoogleServicesAccountId.
     base::CommandLine* cmd_line = base::CommandLine::ForCurrentProcess();
     cmd_line->AppendSwitch(switches::kClearTokenService);
-
-    primary_account_manager->Initialize();
 
     if (primary_account_manager_setup ==
         PrimaryAccountManagerSetup::kWithAuthenticatedAccout) {
@@ -1520,7 +1521,7 @@ TEST_F(IdentityManagerTest,
   run_loop.Run();
 
   EXPECT_TRUE(token_fetcher);
-  EXPECT_EQ(GoogleServiceAuthError(GoogleServiceAuthError::REQUEST_CANCELED),
+  EXPECT_EQ(GoogleServiceAuthError(GoogleServiceAuthError::USER_NOT_SIGNED_UP),
             identity_manager_diagnostics_observer()
                 ->on_access_token_request_completed_error());
 }
@@ -2338,7 +2339,7 @@ TEST_F(IdentityManagerTest, SetPrimaryAccount) {
       identity_manager()->GetPrimaryAccountInfo(ConsentLevel::kSignin).gaia);
 }
 
-// TODO(https://crbug.com/1223364): Remove this when all the users are migrated.
+// TODO(crbug.com/40774609): Remove this when all the users are migrated.
 TEST_F(IdentityManagerTest, SetPrimaryAccountClearsExistingPrimaryAccount) {
   signin_client()->SetInitialPrimaryAccountForTests(
       account_manager::Account{

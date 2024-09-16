@@ -152,6 +152,34 @@ export enum MacroName {
   // Generates a synthetic down arrow key event.
   KEY_PRESS_DOWN = 42,
 
+  // Shows/hides the overview of the user's active desktops.
+  KEY_PRESS_TOGGLE_OVERVIEW = 43,
+
+  // Pauses/plays active media.
+  KEY_PRESS_MEDIA_PLAY_PAUSE = 44,
+
+  // Generates a synthetic long click event.
+  MOUSE_LONG_CLICK_LEFT = 45,
+
+  // Pauses or resumes FaceGaze mouse movement and gesture detection if
+  // FaceGaze is already running.
+  TOGGLE_FACEGAZE = 46,
+
+  // If FaceGaze is enabled, opens the FaceGaze settings subpage.
+  OPEN_FACEGAZE_SETTINGS = 47,
+
+  // Shows/hides the virtual keyboard.
+  TOGGLE_VIRTUAL_KEYBOARD = 48,
+
+  // Generates a synthetic double left click event.
+  MOUSE_CLICK_LEFT_DOUBLE = 49,
+
+  // Toggles scroll mode for FaceGaze.
+  TOGGLE_SCROLL_MODE = 50,
+
+  // A custom key combination, defined by the user.
+  CUSTOM_KEY_COMBINATION = 51,
+
   // Any new actions should match with Voice Access's semantic tags where
   // possible.
 }

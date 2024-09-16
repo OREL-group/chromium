@@ -7,13 +7,13 @@
 
 #import <UIKit/UIKit.h>
 
+#import "ios/chrome/browser/orchestrator/ui_bundled/edit_view_animatee.h"
+#import "ios/chrome/browser/orchestrator/ui_bundled/location_bar_offset_provider.h"
 #import "ios/chrome/browser/ui/omnibox/omnibox_consumer.h"
 #import "ios/chrome/browser/ui/omnibox/omnibox_text_field_ios.h"
-#import "ios/chrome/browser/ui/orchestrator/edit_view_animatee.h"
-#import "ios/chrome/browser/ui/orchestrator/location_bar_offset_provider.h"
+#import "ios/chrome/browser/ui/omnibox/omnibox_view_consumer.h"
 
 @class LayoutGuideCenter;
-@protocol OmniboxAdditionalTextConsumer;
 @protocol OmniboxKeyboardDelegate;
 @protocol OmniboxReturnDelegate;
 @class OmniboxViewController;
@@ -48,7 +48,11 @@ class OmniboxTextChangeDelegate;
 
 @interface OmniboxViewController : UIViewController <EditViewAnimatee,
                                                      LocationBarOffsetProvider,
-                                                     OmniboxConsumer>
+                                                     OmniboxConsumer,
+                                                     OmniboxViewConsumer>
+
+/// Whether the UI is configured for search-only mode.
+@property(nonatomic, assign) BOOL isSearchOnlyUI;
 
 // The textfield used by this view controller.
 @property(nonatomic, readonly, strong) OmniboxTextFieldIOS* textField;
@@ -56,10 +60,6 @@ class OmniboxTextChangeDelegate;
 // The view, which contains a text field view.
 @property(nonatomic, readonly)
     UIView<TextFieldViewContaining>* viewContainingTextField;
-
-// Consumer of additional text.
-@property(nonatomic, readonly) id<OmniboxAdditionalTextConsumer>
-    additionalTextConsumer;
 
 // The default leading image to be used on omnibox focus before this is updated
 // via OmniboxConsumer protocol.
@@ -82,9 +82,6 @@ class OmniboxTextChangeDelegate;
 
 // The layout guide center to use to refer to the omnibox leading image.
 @property(nonatomic, strong) LayoutGuideCenter* layoutGuideCenter;
-
-// Designated initializer.
-- (instancetype)initWithIncognito:(BOOL)isIncognito;
 
 - (void)setTextChangeDelegate:(OmniboxTextChangeDelegate*)textChangeDelegate;
 

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/bindings/core/v8/script_streamer.h"
 
 #include <memory>
@@ -9,11 +14,13 @@
 
 #include "base/run_loop.h"
 #include "base/strings/strcat.h"
+#include "base/synchronization/waitable_event.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
+#include "base/threading/thread_restrictions.h"
 #include "mojo/public/cpp/base/big_buffer.h"
 #include "mojo/public/cpp/system/data_pipe_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -28,6 +35,7 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_code_cache.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_compile_hints_consumer.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_local_compile_hints_consumer.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_local_compile_hints_producer.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_script_runner.h"
@@ -49,6 +57,7 @@
 #include "third_party/blink/renderer/platform/loader/fetch/url_loader/url_loader.h"
 #include "third_party/blink/renderer/platform/loader/testing/mock_fetch_context.h"
 #include "third_party/blink/renderer/platform/loader/testing/test_resource_fetcher_properties.h"
+#include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/public/worker_pool.h"
 #include "third_party/blink/renderer/platform/testing/mock_context_lifecycle_notifier.h"
@@ -127,7 +136,7 @@ class NoopLoaderFactory final : public ResourceFetcher::LoaderFactory {
         scoped_refptr<BlobDataHandle>& downloaded_blob,
         std::unique_ptr<blink::ResourceLoadInfoNotifierWrapper>
             resource_load_info_notifier_wrapper) override {
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
     }
     void LoadAsynchronously(
         std::unique_ptr<network::ResourceRequest> request,
@@ -139,7 +148,7 @@ class NoopLoaderFactory final : public ResourceFetcher::LoaderFactory {
         URLLoaderClient*) override {}
     void Freeze(LoaderFreezeMode) override {}
     void DidChangePriority(WebURLRequest::Priority, int) override {
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
     }
     scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunnerForBodyLoader()
         override {
@@ -149,11 +158,9 @@ class NoopLoaderFactory final : public ResourceFetcher::LoaderFactory {
   };
 };
 
-void AppendDataToDataPipe(const char* data,
+void AppendDataToDataPipe(std::string_view data,
                           mojo::ScopedDataPipeProducerHandle& producer_handle) {
-  size_t data_len = strlen(data);
-  MojoResult result = producer_handle->WriteData(
-      data, &data_len, MOJO_WRITE_DATA_FLAG_ALL_OR_NONE);
+  MojoResult result = producer_handle->WriteAllData(base::as_byte_span(data));
   EXPECT_EQ(result, MOJO_RESULT_OK);
 
   // In case the mojo datapipe is being read on the main thread, we need to
@@ -172,6 +179,8 @@ void AppendDataToDataPipe(const char* data,
   test::YieldCurrentThread();
 }
 
+const uint32_t kDataPipeSize = 1024;
+
 }  // namespace
 
 class ScriptStreamingTest : public testing::Test {
@@ -180,7 +189,7 @@ class ScriptStreamingTest : public testing::Test {
       : url_(String("http://streaming-test.example.com/foo" +
                     base::NumberToString(url_counter_++))) {}
 
-  void Init(v8::Isolate* isolate) {
+  void Init(v8::Isolate* isolate, bool use_response_http_scheme = true) {
     auto* properties = MakeGarbageCollected<TestResourceFetcherProperties>();
     FetchContext* context = MakeGarbageCollected<MockFetchContext>();
     scoped_refptr<base::SingleThreadTaskRunner> task_runner =
@@ -191,8 +200,9 @@ class ScriptStreamingTest : public testing::Test {
         MakeGarbageCollected<MockContextLifecycleNotifier>(),
         nullptr /* back_forward_cache_loader_helper */));
 
-    EXPECT_EQ(mojo::CreateDataPipe(nullptr, producer_handle_, consumer_handle_),
-              MOJO_RESULT_OK);
+    EXPECT_EQ(
+        mojo::CreateDataPipe(kDataPipeSize, producer_handle_, consumer_handle_),
+        MOJO_RESULT_OK);
 
     ResourceRequest request(url_);
     request.SetRequestContext(mojom::blink::RequestContextType::SCRIPT);
@@ -204,14 +214,19 @@ class ScriptStreamingTest : public testing::Test {
         kNoCompileHintsProducer = nullptr;
     constexpr v8_compile_hints::V8CrowdsourcedCompileHintsConsumer*
         kNoCompileHintsConsumer = nullptr;
-    resource_ =
-        ScriptResource::Fetch(params, fetcher, resource_client_, isolate,
-                              ScriptResource::kAllowStreaming,
-                              kNoCompileHintsProducer, kNoCompileHintsConsumer);
+    constexpr bool kNoV8CompileHintsMagicCommentRuntimeEnabled = false;
+    resource_ = ScriptResource::Fetch(
+        params, fetcher, resource_client_, isolate,
+        ScriptResource::kAllowStreaming, kNoCompileHintsProducer,
+        kNoCompileHintsConsumer, kNoV8CompileHintsMagicCommentRuntimeEnabled);
     resource_->AddClient(resource_client_, task_runner.get());
 
     ResourceResponse response(url_);
     response.SetHttpStatusCode(200);
+
+    if (!use_response_http_scheme) {
+      response.SetCurrentRequestUrl(KURL("file:///something"));
+    }
     resource_->SetResponse(response);
 
     resource_->Loader()->DidReceiveResponse(WrappedResourceResponse(response),
@@ -224,7 +239,7 @@ class ScriptStreamingTest : public testing::Test {
   }
 
  protected:
-  void AppendData(const char* data) {
+  void AppendData(std::string_view data) {
     AppendDataToDataPipe(data, producer_handle_);
   }
 
@@ -717,6 +732,25 @@ TEST_F(ScriptStreamingTest, ProduceLocalCompileHintsForStreamedScript) {
   EXPECT_EQ(1UL, compile_hints.size());
 }
 
+TEST_F(ScriptStreamingTest, NullCacheHandler) {
+  V8TestingScope scope;
+  // Use setting the responses URL to something else than HTTP(S) to trigger the
+  // "streaming but no cache handler" corner case.
+  Init(scope.GetIsolate(), /*use_response_http_scheme=*/false);
+  EXPECT_FALSE(resource_->CacheHandler());
+
+  AppendData("/*this doesn't matter*/");
+  Finish();
+  RunUntilResourceLoaded();
+  EXPECT_TRUE(resource_client_->Finished());
+
+  ScriptStreamer* script_streamer = std::get<0>(
+      ScriptStreamer::TakeFrom(resource_, mojom::blink::ScriptType::kClassic));
+  ResourceScriptStreamer* resource_script_streamer =
+      reinterpret_cast<ResourceScriptStreamer*>(script_streamer);
+  EXPECT_TRUE(resource_script_streamer);
+}
+
 INSTANTIATE_TEST_SUITE_P(
     All,
     InlineScriptStreamingTest,
@@ -766,8 +800,9 @@ class DummyLoaderFactory final : public ResourceFetcher::LoaderFactory {
   CodeCacheHost* GetCodeCacheHost() override { return nullptr; }
 
   bool load_started() const { return load_started_; }
-  scoped_refptr<BackgroundResponseProcessor> GetBackgroundResponseProcessor() {
-    return background_response_processor_;
+  std::unique_ptr<BackgroundResponseProcessorFactory>
+  TakeBackgroundResponseProcessorFactory() {
+    return std::move(background_response_processor_factory_);
   }
 
  private:
@@ -795,7 +830,7 @@ class DummyLoaderFactory final : public ResourceFetcher::LoaderFactory {
         scoped_refptr<BlobDataHandle>& downloaded_blob,
         std::unique_ptr<blink::ResourceLoadInfoNotifierWrapper>
             resource_load_info_notifier_wrapper) override {
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
     }
     void LoadAsynchronously(
         std::unique_ptr<network::ResourceRequest> request,
@@ -809,13 +844,14 @@ class DummyLoaderFactory final : public ResourceFetcher::LoaderFactory {
     }
     void Freeze(LoaderFreezeMode) override {}
     void DidChangePriority(WebURLRequest::Priority, int) override {
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
     }
     bool CanHandleResponseOnBackground() override { return true; }
-    void SetBackgroundResponseProcessor(
-        scoped_refptr<BackgroundResponseProcessor>
-            background_response_processor) override {
-      factory_->background_response_processor_ = background_response_processor;
+    void SetBackgroundResponseProcessorFactory(
+        std::unique_ptr<BackgroundResponseProcessorFactory>
+            background_response_processor_factory) override {
+      factory_->background_response_processor_factory_ =
+          std::move(background_response_processor_factory);
     }
     scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunnerForBodyLoader()
         override {
@@ -826,13 +862,17 @@ class DummyLoaderFactory final : public ResourceFetcher::LoaderFactory {
   };
 
   bool load_started_ = false;
-  scoped_refptr<BackgroundResponseProcessor> background_response_processor_;
+  std::unique_ptr<BackgroundResponseProcessorFactory>
+      background_response_processor_factory_;
 };
 
 class DummyBackgroundResponseProcessorClient
     : public BackgroundResponseProcessor::Client {
  public:
-  DummyBackgroundResponseProcessorClient() = default;
+  DummyBackgroundResponseProcessorClient()
+      : main_thread_task_runner_(
+            scheduler::GetSingleThreadTaskRunnerForTesting()) {}
+
   ~DummyBackgroundResponseProcessorClient() override = default;
 
   void DidFinishBackgroundResponseProcessor(
@@ -844,6 +884,9 @@ class DummyBackgroundResponseProcessorClient
     cached_metadata_ = std::move(cached_metadata);
     run_loop_.Quit();
   }
+  void PostTaskToMainThread(CrossThreadOnceClosure task) override {
+    PostCrossThreadTask(*main_thread_task_runner_, FROM_HERE, std::move(task));
+  }
 
   void WaitUntilFinished() { run_loop_.Run(); }
 
@@ -851,12 +894,9 @@ class DummyBackgroundResponseProcessorClient
       base::span<const char> expected_body,
       std::optional<base::span<const uint8_t>> expected_cached_metadata) {
     EXPECT_TRUE(head_);
-    if (absl::holds_alternative<Deque<Vector<char>>>(body_)) {
-      Deque<Vector<char>> raw_body = absl::get<Deque<Vector<char>>>(body_);
-      Vector<char> concatenated_body;
-      for (const auto& chunk : raw_body) {
-        concatenated_body.AppendVector(chunk);
-      }
+    if (absl::holds_alternative<SegmentedBuffer>(body_)) {
+      const SegmentedBuffer& raw_body = absl::get<SegmentedBuffer>(body_);
+      const Vector<char> concatenated_body = raw_body.CopyAs<Vector<char>>();
       EXPECT_THAT(concatenated_body, testing::ElementsAreArray(expected_body));
     } else {
       CHECK(absl::holds_alternative<mojo::ScopedDataPipeConsumerHandle>(body_));
@@ -874,6 +914,7 @@ class DummyBackgroundResponseProcessorClient
   }
 
  private:
+  scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner_;
   base::RunLoop run_loop_;
   network::mojom::URLResponseHeadPtr head_;
   BackgroundResponseProcessor::BodyVariant body_;
@@ -883,7 +924,7 @@ class DummyBackgroundResponseProcessorClient
 class DummyCachedMetadataSender : public CachedMetadataSender {
  public:
   DummyCachedMetadataSender() = default;
-  void Send(CodeCacheHost*, const uint8_t*, size_t) override {}
+  void Send(CodeCacheHost*, base::span<const uint8_t>) override {}
   bool IsServedFromCacheStorage() override { return false; }
 };
 
@@ -931,34 +972,45 @@ network::mojom::URLResponseHeadPtr CreateURLResponseHead(
 
 class BackgroundResourceScriptStreamerTest : public testing::Test {
  public:
-  BackgroundResourceScriptStreamerTest()
+  explicit BackgroundResourceScriptStreamerTest(
+      bool enable_background_code_cache_decode_start = false)
       : url_(String("http://streaming-test.example.com/foo" +
                     base::NumberToString(url_counter_++))) {
     feature_list_.InitWithFeaturesAndParameters(
         {{features::kBackgroundResourceFetch,
-          {{"background-response-processor", "true"}}}},
+          {{"background-script-response-processor", "true"},
+           {"background-code-cache-decoder-start",
+            enable_background_code_cache_decode_start ? "true" : "false"}}}},
         {});
   }
   ~BackgroundResourceScriptStreamerTest() override = default;
 
+  void TearDown() override {
+    RunInBackgroundThred(base::BindLambdaForTesting(
+        [&]() { background_response_processor_.reset(); }));
+  }
+
  protected:
   void Init(v8::Isolate* isolate,
             bool is_module_script = false,
-            std::optional<WTF::TextEncoding> charset = std::nullopt) {
+            std::optional<WTF::TextEncoding> charset = std::nullopt,
+            v8_compile_hints::V8CrowdsourcedCompileHintsConsumer*
+                v8_compile_hints_consumer = nullptr) {
     auto* properties = MakeGarbageCollected<TestResourceFetcherProperties>();
     FetchContext* context = MakeGarbageCollected<MockFetchContext>();
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner =
+    scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner =
         scheduler::GetSingleThreadTaskRunnerForTesting();
     DummyLoaderFactory* dummy_loader_factory =
         MakeGarbageCollected<DummyLoaderFactory>();
     auto* fetcher = MakeGarbageCollected<ResourceFetcher>(ResourceFetcherInit(
-        properties->MakeDetachable(), context, task_runner, task_runner,
-        dummy_loader_factory,
+        properties->MakeDetachable(), context, main_thread_task_runner,
+        main_thread_task_runner, dummy_loader_factory,
         MakeGarbageCollected<MockContextLifecycleNotifier>(),
         nullptr /* back_forward_cache_loader_helper */));
 
-    EXPECT_EQ(mojo::CreateDataPipe(nullptr, producer_handle_, consumer_handle_),
-              MOJO_RESULT_OK);
+    EXPECT_EQ(
+        mojo::CreateDataPipe(kDataPipeSize, producer_handle_, consumer_handle_),
+        MOJO_RESULT_OK);
 
     ResourceRequest request(url_);
     request.SetRequestContext(mojom::blink::RequestContextType::SCRIPT);
@@ -974,21 +1026,23 @@ class BackgroundResourceScriptStreamerTest : public testing::Test {
     }
     constexpr v8_compile_hints::V8CrowdsourcedCompileHintsProducer*
         kNoCompileHintsProducer = nullptr;
-    constexpr v8_compile_hints::V8CrowdsourcedCompileHintsConsumer*
-        kNoCompileHintsConsumer = nullptr;
-    resource_ =
-        ScriptResource::Fetch(params, fetcher, resource_client_, isolate,
-                              ScriptResource::kAllowStreaming,
-                              kNoCompileHintsProducer, kNoCompileHintsConsumer);
-    resource_->AddClient(resource_client_, task_runner.get());
+    constexpr bool kNoV8CompileHintsMagicCommentRuntimeEnabled = false;
+    resource_ = ScriptResource::Fetch(
+        params, fetcher, resource_client_, isolate,
+        ScriptResource::kAllowStreaming, kNoCompileHintsProducer,
+        v8_compile_hints_consumer, kNoV8CompileHintsMagicCommentRuntimeEnabled);
+    resource_->AddClient(resource_client_, main_thread_task_runner.get());
 
     CHECK(dummy_loader_factory->load_started());
-    background_response_processor_ =
-        dummy_loader_factory->GetBackgroundResponseProcessor();
-
     background_resource_fetch_task_runner_ =
         base::ThreadPool::CreateSequencedTaskRunner(
             {base::TaskPriority::USER_BLOCKING});
+
+    RunInBackgroundThred(base::BindLambdaForTesting([&]() {
+      std::unique_ptr<BackgroundResponseProcessorFactory> factory =
+          dummy_loader_factory->TakeBackgroundResponseProcessorFactory();
+      background_response_processor_ = std::move(*factory).Create();
+    }));
   }
 
   ClassicScript* CreateClassicScript() const {
@@ -996,7 +1050,7 @@ class BackgroundResourceScriptStreamerTest : public testing::Test {
   }
 
  protected:
-  void AppendData(const char* data) {
+  void AppendData(std::string_view data) {
     AppendDataToDataPipe(data, producer_handle_);
   }
 
@@ -1057,8 +1111,9 @@ class BackgroundResourceScriptStreamerTest : public testing::Test {
   Persistent<ScriptResource> resource_;
   mojo::ScopedDataPipeProducerHandle producer_handle_;
   mojo::ScopedDataPipeConsumerHandle consumer_handle_;
-  scoped_refptr<BackgroundResponseProcessor> background_response_processor_;
+  std::unique_ptr<BackgroundResponseProcessor> background_response_processor_;
   DummyBackgroundResponseProcessorClient background_response_processor_client_;
+
   scoped_refptr<base::SequencedTaskRunner>
       background_resource_fetch_task_runner_;
   base::test::ScopedFeatureList feature_list_;
@@ -1111,6 +1166,53 @@ TEST_F(BackgroundResourceScriptStreamerTest, HasCodeCache) {
     EXPECT_THAT(*cached_metadata,
                 testing::ElementsAreArray(code_cache_data_copy));
   }));
+  Finish();
+  RunUntilResourceLoaded();
+  // When there is a code cache, we should not stream the script.
+  CheckNotStreamingReason(
+      ScriptStreamer::NotStreamingReason::kHasCodeCacheBackground);
+}
+
+class BackgroundResourceScriptStreamerCodeCacheDecodeStartTest
+    : public BackgroundResourceScriptStreamerTest {
+ public:
+  BackgroundResourceScriptStreamerCodeCacheDecodeStartTest()
+      : BackgroundResourceScriptStreamerTest(
+            /*enable_background_code_cache_decode_start=*/true) {}
+  ~BackgroundResourceScriptStreamerCodeCacheDecodeStartTest() override =
+      default;
+};
+
+TEST_F(BackgroundResourceScriptStreamerCodeCacheDecodeStartTest, HasCodeCache) {
+  V8TestingScope scope;
+  Init(scope.GetIsolate());
+  mojo_base::BigBuffer code_cache_data = CreateDummyCodeCacheData();
+  const std::vector<uint8_t> code_cache_data_copy(
+      code_cache_data.data(), code_cache_data.data() + code_cache_data.size());
+  RunInBackgroundThred(base::BindLambdaForTesting([&]() {
+    network::mojom::URLResponseHeadPtr head = CreateURLResponseHead();
+    // Set charset to make the code cache valid.
+    head->charset = "utf-8";
+    // Set a dummy code cache data.
+    std::optional<mojo_base::BigBuffer> cached_metadata =
+        std::move(code_cache_data);
+    EXPECT_TRUE(background_response_processor_->MaybeStartProcessingResponse(
+        head, consumer_handle_, cached_metadata,
+        background_resource_fetch_task_runner_,
+        &background_response_processor_client_));
+    EXPECT_FALSE(head);
+    EXPECT_FALSE(consumer_handle_);
+    ASSERT_TRUE(cached_metadata);
+    EXPECT_EQ(cached_metadata->size(), 0u);
+  }));
+  AppendData(kLargeEnoughScript);
+  producer_handle_.reset();
+  background_response_processor_client_.WaitUntilFinished();
+  // Checking that the code cache data is passed to the finish callback.
+  background_response_processor_client_.CheckResultOfFinishCallback(
+      /*expected_body=*/base::make_span(kLargeEnoughScript,
+                                        sizeof(kLargeEnoughScript) - 1),
+      /*expected_cached_metadata=*/code_cache_data_copy);
   Finish();
   RunUntilResourceLoaded();
   // When there is a code cache, we should not stream the script.
@@ -1493,7 +1595,7 @@ TEST_F(BackgroundResourceScriptStreamerTest, CancelWhileWaitingForDataPipe) {
   }));
   Cancel();
   RunInBackgroundThred(base::BindLambdaForTesting(
-      [&]() { background_response_processor_->Cancel(); }));
+      [&]() { background_response_processor_.reset(); }));
   producer_handle_.reset();
   // Cancelling the background response processor while waiting for data pipe
   // should not cause any crash.
@@ -1505,7 +1607,7 @@ TEST_F(BackgroundResourceScriptStreamerTest, CancelBeforeReceiveResponse) {
   Init(scope.GetIsolate());
   Cancel();
   RunInBackgroundThred(base::BindLambdaForTesting(
-      [&]() { background_response_processor_->Cancel(); }));
+      [&]() { background_response_processor_.reset(); }));
   // Cancelling the background response processor before receiving response
   // should not cause any crash.
   task_environment_.RunUntilIdle();
@@ -1529,7 +1631,7 @@ TEST_F(BackgroundResourceScriptStreamerTest, CancelWhileRuningStreamingTask) {
   AppendData(kLargeEnoughScript);
   Cancel();
   RunInBackgroundThred(base::BindLambdaForTesting(
-      [&]() { background_response_processor_->Cancel(); }));
+      [&]() { background_response_processor_.reset(); }));
   producer_handle_.reset();
   // Cancelling the background response processor while running streaming task
   // should not cause any crash.
@@ -1622,6 +1724,144 @@ TEST_F(BackgroundResourceScriptStreamerTest,
                    compile_options, no_cache_reason)
                    .ToLocal(&script));
   EXPECT_TRUE(try_catch.HasCaught());
+}
+
+// Regression test for https://crbug.com/337998760.
+TEST_F(BackgroundResourceScriptStreamerTest, DataPipeReadableAfterGC) {
+  V8TestingScope scope;
+  Init(scope.GetIsolate());
+  RunInBackgroundThred(base::BindLambdaForTesting([&]() {
+    network::mojom::URLResponseHeadPtr head = CreateURLResponseHead();
+    std::optional<mojo_base::BigBuffer> cached_metadata;
+    EXPECT_TRUE(background_response_processor_->MaybeStartProcessingResponse(
+        head, consumer_handle_, cached_metadata,
+        background_resource_fetch_task_runner_,
+        &background_response_processor_client_));
+    EXPECT_FALSE(head);
+    EXPECT_FALSE(consumer_handle_);
+    EXPECT_FALSE(cached_metadata);
+  }));
+
+  // Start blocking the background thread.
+  base::WaitableEvent waitable_event;
+  background_resource_fetch_task_runner_->PostTask(
+      FROM_HERE, base::BindLambdaForTesting([&]() {
+        base::ScopedAllowBaseSyncPrimitivesForTesting allow_wait;
+        waitable_event.Wait();
+      }));
+
+  // Resetting `producer_handle_` will triggers OnDataPipeReadable() on the
+  // background thread. But the background thread is still blocked by the
+  // `waitable_event`.
+  producer_handle_.reset();
+
+  Cancel();
+
+  resource_ = nullptr;
+  resource_client_ = nullptr;
+  ThreadState::Current()->CollectAllGarbageForTesting();
+
+  // Unblock the background thread.
+  waitable_event.Signal();
+
+  task_environment_.RunUntilIdle();
+}
+
+TEST_F(BackgroundResourceScriptStreamerTest,
+       DataPipeReadableAfterProcessorIsDeleted) {
+  V8TestingScope scope;
+  Init(scope.GetIsolate());
+  RunInBackgroundThred(base::BindLambdaForTesting([&]() {
+    network::mojom::URLResponseHeadPtr head = CreateURLResponseHead();
+    std::optional<mojo_base::BigBuffer> cached_metadata;
+    EXPECT_TRUE(background_response_processor_->MaybeStartProcessingResponse(
+        head, consumer_handle_, cached_metadata,
+        background_resource_fetch_task_runner_,
+        &background_response_processor_client_));
+    EXPECT_FALSE(head);
+    EXPECT_FALSE(consumer_handle_);
+    EXPECT_FALSE(cached_metadata);
+  }));
+
+  // Start blocking the background thread.
+  base::WaitableEvent waitable_event;
+  background_resource_fetch_task_runner_->PostTask(
+      FROM_HERE, base::BindLambdaForTesting([&]() {
+        base::ScopedAllowBaseSyncPrimitivesForTesting allow_wait;
+        waitable_event.Wait();
+        // Delete `background_response_processor_` before SimpleWatcher calls
+        // OnDataPipeReadable().
+        background_response_processor_.reset();
+      }));
+
+  // Resetting `producer_handle_` will triggers SimpleWatcher's callback on the
+  // background thread. But the background thread is still blocked by the
+  // `waitable_event`.
+  producer_handle_.reset();
+
+  Cancel();
+
+  resource_ = nullptr;
+  resource_client_ = nullptr;
+  ThreadState::Current()->CollectAllGarbageForTesting();
+
+  // Unblock the background thread.
+  waitable_event.Signal();
+
+  task_environment_.RunUntilIdle();
+}
+
+// Regression test for https://crbug.com/341473518.
+TEST_F(BackgroundResourceScriptStreamerTest,
+       DeletingBackgroundProcessorWhileParsingShouldNotCrash) {
+  V8TestingScope scope;
+  v8_compile_hints::V8CrowdsourcedCompileHintsConsumer*
+      v8_compile_hints_consumer = MakeGarbageCollected<
+          v8_compile_hints::V8CrowdsourcedCompileHintsConsumer>();
+  Vector<int64_t> dummy_data(v8_compile_hints::kBloomFilterInt32Count / 2);
+  v8_compile_hints_consumer->SetData(dummy_data.data(), dummy_data.size());
+
+  Init(scope.GetIsolate(), /*is_module_script=*/false, /*charset=*/std::nullopt,
+       v8_compile_hints_consumer);
+  RunInBackgroundThred(base::BindLambdaForTesting([&]() {
+    network::mojom::URLResponseHeadPtr head = CreateURLResponseHead();
+    std::optional<mojo_base::BigBuffer> cached_metadata;
+    EXPECT_TRUE(background_response_processor_->MaybeStartProcessingResponse(
+        head, consumer_handle_, cached_metadata,
+        background_resource_fetch_task_runner_,
+        &background_response_processor_client_));
+  }));
+
+  std::string comment_line =
+      base::StrCat({std::string(kDataPipeSize - 1, '/'), "\n"});
+  AppendData(comment_line);
+
+  RunInBackgroundThred(base::BindLambdaForTesting([&]() {
+    // Call YieldCurrentThread() until the parser thread reads the
+    // `comment_line` form the data pipe.
+    while (!producer_handle_->QuerySignalsState().writable()) {
+      test::YieldCurrentThread();
+    }
+    const std::string kFunctionScript = "function a() {console.log('');}";
+    const std::string function_line = base::StrCat(
+        {kFunctionScript,
+         std::string(kDataPipeSize - kFunctionScript.size(), '/')});
+    MojoResult result =
+        producer_handle_->WriteAllData(base::as_byte_span(function_line));
+    EXPECT_EQ(result, MOJO_RESULT_OK);
+    // Busyloop until the parser thread reads the `function_line` form the data
+    // pipe.
+    while (!producer_handle_->QuerySignalsState().writable()) {
+    }
+    // Delete the BackgroundProcessor. This is intended to make sure that
+    // deleting the BackgroundProcessor while the parser thread is parsing the
+    // script should not cause a crash.
+    background_response_processor_.reset();
+  }));
+
+  producer_handle_.reset();
+
+  task_environment_.RunUntilIdle();
 }
 
 }  // namespace blink

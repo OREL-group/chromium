@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/views/intent_picker_bubble_view.h"
 
+#include <string_view>
 #include <utility>
 
 #include "base/auto_reset.h"
@@ -13,7 +14,6 @@
 #include "base/functional/bind.h"
 #include "base/i18n/rtl.h"
 #include "base/ranges/algorithm.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
@@ -38,6 +38,7 @@
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/models/image_model.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/color/color_id.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/gfx/geometry/insets.h"
@@ -142,7 +143,13 @@ class IntentPickerAppGridButton : public views::Button {
     name_label->SetVerticalAlignment(gfx::VerticalAlignment::ALIGN_TOP);
 
     SetFocusBehavior(FocusBehavior::ALWAYS);
-    SetAccessibleName(name_label->GetText());
+    GetViewAccessibility().SetRole(ax::mojom::Role::kRadioButton);
+    GetViewAccessibility().SetCheckedState(
+        selected_ ? ax::mojom::CheckedState::kTrue
+                  : ax::mojom::CheckedState::kFalse);
+    // TODO(crbug.com/325137417): `SetName` should be called whenever the
+    // `name_label` text changes, not just in the constructor.
+    GetViewAccessibility().SetName(name_label->GetText());
     SetPreferredSize(gfx::Size(kGridItemPreferredSize, kGridItemPreferredSize));
 
     SetGroup(kGridItemGroupId);
@@ -155,17 +162,14 @@ class IntentPickerAppGridButton : public views::Button {
   void SetSelected(bool selected) {
     selected_ = selected;
     UpdateBackground();
-    NotifyAccessibilityEvent(ax::mojom::Event::kCheckedStateChanged, true);
+    GetViewAccessibility().SetCheckedState(
+        selected_ ? ax::mojom::CheckedState::kTrue
+                  : ax::mojom::CheckedState::kFalse);
   }
 
   // views::Button:
   void StateChanged(ButtonState old_state) override { UpdateBackground(); }
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override {
-    Button::GetAccessibleNodeData(node_data);
-    node_data->role = ax::mojom::Role::kRadioButton;
-    node_data->SetCheckedState(selected_ ? ax::mojom::CheckedState::kTrue
-                                         : ax::mojom::CheckedState::kFalse);
-  }
+
   bool IsGroupFocusTraversable() const override { return false; }
   views::View* GetSelectedViewForGroup(int group) override {
     if (group != kGridItemGroupId)
@@ -339,7 +343,7 @@ class IntentPickerLabelButton : public views::LabelButton {
                           const ui::ImageModel& icon_model,
                           const std::string& display_name)
       : LabelButton(std::move(callback),
-                    base::UTF8ToUTF16(base::StringPiece(display_name))) {
+                    base::UTF8ToUTF16(std::string_view(display_name))) {
     SetHorizontalAlignment(gfx::ALIGN_LEFT);
     if (!icon_model.IsEmpty())
       SetImageModel(views::ImageButton::STATE_NORMAL, icon_model);
@@ -417,8 +421,9 @@ class IntentPickerAppListView
 
   void OnKeyEvent(ui::KeyEvent* event) override {
     if (!IsKeyboardCodeArrow(event->key_code()) ||
-        event->type() != ui::ET_KEY_RELEASED)
+        event->type() != ui::EventType::kKeyReleased) {
       return;
+    }
 
     int delta = 0;
     switch (event->key_code()) {
@@ -435,7 +440,7 @@ class IntentPickerAppListView
         delta = base::i18n::IsRTL() ? -1 : 1;
         break;
       default:
-        NOTREACHED_NORETURN();
+        NOTREACHED();
     }
 
     SetSelectedAppIndex(CalculateNextAppIndex(delta), nullptr);
@@ -633,16 +638,17 @@ IntentPickerBubbleView::IntentPickerBubbleView(
       bubble_type_(bubble_type),
       initiating_origin_(initiating_origin) {
   SetButtons(show_stay_in_chrome_
-                 ? (ui::DIALOG_BUTTON_OK | ui::DIALOG_BUTTON_CANCEL)
-                 : ui::DIALOG_BUTTON_OK);
+                 ? static_cast<int>(ui::mojom::DialogButton::kOk) |
+                       static_cast<int>(ui::mojom::DialogButton::kCancel)
+                 : static_cast<int>(ui::mojom::DialogButton::kOk));
   SetButtonLabel(
-      ui::DIALOG_BUTTON_OK,
+      ui::mojom::DialogButton::kOk,
       l10n_util::GetStringUTF16(
           bubble_type_ == BubbleType::kClickToCall
               ? IDS_BROWSER_SHARING_CLICK_TO_CALL_DIALOG_CALL_BUTTON_LABEL
               : IDS_INTENT_PICKER_BUBBLE_VIEW_OPEN));
   SetButtonLabel(
-      ui::DIALOG_BUTTON_CANCEL,
+      ui::mojom::DialogButton::kCancel,
       l10n_util::GetStringUTF16(IDS_INTENT_PICKER_BUBBLE_VIEW_STAY_IN_CHROME));
   SetAcceptCallback(base::BindOnce(&IntentPickerBubbleView::OnDialogAccepted,
                                    base::Unretained(this)));
@@ -674,7 +680,7 @@ void IntentPickerBubbleView::OnWidgetDestroying(views::Widget* widget) {
 
 void IntentPickerBubbleView::OnAppSelected(std::optional<size_t> index,
                                            bool accepted) {
-  SetButtonEnabled(ui::DIALOG_BUTTON_OK, index.has_value());
+  SetButtonEnabled(ui::mojom::DialogButton::kOk, index.has_value());
 
   if (index.has_value()) {
     UpdateCheckboxState(index.value());

@@ -196,7 +196,7 @@ blink::mojom::StreamDevices CreateFakeDevice(
   else if (blink::IsVideoInputMediaType(param.stream_type))
     fake_devices.video_device = device;
   else
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
 
   return fake_devices;
 }
@@ -263,7 +263,7 @@ TEST_P(MediaStreamCaptureIndicatorObserverMethodTest, AddAndRemoveDevice) {
   ::testing::Mock::VerifyAndClear(observer());
 }
 
-// TODO(crbug.com/1479984): re-enable once the bug is fixed.
+// TODO(crbug.com/40071631): re-enable once the bug is fixed.
 TEST_P(MediaStreamCaptureIndicatorObserverMethodTest,
        DISABLED_StopMediaCapturing) {
   const ObserverMethodTestParam& param = GetParam();

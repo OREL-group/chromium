@@ -30,6 +30,7 @@ import {TAG_NAME as DriveOutOfIndividualSpaceBanner} from './ui/banners/drive_ou
 import {TAG_NAME as DriveOutOfOrganizationSpaceBanner} from './ui/banners/drive_out_of_organization_space_banner.js';
 import {TAG_NAME as DriveOutOfSharedDriveSpaceBanner} from './ui/banners/drive_out_of_shared_drive_space_banner.js';
 import {TAG_NAME as DriveWelcomeBannerTagName} from './ui/banners/drive_welcome_banner.js';
+import {TAG_NAME as FilesMigratingToCloudBannerTagName} from './ui/banners/files_migrating_to_cloud_banner.js';
 import {TAG_NAME as GoogleOneOfferBannerTagName} from './ui/banners/google_one_offer_banner.js';
 import {TAG_NAME as HoldingSpaceWelcomeBannerTagName} from './ui/banners/holding_space_welcome_banner.js';
 import {TAG_NAME as InvalidUsbFileSystemBannerTagName} from './ui/banners/invalid_usb_filesystem_banner.js';
@@ -252,6 +253,12 @@ export class BannerController extends EventTarget {
    */
   private bulkPinningEnabled_ = false;
 
+  /**
+   * SkyVault migration destination. If set, one of {Google Drive, OneDrive}.
+   */
+  private migrationDestination_: chrome.fileManagerPrivate.CloudProvider =
+      chrome.fileManagerPrivate.CloudProvider.NOT_SPECIFIED;
+
   constructor(
       private directoryModel_: DirectoryModel,
       private volumeManager_: VolumeManager, private crostini_: Crostini,
@@ -277,9 +284,11 @@ export class BannerController extends EventTarget {
   private onPreferencesChanged_() {
     chrome.fileManagerPrivate.getPreferences(pref => {
       if (this.bulkPinningAvailable_ !== pref.driveFsBulkPinningAvailable ||
-          this.bulkPinningEnabled_ !== pref.driveFsBulkPinningEnabled) {
+          this.bulkPinningEnabled_ !== pref.driveFsBulkPinningEnabled ||
+          this.migrationDestination_ !== pref.skyVaultMigrationDestination) {
         this.bulkPinningAvailable_ = pref.driveFsBulkPinningAvailable;
         this.bulkPinningEnabled_ = pref.driveFsBulkPinningEnabled;
+        this.migrationDestination_ = pref.skyVaultMigrationDestination;
         this.reconcile();
       }
     });
@@ -311,6 +320,7 @@ export class BannerController extends EventTarget {
       // Banners are initialized in their priority order. The order of the array
       // denotes the priority of the banner, 0th index is highest priority.
       this.setWarningBannersInOrder([
+        FilesMigratingToCloudBannerTagName,
         LocalDiskLowSpaceBannerTagName,
         DriveOutOfOrganizationSpaceBanner,
         DriveOutOfSharedDriveSpaceBanner,
@@ -420,6 +430,12 @@ export class BannerController extends EventTarget {
             (this.volumeManager_.hasDisabledVolumes() ||
              this.hasDlpDisabledFiles_),
         context: () => ({type: this.dialogType_}),
+      });
+
+      this.registerCustomBannerFilter(FilesMigratingToCloudBannerTagName, {
+        shouldShow: () => this.migrationDestination_ !==
+            chrome.fileManagerPrivate.CloudProvider.NOT_SPECIFIED,
+        context: () => ({cloudProvider: this.migrationDestination_}),
       });
     }
 

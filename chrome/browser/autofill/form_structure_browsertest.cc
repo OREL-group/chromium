@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/autofill/core/browser/form_structure.h"
+
 #include <algorithm>
 #include <vector>
 
@@ -30,7 +32,7 @@
 #include "components/autofill/core/browser/autofill_experiments.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/browser_autofill_manager.h"
-#include "components/autofill/core/browser/form_structure.h"
+#include "components/autofill/core/browser/heuristic_source.h"
 #include "components/autofill/core/browser/test_autofill_manager_waiter.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/autofill_payments_features.h"
@@ -113,8 +115,8 @@ std::string FormStructuresToString(
     std::string string_form;
     std::map<std::string, int> section_to_index;
     for (const auto& field : *form_structure) {
-      std::string section = field->section.ToString();
-      if (field->section.is_from_fieldidentifier()) {
+      std::string section = field->section().ToString();
+      if (field->section().is_from_fieldidentifier()) {
         // Normalize the section by replacing the unique but platform-dependent
         // integers in `field->section` with consecutive unique integers.
         // The section string is of the form "fieldname_id1_id2", where id1, id2
@@ -144,8 +146,6 @@ std::string FormStructuresToString(
   sort(string_forms.begin(), string_forms.end());
   return base::JoinString(string_forms, "\n");
 }
-
-}  // namespace
 
 // A data-driven test for verifying Autofill heuristics. Each input is an HTML
 // file that contains one or more forms. The corresponding output file lists the
@@ -206,31 +206,19 @@ FormStructureBrowserTest::FormStructureBrowserTest()
   feature_list_.InitWithFeatures(
       // Enabled
       {
-          // TODO(crbug.com/40128551) Remove once launched.
-          features::kAutofillUseNewSectioningMethod,
-          // TODO(crbug.com/40160818) Remove once launched.
-          features::kAutofillEnableDependentLocalityParsing,
-          // TODO(crbug.com/40158074) Remove once launched.
-          features::kAutofillParsingPatternProvider,
           features::kAutofillPageLanguageDetection,
           // TODO(crbug.com/40741721): Remove once shared labels are launched.
           features::kAutofillEnableSupportForParsingWithSharedLabels,
           // TODO(crbug.com/40230674): Remove once launched.
           features::kAutofillParseVcnCardOnFileStandaloneCvcFields,
-          // TODO(crbug.com/1311937): Remove once launched.
+          // TODO(crbug.com/40220393): Remove once launched.
           features::kAutofillEnableSupportForPhoneNumberTrunkTypes,
           features::kAutofillInferCountryCallingCode,
           // TODO(crbug.com/40266396): Remove once launched.
           features::kAutofillEnableExpirationDateImprovements,
-          // TODO(crbug.com/40279279): Clean up when launched.
-          features::kAutofillDefaultToCityAndNumber,
-          // TODO(b/40204601): Clean up when launched.
-          blink::features::kAutofillIncludeFormElementsInShadowDom,
-          blink::features::
-              kAutofillIncludeShadowDomInUnassociatedListedElements,
       },
       // Disabled
-      {// TODO(crbug.com/1311937): Remove once launched.
+      {// TODO(crbug.com/40220393): Remove once launched.
        // This feature is part of the AutofillRefinedPhoneNumberTypes rollout.
        // As it is not supported on iOS yet, it is disabled.
        features::kAutofillConsiderPhoneNumberSeparatorsValidLabels,
@@ -252,6 +240,11 @@ void FormStructureBrowserTest::SetUpCommandLine(
   command_line->AppendSwitchASCII(switches::kLoggingLevel, "2");
   command_line->AppendSwitchASCII(
       variations::switches::kVariationsOverrideCountry, "us");
+  // SelectParserRelaxation affects the results from the test data because the
+  // test data has unclosed <select> tags. Since SelectParserRelaxation is not
+  // enabled by default, we are disabling it for this test.
+  command_line->AppendSwitchASCII("disable-blink-features",
+                                  "SelectParserRelaxation");
 }
 
 void FormStructureBrowserTest::SetUpOnMainThread() {
@@ -297,12 +290,18 @@ std::unique_ptr<HttpResponse> FormStructureBrowserTest::HandleRequest(
 }
 
 // TODO(https://crbug.com/41493195): Re-enable this test
-#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_WIN)
+#if BUILDFLAG(IS_CHROMEOS_ASH) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX)
 #define MAYBE_DataDrivenHeuristics DISABLED_DataDrivenHeuristics
 #else
 #define MAYBE_DataDrivenHeuristics DataDrivenHeuristics
 #endif
 IN_PROC_BROWSER_TEST_P(FormStructureBrowserTest, MAYBE_DataDrivenHeuristics) {
+#if !BUILDFLAG(USE_INTERNAL_AUTOFILL_PATTERNS)
+  if (GetActiveHeuristicSource() != HeuristicSource::kLegacyRegexes) {
+    GTEST_SKIP() << "DataDrivenHeuristics tests are only supported with legacy "
+                    "parsing patterns";
+  }
+#endif
   // Prints the path of the test to be executed.
   LOG(INFO) << GetParam().MaybeAsASCII();
   bool is_expected_to_pass =
@@ -314,4 +313,5 @@ INSTANTIATE_TEST_SUITE_P(AllForms,
                          FormStructureBrowserTest,
                          testing::ValuesIn(GetTestFiles()));
 
+}  // namespace
 }  // namespace autofill

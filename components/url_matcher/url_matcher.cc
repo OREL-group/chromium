@@ -392,8 +392,7 @@ std::string URLMatcherConditionFactory::CanonicalizeURLForFullSearches(
   // Clear port if it is implicit from scheme.
   if (url.has_port()) {
     const std::string& port = url.scheme();
-    if (url::DefaultPortForScheme(port.c_str(), port.size()) ==
-        url.EffectiveIntPort()) {
+    if (url::DefaultPortForScheme(port) == url.EffectiveIntPort()) {
       replacements.ClearPort();
     }
   }
@@ -412,8 +411,7 @@ static std::string CanonicalizeURLForRegexSearchesHelper(const GURL& url,
   // Clear port if it is implicit from scheme.
   if (url.has_port()) {
     const std::string& port = url.scheme();
-    if (url::DefaultPortForScheme(port.c_str(), port.size()) ==
-        url.EffectiveIntPort()) {
+    if (url::DefaultPortForScheme(port) == url.EffectiveIntPort()) {
       replacements.ClearPort();
     }
   }
@@ -677,7 +675,7 @@ bool URLQueryElementMatcherCondition::IsMatch(
                                                 value_length_, value_) == 0;
     }
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return false;
 }
 
@@ -916,6 +914,7 @@ std::set<base::MatcherStringPattern::ID> URLMatcher::MatchURL(
         triggered_condition_sets_iter->second;
     for (auto j = condition_sets.begin(); j != condition_sets.end(); ++j) {
       auto condition_set_iter = url_matcher_condition_sets_.find(*j);
+      // Expensive: DCHECK as this is a tight loop.
       DCHECK(condition_set_iter != url_matcher_condition_sets_.end());
       if (condition_set_iter->second->IsMatch(matches, url,
                                               url_for_component_searches))

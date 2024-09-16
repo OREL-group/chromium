@@ -2,10 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/341324165): Fix and remove.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "content/web_test/browser/web_test_control_host.h"
-#include "base/files/file_path.h"
-#include "base/files/file_util.h"
-#include "base/memory/raw_ptr.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -23,11 +25,14 @@
 #include "base/base64.h"
 #include "base/command_line.h"
 #include "base/containers/contains.h"
+#include "base/files/file_path.h"
+#include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/memory/raw_ptr.h"
 #include "base/path_service.h"
 #include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
@@ -44,6 +49,7 @@
 #include "components/custom_handlers/simple_protocol_handler_registry_factory.h"
 #include "content/browser/aggregation_service/aggregation_service.h"
 #include "content/browser/attribution_reporting/attribution_manager.h"
+#include "content/browser/in_memory_federated_permission_context.h"
 #include "content/browser/renderer_host/frame_tree.h"
 #include "content/browser/renderer_host/frame_tree_node.h"
 #include "content/browser/renderer_host/navigation_request.h"
@@ -74,7 +80,6 @@
 #include "content/shell/browser/shell_content_browser_client.h"
 #include "content/shell/browser/shell_content_index_provider.h"
 #include "content/shell/browser/shell_devtools_frontend.h"
-#include "content/shell/browser/shell_federated_permission_context.h"
 #include "content/test/mock_platform_notification_service.h"
 #include "content/test/storage_partition_test_helpers.h"
 #include "content/web_test/browser/devtools_protocol_test_bindings.h"
@@ -86,11 +91,13 @@
 #include "content/web_test/browser/web_test_devtools_bindings.h"
 #include "content/web_test/browser/web_test_first_device_bluetooth_chooser.h"
 #include "content/web_test/browser/web_test_permission_manager.h"
+#include "content/web_test/browser/web_test_pressure_manager.h"
 #include "content/web_test/common/web_test_constants.h"
 #include "content/web_test/common/web_test_string_util.h"
 #include "content/web_test/common/web_test_switches.h"
 #include "ipc/ipc_channel_proxy.h"
 #include "mojo/public/cpp/bindings/sync_call_restrictions.h"
+#include "services/device/public/cpp/compute_pressure/buildflags.h"
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/mojom/clear_data_filter.mojom.h"
 #include "services/network/public/mojom/network_context.mojom.h"
@@ -597,7 +604,7 @@ void WebTestControlHost::PrepareForWebTest(const TestInfo& test_info) {
     // This forces SetSize() not to early return which would otherwise happen
     // when we set the size to |window_size| which is the same as its current
     // size. See http://crbug.com/1011191 for more details.
-    // TODO(crbug.com/309760): This resize to half-size could go away if
+    // TODO(crbug.com/41067256): This resize to half-size could go away if
     // testRunner.useUnfortunateSynchronousResizeMode() goes away.
     main_window_->web_contents()->GetRenderWidgetHostView()->DisableAutoResize(
         gfx::Size());
@@ -616,8 +623,8 @@ void WebTestControlHost::PrepareForWebTest(const TestInfo& test_info) {
   // TODO(danakj): We no longer run web tests on android, and this is an android
   // feature, so maybe this isn't needed anymore.
   main_window_->web_contents()->UpdateBrowserControlsState(
-      cc::BrowserControlsState::kBoth, cc::BrowserControlsState::kHidden,
-      false);
+      cc::BrowserControlsState::kBoth, cc::BrowserControlsState::kHidden, false,
+      std::nullopt);
 
   // We did not track the |main_window_| RenderFrameHost during the creation of
   // |main_window_|, since we need the pointer value in this class set first. So
@@ -749,7 +756,28 @@ void WebTestControlHost::ResetBrowserAfterWebTest() {
 
   ShellBrowserContext* browser_context =
       ShellContentBrowserClient::Get()->browser_context();
-  browser_context->ResetFederatedPermissionContext();
+  static_cast<InMemoryFederatedPermissionContext*>(
+      browser_context->GetFederatedIdentityPermissionContext())
+      ->ResetForTesting();
+
+#if BUILDFLAG(ENABLE_COMPUTE_PRESSURE)
+  // Delete any ScopedVirtualPressureSourceForDevTools and
+  // WebTestPressureManager instances created by WebTestContentBrowserClient.
+  // At this point all other windows have been closed and their WebContents
+  // have been destroyed, so we only need to worry about |main_window_|.
+  //
+  // Note that if other windows were using WebTestPressureManager there might
+  // be a race condition between ScopedVirtualPressureSourceForDevTools and
+  // WebContentsPressureManagerProxy because both the latter and
+  // WebTestPressureManager inherit from WebContentsUserData so their
+  // destruction order can vary. This is not a problem though -- in the worst
+  // case, some virtual pressure sources will remain valid but unused in
+  // //services during content_shell's lifetime.
+  if (main_window_) {
+    main_window_->web_contents()->RemoveUserData(
+        WebTestPressureManager::UserDataKey());
+  }
+#endif  // BUILDFLAG(ENABLE_COMPUTE_PRESSURE)
 
   // Delete all cookies, Attribution Reporting data and Aggregation service data
   {
@@ -1022,7 +1050,7 @@ bool WebTestControlHost::IsMainWindow(WebContents* web_contents) const {
 std::unique_ptr<BluetoothChooser> WebTestControlHost::RunBluetoothChooser(
     RenderFrameHost* frame,
     const BluetoothChooser::EventHandler& event_handler) {
-  // TODO(https://crbug.com/509038): Remove |bluetooth_chooser_factory_| once
+  // TODO(crbug.com/40426301): Remove |bluetooth_chooser_factory_| once
   // all of the Web Bluetooth tests are migrated to external/wpt/.
   if (bluetooth_chooser_factory_) {
     return bluetooth_chooser_factory_->RunBluetoothChooser(frame,
@@ -1181,9 +1209,7 @@ void WebTestControlHost::DiscardMainWindow() {
   // has been destroyed. Then we dare not call Shell::Close() on the
   // |main_window_|.
   // 2. Some other fatal error has occurred. We can't tell this apart from the
-  // Shell destroying, since that is also something a test can do, and
-  // destroying the WebContents can also happen in order ways (like activating a
-  // portal).
+  // Shell destroying, since that is also something a test can do.
   //
   // Since we can't tell at this point if |main_window_| is okay to use, we
   // don't touch it, and we stop observing its WebContents.
@@ -1320,8 +1346,9 @@ void WebTestControlHost::OnTestFinished() {
                             barrier_closure);
 }
 
-void WebTestControlHost::OnDumpFrameLayoutResponse(int frame_tree_node_id,
-                                                   const std::string& dump) {
+void WebTestControlHost::OnDumpFrameLayoutResponse(
+    FrameTreeNodeId frame_tree_node_id,
+    const std::string& dump) {
   // Store the result.
   auto pair = frame_to_layout_dump_map_.emplace(frame_tree_node_id, dump);
   bool insertion_took_place = pair.second;
@@ -1377,7 +1404,7 @@ void WebTestControlHost::ReportResults() {
   else if (renderer_dump_result_->layout)
     OnTextDump(*renderer_dump_result_->layout);
   else
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
 
   // Use the browser-generated |pixel_dump_| if present, else use the
   // renderer's.
@@ -1427,7 +1454,7 @@ void WebTestControlHost::OnImageDump(const std::string& actual_pixel_hash,
         pixel_format = gfx::PNGCodec::FORMAT_RGBA;
         break;
       default:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
         return;
     }
 
@@ -1534,7 +1561,7 @@ void WebTestControlHost::SetPermission(const std::string& name,
   } else if (name == "top-level-storage-access") {
     type = blink::PermissionType::TOP_LEVEL_STORAGE_ACCESS;
   } else {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     type = blink::PermissionType::NOTIFICATIONS;
   }
 
@@ -1578,9 +1605,8 @@ class FakeSelectFileDialog : public ui::SelectFileDialog {
                       int file_type_index,
                       const base::FilePath::StringType& default_extension,
                       gfx::NativeWindow owning_window,
-                      void* params,
                       const GURL* caller) override {
-    listener_->FileSelected(ui::SelectedFileInfo(result_), 0, params);
+    listener_->FileSelected(ui::SelectedFileInfo(result_), 0);
   }
 
   bool IsRunning(gfx::NativeWindow owning_window) const override {
@@ -1686,9 +1712,11 @@ void WebTestControlHost::ClearAllDatabases() {
   scoped_refptr<storage::DatabaseTracker> db_tracker =
       base::WrapRefCounted(storage_partition->GetDatabaseTracker());
 
-  base::SequencedTaskRunner* task_runner = db_tracker->task_runner();
-  task_runner->PostTask(FROM_HERE, base::BindOnce(run_on_database_sequence,
-                                                  std::move(db_tracker)));
+  if (db_tracker) {
+    base::SequencedTaskRunner* task_runner = db_tracker->task_runner();
+    task_runner->PostTask(FROM_HERE, base::BindOnce(run_on_database_sequence,
+                                                    std::move(db_tracker)));
+  }
 }
 
 void WebTestControlHost::SimulateWebNotificationClick(
@@ -1877,7 +1905,7 @@ void WebTestControlHost::SetRegisterProtocolHandlerMode(
           custom_handlers::RphRegistrationMode::kAutoReject);
       return;
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 void WebTestControlHost::GoToOffset(int offset) {

@@ -8,8 +8,8 @@
 #include <initializer_list>
 #include <memory>
 #include <string>
+#include <string_view>
 
-#include "base/strings/string_piece.h"
 #include "build/chromeos_buildflags.h"
 #include "chrome/test/base/mixin_based_in_process_browser_test.h"
 #include "google_apis/gaia/fake_gaia.h"
@@ -29,7 +29,7 @@ class CommandLine;
 //   };
 class FakeGaiaMixin : public InProcessBrowserTestMixin {
  public:
-  using UiPath = std::initializer_list<base::StringPiece>;
+  using UiPath = std::initializer_list<std::string_view>;
 
   // Default fake user email and password, may be used by tests.
   static const char kFakeUserEmail[];
@@ -83,6 +83,9 @@ class FakeGaiaMixin : public InProcessBrowserTestMixin {
   void SetupFakeGaiaForLogin(const std::string& user_email,
                              const std::string& gaia_id,
                              const std::string& refresh_token);
+
+  // Set up fake gaia for the login code with default values.
+  void SetupFakeGaiaForLoginWithDefaults();
 
   // Sets up fake gaia to serve access tokens for a child user.
   // *   Maps `user_email` to `gaia_id`. If `gaia_id` is empty, `user_email`

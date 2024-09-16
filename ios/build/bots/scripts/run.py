@@ -37,6 +37,17 @@ import wpr_runner
 import xcodebuild_runner
 import xcode_util as xcode
 
+THIS_DIR = os.path.abspath(os.path.dirname(__file__))
+CHROMIUM_SRC_DIR = os.path.abspath(os.path.join(THIS_DIR, '../../../..'))
+sys.path.extend([
+    os.path.abspath(os.path.join(CHROMIUM_SRC_DIR, 'build/util/lib/proto')),
+    os.path.abspath(os.path.join(CHROMIUM_SRC_DIR, 'build/util/'))
+])
+import measures
+import exception_recorder
+
+from result_sink_util import ResultSinkClient
+
 # if the current directory is in scripts, then we need to add plugin
 # path in order to import from that directory
 if os.path.split(os.path.dirname(__file__))[1] != 'plugin':
@@ -66,7 +77,6 @@ class Runner():
     """
     self.args = argparse.Namespace()
     self.test_args = []
-    self.should_move_xcode_runtime_to_cache = True
     # Xcode might be corruped, so this the flag to decide
     # whether we should clear it from cache
     self.should_delete_xcode_cache = False
@@ -93,26 +103,28 @@ class Runner():
     """
     Main coordinating function.
     """
-    self.parse_args(args)
-
-    # This logic is run by default before the otool command is invoked such that
-    # otool has the correct Xcode selected for command line dev tools.
-    install_success, is_legacy_xcode = xcode.install_xcode(
-        self.args.mac_toolchain_cmd, self.args.xcode_build_version,
-        self.args.xcode_path, self.args.runtime_cache_prefix, self.args.version)
-    if not install_success:
-      raise test_runner.XcodeVersionNotFoundError(self.args.xcode_build_version)
-
-    # Sharding env var is required to shard GTest.
-    env_vars = self.args.env_var + self.sharding_env_vars()
-
     summary = {}
     tr = None
-
-    if not os.path.exists(self.args.out_dir):
-      os.makedirs(self.args.out_dir)
+    is_legacy_xcode = True
+    self.parse_args(args)
 
     try:
+      with measures.time_consumption(
+          'mac_toolchain', 'Download and Install', 'Xcode and Runtime'):
+        install_success, is_legacy_xcode = xcode.install_xcode(
+            self.args.mac_toolchain_cmd, self.args.xcode_build_version,
+            self.args.xcode_path, self.args.runtime_cache_prefix,
+            self.args.version)
+      if not install_success:
+        raise test_runner_errors.XcodeInstallFailedError(
+            self.args.xcode_build_version)
+
+      # Sharding env var is required to shard GTest.
+      env_vars = self.args.env_var + self.sharding_env_vars()
+
+      if not os.path.exists(self.args.out_dir):
+        os.makedirs(self.args.out_dir)
+
       if self.args.xcodebuild_sim_runner:
         tr = xcodebuild_runner.SimulatorParallelTestRunner(
             self.args.app,
@@ -130,7 +142,7 @@ class Runner():
             test_args=self.test_args,
             use_clang_coverage=self.args.use_clang_coverage,
             env_vars=env_vars,
-            video_plugin_option=self.args.record_video,
+            record_video_option=self.args.record_video,
             output_disabled_tests=self.args.output_disabled_tests,
         )
       elif self.args.variations_seed_path != 'NO_PATH':
@@ -216,37 +228,20 @@ class Runner():
 
       logging.info("Using test runner %s" % type(tr).__name__)
       return 0 if tr.launch() else 1
-    except shard_util.ExcessShardsError as e:
-      logging.error(e)
-      summary['step_text'] = format_exception_step_text(e)
-      return 2
-    except test_runner_errors.XcodeEnumerateTestsError as e:
-      logging.error(e)
-      summary['step_text'] = format_exception_step_text(e)
-      return 2
     except test_runner.DeviceError as e:
       sys.stderr.write(traceback.format_exc())
       summary['step_text'] = format_exception_step_text(e)
       # Swarming infra marks device status unavailable for any device related
       # issue using this return code.
+      exception_recorder.register(e)
       return 3
-    except (test_runner.SimulatorNotFoundError,
-            test_runner.HostIsDownError) as e:
-      # This means there's probably some issue in simulator runtime so we don't
-      # want to cache it anymore (when it's in new Xcode format).
-      self.should_move_xcode_runtime_to_cache = False
-      sys.stderr.write(traceback.format_exc())
-      summary['step_text'] = format_exception_step_text(e)
-      return 2
-    except test_runner.MIGServerDiedError as e:
-      self.should_delete_xcode_cache = True
-      return 2
-    except test_runner.TestRunnerError as e:
+    except Exception as e:
       sys.stderr.write(traceback.format_exc())
       summary['step_text'] = format_exception_step_text(e)
       # test_runner.Launch returns 0 on success, 1 on failure, so return 2
       # on exception to distinguish between a test failure, and a failure
       # to launch the test at all.
+      exception_recorder.register(e)
       return 2
     finally:
       if tr:
@@ -267,7 +262,7 @@ class Runner():
       # and passed here via swarming.py. This argument defaults to
       # ${ISOLATED_OUTDIR}/output.json. out-dir is set to ${ISOLATED_OUTDIR}
 
-      # TODO(crbug.com/1031338) - the content of this output.json will
+      # TODO(crbug.com/40110412) - the content of this output.json will
       # work with Chromium recipe because we use the noop_merge merge script,
       # but will require structural changes to support the default gtest
       # merge script (ref: //testing/merge_scripts/standard_gtest_merge.py)
@@ -277,22 +272,15 @@ class Runner():
       with open(output_json_path, 'w') as f:
         json.dump(test_results, f)
 
-      # Move the iOS runtime back to cache dir if the Xcode package is not
-      # legacy (i.e. Xcode program & runtimes are in different CIPD packages.)
-      # and it's a simulator task.
-      if not is_legacy_xcode and self.args.version:
-        if self.should_move_xcode_runtime_to_cache:
-          runtime_cache_folder = xcode.construct_runtime_cache_folder(
-              self.args.runtime_cache_prefix, self.args.version)
-          xcode.move_runtime(runtime_cache_folder, self.args.xcode_path, False)
-        else:
-          xcode.remove_runtimes(self.args.xcode_path)
-
       if self.should_delete_xcode_cache:
         shutil.rmtree(self.args.xcode_path)
 
       test_runner.defaults_delete('com.apple.CoreSimulator',
                                   'FramebufferServerRendererPolicy')
+
+      if exception_recorder.size() > 0 or measures.size() > 0:
+        result_sink_client = ResultSinkClient()
+        result_sink_client.post_extended_properties()
 
   def parse_args(self, args):
     """Parse the args into args and test_args.
@@ -402,7 +390,7 @@ class Runner():
         type=int,
         default=constants.READLINE_TIMEOUT,
     )
-    #TODO(crbug.com/1056887): Implement this arg in infra.
+    #TODO(crbug.com/40120509): Implement this arg in infra.
     parser.add_argument(
         '--release',
         help='Indicates if this is a release build.',
@@ -597,7 +585,7 @@ class Runner():
     load_from_json(args)
     validate(args)
     merge_test_cases(args)
-    # TODO(crbug.com/1056820): |app| won't contain "Debug" or "Release" after
+    # TODO(crbug.com/40120476): |app| won't contain "Debug" or "Release" after
     # recipe migrations.
     args.release = args.release or (args.app and "Release" in args.app)
     self.args = args

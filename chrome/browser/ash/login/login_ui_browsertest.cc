@@ -3,11 +3,14 @@
 // found in the LICENSE file.
 
 #include <string>
+
 #include "ash/constants/ash_features.h"
 #include "ash/constants/ash_pref_names.h"
 #include "ash/constants/ash_switches.h"
+#include "ash/display/screen_orientation_controller_test_api.h"
 #include "ash/login/login_screen_controller.h"
 #include "ash/public/cpp/login_screen_test_api.h"
+#include "ash/public/cpp/test/shell_test_api.h"
 #include "ash/shell.h"
 #include "base/command_line.h"
 #include "base/test/scoped_feature_list.h"
@@ -34,7 +37,7 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/ui/webui/ash/login/gaia_screen_handler.h"
 #include "chrome/browser/ui/webui/ash/login/welcome_screen_handler.h"
-#include "chrome/browser/ui/webui/ash/system_web_dialog_delegate.h"
+#include "chrome/browser/ui/webui/ash/system_web_dialog/system_web_dialog_delegate.h"
 #include "chrome/common/pref_names.h"
 #include "chromeos/ash/components/dbus/dbus_thread_manager.h"
 #include "chromeos/ash/components/dbus/debug_daemon/fake_debug_daemon_client.h"
@@ -46,6 +49,7 @@
 #include "content/public/test/browser_test.h"
 #include "net/dns/mock_host_resolver.h"
 #include "ui/base/accelerators/accelerator.h"
+#include "ui/display/test/display_manager_test_api.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/events/test/event_generator.h"
@@ -76,7 +80,19 @@ IN_PROC_BROWSER_TEST_F(InterruptedAutoStartEnrollmentTest, ShowsWelcome) {
 }
 
 IN_PROC_BROWSER_TEST_F(OobeBaseTest, OobeNoExceptions) {
+  display::test::DisplayManagerTestApi display_manager(
+      ash::ShellTestApi().display_manager());
+
   test::WaitForWelcomeScreen();
+
+  // Test minimum screen size and global ResizeObservers
+  display_manager.UpdateDisplay(std::string("900x600"));
+  // Test portrait transition
+  display_manager.UpdateDisplay(std::string("600x900"));
+  ScreenOrientationControllerTestApi(
+      Shell::Get()->screen_orientation_controller())
+      .UpdateNaturalOrientation();
+
   OobeBaseTest::CheckJsExceptionErrors(0);
 }
 
@@ -194,7 +210,8 @@ class DisplayPasswordButtonTest : public LoginManagerTest {
     login_manager_mixin_.SkipPostLoginScreens();
 
     auto context = LoginManagerMixin::CreateDefaultUserContext(test_user);
-    login_manager_mixin_.LoginAndWaitForActiveSession(context);
+    login_manager_mixin_.LoginAsNewRegularUser(context);
+    login_manager_mixin_.WaitForActiveSession();
 
     ScreenLockerTester screen_locker_tester;
     screen_locker_tester.Lock();
@@ -336,7 +353,8 @@ class UserManagementDisclosureTest : public LoginManagerTest {
     login_manager_mixin_.SkipPostLoginScreens();
 
     auto context = LoginManagerMixin::CreateDefaultUserContext(test_user);
-    login_manager_mixin_.LoginAndWaitForActiveSession(context);
+    login_manager_mixin_.LoginAsNewRegularUser(context);
+    login_manager_mixin_.WaitForActiveSession();
 
     ScreenLockerTester screen_locker_tester;
     screen_locker_tester.Lock();
@@ -421,16 +439,17 @@ class UserManagementDisclosureChildTest
   ~UserManagementDisclosureChildTest() override = default;
 
  protected:
-  LoggedInUserMixin logged_in_user_mixin_{
-      &mixin_host_, LoggedInUserMixin::LogInType::kChild,
-      embedded_test_server(), this, false /*should_launch_browser*/};
+  LoggedInUserMixin logged_in_user_mixin_{&mixin_host_, /*test_base=*/this,
+                                          embedded_test_server(),
+                                          LoggedInUserMixin::LogInType::kChild};
 };
 
 // Check if the user management disclosure is hidden on the lock screen after
 // having logged a child account into a session and having locked the screen.
 IN_PROC_BROWSER_TEST_F(UserManagementDisclosureChildTest,
                        PRE_EnterpriseIconVisibleChildUser) {
-  logged_in_user_mixin_.LogInUser();
+  logged_in_user_mixin_.LogInUser(
+      {ash::LoggedInUserMixin::LoginDetails::kNoBrowserLaunch});
   ScreenLockerTester screen_locker_tester;
   screen_locker_tester.Lock();
   EXPECT_FALSE(LoginScreenTestApi::IsManagedIconShown(

@@ -6,6 +6,7 @@
 #define COMPONENTS_GUEST_VIEW_BROWSER_GUEST_VIEW_BASE_H_
 
 #include <memory>
+#include <optional>
 
 #include "base/containers/circular_deque.h"
 #include "base/memory/raw_ptr.h"
@@ -18,6 +19,7 @@
 #include "components/zoom/zoom_observer.h"
 #include "content/public/browser/browser_plugin_guest_delegate.h"
 #include "content/public/browser/global_routing_id.h"
+#include "content/public/browser/permission_result.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_contents_observer.h"
@@ -249,6 +251,11 @@ class GuestViewBase : public content::BrowserPluginGuestDelegate,
   // permission requests of the given `type`.
   virtual bool IsPermissionRequestable(ContentSettingsType type) const;
 
+  // If the GuestView overrides |type|, returns the permission result of |type|.
+  // Otherwise, returns nullopt.
+  virtual std::optional<content::PermissionResult> OverridePermissionResult(
+      ContentSettingsType type) const;
+
   content::RenderFrameHost* GetGuestMainFrame() const;
 
  protected:
@@ -275,9 +282,8 @@ class GuestViewBase : public content::BrowserPluginGuestDelegate,
   content::RenderFrameHost* GetProspectiveOuterDocument() override;
 
   // WebContentsDelegate implementation.
-  bool HandleKeyboardEvent(
-      content::WebContents* source,
-      const content::NativeWebKeyboardEvent& event) override;
+  bool HandleKeyboardEvent(content::WebContents* source,
+                           const input::NativeWebKeyboardEvent& event) override;
   bool PreHandleGestureEvent(content::WebContents* source,
                              const blink::WebGestureEvent& event) override;
 
@@ -367,7 +373,7 @@ class GuestViewBase : public content::BrowserPluginGuestDelegate,
   class OwnerContentsObserver;
   class OpenerLifetimeObserver;
 
-  // TODO(533069): Remove since BrowserPlugin has been removed.
+  // TODO(crbug.com/40436245): Remove since BrowserPlugin has been removed.
   void DidAttach();
 
   // BrowserPluginGuestDelegate implementation.
@@ -380,8 +386,7 @@ class GuestViewBase : public content::BrowserPluginGuestDelegate,
   // WebContentsDelegate implementation.
   void ActivateContents(content::WebContents* contents) final;
   void ContentsMouseEvent(content::WebContents* source,
-                          bool motion,
-                          bool exited) final;
+                          const ui::Event& event) final;
   void ContentsZoomChange(bool zoom_in) final;
   void LoadingStateChanged(content::WebContents* source,
                            bool should_show_loading_ui) final;
@@ -483,15 +488,15 @@ class GuestViewBase : public content::BrowserPluginGuestDelegate,
   // element may not match the size of the guest.
   gfx::Size guest_size_;
 
-  // When the guest is created, a guest WebContents is created and we take
-  // ownership of it here until it's ready to be attached. On attachment,
-  // ownership of the guest WebContents is taken by the embedding WebContents.
-  std::unique_ptr<content::WebContents> owned_guest_contents_;
-
   // Before attachment a GuestViewBase is owned with a unique_ptr. After
   // attachment, a GuestViewBase is self-owned and scoped to the lifetime of the
   // guest WebContents.
   bool self_owned_ = false;
+
+  // When the guest is created, a guest WebContents is created and we take
+  // ownership of it here until it's ready to be attached. On attachment,
+  // ownership of the guest WebContents is taken by the embedding WebContents.
+  std::unique_ptr<content::WebContents> owned_guest_contents_;
 
   // The params used when creating the guest contents. These are saved here in
   // case we need to recreate the guest contents. Not all guest types need to

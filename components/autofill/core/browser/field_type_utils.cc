@@ -92,9 +92,11 @@ bool IsAddressType(FieldType type) {
     case FieldTypeGroup::kPasswordField:
     case FieldTypeGroup::kTransaction:
     case FieldTypeGroup::kIban:
+    case FieldTypeGroup::kStandaloneCvcField:
+    case FieldTypeGroup::kPredictionImprovements:
       return false;
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 size_t AddressLineIndex(FieldType type) {
@@ -105,7 +107,7 @@ size_t AddressLineIndex(FieldType type) {
   if (kAddressLineIndex.contains(type)) {
     return kAddressLineIndex.at(type);
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 size_t DetermineExpirationYearLength(FieldType assumed_field_type) {
@@ -115,7 +117,7 @@ size_t DetermineExpirationYearLength(FieldType assumed_field_type) {
     case CREDIT_CARD_EXP_4_DIGIT_YEAR:
       return 4;
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 

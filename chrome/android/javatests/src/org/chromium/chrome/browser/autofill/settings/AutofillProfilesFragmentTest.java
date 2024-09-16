@@ -28,17 +28,15 @@ import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
-import org.chromium.base.test.util.Batch;
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.Feature;
-import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.autofill.AutofillTestHelper;
@@ -51,13 +49,12 @@ import org.chromium.chrome.browser.sync.SyncServiceFactory;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.R;
 import org.chromium.components.autofill.AutofillProfile;
-import org.chromium.components.autofill.Source;
+import org.chromium.components.autofill.RecordType;
 import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.components.signin.identitymanager.ConsentLevel;
 import org.chromium.components.signin.identitymanager.IdentityManager;
 import org.chromium.components.sync.SyncService;
 import org.chromium.components.sync.UserSelectableType;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.ui.KeyboardVisibilityDelegate;
 
 import java.util.Collections;
@@ -68,8 +65,8 @@ import java.util.concurrent.TimeoutException;
 
 /** Unit test suite for AutofillProfilesFragment. */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@Batch(Batch.PER_CLASS)
 @EnableFeatures({ChromeFeatureList.SYNC_ENABLE_CONTACT_INFO_DATA_TYPE_IN_TRANSPORT_MODE})
+// TODO(crbug.com/344657376): Failing when batched, batch this again.
 public class AutofillProfilesFragmentTest {
     private static final AutofillProfile sLocalOrSyncProfile =
             AutofillProfile.builder()
@@ -86,7 +83,7 @@ public class AutofillProfilesFragmentTest {
                     .build();
     private static final AutofillProfile sAccountProfile =
             AutofillProfile.builder()
-                    .setSource(Source.ACCOUNT)
+                    .setRecordType(RecordType.ACCOUNT)
                     .setFullName("Artik Doe")
                     .setCompanyName("Google")
                     .setStreetAddress("999 Fourth St")
@@ -106,7 +103,6 @@ public class AutofillProfilesFragmentTest {
             sSettingsActivityTestRule =
                     new SettingsActivityTestRule<>(AutofillProfilesFragment.class);
 
-    @Rule public final TestRule mFeaturesProcessorRule = new Features.JUnitProcessor();
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
 
     @Mock private IdentityServicesProvider mIdentityServicesProvider;
@@ -258,7 +254,8 @@ public class AutofillProfilesFragmentTest {
     public void testDeleteLocalProfile() throws Exception {
         Context context = sSettingsActivityTestRule.getFragment().getContext();
         setUpMockSyncService(false, new HashSet());
-        testDeleteProfile(context.getString(R.string.autofill_delete_local_address_source_notice));
+        testDeleteProfile(
+                context.getString(R.string.autofill_delete_local_address_record_type_notice));
     }
 
     @Test
@@ -267,7 +264,8 @@ public class AutofillProfilesFragmentTest {
     public void testDeleteSyncableProfile() throws Exception {
         Context context = sSettingsActivityTestRule.getFragment().getContext();
         setUpMockSyncService(true, Collections.singleton(UserSelectableType.AUTOFILL));
-        testDeleteProfile(context.getString(R.string.autofill_delete_sync_address_source_notice));
+        testDeleteProfile(
+                context.getString(R.string.autofill_delete_sync_address_record_type_notice));
     }
 
     public void testDeleteProfile(String expectedConfirmationMessage) throws Exception {
@@ -281,7 +279,7 @@ public class AutofillProfilesFragmentTest {
         assertEquals("Seb Doe", sebProfile.getTitle());
 
         // Delete the profile, but cancel on confirmation.
-        TestThreadUtils.runOnUiThreadBlocking(sebProfile::performClick);
+        ThreadUtils.runOnUiThreadBlocking(sebProfile::performClick);
         EditorDialogView editorDialog = autofillProfileFragment.getEditorDialogForTest();
         rule.setEditorDialogAndWait(editorDialog);
         rule.clickInEditorAndWaitForConfirmationDialog(R.id.delete_menu_id);
@@ -302,7 +300,7 @@ public class AutofillProfilesFragmentTest {
         checkPreferenceCount(6 /* One toggle + one add button + four profile. */);
 
         // Delete a profile and confirm it.
-        TestThreadUtils.runOnUiThreadBlocking(sebProfile::performClick);
+        ThreadUtils.runOnUiThreadBlocking(sebProfile::performClick);
         rule.setEditorDialogAndWait(autofillProfileFragment.getEditorDialogForTest());
         rule.clickInEditorAndWaitForConfirmationDialog(R.id.delete_menu_id);
         rule.clickInConfirmationDialogAndWait(
@@ -332,7 +330,7 @@ public class AutofillProfilesFragmentTest {
         assertNotNull(artikProfile);
 
         // Delete Artik's account profile.
-        TestThreadUtils.runOnUiThreadBlocking(artikProfile::performClick);
+        ThreadUtils.runOnUiThreadBlocking(artikProfile::performClick);
         EditorDialogView editorDialog = autofillProfileFragment.getEditorDialogForTest();
         rule.setEditorDialogAndWait(editorDialog);
         rule.clickInEditorAndWaitForConfirmationDialog(R.id.delete_menu_id);
@@ -342,7 +340,7 @@ public class AutofillProfilesFragmentTest {
         assertNotNull(confirmationDialog);
         TextView messageView = confirmationDialog.findViewById(R.id.confirmation_dialog_message);
         String expectedMessage =
-                context.getString(R.string.autofill_delete_account_address_source_notice)
+                context.getString(R.string.autofill_delete_account_address_record_type_notice)
                         .replace("$1", email);
         assertEquals(expectedMessage, messageView.getText());
 
@@ -368,7 +366,7 @@ public class AutofillProfilesFragmentTest {
         assertEquals("John Doe", johnProfile.getTitle());
 
         // Edit a profile.
-        TestThreadUtils.runOnUiThreadBlocking(johnProfile::performClick);
+        ThreadUtils.runOnUiThreadBlocking(johnProfile::performClick);
         EditorDialogView editorDialog = autofillProfileFragment.getEditorDialogForTest();
         rule.setEditorDialogAndWait(editorDialog);
         rule.setTextInEditorAndWait(
@@ -407,7 +405,7 @@ public class AutofillProfilesFragmentTest {
 
         mHelper.setProfile(
                 AutofillProfile.builder()
-                        .setSource(Source.ACCOUNT)
+                        .setRecordType(RecordType.ACCOUNT)
                         .setFullName("Account Updated #0")
                         .setCompanyName("Google")
                         .setStreetAddress("111 Fourth St")
@@ -428,7 +426,7 @@ public class AutofillProfilesFragmentTest {
         AutofillProfileEditorPreference johnProfile = findPreference("Account Updated #0");
         assertNotNull(johnProfile);
 
-        TestThreadUtils.runOnUiThreadBlocking(johnProfile::performClick);
+        ThreadUtils.runOnUiThreadBlocking(johnProfile::performClick);
         EditorDialogView editorDialog = autofillProfileFragment.getEditorDialogForTest();
         rule.setEditorDialogAndWait(editorDialog);
 
@@ -436,7 +434,9 @@ public class AutofillProfilesFragmentTest {
         TextView footerMessage = editorDialog.findViewById(R.id.footer_message);
         assertEquals(View.VISIBLE, footerMessage.getVisibility());
         String expectedMessage =
-                context.getString(R.string.autofill_address_already_saved_in_account_source_notice)
+                context.getString(
+                                R.string
+                                        .autofill_address_already_saved_in_account_record_type_notice)
                         .replace("$1", email);
         assertEquals(expectedMessage, footerMessage.getText());
 
@@ -480,7 +480,7 @@ public class AutofillProfilesFragmentTest {
     public void testEditInvalidAccountProfile() throws Exception {
         mHelper.setProfile(
                 AutofillProfile.builder()
-                        .setSource(Source.ACCOUNT)
+                        .setRecordType(RecordType.ACCOUNT)
                         .setFullName("Account Updated #0")
                         .setCompanyName("Google")
                         .setStreetAddress("")
@@ -534,7 +534,7 @@ public class AutofillProfilesFragmentTest {
         assertEquals("Bob Doe", bobProfile.getTitle());
 
         // Open the profile.
-        TestThreadUtils.runOnUiThreadBlocking(bobProfile::performClick);
+        ThreadUtils.runOnUiThreadBlocking(bobProfile::performClick);
         rule.setEditorDialogAndWait(
                 sSettingsActivityTestRule.getFragment().getEditorDialogForTest());
         rule.clickInEditorAndWait(
@@ -554,7 +554,7 @@ public class AutofillProfilesFragmentTest {
         assertEquals("Bill Doe", billProfile.getTitle());
 
         // Open the profile.
-        TestThreadUtils.runOnUiThreadBlocking(billProfile::performClick);
+        ThreadUtils.runOnUiThreadBlocking(billProfile::performClick);
         rule.setEditorDialogAndWait(
                 sSettingsActivityTestRule.getFragment().getEditorDialogForTest());
         rule.clickInEditorAndWait(
@@ -574,7 +574,7 @@ public class AutofillProfilesFragmentTest {
         assertNotNull(addProfile);
 
         // Open AutofillProfileEditorPreference.
-        TestThreadUtils.runOnUiThreadBlocking(addProfile::performClick);
+        ThreadUtils.runOnUiThreadBlocking(addProfile::performClick);
         rule.setEditorDialogAndWait(fragment.getEditorDialogForTest());
         // The keyboard is shown as soon as AutofillProfileEditorPreference comes into view.
         waitForKeyboardStatus(true, sSettingsActivityTestRule.getActivity());
@@ -582,12 +582,12 @@ public class AutofillProfilesFragmentTest {
         final List<EditText> fields =
                 fragment.getEditorDialogForTest().getEditableTextFieldsForTest();
         // Ensure the first text field is focused.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     fields.get(0).requestFocus();
                 });
         // Hide the keyboard.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     KeyboardVisibilityDelegate.getInstance().hideKeyboard(fields.get(0));
                 });
@@ -687,7 +687,7 @@ public class AutofillProfilesFragmentTest {
 
     private void checkPreferenceCount(int expectedPreferenceCount) {
         int preferenceCount =
-                TestThreadUtils.runOnUiThreadBlockingNoException(
+                ThreadUtils.runOnUiThreadBlocking(
                         () ->
                                 sSettingsActivityTestRule
                                         .getFragment()
@@ -698,7 +698,7 @@ public class AutofillProfilesFragmentTest {
 
     @Nullable
     private AutofillProfileEditorPreference findPreference(String title) {
-        return TestThreadUtils.runOnUiThreadBlockingNoException(
+        return ThreadUtils.runOnUiThreadBlocking(
                 () -> sSettingsActivityTestRule.getFragment().findPreference(title));
     }
 
@@ -721,7 +721,7 @@ public class AutofillProfilesFragmentTest {
             int buttonId,
             boolean waitForError)
             throws TimeoutException {
-        TestThreadUtils.runOnUiThreadBlocking(profile::performClick);
+        ThreadUtils.runOnUiThreadBlocking(profile::performClick);
 
         rule.setEditorDialogAndWait(profileFragment.getEditorDialogForTest());
         rule.setTextInEditorAndWait(values);
@@ -745,7 +745,7 @@ public class AutofillProfilesFragmentTest {
     }
 
     private void setUpMockSyncService(boolean enabled, Set<Integer> selectedTypes) {
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> SyncServiceFactory.setInstanceForTesting(mSyncService));
         when(mSyncService.isSyncFeatureEnabled()).thenReturn(enabled);
         when(mSyncService.getSelectedTypes()).thenReturn(selectedTypes);

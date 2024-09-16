@@ -77,7 +77,7 @@ class TabSharingInfoBarDelegate::StopButton
       case TabSharingInfoBarDelegate::TabShareType::CAPTURE:
         return l10n_util::GetStringUTF16(IDS_TAB_SHARING_INFOBAR_STOP_BUTTON);
     }
-    NOTREACHED_NORETURN();
+    NOTREACHED();
   }
 
  private:
@@ -109,7 +109,7 @@ class TabSharingInfoBarDelegate::ShareTabInsteadButton
       case TabSharingInfoBarDelegate::TabShareType::CAPTURE:
         return l10n_util::GetStringUTF16(IDS_TAB_SHARING_INFOBAR_SHARE_BUTTON);
     }
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return std::u16string();
   }
 
@@ -166,7 +166,7 @@ class TabSharingInfoBarDelegate::SwitchToTabButton
   }
 
   std::u16string GetLabel() const override {
-    // TODO(crbug.com/1224363): Hard-code this text into the button.
+    // TODO(crbug.com/40188004): Hard-code this text into the button.
     content::RenderFrameHost* const rfh =
         content::RenderFrameHost::FromID(focus_target_.id);
     if (!rfh) {
@@ -286,7 +286,7 @@ bool IsCapturedTab(TabRole role) {
     case TabRole::kSelfCapturingTab:
       return true;
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 }  // namespace
@@ -386,7 +386,7 @@ std::u16string TabSharingInfoBarDelegate::GetMessageText() const {
       return GetMessageTextCapturing(IsCapturedTab(role_), shared_tab_name_,
                                      capturer_name_);
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 std::u16string TabSharingInfoBarDelegate::GetButtonLabel(
@@ -455,7 +455,7 @@ const TabSharingInfoBarDelegateButton& TabSharingInfoBarDelegate::GetButton(
     case TabSharingInfoBarButton::kCapturedSurfaceControlIndicator:
       return *csc_indicator_button_;
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 TabSharingInfoBarDelegateButton& TabSharingInfoBarDelegate::GetButton(

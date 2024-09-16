@@ -2,13 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/capture/video/chromeos/stream_buffer_manager.h"
 
 #include <memory>
 #include <string>
 
 #include "base/functional/bind.h"
-#include "base/functional/callback_helpers.h"
 #include "base/posix/safe_strerror.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
@@ -22,6 +26,7 @@
 #include "media/capture/video/video_capture_buffer_pool.h"
 #include "mojo/public/cpp/platform/platform_handle.h"
 #include "mojo/public/cpp/system/platform_handle.h"
+#include "third_party/abseil-cpp/absl/cleanup/cleanup.h"
 #include "third_party/libyuv/include/libyuv.h"
 
 namespace media {
@@ -102,9 +107,7 @@ StreamBufferManager::AcquireBufferForClientById(StreamType stream_type,
     DLOG(WARNING) << "Failed to map original buffer";
     return std::move(buffer_pair.vcd_buffer);
   }
-  base::ScopedClosureRunner unmap_original_gmb(
-      base::BindOnce([](gfx::GpuMemoryBuffer* gmb) { gmb->Unmap(); },
-                     base::Unretained(original_gmb.get())));
+  absl::Cleanup unmap_original_gmb = [&original_gmb] { original_gmb->Unmap(); };
 
   const size_t original_width = stream_context->buffer_dimension.width();
   const size_t original_height = stream_context->buffer_dimension.height();
@@ -167,9 +170,7 @@ StreamBufferManager::AcquireBufferForClientById(StreamType stream_type,
     DLOG(WARNING) << "Failed to map rotated buffer";
     return std::move(buffer_pair.vcd_buffer);
   }
-  base::ScopedClosureRunner unmap_rotated_gmb(
-      base::BindOnce([](gfx::GpuMemoryBuffer* gmb) { gmb->Unmap(); },
-                     base::Unretained(rotated_gmb.get())));
+  absl::Cleanup unmap_rotated_gmb = [&rotated_gmb] { rotated_gmb->Unmap(); };
 
   libyuv::NV12ToI420Rotate(
       static_cast<uint8_t*>(original_gmb->memory(0)), original_gmb->stride(0),
@@ -267,7 +268,7 @@ void StreamBufferManager::SetUpStreamsAndBuffers(
         break;
       }
       default: {
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
       }
     }
     const ChromiumPixelFormat stream_format =
@@ -446,7 +447,11 @@ void StreamBufferManager::ReserveBufferFromPool(StreamType stream_type) {
     DLOG(WARNING) << "Failed to reserve video capture buffer";
     return;
   }
-  if (retire_old_buffer_id != VideoCaptureBufferPool::kInvalidId) {
+  // TODO(b/333813928): This is a temporary solution to fix the cros camera
+  // service crash until we figure out the crash root cause.
+  const bool kEnableBufferSynchronizationWithCameraService = false;
+  if (kEnableBufferSynchronizationWithCameraService &&
+      retire_old_buffer_id != VideoCaptureBufferPool::kInvalidId) {
     buffer_observer_->OnBufferRetired(
         client_type, GetBufferIpcId(stream_type, retire_old_buffer_id));
   }
@@ -456,7 +461,8 @@ void StreamBufferManager::ReserveBufferFromPool(StreamType stream_type) {
       stream_context->buffer_dimension, *gfx_format,
       stream_context->buffer_usage, base::NullCallback());
 
-  if (require_new_buffer_id != VideoCaptureBufferPool::kInvalidId) {
+  if (kEnableBufferSynchronizationWithCameraService &&
+      require_new_buffer_id != VideoCaptureBufferPool::kInvalidId) {
     gfx::GpuMemoryBufferHandle gpu_memory_buffer_handle = gmb->CloneHandle();
     gfx::NativePixmapHandle& native_pixmap_handle =
         gpu_memory_buffer_handle.native_pixmap_handle;

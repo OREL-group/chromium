@@ -20,7 +20,6 @@
 #include "content/common/features.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/common/content_client.h"
-#include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
 #include "net/http/http_util.h"
 #include "net/url_request/redirect_info.h"
@@ -52,16 +51,11 @@ void ReportErrorAndTraceEvent(
 }
 
 bool IsSignedExchangeHandlingEnabled(BrowserContext* context) {
-  if (!GetContentClient()->browser()->AllowSignedExchange(context))
-    return false;
-
-  return base::FeatureList::IsEnabled(features::kSignedHTTPExchange);
+  return GetContentClient()->browser()->AllowSignedExchange(context);
 }
 
 bool IsSignedExchangeReportingForDistributorsEnabled() {
-  return base::FeatureList::IsEnabled(network::features::kReporting) &&
-         base::FeatureList::IsEnabled(
-             features::kSignedExchangeReportingForDistributors);
+  return base::FeatureList::IsEnabled(network::features::kReporting);
 }
 
 bool ShouldHandleAsSignedHTTPExchange(
@@ -69,7 +63,7 @@ bool ShouldHandleAsSignedHTTPExchange(
     const network::mojom::URLResponseHead& head) {
   // Currently we don't support the signed exchange which is returned from a
   // service worker.
-  // TODO(crbug/803774): Decide whether we should support it or not.
+  // TODO(crbug.com/40558902): Decide whether we should support it or not.
   if (head.was_fetched_via_service_worker)
     return false;
   if (!SignedExchangeRequestHandler::IsSupportedMimeType(head.mime_type))
@@ -197,11 +191,11 @@ SignedExchangeLoadResult GetLoadResultFromSignatureVerifierResult(
         kErrInvalidSignatureIntegrity_deprecated:
     case SignedExchangeSignatureVerifier::Result::
         kErrInvalidTimestamp_deprecated:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return SignedExchangeLoadResult::kSignatureVerificationError;
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return SignedExchangeLoadResult::kSignatureVerificationError;
 }
 

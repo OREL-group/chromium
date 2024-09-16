@@ -57,7 +57,7 @@ class Transaction;
 }
 
 namespace syncer {
-class ModelTypeControllerDelegate;
+class DataTypeControllerDelegate;
 }
 
 namespace history {
@@ -175,6 +175,18 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
     // thread.
     virtual void NotifyDeletions(DeletionInfo deletion_info) = 0;
 
+    // Notify HistoryService that partitioned visited links have been added.
+    // This event will be forwarded to PartitionedVisitedLinkWriter, where the
+    // corresponding visited links will be added to the in-memory hashtable.
+    virtual void NotifyVisitedLinksAdded(const HistoryAddPageArgs& args) = 0;
+
+    // Notify HistoryService that partitioned visited links have been deleted.
+    // This event will be forwarded to the PartitionedVisitedLinkWriter, where
+    // the corresponding visited links will be deleted from the in-memory
+    // hashtable.
+    virtual void NotifyVisitedLinksDeleted(
+        const std::vector<DeletedVisitedLink>& links) = 0;
+
     // Notify HistoryService that some keyword has been searched using omnibox.
     // The event will be forwarded to the HistoryServiceObservers in the correct
     // thread.
@@ -193,6 +205,10 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
 
   // Check if the transition should increment the typed_count of a visit.
   static bool IsTypedIncrement(ui::PageTransition transition);
+
+  // The number of days old a history entry can be before it is considered "old"
+  // and is deleted.
+  static constexpr int kExpireDaysThreshold = 90;
 
   // Init must be called to complete object creation. This object can be
   // constructed on any thread, but all other functions including Init() must
@@ -363,7 +379,7 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
       int number_of_days_to_report,
       DomainMetricBitmaskType metric_type_bitmask);
 
-  // Gets unique domains (eLTD+1) visited within the time range
+  // Gets unique domains (eTLD+1) visited within the time range
   // [`begin_time`, `end_time`) for local and synced visits sorted in
   // reverse-chronological order.
   DomainsVisitedResult GetUniqueDomainsVisited(base::Time begin_time,
@@ -723,7 +739,7 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
 
   // Returns the sync controller delegate for syncing history. The returned
   // delegate is owned by `this` object.
-  base::WeakPtr<syncer::ModelTypeControllerDelegate>
+  base::WeakPtr<syncer::DataTypeControllerDelegate>
   GetHistorySyncControllerDelegate();
 
   // Sends the SyncService's TransportState `state` to the HistorySyncBridge.
@@ -821,8 +837,8 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
   friend class base::RefCountedThreadSafe<HistoryBackend>;
   friend class TestHistoryBackend;
   friend class HistoryBackendTest;
-  friend class HistoryBackendDBBaseTest;  // So the unit tests can poke our
-                                          // innards.
+  friend class HistoryBackendDBBaseTest;
+  FRIEND_TEST_ALL_PREFIXES(OrderingHistoryServiceTest, EnsureCorrectOrder);
 
   // Returns the name of the Favicons database.
   base::FilePath GetFaviconsFileName() const;
@@ -1006,7 +1022,7 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
   void NotifyDeletions(DeletionInfo deletion_info) override;
   void NotifyVisitUpdated(const VisitRow& visit,
                           VisitUpdateReason reason) override;
-  void NotifyVisitDeleted(const VisitRow& visit) override;
+  void NotifyVisitsDeleted(const std::vector<DeletedVisit>& visits) override;
 
   // Deleting all history ------------------------------------------------------
 
@@ -1099,8 +1115,11 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
   // Tracks page transition types.
   VisitTracker tracker_;
 
-  // List of QueuedHistoryDBTasks to run;
+  // List of QueuedHistoryDBTasks to run.
   std::list<std::unique_ptr<QueuedHistoryDBTask>> queued_history_db_tasks_;
+  // A single task, taken out of the above list, that has already been posted to
+  // the `task_runner_`. Stored so that it can be canceled at shutdown.
+  base::CancelableOnceClosure posted_history_db_task_;
 
   // Used to determine if a URL is bookmarked; may be null.
   std::unique_ptr<HistoryBackendClient> backend_client_;
@@ -1133,10 +1152,7 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
   // identifier for the local device.
   std::string local_device_originator_cache_guid_;
 
-  // Whether segments data should include foreign history; Note that setting
-  // this to true doesn't guarantee segments data is synced, as feature
-  // `kSyncSegmentsData` may be enabled or disabled, or
-  // `kMaxNumNewTabPageDisplays` is reached.
+  // Whether segments data should include foreign history.
   bool can_add_foreign_visits_to_segments_ = false;
 };
 

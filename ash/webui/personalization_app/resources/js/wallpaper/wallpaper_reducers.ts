@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import {FullscreenPreviewState} from 'chrome://resources/ash/common/personalization/wallpaper_state.js';
 import {SeaPenActionName, SeaPenActions} from 'chrome://resources/ash/common/sea_pen/sea_pen_actions.js';
 import {seaPenReducer} from 'chrome://resources/ash/common/sea_pen/sea_pen_reducer.js';
 import {SeaPenState} from 'chrome://resources/ash/common/sea_pen/sea_pen_state.js';
@@ -387,8 +388,8 @@ function pendingSelectedReducer(
         return null;
       }
       return state;
-    case WallpaperActionName.SET_FULLSCREEN_ENABLED:
-      if (!action.enabled) {
+    case WallpaperActionName.SET_FULLSCREEN_STATE:
+      if (action.state === FullscreenPreviewState.OFF) {
         // Clear the pending selected state after full screen is dismissed.
         return null;
       }
@@ -432,8 +433,8 @@ function fullscreenReducer(
     state: WallpaperState['fullscreen'], action: Actions,
     _: PersonalizationState): WallpaperState['fullscreen'] {
   switch (action.name) {
-    case WallpaperActionName.SET_FULLSCREEN_ENABLED:
-      return action.enabled;
+    case WallpaperActionName.SET_FULLSCREEN_STATE:
+      return action.state;
     default:
       return state;
   }

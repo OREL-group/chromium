@@ -9,7 +9,9 @@
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/platform/bindings/script_forbidden_scope.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
 
@@ -42,14 +44,14 @@ class ScriptPromiseProperty final
 
   ScriptPromise<IDLResolvedType> Promise(DOMWrapperWorld& world) {
     if (!GetExecutionContext()) {
-      return ScriptPromise<IDLResolvedType>();
+      return EmptyPromise();
     }
 
     ScriptState* script_state = ToScriptState(execution_context_.Get(), world);
 
     for (auto& promise : promises_) {
-      if (promise.IsAssociatedWith(script_state)) {
-        return static_cast<ScriptPromise<IDLResolvedType>&>(promise);
+      if (promise.second == script_state) {
+        return static_cast<ScriptPromise<IDLResolvedType>&>(promise.first);
       }
     }
 
@@ -76,7 +78,7 @@ class ScriptPromiseProperty final
         resolver->template Reject<IDLRejectedType>(rejected_);
         break;
     }
-    promises_.push_back(promise);
+    promises_.emplace_back(promise, script_state);
     return promise;
   }
 
@@ -134,7 +136,7 @@ class ScriptPromiseProperty final
   void MarkAsHandled() {
     mark_as_handled_ = true;
     for (auto& promise : promises_) {
-      promise.MarkAsHandled();
+      promise.first.MarkAsHandled();
     }
   }
 
@@ -183,7 +185,7 @@ class ScriptPromiseProperty final
   // size by storing them as the untemplated base class and downcasting where
   // needed.
   HeapVector<Member<ScriptPromiseResolverBase>> resolvers_;
-  HeapVector<ScriptPromiseUntyped> promises_;
+  HeapVector<std::pair<ScriptPromiseUntyped, Member<ScriptState>>> promises_;
   WeakMember<ExecutionContext> const execution_context_;
 
   bool mark_as_handled_ = false;

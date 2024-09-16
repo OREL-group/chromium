@@ -25,17 +25,20 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/test_launcher_utils.h"
 #include "components/prefs/pref_service.h"
+#include "components/ukm/test_ukm_recorder.h"
 #include "components/variations/variations_switches.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "media/base/key_system_names.h"
+#include "media/base/key_systems.h"
 #include "media/base/media_switches.h"
 #include "media/base/test_data_util.h"
 #include "media/cdm/clear_key_cdm_common.h"
 #include "media/cdm/supported_cdm_versions.h"
 #include "media/media_buildflags.h"
+#include "services/metrics/public/cpp/ukm_builders.h"
 #include "testing/gtest/include/gtest/gtest-spi.h"
 #include "third_party/widevine/cdm/buildflags.h"
 #include "third_party/widevine/cdm/widevine_cdm_common.h"
@@ -100,11 +103,19 @@ enum class ConfigChangeType {
 // Whether the video should be not played or played once or twice.
 enum class PlayCount { ZERO = 0, ONCE = 1, TWICE = 2 };
 
-using ::testing::Bool;
-using ::testing::Combine;
-using ::testing::UnitTest;
-using ::testing::Values;
-using ::testing::WithParamInterface;
+using testing::Bool;
+using testing::Combine;
+using testing::Eq;
+using testing::Not;
+using testing::Pair;
+using testing::UnitTest;
+using testing::UnorderedElementsAre;
+using testing::Values;
+using testing::WithParamInterface;
+using ukm::builders::Media_EME_ApiPromiseRejection;
+using ukm::builders::Media_EME_CreateMediaKeys;
+using ukm::builders::Media_EME_RequestMediaKeySystemAccess;
+using ukm::builders::Media_EME_Usage;
 
 // Base class for encrypted media tests.
 class EncryptedMediaTestBase : public MediaBrowserTest {
@@ -322,10 +333,8 @@ class EncryptedMediaTestBase : public MediaBrowserTest {
 
 #if BUILDFLAG(ENABLE_LIBRARY_CDMS)
   void SetUpDefaultCommandLine(base::CommandLine* command_line) override {
-    base::CommandLine default_command_line(base::CommandLine::NO_PROGRAM);
-    InProcessBrowserTest::SetUpDefaultCommandLine(&default_command_line);
-    test_launcher_utils::RemoveCommandLineSwitch(
-        default_command_line, switches::kDisableComponentUpdate, command_line);
+    InProcessBrowserTest::SetUpDefaultCommandLine(command_line);
+    command_line->RemoveSwitch(switches::kDisableComponentUpdate);
   }
 #endif  // BUILDFLAG(ENABLE_LIBRARY_CDMS)
 
@@ -341,7 +350,7 @@ class EncryptedMediaTestBase : public MediaBrowserTest {
       command_line->AppendSwitch(switches::kDisableWebSecurity);
     }
 
-    // TODO(crbug.com/1243903): WhatsNewUI might be causing timeouts.
+    // TODO(crbug.com/40787541): WhatsNewUI might be causing timeouts.
     command_line->AppendSwitch(switches::kNoFirstRun);
 
     std::vector<base::test::FeatureRefAndParams> enabled_features;
@@ -467,7 +476,7 @@ class ECKEncryptedMediaFileIOTest
     // sure that end to end functionalities do not break with changes made, so
     // that the MediaLicenseDatabase, the CdmStorageDatabaseMigration, and the
     // final CdmStorageDatabase all work as expected.
-    // TODO(crbug.com/1454512): Remove logic here when fully transitioned to
+    // TODO(crbug.com/40272342): Remove logic here when fully transitioned to
     // CdmStorageDatabase.
     std::vector<base::test::FeatureRefAndParams> storage_feature_list;
 
@@ -575,7 +584,7 @@ class ECKIncognitoEncryptedMediaFileIOTest
     // sure that end to end functionalities do not break with changes made, so
     // that the MediaLicenseDatabase, the CdmStorageDatabaseMigration, and the
     // final CdmStorageDatabase all work as expected.
-    // TODO(crbug.com/1454512): Remove logic here when fully transitioned to
+    // TODO(crbug.com/40272342): Remove logic here when fully transitioned to
     // CdmStorageDatabase.
     std::vector<base::test::FeatureRefAndParams> storage_feature_list;
 
@@ -829,9 +838,8 @@ IN_PROC_BROWSER_TEST_P(MseEncryptedMediaTest,
   TestSimplePlayback("bear-320x240-v_frag-vp9-cenc.mp4");
 }
 
-#if BUILDFLAG(IS_MAC) || (BUILDFLAG(IS_FUCHSIA) && defined(ARCH_CPU_ARM_FAMILY))
-// TODO(https://crbug.com/1250305): Fails on dcheck-enabled builds on 11.0.
-// TODO(https://crbug.com/1280308): Fails on Fuchsia-arm64
+#if BUILDFLAG(IS_MAC)
+// TODO(crbug.com/40197943): Fails on dcheck-enabled builds on 11.0.
 #define MAYBE_Playback_VideoOnly_WebM_VP9Profile2 \
   DISABLED_Playback_VideoOnly_WebM_VP9Profile2
 #else
@@ -843,9 +851,8 @@ IN_PROC_BROWSER_TEST_P(EncryptedMediaTest,
   TestSimplePlayback("bear-320x240-v-vp9_profile2_subsample_cenc-v.webm");
 }
 
-#if BUILDFLAG(IS_MAC) || (BUILDFLAG(IS_FUCHSIA) && defined(ARCH_CPU_ARM_FAMILY))
-// TODO(https://crbug.com/1250305): Fails on dcheck-enabled builds on 11.0.
-// TODO(https://crbug.com/1280308): Fails on Fuchsia-arm64
+#if BUILDFLAG(IS_MAC)
+// TODO(crbug.com/40197943): Fails on dcheck-enabled builds on 11.0.
 #define MAYBE_Playback_VideoOnly_MP4_VP9Profile2 \
   DISABLED_Playback_VideoOnly_MP4_VP9Profile2
 #else
@@ -960,6 +967,131 @@ IN_PROC_BROWSER_TEST_P(MseEncryptedMediaTest, EncryptedMediaDisabled) {
                         CurrentKeySystem(), CurrentSourceType(),
                         kNoSessionToLoad, false, PlayCount::ONCE,
                         expected_title);
+}
+
+IN_PROC_BROWSER_TEST_P(MseEncryptedMediaTest, Playback_Check_Ukm) {
+  bool is_widevine =
+#if BUILDFLAG(ENABLE_WIDEVINE)
+      IsWidevine(CurrentKeySystem());
+#else
+      false;
+#endif  // BUILDFLAG(ENABLE_WIDEVINE)
+
+  ukm::TestAutoSetUkmRecorder ukm_recorder;
+  TestSimplePlayback("bear-320x240-av_enc-a.webm");
+
+  // Check Media_EME_RequestMediaKeySystemAccess UKM. It is only recorded for
+  // Widevine.
+  auto request_entries = ukm_recorder.GetEntries(
+      Media_EME_RequestMediaKeySystemAccess::kEntryName,
+      {Media_EME_RequestMediaKeySystemAccess::kIsAdFrameName,
+       Media_EME_RequestMediaKeySystemAccess::kIsCrossOriginName,
+       Media_EME_RequestMediaKeySystemAccess::kIsFromMediaCapabilitiesName,
+       Media_EME_RequestMediaKeySystemAccess::kIsTopFrameName,
+       Media_EME_RequestMediaKeySystemAccess::kKeySystemName,
+       Media_EME_RequestMediaKeySystemAccess::kVideoCapabilitiesName,
+       Media_EME_RequestMediaKeySystemAccess::
+           kVideoCapabilities_HasEmptyRobustnessName,
+       Media_EME_RequestMediaKeySystemAccess::
+           kVideoCapabilities_HasHwSecureAllRobustnessName});
+  if (is_widevine) {
+    EXPECT_EQ(request_entries.size(), 1u);
+    EXPECT_THAT(
+        request_entries[0].metrics,
+        UnorderedElementsAre(
+            Pair(Media_EME_RequestMediaKeySystemAccess::kIsAdFrameName,
+                 /*false=*/0),
+            Pair(Media_EME_RequestMediaKeySystemAccess::kIsCrossOriginName,
+                 /*false=*/0),
+            Pair(Media_EME_RequestMediaKeySystemAccess::
+                     kIsFromMediaCapabilitiesName,
+                 /*false=*/0),
+            Pair(Media_EME_RequestMediaKeySystemAccess::kIsTopFrameName,
+                 /*true=*/1),
+            Pair(Media_EME_RequestMediaKeySystemAccess::kKeySystemName,
+                 /*blink::KeySystemForUkmLegacy::kWidevine=*/1),
+            Pair(Media_EME_RequestMediaKeySystemAccess::kVideoCapabilitiesName,
+                 /*true=*/1),
+            Pair(Media_EME_RequestMediaKeySystemAccess::
+                     kVideoCapabilities_HasEmptyRobustnessName,
+                 /*true=*/1),
+            Pair(Media_EME_RequestMediaKeySystemAccess::
+                     kVideoCapabilities_HasHwSecureAllRobustnessName,
+                 /*false=*/0)));
+  } else {
+    // Not Widevine, so nothing should be recorded.
+    EXPECT_EQ(request_entries.size(), 0u);
+  }
+
+  // Check Media_EME_CreateMediaKeys UKM. It is also only recorded for Widevine.
+  auto create_entries =
+      ukm_recorder.GetEntries(Media_EME_CreateMediaKeys::kEntryName,
+                              {Media_EME_CreateMediaKeys::kIsAdFrameName,
+                               Media_EME_CreateMediaKeys::kIsCrossOriginName,
+                               Media_EME_CreateMediaKeys::kIsTopFrameName,
+                               Media_EME_CreateMediaKeys::kKeySystemName});
+  if (is_widevine) {
+    EXPECT_EQ(create_entries.size(), 1u);
+    EXPECT_THAT(create_entries[0].metrics,
+                UnorderedElementsAre(
+                    Pair(Media_EME_CreateMediaKeys::kIsAdFrameName,
+                         /*false=*/0),
+                    Pair(Media_EME_CreateMediaKeys::kIsCrossOriginName,
+                         /*false=*/0),
+                    Pair(Media_EME_CreateMediaKeys::kIsTopFrameName,
+                         /*true=*/1),
+                    Pair(Media_EME_CreateMediaKeys::kKeySystemName,
+                         /*blink::KeySystemForUkmLegacy::kWidevine=*/1)));
+  } else {
+    // Not Widevine, so nothing should be recorded.
+    EXPECT_EQ(create_entries.size(), 0u);
+  }
+
+  // Check Media_EME_Usage UKM. It is recorded for all key systems. Currently
+  // only update() will be called during playback.
+  auto usage_entries = ukm_recorder.GetEntries(
+      Media_EME_Usage::kEntryName,
+      {Media_EME_Usage::kApiName, Media_EME_Usage::kIsPersistentSessionName,
+       Media_EME_Usage::kKeySystemName,
+       Media_EME_Usage::kUseHardwareSecureCodecsName});
+  EXPECT_EQ(usage_entries.size(), 1u);
+  EXPECT_THAT(
+      usage_entries[0].metrics,
+      UnorderedElementsAre(
+          Pair(Media_EME_Usage::kApiName, /*blink::EmeApiType::kUpdate=*/6),
+          Pair(Media_EME_Usage::kIsPersistentSessionName, /*false=*/0),
+          Pair(Media_EME_Usage::kKeySystemName,
+               media::GetKeySystemIntForUKM(CurrentKeySystem())),
+          Pair(Media_EME_Usage::kUseHardwareSecureCodecsName, /*false=*/0)));
+
+  // Check Media_EME_ApiPromiseRejection. With Widevine if there is no license
+  // server Update() will fail. With ClearKey a valid response is provided, so
+  // there is no failure.
+  auto promise_entries = ukm_recorder.GetEntries(
+      Media_EME_ApiPromiseRejection::kEntryName,
+      {Media_EME_ApiPromiseRejection::kApiName,
+       Media_EME_ApiPromiseRejection::kKeySystemName,
+       Media_EME_ApiPromiseRejection::kSystemCodeName,
+       Media_EME_ApiPromiseRejection::kUseHardwareSecureCodecsName});
+  if (is_widevine && !license_server_) {
+    // Update() should have failed due to invalid license response.
+    EXPECT_EQ(promise_entries.size(), 1u);
+    // Media_EME_ApiPromiseRejection::kSystemCodeName is key system
+    // implementation specific, so exact value may change.
+    EXPECT_THAT(
+        promise_entries[0].metrics,
+        UnorderedElementsAre(
+            Pair(Media_EME_ApiPromiseRejection::kApiName,
+                 /*blink::EmeApiType::kUpdate=*/6),
+            Pair(Media_EME_ApiPromiseRejection::kKeySystemName,
+                 media::GetKeySystemIntForUKM(CurrentKeySystem())),
+            Pair(Media_EME_ApiPromiseRejection::kSystemCodeName, Not(Eq(0))),
+            Pair(Media_EME_ApiPromiseRejection::kUseHardwareSecureCodecsName,
+                 /*false=*/0)));
+  } else {
+    // No error with ClearKey or with Widevine if a license server is available.
+    EXPECT_EQ(promise_entries.size(), 0u);
+  }
 }
 
 #if BUILDFLAG(USE_PROPRIETARY_CODECS)
@@ -1165,7 +1297,7 @@ IN_PROC_BROWSER_TEST_P(ECKEncryptedMediaTest, MAYBE_StorageIdTest) {
 }
 
 // TODO(crbug.com/40601162): Times out in debug builds.
-// TODO(crbug.com/40916095): Sometimes crashes on win and chromeos.
+// TODO(crbug.com/40916095, crbug.com/348996697): Test flakiness.
 #if !defined(NDEBUG) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_WIN)
 #define MAYBE_MultipleCdmTypes DISABLED_MultipeCdmTypes
 #else
@@ -1192,7 +1324,7 @@ INSTANTIATE_TEST_SUITE_P(Capture_Browser,
                          ECKEncryptedMediaOutputProtectionTest,
                          Values("browser"));
 
-// TODO(https://crbug.com/1047944): Failing on Win.
+// TODO(crbug.com/40671674): Failing on Win.
 #if BUILDFLAG(IS_WIN)
 #define MAYBE_BeforeMediaKeys DISABLED_BeforeMediaKeys
 #else
@@ -1203,7 +1335,7 @@ IN_PROC_BROWSER_TEST_P(ECKEncryptedMediaOutputProtectionTest,
   TestOutputProtection(/*create_recorder_before_media_keys=*/true);
 }
 
-// TODO(https://crbug.com/1047944): Failing on Win.
+// TODO(crbug.com/40671674): Failing on Win.
 #if BUILDFLAG(IS_WIN)
 #define MAYBE_AfterMediaKeys DISABLED_AfterMediaKeys
 #else

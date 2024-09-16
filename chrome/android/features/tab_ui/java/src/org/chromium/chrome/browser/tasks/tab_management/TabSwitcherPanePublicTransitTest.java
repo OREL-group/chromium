@@ -14,8 +14,6 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 
-import static org.chromium.chrome.browser.flags.ChromeFeatureList.ANDROID_HUB;
-
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.test.filters.MediumTest;
@@ -25,22 +23,20 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.test.transit.BatchedPublicTransitRule;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
-import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
-import org.chromium.chrome.test.transit.ChromeTabbedActivityPublicTransitEntryPoints;
-import org.chromium.chrome.test.transit.HubIncognitoTabSwitcherStation;
-import org.chromium.chrome.test.transit.HubTabSwitcherAppMenuFacility;
-import org.chromium.chrome.test.transit.HubTabSwitcherBaseStation;
-import org.chromium.chrome.test.transit.HubTabSwitcherListEditorFacility;
-import org.chromium.chrome.test.transit.HubTabSwitcherStation;
-import org.chromium.chrome.test.transit.PageAppMenuFacility;
-import org.chromium.chrome.test.transit.PageStation;
+import org.chromium.chrome.test.transit.BlankCTATabInitialStatePublicTransitRule;
+import org.chromium.chrome.test.transit.hub.IncognitoTabSwitcherStation;
+import org.chromium.chrome.test.transit.hub.RegularTabSwitcherStation;
+import org.chromium.chrome.test.transit.hub.TabSwitcherListEditorFacility;
+import org.chromium.chrome.test.transit.hub.TabSwitcherStation;
+import org.chromium.chrome.test.transit.ntp.IncognitoNewTabPageStation;
+import org.chromium.chrome.test.transit.page.PageStation;
+import org.chromium.chrome.test.transit.page.WebPageStation;
 
 /** Public transit tests for the Hub's tab switcher panes. */
 // TODO(crbug/324919909): Migrate more tests from TabSwitcherLayoutTest to here or other test
@@ -48,42 +44,35 @@ import org.chromium.chrome.test.transit.PageStation;
 // more core UI elements; for example undo snackbars.
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
-@EnableFeatures({ANDROID_HUB})
 @Batch(Batch.PER_CLASS)
 public class TabSwitcherPanePublicTransitTest {
-    @Rule
-    public BatchedPublicTransitRule<PageStation> mBatchedRule =
-            new BatchedPublicTransitRule<>(PageStation.class, /* expectResetByTest= */ true);
-
     @ClassRule
     public static ChromeTabbedActivityTestRule sActivityTestRule =
             new ChromeTabbedActivityTestRule();
 
-    private ChromeTabbedActivityPublicTransitEntryPoints mTransitEntryPoints =
-            new ChromeTabbedActivityPublicTransitEntryPoints(sActivityTestRule);
+    @Rule
+    public BlankCTATabInitialStatePublicTransitRule mInitialStateRule =
+            new BlankCTATabInitialStatePublicTransitRule(sActivityTestRule);
 
     @Test
     @MediumTest
     public void testSwitchTabModel_ScrollToSelectedTab() {
-        PageStation page = mTransitEntryPoints.startOnBlankPageBatched(mBatchedRule);
+        WebPageStation firstPage = mInitialStateRule.startOnBlankPage();
         ChromeTabbedActivity cta = sActivityTestRule.getActivity();
 
-        PageAppMenuFacility appMenu = null;
+        PageStation page = firstPage;
         for (int i = 1; i < 10; i++) {
-            appMenu = page.openAppMenu();
-            page = appMenu.openNewTab();
+            page = page.openGenericAppMenu().openNewTab();
         }
         assertEquals(9, cta.getCurrentTabModel().index());
-        appMenu = page.openAppMenu();
-        page = appMenu.openNewIncognitoTab();
+        IncognitoNewTabPageStation incognitoNtp = page.openGenericAppMenu().openNewIncognitoTab();
         assertTrue(cta.getCurrentTabModel().isIncognito());
 
-        HubIncognitoTabSwitcherStation incognitoTabSwitcher =
-                page.openHub(HubIncognitoTabSwitcherStation.class);
-        HubTabSwitcherStation regularTabSwitcher =
-                incognitoTabSwitcher.closeTabAtIndex(0, HubTabSwitcherStation.class);
+        IncognitoTabSwitcherStation incognitoTabSwitcher = incognitoNtp.openIncognitoTabSwitcher();
+        RegularTabSwitcherStation regularTabSwitcher =
+                incognitoTabSwitcher.closeTabAtIndex(0, RegularTabSwitcherStation.class);
 
-        onView(HubTabSwitcherBaseStation.TAB_LIST_RECYCLER_VIEW.getViewMatcher())
+        onView(TabSwitcherStation.TAB_LIST_RECYCLER_VIEW.getViewMatcher())
                 .check(
                         (v, noMatchException) -> {
                             if (noMatchException != null) throw noMatchException;
@@ -93,60 +82,53 @@ public class TabSwitcherPanePublicTransitTest {
                             assertEquals(9, layoutManager.findLastVisibleItemPosition());
                         });
 
-        // Reset to a single tab.
-        for (int i = 1; i < 10; i++) {
-            regularTabSwitcher = regularTabSwitcher.closeTabAtIndex(1, HubTabSwitcherStation.class);
-        }
-        page = regularTabSwitcher.selectTabAtIndex(0);
+        // Go back to a tab to cleanup tab state
+        regularTabSwitcher.selectTabAtIndex(0, WebPageStation.newBuilder());
     }
 
     @Test
     @MediumTest
     public void testTabListEditor_EnterAndExit() {
-        PageStation page = mTransitEntryPoints.startOnBlankPageBatched(mBatchedRule);
-        PageAppMenuFacility appMenu = page.openAppMenu();
-        page = appMenu.openNewTab();
+        WebPageStation firstPage = mInitialStateRule.startOnBlankPage();
 
-        HubTabSwitcherStation regularTabSwitcher = page.openHub(HubTabSwitcherStation.class);
-        HubTabSwitcherAppMenuFacility tabSwitcherAppMenu = regularTabSwitcher.openAppMenu();
-        HubTabSwitcherListEditorFacility listEditor = tabSwitcherAppMenu.clickSelectTabs();
+        RegularTabSwitcherStation regularTabSwitcher = firstPage.openRegularTabSwitcher();
+        TabSwitcherListEditorFacility listEditor =
+                regularTabSwitcher.openAppMenu().clickSelectTabs();
 
         listEditor.pressBackToExit();
 
-        // Reset to a single tab.
-        regularTabSwitcher = regularTabSwitcher.closeTabAtIndex(1, HubTabSwitcherStation.class);
-        page = regularTabSwitcher.selectTabAtIndex(0);
+        // Go back to a tab to cleanup tab state
+        regularTabSwitcher.selectTabAtIndex(0, WebPageStation.newBuilder());
     }
 
     @Test
     @MediumTest
     public void testEmptyStateView() {
-        PageStation page = mTransitEntryPoints.startOnBlankPageBatched(mBatchedRule);
+        WebPageStation firstPage = mInitialStateRule.startOnBlankPage();
         ChromeTabbedActivity cta = sActivityTestRule.getActivity();
 
-        PageAppMenuFacility appMenu = page.openAppMenu();
-        page = appMenu.openNewIncognitoTab();
+        IncognitoNewTabPageStation incognitoNtp =
+                firstPage.openGenericAppMenu().openNewIncognitoTab();
         assertTrue(cta.getCurrentTabModel().isIncognito());
 
-        HubIncognitoTabSwitcherStation incognitoTabSwitcher =
-                page.openHub(HubIncognitoTabSwitcherStation.class);
-        onView(HubTabSwitcherStation.EMPTY_STATE_TEXT.getViewMatcher()).check(doesNotExist());
+        IncognitoTabSwitcherStation incognitoTabSwitcher = incognitoNtp.openIncognitoTabSwitcher();
+        onView(RegularTabSwitcherStation.EMPTY_STATE_TEXT.getViewMatcher()).check(doesNotExist());
 
-        HubTabSwitcherStation regularTabSwitcher = incognitoTabSwitcher.selectRegularTabList();
+        RegularTabSwitcherStation regularTabSwitcher = incognitoTabSwitcher.selectRegularTabList();
 
-        regularTabSwitcher = regularTabSwitcher.closeTabAtIndex(0, HubTabSwitcherStation.class);
-        onView(HubTabSwitcherStation.EMPTY_STATE_TEXT.getViewMatcher())
+        regularTabSwitcher = regularTabSwitcher.closeTabAtIndex(0, RegularTabSwitcherStation.class);
+        onView(RegularTabSwitcherStation.EMPTY_STATE_TEXT.getViewMatcher())
                 .check(matches(isDisplayed()));
 
         incognitoTabSwitcher = regularTabSwitcher.selectIncognitoTabList();
-        onView(HubTabSwitcherStation.EMPTY_STATE_TEXT.getViewMatcher()).check(doesNotExist());
+        onView(RegularTabSwitcherStation.EMPTY_STATE_TEXT.getViewMatcher()).check(doesNotExist());
 
-        regularTabSwitcher = incognitoTabSwitcher.closeTabAtIndex(0, HubTabSwitcherStation.class);
-        onView(HubTabSwitcherStation.EMPTY_STATE_TEXT.getViewMatcher())
+        regularTabSwitcher =
+                incognitoTabSwitcher.closeTabAtIndex(0, RegularTabSwitcherStation.class);
+        onView(RegularTabSwitcherStation.EMPTY_STATE_TEXT.getViewMatcher())
                 .check(matches(isDisplayed()));
 
-        // Reset to a single tab.
-        HubTabSwitcherAppMenuFacility tabSwitcherAppMenu = regularTabSwitcher.openAppMenu();
-        page = tabSwitcherAppMenu.openNewTab();
+        // Go back to a tab to cleanup tab state
+        regularTabSwitcher.openAppMenu().openNewTab();
     }
 }

@@ -10,11 +10,11 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.when;
 
+import static org.chromium.base.ThreadUtils.runOnUiThreadBlocking;
 import static org.chromium.base.test.util.Restriction.RESTRICTION_TYPE_NON_LOW_END_DEVICE;
 import static org.chromium.chrome.browser.autofill.editors.AddressEditorCoordinator.UserFlow.MIGRATE_EXISTING_ADDRESS_PROFILE;
 import static org.chromium.chrome.browser.autofill.editors.AddressEditorCoordinator.UserFlow.SAVE_NEW_ADDRESS_PROFILE;
 import static org.chromium.chrome.browser.autofill.editors.AddressEditorCoordinator.UserFlow.UPDATE_EXISTING_ADDRESS_PROFILE;
-import static org.chromium.content_public.browser.test.util.TestThreadUtils.runOnUiThreadBlocking;
 import static org.chromium.ui.test.util.UiRestriction.RESTRICTION_TYPE_PHONE;
 
 import android.view.View;
@@ -25,7 +25,6 @@ import org.junit.AfterClass;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
@@ -35,8 +34,6 @@ import org.chromium.base.test.params.ParameterSet;
 import org.chromium.base.test.params.ParameterizedRunner;
 import org.chromium.base.test.util.DoNotBatch;
 import org.chromium.base.test.util.Feature;
-import org.chromium.base.test.util.Features;
-import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.JniMocker;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.autofill.AutofillAddress;
@@ -49,7 +46,6 @@ import org.chromium.chrome.browser.autofill.PhoneNumberUtil;
 import org.chromium.chrome.browser.autofill.PhoneNumberUtilJni;
 import org.chromium.chrome.browser.autofill.editors.AddressEditorCoordinator.Delegate;
 import org.chromium.chrome.browser.feedback.HelpAndFeedbackLauncher;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.profiles.ProfileManager;
 import org.chromium.chrome.browser.signin.services.IdentityServicesProvider;
@@ -57,7 +53,7 @@ import org.chromium.chrome.browser.sync.SyncServiceFactory;
 import org.chromium.chrome.test.ChromeJUnit4RunnerDelegate;
 import org.chromium.components.autofill.AutofillProfile;
 import org.chromium.components.autofill.FieldType;
-import org.chromium.components.autofill.Source;
+import org.chromium.components.autofill.RecordType;
 import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.components.signin.identitymanager.IdentityManager;
 import org.chromium.components.sync.SyncService;
@@ -76,9 +72,6 @@ import java.util.List;
 @DoNotBatch(reason = "The tests can't be batched because they run for different set-ups.")
 @RunWith(ParameterizedRunner.class)
 @ParameterAnnotations.UseRunnerDelegate(ChromeJUnit4RunnerDelegate.class)
-@EnableFeatures({
-    ChromeFeatureList.AUTOFILL_ADDRESS_PROFILE_SAVE_PROMPT_NICKNAME_SUPPORT
-})
 @Restriction({RESTRICTION_TYPE_PHONE, RESTRICTION_TYPE_NON_LOW_END_DEVICE})
 public class AddressEditorRenderTest extends BlankUiTestActivityTestCase {
     private static final String USER_EMAIL = "example@gmail.com";
@@ -108,7 +101,7 @@ public class AddressEditorRenderTest extends BlankUiTestActivityTestCase {
                     .build();
     private static final AutofillProfile sAccountProfile =
             AutofillProfile.builder()
-                    .setSource(Source.ACCOUNT)
+                    .setRecordType(RecordType.ACCOUNT)
                     .setFullName("Seb Doe")
                     .setCompanyName("Google")
                     .setStreetAddress("111 First St")
@@ -128,11 +121,10 @@ public class AddressEditorRenderTest extends BlankUiTestActivityTestCase {
     @Rule
     public final RenderTestRule mRenderTestRule =
             RenderTestRule.Builder.withPublicCorpus()
-                    .setRevision(1)
+                    .setRevision(2)
                     .setBugComponent(Component.UI_BROWSER_AUTOFILL)
                     .build();
 
-    @Rule public TestRule mProcessor = new Features.JUnitProcessor();
     @Rule public JniMocker mJniMocker = new JniMocker();
 
     @Mock private AutofillProfileBridge.Natives mAutofillProfileBridgeJni;
@@ -260,7 +252,6 @@ public class AddressEditorRenderTest extends BlankUiTestActivityTestCase {
                             mAddressEditor =
                                     new AddressEditorCoordinator(
                                             getActivity(),
-                                            mLauncher,
                                             mDelegate,
                                             mProfile,
                                             /* saveToDisk= */ false);
@@ -284,7 +275,6 @@ public class AddressEditorRenderTest extends BlankUiTestActivityTestCase {
                             mAddressEditor =
                                     new AddressEditorCoordinator(
                                             getActivity(),
-                                            mLauncher,
                                             mDelegate,
                                             mProfile,
                                             /* saveToDisk= */ false);
@@ -308,7 +298,6 @@ public class AddressEditorRenderTest extends BlankUiTestActivityTestCase {
                             mAddressEditor =
                                     new AddressEditorCoordinator(
                                             getActivity(),
-                                            mLauncher,
                                             mDelegate,
                                             mProfile,
                                             new AutofillAddress(
@@ -337,7 +326,6 @@ public class AddressEditorRenderTest extends BlankUiTestActivityTestCase {
                             mAddressEditor =
                                     new AddressEditorCoordinator(
                                             getActivity(),
-                                            mLauncher,
                                             mDelegate,
                                             mProfile,
                                             new AutofillAddress(
@@ -366,7 +354,6 @@ public class AddressEditorRenderTest extends BlankUiTestActivityTestCase {
                             mAddressEditor =
                                     new AddressEditorCoordinator(
                                             getActivity(),
-                                            mLauncher,
                                             mDelegate,
                                             mProfile,
                                             new AutofillAddress(

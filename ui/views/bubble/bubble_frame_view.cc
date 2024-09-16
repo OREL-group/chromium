@@ -13,6 +13,7 @@
 #include "ui/base/hit_test.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/color/color_id.h"
@@ -102,9 +103,7 @@ BubbleFrameView::BubbleFrameView(const gfx::Insets& title_margins,
   main_image_->SetVisible(false);
   subtitle_->SetVisible(false);
 
-  if (features::IsChromeRefresh2023()) {
-    default_title_->SetTextStyle(style::STYLE_HEADLINE_4);
-  }
+  default_title_->SetTextStyle(style::STYLE_HEADLINE_4);
 
   auto minimize = CreateMinimizeButton(base::BindRepeating(
       [](BubbleFrameView* view, const ui::Event& event) {
@@ -145,19 +144,23 @@ BubbleFrameView::~BubbleFrameView() = default;
 // static
 std::unique_ptr<Label> BubbleFrameView::CreateDefaultTitleLabel(
     const std::u16string& title_text) {
-  return CreateLabelWithContextAndStyle(title_text, style::CONTEXT_DIALOG_TITLE,
-                                        style::STYLE_PRIMARY);
+  std::unique_ptr<Label> label = CreateLabelWithContextAndStyle(
+      title_text, style::CONTEXT_DIALOG_TITLE, style::STYLE_PRIMARY);
+  if (base::FeatureList::IsEnabled(features::kBubbleFrameViewTitleIsHeading)) {
+    label->GetViewAccessibility().SetRole(ax::mojom::Role::kHeading);
+    label->GetViewAccessibility().SetHierarchicalLevel(1);
+  }
+  return label;
 }
 
 // static
 std::unique_ptr<Button> BubbleFrameView::CreateCloseButton(
     Button::PressedCallback callback) {
   auto close_button = CreateVectorImageButtonWithNativeTheme(
-      std::move(callback), features::IsChromeRefresh2023()
-                               ? vector_icons::kCloseChromeRefreshIcon
-                               : vector_icons::kCloseRoundedIcon);
+      std::move(callback), vector_icons::kCloseChromeRefreshIcon);
   close_button->SetTooltipText(l10n_util::GetStringUTF16(IDS_APP_CLOSE));
-  close_button->SetAccessibleName(l10n_util::GetStringUTF16(IDS_APP_CLOSE));
+  close_button->GetViewAccessibility().SetName(
+      l10n_util::GetStringUTF16(IDS_APP_CLOSE));
   close_button->SizeToPreferredSize();
 
   InstallCircleHighlightPathGenerator(close_button.get());
@@ -172,7 +175,7 @@ std::unique_ptr<Button> BubbleFrameView::CreateMinimizeButton(
       std::move(callback), kWindowControlMinimizeIcon);
   minimize_button->SetTooltipText(
       l10n_util::GetStringUTF16(IDS_APP_ACCNAME_MINIMIZE));
-  minimize_button->SetAccessibleName(
+  minimize_button->GetViewAccessibility().SetName(
       l10n_util::GetStringUTF16(IDS_APP_ACCNAME_MINIMIZE));
   minimize_button->SizeToPreferredSize();
 
@@ -429,31 +432,21 @@ void BubbleFrameView::UpdateMainImage() {
     // consider moving that functionality into ImageView or ImageModel without
     // having to specify an external size before painting.
     constexpr int kMainImageDialogWidthIncrease = 128;
-    constexpr int kBorderMargin = 16;
     constexpr int kBorderStrokeThickness = 1;
 
-    // Under CR2023, use the `title_margins_` for the outer margins between the
-    // content and the visible frame border. `border_insets` is the space
-    // outside the visible border mask that incorporates the rounded corners.
-    // This will ensure that the *perceived* margin will be what is expected
-    // since the origin for the view is outside the visible border.
-    // For pre-CR2023, there should be no visual change.
-    const int border_margin_left =
-        features::IsChromeRefresh2023() ? title_margins_.left() : kBorderMargin;
-    const int border_margin_top =
-        features::IsChromeRefresh2023() ? title_margins_.top() : kBorderMargin;
+    // Use the `title_margins_` for the outer margins between the content and
+    // the visible frame border. `border_insets` is the space outside the
+    // visible border mask that incorporates the rounded corners. This will
+    // ensure that the *perceived* margin will be what is expected since the
+    // origin for the view is outside the visible border.
+    const int border_margin_left = title_margins_.left();
+    const int border_margin_top = title_margins_.top();
     const gfx::Insets border_insets = GetBorder()->GetInsets();
     const int main_image_dimension = kMainImageDialogWidthIncrease -
                                      border_insets.left() - border_margin_left -
                                      kBorderStrokeThickness;
-    const int image_inset_left =
-        features::IsChromeRefresh2023()
-            ? border_insets.left() + border_margin_left
-            : border_margin_left - kBorderStrokeThickness;
-    const int image_inset_top =
-        features::IsChromeRefresh2023()
-            ? border_insets.top() + border_margin_top
-            : border_margin_top - kBorderStrokeThickness;
+    const int image_inset_left = border_insets.left() + border_margin_left;
+    const int image_inset_top = border_insets.top() + border_margin_top;
     const gfx::Insets image_insets =
         gfx::Insets::TLBR(image_inset_top, image_inset_left, border_margin_top,
                           border_margin_left);
@@ -491,9 +484,11 @@ std::optional<double> BubbleFrameView::GetProgress() const {
   return std::nullopt;
 }
 
-gfx::Size BubbleFrameView::CalculatePreferredSize() const {
+gfx::Size BubbleFrameView::CalculatePreferredSize(
+    const SizeBounds& available_size) const {
   // Get the preferred size of the client area.
-  gfx::Size client_size = GetWidget()->client_view()->GetPreferredSize({});
+  gfx::Size client_size =
+      GetWidget()->client_view()->GetPreferredSize(available_size);
   // Expand it to include the bubble border and space for the arrow.
   return GetWindowBoundsForClientBounds(gfx::Rect(client_size)).size();
 }
@@ -1046,8 +1041,9 @@ int BubbleFrameView::GetFrameWidthForClientWidth(int client_width) const {
 
   DialogDelegate* const dialog_delegate =
       GetWidget()->widget_delegate()->AsDialogDelegate();
-  bool snapping = dialog_delegate &&
-                  dialog_delegate->GetDialogButtons() != ui::DIALOG_BUTTON_NONE;
+  bool snapping =
+      dialog_delegate && dialog_delegate->buttons() !=
+                             static_cast<int>(ui::mojom::DialogButton::kNone);
   return snapping ? LayoutProvider::Get()->GetSnappedDialogWidth(frame_width)
                   : frame_width;
 }
@@ -1082,10 +1078,6 @@ bool BubbleFrameView::HasTitle() const {
 
 BubbleFrameView::ButtonsPositioning BubbleFrameView::GetButtonsPositioning()
     const {
-  if (!features::IsChromeRefresh2023()) {
-    return ButtonsPositioning::kOnFrameEdge;
-  }
-
   // Positions the buttons in the title row when there's no header row.
   return HasTitle() && !(header_view_ && header_view_->GetVisible())
              ? ButtonsPositioning::kInTitleRow

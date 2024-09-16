@@ -49,11 +49,14 @@ class FederatedIdentityPermissionContext
   void AddIdpSigninStatusObserver(IdpSigninStatusObserver* observer) override;
   void RemoveIdpSigninStatusObserver(
       IdpSigninStatusObserver* observer) override;
-  bool HasSharingPermission(
+  bool HasSharingPermission(const url::Origin& relying_party_requester,
+                            const url::Origin& relying_party_embedder,
+                            const url::Origin& identity_provider) override;
+  std::optional<base::Time> GetLastUsedTimestamp(
       const url::Origin& relying_party_requester,
       const url::Origin& relying_party_embedder,
       const url::Origin& identity_provider,
-      const std::optional<std::string>& account_id) override;
+      const std::string& account_id) override;
   bool HasSharingPermission(
       const url::Origin& relying_party_requester) override;
   void GrantSharingPermission(const url::Origin& relying_party_requester,
@@ -76,6 +79,8 @@ class FederatedIdentityPermissionContext
   std::vector<GURL> GetRegisteredIdPs() override;
   void RegisterIdP(const GURL& url) override;
   void UnregisterIdP(const GURL& url) override;
+  void OnSetRequiresUserMediation(const url::Origin& relying_party,
+                                  base::OnceClosure callback) override;
 
   // signin::IdentityManager::Observer:
   void OnAccountsInCookieUpdated(

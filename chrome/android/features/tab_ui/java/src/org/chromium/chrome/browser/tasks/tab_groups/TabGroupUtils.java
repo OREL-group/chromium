@@ -13,7 +13,7 @@ import androidx.annotation.StringRes;
 import org.chromium.base.ApplicationStatus;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
-import org.chromium.chrome.browser.profiles.ProfileManager;
+import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
@@ -37,6 +37,7 @@ public class TabGroupUtils {
     private static TabModelSelectorTabObserver sTabModelSelectorTabObserver;
 
     public static void maybeShowIPH(
+            Profile profile,
             @FeatureConstants String featureName,
             View view,
             @Nullable BottomSheetController bottomSheetController) {
@@ -54,17 +55,12 @@ public class TabGroupUtils {
                 accessibilityTextId =
                         R.string.iph_tab_groups_tap_to_see_another_tab_accessibility_text;
                 break;
-            case FeatureConstants.TAB_GROUPS_YOUR_TABS_ARE_TOGETHER_FEATURE:
-                textId = R.string.iph_tab_groups_your_tabs_together_text;
-                accessibilityTextId = textId;
-                break;
             default:
                 assert false;
                 return;
         }
 
-        final Tracker tracker =
-                TrackerFactory.getTrackerForProfile(ProfileManager.getLastUsedRegularProfile());
+        final Tracker tracker = TrackerFactory.getTrackerForProfile(profile);
         if (!tracker.isInitialized()) return;
         if (!tracker.shouldTriggerHelpUI(featureName)) return;
 
@@ -133,6 +129,7 @@ public class TabGroupUtils {
                                 || (navigationHandle.pageTransition() & PageTransition.CORE_MASK)
                                         == PageTransition.GENERATED) {
                             maybeShowIPH(
+                                    tab.getProfile(),
                                     FeatureConstants.TAB_GROUPS_QUICKLY_COMPARE_PAGES_FEATURE,
                                     tab.getView(),
                                     null);

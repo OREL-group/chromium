@@ -4,6 +4,7 @@
 
 #include "content/browser/speech/soda_speech_recognition_engine_impl.h"
 
+#include <array>
 #include <memory>
 #include <vector>
 
@@ -39,11 +40,11 @@ class SodaSpeechRecognitionEngineImplTest
 
   // SpeechRecognitionRequestDelegate methods.
   void OnSpeechRecognitionEngineResults(
-      const std::vector<blink::mojom::SpeechRecognitionResultPtr>& results)
+      const std::vector<media::mojom::WebSpeechRecognitionResultPtr>& results)
       override;
   void OnSpeechRecognitionEngineEndOfUtterance() override;
   void OnSpeechRecognitionEngineError(
-      const blink::mojom::SpeechRecognitionError& error) override;
+      const media::mojom::SpeechRecognitionError& error) override;
 
   // context.
   std::unique_ptr<SodaSpeechRecognitionEngineImpl> CreateSpeechRecognition(
@@ -55,16 +56,16 @@ class SodaSpeechRecognitionEngineImplTest
   // operations.
   void SendDummyAudioChunk();
   void FillRecognitionExpectResults(
-      std::vector<blink::mojom::SpeechRecognitionResultPtr>& results,
+      std::vector<media::mojom::WebSpeechRecognitionResultPtr>& results,
       const char* transcription,
       bool is_final);
   void SendSpeechResult(const char* result, bool is_final);
   void SendTranscriptionError();
   void ExpectResultsReceived(
-      const std::vector<blink::mojom::SpeechRecognitionResultPtr>& results);
+      const std::vector<media::mojom::WebSpeechRecognitionResultPtr>& results);
   bool ResultsAreEqual(
-      const std::vector<blink::mojom::SpeechRecognitionResultPtr>& a,
-      const std::vector<blink::mojom::SpeechRecognitionResultPtr>& b);
+      const std::vector<media::mojom::WebSpeechRecognitionResultPtr>& a,
+      const std::vector<media::mojom::WebSpeechRecognitionResultPtr>& b);
 
  protected:
   content::BrowserTaskEnvironment task_environment_;
@@ -74,8 +75,9 @@ class SodaSpeechRecognitionEngineImplTest
       fake_speech_recognition_mgr_delegate_;
   std::unique_ptr<SodaSpeechRecognitionEngineImpl> client_under_test_;
 
-  base::queue<std::vector<blink::mojom::SpeechRecognitionResultPtr>> results_;
-  blink::mojom::SpeechRecognitionErrorCode error_;
+  base::queue<std::vector<media::mojom::WebSpeechRecognitionResultPtr>>
+      results_;
+  media::mojom::SpeechRecognitionErrorCode error_;
   int end_of_utterance_counter_ = 0;
   bool recognition_ready_ = false;
 
@@ -83,7 +85,7 @@ class SodaSpeechRecognitionEngineImplTest
 };
 
 void SodaSpeechRecognitionEngineImplTest::SetUp() {
-  error_ = blink::mojom::SpeechRecognitionErrorCode::kNone;
+  error_ = media::mojom::SpeechRecognitionErrorCode::kNone;
   end_of_utterance_counter_ = 0;
   recognition_ready_ = false;
   browser_context_ = std::make_unique<content::TestBrowserContext>();
@@ -97,7 +99,7 @@ void SodaSpeechRecognitionEngineImplTest::SetUp() {
 void SodaSpeechRecognitionEngineImplTest::TearDown() {}
 
 void SodaSpeechRecognitionEngineImplTest::OnSpeechRecognitionEngineResults(
-    const std::vector<blink::mojom::SpeechRecognitionResultPtr>& results) {
+    const std::vector<media::mojom::WebSpeechRecognitionResultPtr>& results) {
   results_.push(mojo::Clone(results));
 }
 
@@ -107,7 +109,7 @@ void SodaSpeechRecognitionEngineImplTest::
 }
 
 void SodaSpeechRecognitionEngineImplTest::OnSpeechRecognitionEngineError(
-    const blink::mojom::SpeechRecognitionError& error) {
+    const media::mojom::SpeechRecognitionError& error) {
   error_ = error.code;
 }
 
@@ -147,7 +149,7 @@ SodaSpeechRecognitionEngineImplTest::CreateSpeechRecognition(
 void SodaSpeechRecognitionEngineImplTest::SendDummyAudioChunk() {
   // Enough data so that the encoder will output something, as can't read 0
   // bytes from a Mojo stream.
-  unsigned char dummy_audio_buffer_data[2000 * 2] = {'\0'};
+  std::array<unsigned char, 2000 * 2> dummy_audio_buffer_data = {'\0'};
   scoped_refptr<AudioChunk> dummy_audio_chunk(new AudioChunk(
       &dummy_audio_buffer_data[0], sizeof(dummy_audio_buffer_data),
       2 /* bytes per sample */));
@@ -158,15 +160,15 @@ void SodaSpeechRecognitionEngineImplTest::SendDummyAudioChunk() {
 }
 
 void SodaSpeechRecognitionEngineImplTest::FillRecognitionExpectResults(
-    std::vector<blink::mojom::SpeechRecognitionResultPtr>& results,
+    std::vector<media::mojom::WebSpeechRecognitionResultPtr>& results,
     const char* transcription,
     bool is_final) {
-  results.push_back(blink::mojom::SpeechRecognitionResult::New());
-  blink::mojom::SpeechRecognitionResultPtr& result = results.back();
+  results.push_back(media::mojom::WebSpeechRecognitionResult::New());
+  media::mojom::WebSpeechRecognitionResultPtr& result = results.back();
   result->is_provisional = !is_final;
 
-  blink::mojom::SpeechRecognitionHypothesisPtr hypothesis =
-      blink::mojom::SpeechRecognitionHypothesis::New();
+  media::mojom::SpeechRecognitionHypothesisPtr hypothesis =
+      media::mojom::SpeechRecognitionHypothesis::New();
   hypothesis->confidence = 1.0;
   hypothesis->utterance = base::UTF8ToUTF16(transcription);
   result->hypotheses.push_back(std::move(hypothesis));
@@ -187,15 +189,15 @@ void SodaSpeechRecognitionEngineImplTest::SendTranscriptionError() {
 }
 
 void SodaSpeechRecognitionEngineImplTest::ExpectResultsReceived(
-    const std::vector<blink::mojom::SpeechRecognitionResultPtr>& results) {
+    const std::vector<media::mojom::WebSpeechRecognitionResultPtr>& results) {
   ASSERT_GE(1U, results_.size());
   ASSERT_TRUE(ResultsAreEqual(results, results_.front()));
   results_.pop();
 }
 
 bool SodaSpeechRecognitionEngineImplTest::ResultsAreEqual(
-    const std::vector<blink::mojom::SpeechRecognitionResultPtr>& a,
-    const std::vector<blink::mojom::SpeechRecognitionResultPtr>& b) {
+    const std::vector<media::mojom::WebSpeechRecognitionResultPtr>& a,
+    const std::vector<media::mojom::WebSpeechRecognitionResultPtr>& b) {
   if (a.size() != b.size()) {
     return false;
   }
@@ -208,9 +210,9 @@ bool SodaSpeechRecognitionEngineImplTest::ResultsAreEqual(
       return false;
     }
     for (size_t i = 0; i < (*it_a)->hypotheses.size(); ++i) {
-      const blink::mojom::SpeechRecognitionHypothesisPtr& hyp_a =
+      const media::mojom::SpeechRecognitionHypothesisPtr& hyp_a =
           (*it_a)->hypotheses[i];
-      const blink::mojom::SpeechRecognitionHypothesisPtr& hyp_b =
+      const media::mojom::SpeechRecognitionHypothesisPtr& hyp_b =
           (*it_b)->hypotheses[i];
       if (hyp_a->utterance != hyp_b->utterance ||
           hyp_a->confidence != hyp_b->confidence) {
@@ -235,19 +237,19 @@ TEST_F(SodaSpeechRecognitionEngineImplTest, SpeechRecognitionResults) {
   client_under_test_->StartRecognition();
   SendDummyAudioChunk();
 
-  std::vector<blink::mojom::SpeechRecognitionResultPtr> first_results;
+  std::vector<media::mojom::WebSpeechRecognitionResultPtr> first_results;
   FillRecognitionExpectResults(first_results, kFirstSpeechResult, false);
   SendSpeechResult(kFirstSpeechResult, /*is_final=*/false);
   ExpectResultsReceived(first_results);
 
   SendDummyAudioChunk();
-  std::vector<blink::mojom::SpeechRecognitionResultPtr> second_results;
+  std::vector<media::mojom::WebSpeechRecognitionResultPtr> second_results;
   FillRecognitionExpectResults(second_results, kSecondSpeechResult, false);
   SendSpeechResult(kSecondSpeechResult, /*is_final=*/false);
   ExpectResultsReceived(second_results);
 
   SendTranscriptionError();
-  ASSERT_EQ(blink::mojom::SpeechRecognitionErrorCode::kNoSpeech, error_);
+  ASSERT_EQ(media::mojom::SpeechRecognitionErrorCode::kNoSpeech, error_);
 }
 
 TEST_F(SodaSpeechRecognitionEngineImplTest, SpeechRecognitionAudioChunksEnded) {
@@ -263,7 +265,7 @@ TEST_F(SodaSpeechRecognitionEngineImplTest, SpeechRecognitionAudioChunksEnded) {
   client_under_test_->StartRecognition();
   SendDummyAudioChunk();
 
-  std::vector<blink::mojom::SpeechRecognitionResultPtr> first_results;
+  std::vector<media::mojom::WebSpeechRecognitionResultPtr> first_results;
   FillRecognitionExpectResults(first_results, kFirstSpeechResult, false);
   SendSpeechResult(kFirstSpeechResult, /*is_final=*/false);
   ExpectResultsReceived(first_results);
@@ -272,7 +274,7 @@ TEST_F(SodaSpeechRecognitionEngineImplTest, SpeechRecognitionAudioChunksEnded) {
   client_under_test_->AudioChunksEnded();
   client_under_test_->EndRecognition();
   loop.RunUntilIdle();
-  ASSERT_EQ(blink::mojom::SpeechRecognitionErrorCode::kAborted, error_);
+  ASSERT_EQ(media::mojom::SpeechRecognitionErrorCode::kAborted, error_);
 }
 
 TEST_F(SodaSpeechRecognitionEngineImplTest, SpeechRecognitionEndOfUtterance) {
@@ -289,12 +291,12 @@ TEST_F(SodaSpeechRecognitionEngineImplTest, SpeechRecognitionEndOfUtterance) {
   client_under_test_->StartRecognition();
   SendDummyAudioChunk();
 
-  std::vector<blink::mojom::SpeechRecognitionResultPtr> first_results;
+  std::vector<media::mojom::WebSpeechRecognitionResultPtr> first_results;
   FillRecognitionExpectResults(first_results, kFirstSpeechResult, false);
   SendSpeechResult(kFirstSpeechResult, /*is_final=*/false);
   ExpectResultsReceived(first_results);
 
-  std::vector<blink::mojom::SpeechRecognitionResultPtr> second_results;
+  std::vector<media::mojom::WebSpeechRecognitionResultPtr> second_results;
   FillRecognitionExpectResults(second_results, kSecondSpeechResult, true);
   SendSpeechResult(kSecondSpeechResult, /*is_final=*/true);
   ExpectResultsReceived(second_results);
@@ -316,7 +318,7 @@ TEST_F(SodaSpeechRecognitionEngineImplTest, SpeechRecognitionEnd) {
   client_under_test_->StartRecognition();
   SendDummyAudioChunk();
 
-  std::vector<blink::mojom::SpeechRecognitionResultPtr> first_results;
+  std::vector<media::mojom::WebSpeechRecognitionResultPtr> first_results;
   FillRecognitionExpectResults(first_results, kFirstSpeechResult, false);
   SendSpeechResult(kFirstSpeechResult, /*is_final=*/false);
   ExpectResultsReceived(first_results);
@@ -324,38 +326,7 @@ TEST_F(SodaSpeechRecognitionEngineImplTest, SpeechRecognitionEnd) {
   client_under_test_->EndRecognition();
   SendDummyAudioChunk();
 
-  ASSERT_EQ(blink::mojom::SpeechRecognitionErrorCode::kNotAllowed, error_);
-}
-
-TEST_F(SodaSpeechRecognitionEngineImplTest,
-       SpeechRecognitionManagerDelegateNotAvaiable) {
-  SpeechRecognitionSessionConfig config;
-  client_under_test_ = CreateSpeechRecognition(config, nullptr, true);
-  ASSERT_FALSE(client_under_test_->Initialize());
-  base::RunLoop().RunUntilIdle();
-  ASSERT_FALSE(recognition_ready_);
-
-  client_under_test_->StartRecognition();
-
-  ASSERT_EQ(blink::mojom::SpeechRecognitionErrorCode::kServiceNotAllowed,
-            error_);
-}
-
-TEST_F(SodaSpeechRecognitionEngineImplTest, NoSpeechRecognitionService) {
-  fake_speech_recognition_mgr_delegate_->Reset(nullptr);
-  mock_service_ = nullptr;
-
-  SpeechRecognitionSessionConfig config;
-  client_under_test_ = CreateSpeechRecognition(
-      config, fake_speech_recognition_mgr_delegate_.get(), true);
-  ASSERT_TRUE(client_under_test_->Initialize());
-  base::RunLoop().RunUntilIdle();
-  ASSERT_FALSE(recognition_ready_);
-
-  client_under_test_->StartRecognition();
-
-  ASSERT_EQ(blink::mojom::SpeechRecognitionErrorCode::kServiceNotAllowed,
-            error_);
+  ASSERT_EQ(media::mojom::SpeechRecognitionErrorCode::kNotAllowed, error_);
 }
 
 TEST_F(SodaSpeechRecognitionEngineImplTest, SetOnReadyCallbackAfterBind) {

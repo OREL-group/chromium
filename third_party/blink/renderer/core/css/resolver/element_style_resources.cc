@@ -38,6 +38,7 @@
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/loader/lazy_image_helper.h"
+#include "third_party/blink/renderer/core/paint/timing/paint_timing.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/style/content_data.h"
 #include "third_party/blink/renderer/core/style/cursor_data.h"
@@ -133,10 +134,12 @@ StyleImage* StyleImageLoader::Load(
   if (auto* image_set_value = DynamicTo<CSSImageSetValue>(value)) {
     StyleImage* style_image =
         ResolveImageSet(*image_set_value, image_request_behavior, cross_origin);
-    return image_set_value->CacheImage(style_image, device_scale_factor_);
+    return image_set_value->CacheImage(
+        style_image, device_scale_factor_,
+        style_image ? style_image->IsOriginClean() : true);
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return nullptr;
 }
 
@@ -222,7 +225,7 @@ bool ElementStyleResources::IsPending(const CSSValue& value) const {
     return img_set_value->IsCachePending(device_scale_factor_);
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return false;
 }
 
@@ -249,7 +252,7 @@ StyleImage* ElementStyleResources::CachedStyleImage(
     return img_set_value->CachedImage(device_scale_factor_);
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return nullptr;
 }
 
@@ -315,7 +318,7 @@ void ElementStyleResources::LoadPendingSVGResources(
         LoadResourcesForFilter(builder.MutableFilterOperations(), document);
         break;
       default:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
     }
   }
 }
@@ -468,7 +471,7 @@ void ElementStyleResources::LoadPendingImages(ComputedStyleBuilder& builder) {
         }
         break;
       default:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
     }
   }
 }

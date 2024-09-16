@@ -35,6 +35,7 @@
 #include "components/autofill/core/common/autofill_payments_features.h"
 #include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/gfx/color_palette.h"
@@ -59,12 +60,43 @@
 
 namespace autofill {
 
+namespace {
+
+int GetLightModeBannerIdForSaveCard() {
+  switch (autofill::GetUpdatedDesktopUiTreatmentArm()) {
+    case autofill::UpdatedDesktopUiTreatmentArm::kSecurityFocus:
+      return IDR_SAVE_CARD_SECURITY;
+    case autofill::UpdatedDesktopUiTreatmentArm::kConvenienceFocus:
+      return IDR_SAVE_CARD_CONVENIENCE;
+    case autofill::UpdatedDesktopUiTreatmentArm::kEducationFocus:
+      return IDR_SAVE_CARD_EDUCATION;
+    case autofill::UpdatedDesktopUiTreatmentArm::kDefault:
+      return IDR_SAVE_CARD;
+  }
+}
+
+int GetDarkModeBannerIdForSaveCard() {
+  switch (autofill::GetUpdatedDesktopUiTreatmentArm()) {
+    case autofill::UpdatedDesktopUiTreatmentArm::kSecurityFocus:
+      return IDR_SAVE_CARD_SECURITY_DARK;
+    case autofill::UpdatedDesktopUiTreatmentArm::kConvenienceFocus:
+      return IDR_SAVE_CARD_CONVENIENCE_DARK;
+    case autofill::UpdatedDesktopUiTreatmentArm::kEducationFocus:
+      return IDR_SAVE_CARD_EDUCATION_DARK;
+    case autofill::UpdatedDesktopUiTreatmentArm::kDefault:
+      return IDR_SAVE_CARD_DARK;
+  }
+}
+
+}  // namespace
+
 SaveCardOfferBubbleViews::SaveCardOfferBubbleViews(
     views::View* anchor_view,
     content::WebContents* web_contents,
     SaveCardBubbleController* controller)
     : SaveCardBubbleViews(anchor_view, web_contents, controller) {
-  SetButtons(ui::DIALOG_BUTTON_OK | ui::DIALOG_BUTTON_CANCEL);
+  SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk) |
+             static_cast<int>(ui::mojom::DialogButton::kCancel));
 
   Profile* profile =
       Profile::FromBrowserContext(web_contents->GetBrowserContext());
@@ -123,11 +155,12 @@ bool SaveCardOfferBubbleViews::Accept() {
 }
 
 bool SaveCardOfferBubbleViews::IsDialogButtonEnabled(
-    ui::DialogButton button) const {
-  if (button == ui::DIALOG_BUTTON_CANCEL)
+    ui::mojom::DialogButton button) const {
+  if (button == ui::mojom::DialogButton::kCancel) {
     return true;
+  }
 
-  DCHECK_EQ(ui::DIALOG_BUTTON_OK, button);
+  DCHECK_EQ(ui::mojom::DialogButton::kOk, button);
   if (cardholder_name_textfield_) {
     // Make sure we are not requesting cardholder name and expiration date at
     // the same time.
@@ -166,15 +199,31 @@ void SaveCardOfferBubbleViews::AddedToWidget() {
   SaveCardBubbleViews::AddedToWidget();
   // Set the header image.
   ui::ResourceBundle& bundle = ui::ResourceBundle::GetSharedInstance();
+  int light_mode_banner_id;
+  int dark_mode_banner_id;
 
-  bool is_cvc_save_bubble =
-      controller()->GetBubbleType() == BubbleType::LOCAL_CVC_SAVE ||
-      controller()->GetBubbleType() == BubbleType::UPLOAD_CVC_SAVE;
+  switch (controller()->GetBubbleType()) {
+    case BubbleType::UPLOAD_SAVE:
+    case BubbleType::UPLOAD_IN_PROGRESS:
+    case BubbleType::UPLOAD_COMPLETED:
+      // Updated banner/text pairs are for upload save only.
+      light_mode_banner_id = GetLightModeBannerIdForSaveCard();
+      dark_mode_banner_id = GetDarkModeBannerIdForSaveCard();
+      break;
+    case BubbleType::LOCAL_CVC_SAVE:
+    case BubbleType::UPLOAD_CVC_SAVE:
+      // CVC bubbles show their own CVC-based banner image.
+      light_mode_banner_id = IDR_SAVE_CVC;
+      dark_mode_banner_id = IDR_SAVE_CVC_DARK;
+      break;
+    default:
+      light_mode_banner_id = IDR_SAVE_CARD;
+      dark_mode_banner_id = IDR_SAVE_CARD_DARK;
+  }
+
   auto image_view = std::make_unique<ThemeTrackingNonAccessibleImageView>(
-      *bundle.GetImageSkiaNamed(is_cvc_save_bubble ? IDR_SAVE_CVC
-                                                   : IDR_SAVE_CARD),
-      *bundle.GetImageSkiaNamed(is_cvc_save_bubble ? IDR_SAVE_CVC_DARK
-                                                   : IDR_SAVE_CARD_DARK),
+      *bundle.GetImageSkiaNamed(light_mode_banner_id),
+      *bundle.GetImageSkiaNamed(dark_mode_banner_id),
       base::BindRepeating(&views::BubbleDialogDelegate::GetBackgroundColor,
                           base::Unretained(this)));
   GetBubbleFrameView()->SetHeaderView(std::move(image_view));
@@ -249,8 +298,9 @@ std::unique_ptr<views::View> SaveCardOfferBubbleViews::CreateMainContentView() {
     cardholder_name_textfield_ = new views::Textfield();
     cardholder_name_textfield_->set_controller(this);
     cardholder_name_textfield_->SetID(DialogViewId::CARDHOLDER_NAME_TEXTFIELD);
-    cardholder_name_textfield_->SetAccessibleName(l10n_util::GetStringUTF16(
-        IDS_AUTOFILL_SAVE_CARD_PROMPT_CARDHOLDER_NAME));
+    cardholder_name_textfield_->GetViewAccessibility().SetName(
+        l10n_util::GetStringUTF16(
+            IDS_AUTOFILL_SAVE_CARD_PROMPT_CARDHOLDER_NAME));
     cardholder_name_textfield_->SetTextInputType(
         ui::TextInputType::TEXT_INPUT_TYPE_TEXT);
     cardholder_name_textfield_->SetText(prefilled_name);
@@ -293,7 +343,7 @@ SaveCardOfferBubbleViews::CreateRequestExpirationDateView() {
   month_input_dropdown_ = new views::Combobox(&month_combobox_model_);
   month_input_dropdown_->SetCallback(base::BindRepeating(
       &SaveCardOfferBubbleViews::DialogModelChanged, base::Unretained(this)));
-  month_input_dropdown_->SetAccessibleName(
+  month_input_dropdown_->GetViewAccessibility().SetName(
       l10n_util::GetStringUTF16(IDS_AUTOFILL_DIALOG_PLACEHOLDER_EXPIRY_MONTH));
   month_input_dropdown_->SetID(DialogViewId::EXPIRATION_DATE_DROPBOX_MONTH);
 
@@ -308,7 +358,7 @@ SaveCardOfferBubbleViews::CreateRequestExpirationDateView() {
   year_input_dropdown_ = new views::Combobox(&year_combobox_model_);
   year_input_dropdown_->SetCallback(base::BindRepeating(
       &SaveCardOfferBubbleViews::DialogModelChanged, base::Unretained(this)));
-  year_input_dropdown_->SetAccessibleName(
+  year_input_dropdown_->GetViewAccessibility().SetName(
       l10n_util::GetStringUTF16(IDS_AUTOFILL_DIALOG_PLACEHOLDER_EXPIRY_YEAR));
   year_input_dropdown_->SetID(DialogViewId::EXPIRATION_DATE_DROPBOX_YEAR);
 
@@ -409,7 +459,7 @@ void SaveCardOfferBubbleViews::ShowThrobber() {
     return;
   }
 
-  SetButtons(ui::DIALOG_BUTTON_NONE);
+  SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
   SetExtraView({nullptr});
 
   CHECK(loading_throbber_);

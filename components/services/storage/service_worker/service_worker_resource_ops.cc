@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/services/storage/service_worker/service_worker_resource_ops.h"
 
 #include "base/containers/span.h"
@@ -322,7 +327,7 @@ class ServiceWorkerResourceReaderImpl::DataReader {
     switch (rv) {
       case MOJO_RESULT_INVALID_ARGUMENT:
       case MOJO_RESULT_BUSY:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
         return;
       case MOJO_RESULT_FAILED_PRECONDITION:
         Complete(net::ERR_ABORTED);

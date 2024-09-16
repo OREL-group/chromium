@@ -88,15 +88,15 @@ running fuzz tests are not included.
 
 Currently, a migration is in process to enable tests for a builder to be
 configured as part of the builder definition itself. In order to avoid having to
-manually sync definitions in two locations/systems, some of the .pyl files in
-//testing/buildbot that used to be hand-written are now generated from the
+manually sync definitions in two locations/systems, some of the .pyl that used
+to be hand-written files in //testing/buildbot are now generated from the
 starlark definitions. Due to intentional design decisions in lucicfg, the files
 generated from the //infra/config starlark can't be located outside of
-//infra/config. Owing to angle using an exported copy of the //testing/buildbot
-directory, those .pyl files must still exist in //testing/buildbot.
+//infra/config/generated. //testing/buildbot/generate_buildbot_json.py has been
+updated to read gn_isolate_map.pyl, mixins.pyl, test_suites.pyl and variants.pyl
+from //infra/config/generated/testing.
 
-Because of those constraints, updating some of the .pyl files requires the
-following process:
+Updating these .pyl files requires the following process:
 
 1. Modify starlark files
 
@@ -115,12 +115,6 @@ following process:
 
     On mac or linux, you can just do: `infra/config/main.star`
 
-1. Copy the pyl files from //infra/config/generated/testing to
-   //testing/buildbot by running
-   [sync-pyl-files.py](/infra/config/scripts/sync-pyl-files.py)
-
-    `infra/config/scripts/sync-pyl-files.py`
-
 Then you can make any edits you wish to the hand-written .pyl files in
 //testing/buildbot ([waterfalls.pyl][waterfalls.pyl] and
 [test_suite_exceptions.pyl](/testing/buildbot/test_suite_exceptions.pyl)) and
@@ -128,6 +122,16 @@ run [generate_buildbot_json.py](/testing/buildbot/generate_buildbot_json.py) to
 generate the targets spec files.
 
 [waterfalls.pyl]: /testing/buildbot/waterfalls.pyl
+
+Due to angle using mixins.pyl via a subtree repo that exports
+//testing/buildbot, if mixins.pyl was modified by the above steps, it's
+necessary to sync that file to //testing/buildbot.
+
+1. Copy mixins.pyl from //infra/config/generated/testing to
+   //testing/buildbot by running
+   [sync-pyl-files.py](/infra/config/scripts/sync-pyl-files.py)
+
+    `infra/config/scripts/sync-pyl-files.py`
 
 ### Setting tests for a builder in starlark
 
@@ -138,17 +142,17 @@ conditions:
 * Cannot rely on any fields being set on the builder's waterfall in
   waterfalls.pyl except mixins
 * Cannot rely on any fields besides additional_compile_targets, test_suites,
-  mixins and use_swarming being set for the builder in waterfalls.pyl (fields
-  that are present in targets.mixin can be specified by specifying an in-place
-  mixin in the mixins field instead)
+  mixins, os_type and use_swarming being set for the builder in waterfalls.pyl
+  (fields that are present in targets.mixin can be specified by specifying an
+  in-place mixin in the mixins field instead)
   * Under test_suites, test can only be specified for the scripts,
     gtest_tests and isolated_scripts keys
     * Only the following fields can be set on gtests & isolated scripts either
       directly or via mixins:
       * args
-      * android_args (setting the os type isn't supported yet, so this won't
-        take effect, but won't be rejected)
-      * android_swarming (setting the os type isn't supported yet, so this won't
+      * android_args (expanding these isn't supported yet, so this won't take
+        effect, but won't be rejected)
+      * android_swarming (expanding these isn't supported yet, so this won't
         take effect, but won't be rejected)
       * ci_only
       * isolate_profile_data

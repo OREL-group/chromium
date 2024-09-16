@@ -31,6 +31,7 @@
 #include "services/viz/public/mojom/compositing/layer_context.mojom.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/display/types/display_constants.h"
 
 namespace device {
 
@@ -149,7 +150,7 @@ class StubXrJavaCoordinator : public XrJavaCoordinator {
       SurfaceTouchCallback touch_callback,
       JavaShutdownCallback destroyed_callback,
       XrSessionButtonTouchedCallback button_touched_callback) override {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
   }
   void EndSession() override {}
 
@@ -231,8 +232,9 @@ class StubCompositorFrameSink
   void SetSwapCompletionCallbackEnabled(bool enable) override {}
   void SetStandaloneBeginFrameObserver(
       mojo::PendingRemote<viz::mojom::BeginFrameObserver> observer) override {}
-  void SetMaxVrrInterval(
-      std::optional<base::TimeDelta> max_vrr_interval) override {}
+  void SetMaxVSyncAndVrr(std::optional<base::TimeDelta> max_vsync_interval,
+                         display::VariableRefreshRateState vrr_state) override {
+  }
 
   // mojom::CompositorFrameSink:
   void SetNeedsBeginFrame(bool needs_begin_frame) override {}
@@ -328,7 +330,7 @@ class ArCoreDeviceTest : public testing::Test {
     DVLOG(1) << __func__;
     session_ = std::move(session_result->session);
     controller_.Bind(std::move(session_result->controller));
-    // TODO(crbug.com/837834): verify that things fail if restricted.
+    // TODO(crbug.com/41386002): verify that things fail if restricted.
     // We should think through the right result here for javascript.
     // If an AR page tries to hittest while not focused, should it
     // get no results or fail?
@@ -369,7 +371,7 @@ class ArCoreDeviceTest : public testing::Test {
                              base::BindOnce(&ArCoreDeviceTest::OnSessionCreated,
                                             base::Unretained(this)));
 
-    // TODO(https://crbug.com/837834): figure out how to make this work
+    // TODO(crbug.com/41386002): figure out how to make this work
     // EXPECT_CALL(*bridge,
     // DoCreateUnboundContextProvider(testing::_)).Times(1);
 
@@ -393,7 +395,7 @@ class ArCoreDeviceTest : public testing::Test {
       std::move(run_loop_quit_closure).Run();
     };
 
-    // TODO(https://crbug.com/837834): verify GetFrameData fails if we
+    // TODO(crbug.com/41386002): verify GetFrameData fails if we
     // haven't resolved the Mailbox.
     frame_provider->GetFrameData(
         nullptr,

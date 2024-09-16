@@ -8,7 +8,6 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -21,7 +20,6 @@
 #include "base/notreached.h"
 #include "base/ranges/algorithm.h"
 #include "base/run_loop.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -31,9 +29,9 @@
 #include "base/time/time.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
-#include "chrome/browser/apps/app_service/browser_app_instance_tracker.h"
 #include "chrome/browser/apps/app_service/intent_util.h"
 #include "chrome/browser/apps/app_service/launch_utils.h"
+#include "chrome/browser/apps/browser_instance/browser_app_instance_tracker.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
 #include "chrome/browser/media/webrtc/media_stream_capture_indicator.h"
@@ -314,8 +312,8 @@ IN_PROC_BROWSER_TEST_F(LacrosWebAppsControllerBrowserTest, ManifestUpdate) {
   webapps::AppId app_id;
   {
     const std::u16string original_description = u"Original Web App";
-    auto web_app_info = std::make_unique<WebAppInstallInfo>();
-    web_app_info->start_url = app_url;
+    auto web_app_info =
+        WebAppInstallInfo::CreateWithStartUrlForTesting(app_url);
     web_app_info->scope = app_url;
     web_app_info->title = original_description;
     web_app_info->description = original_description;
@@ -328,8 +326,8 @@ IN_PROC_BROWSER_TEST_F(LacrosWebAppsControllerBrowserTest, ManifestUpdate) {
 
   {
     const std::u16string updated_description = u"Updated Web App";
-    auto web_app_info = std::make_unique<WebAppInstallInfo>();
-    web_app_info->start_url = app_url;
+    auto web_app_info =
+        WebAppInstallInfo::CreateWithStartUrlForTesting(app_url);
     web_app_info->scope = app_url;
     web_app_info->title = updated_description;
     web_app_info->description = updated_description;
@@ -360,8 +358,8 @@ IN_PROC_BROWSER_TEST_F(LacrosWebAppsControllerBrowserTest,
   webapps::AppId app_id;
   {
     const std::u16string description = u"Web App";
-    auto web_app_info = std::make_unique<WebAppInstallInfo>();
-    web_app_info->start_url = app_url;
+    auto web_app_info =
+        WebAppInstallInfo::CreateWithStartUrlForTesting(app_url);
     web_app_info->scope = app_url;
     web_app_info->title = description;
     web_app_info->description = description;
@@ -432,9 +430,9 @@ IN_PROC_BROWSER_TEST_F(LacrosWebAppsControllerBrowserTest, ContentSettings) {
 
   // Install an additional app from a different host.
   {
-    auto web_app_info = std::make_unique<WebAppInstallInfo>();
-    web_app_info->start_url = GURL("https://example.com:8080/");
-    web_app_info->scope = web_app_info->start_url;
+    auto web_app_info = WebAppInstallInfo::CreateWithStartUrlForTesting(
+        GURL("https://example.com:8080/"));
+    web_app_info->scope = web_app_info->start_url();
     web_app_info->title = u"Unrelated Web App";
     InstallWebApp(std::move(web_app_info));
   }
@@ -839,10 +837,11 @@ IN_PROC_BROWSER_TEST_F(LacrosWebAppsControllerBrowserTest, DisabledState) {
   webapps::AppId app2_id;
   {
     const std::u16string description = u"Uninstalled Web App";
-    auto web_app_info = std::make_unique<WebAppInstallInfo>();
-    web_app_info->start_url =
+    GURL start_url =
         embedded_test_server()->GetURL("app.site.com", "/simple.html");
-    web_app_info->scope = web_app_info->start_url.GetWithoutFilename();
+    auto web_app_info =
+        WebAppInstallInfo::CreateWithStartUrlForTesting(start_url);
+    web_app_info->scope = web_app_info->start_url().GetWithoutFilename();
     web_app_info->title = description;
     web_app_info->description = description;
     app2_id = InstallWebApp(std::move(web_app_info));

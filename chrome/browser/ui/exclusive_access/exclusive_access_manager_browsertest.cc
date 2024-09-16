@@ -10,7 +10,7 @@
 #include "chrome/browser/ui/exclusive_access/exclusive_access_test.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "content/public/common/input/native_web_keyboard_event.h"
+#include "components/input/native_web_keyboard_event.h"
 #include "content/public/test/browser_test.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "url/gurl.h"
@@ -19,7 +19,7 @@ using ExclusiveAccessManagerTest = ExclusiveAccessTest;
 
 IN_PROC_BROWSER_TEST_F(ExclusiveAccessManagerTest, HandleKeyEvent_NonEscKey) {
   // Non-Esc key events should be ignored.
-  content::NativeWebKeyboardEvent event(
+  input::NativeWebKeyboardEvent event(
       blink::WebInputEvent::Type::kRawKeyDown,
       blink::WebInputEvent::kNoModifiers,
       blink::WebInputEvent::GetStaticTimeStampForTests());
@@ -88,6 +88,22 @@ class ExclusiveAccessManagerPressAndHoldEscTest : public ExclusiveAccessTest {
 };
 
 IN_PROC_BROWSER_TEST_F(ExclusiveAccessManagerPressAndHoldEscTest,
+                       HoldTimerStartOnEscKeyPressWithModifiers) {
+  // Don't start the timer on Esc key down with a non-stateful modifier.
+  input::NativeWebKeyboardEvent event(
+      blink::WebInputEvent::Type::kRawKeyDown, blink::WebInputEvent::kShiftKey,
+      blink::WebInputEvent::GetStaticTimeStampForTests());
+  event.windows_key_code = ui::VKEY_ESCAPE;
+  GetExclusiveAccessManager()->HandleUserKeyEvent(event);
+  EXPECT_FALSE(IsEscKeyHoldTimerRunning());
+
+  // Start the timer on Esc key down with a stateful modifier.
+  event.SetModifiers(blink::WebInputEvent::kNumLockOn);
+  GetExclusiveAccessManager()->HandleUserKeyEvent(event);
+  EXPECT_TRUE(IsEscKeyHoldTimerRunning());
+}
+
+IN_PROC_BROWSER_TEST_F(ExclusiveAccessManagerPressAndHoldEscTest,
                        HandlePressAndHoldKeyEvent) {
   // Start the timer on key down event.
   SendEscapeToExclusiveAccessManager(/*is_key_down=*/true);
@@ -136,12 +152,8 @@ IN_PROC_BROWSER_TEST_F(ExclusiveAccessManagerPressAndHoldEscTest,
   EXPECT_TRUE(IsExclusiveAccessBubbleDisplayed());
 
   // Setting the bubble type to none will hide the bubble.
-  GetExclusiveAccessManager()
-      ->context()
-      ->UpdateExclusiveAccessExitBubbleContent(
-          GURL(), ExclusiveAccessBubbleType::EXCLUSIVE_ACCESS_BUBBLE_TYPE_NONE,
-          base::DoNothing(),
-          /*notify_download=*/false, /*force_update=*/true);
+  GetExclusiveAccessManager()->context()->UpdateExclusiveAccessBubble(
+      {.force_update = true}, base::NullCallback());
   EXPECT_FALSE(IsExclusiveAccessBubbleDisplayed());
 
   // The bubble is not shown after a short press on Esc key.

@@ -10,6 +10,7 @@
 #include "base/memory/raw_ref.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/views/metadata/view_factory.h"
 #include "ui/views/view.h"
 
 namespace views {
@@ -51,8 +52,6 @@ class ReadWriteCardsView : public views::View {
 
   // views::View:
   void AddedToWidget() override;
-  void PreferredSizeChanged() override;
-  void ChildPreferredSizeChanged(views::View* child) override;
 
   const gfx::Rect& context_menu_bounds() const { return context_menu_bounds_; }
 
@@ -67,6 +66,11 @@ class ReadWriteCardsView : public views::View {
       read_write_cards_ui_controller_;
 };
 
+BEGIN_VIEW_BUILDER(/* no export */, ReadWriteCardsView, views::View)
+END_VIEW_BUILDER
+
 }  // namespace chromeos
+
+DEFINE_VIEW_BUILDER(/* no export */, chromeos::ReadWriteCardsView)
 
 #endif  // CHROME_BROWSER_UI_CHROMEOS_READ_WRITE_CARDS_READ_WRITE_CARDS_VIEW_H_

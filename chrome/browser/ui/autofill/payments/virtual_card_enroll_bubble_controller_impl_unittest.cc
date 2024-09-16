@@ -65,6 +65,15 @@ class ControllerTestSupport {
   VirtualCardEnrollmentFields virtual_card_enrollment_fields_;
 };
 
+class MockAutofillVCNEnrollBottomSheetBridge
+    : public AutofillVCNEnrollBottomSheetBridge {
+ public:
+  MockAutofillVCNEnrollBottomSheetBridge()
+      : AutofillSaveCardBottomSheetBridge() {}
+
+  MOCK_METHOD(void, Hide, (), (override));
+};
+
 class VirtualCardEnrollBubbleControllerImplBottomSheetTest
     : public ChromeRenderViewHostTestHarness {
  public:
@@ -82,7 +91,7 @@ TEST_F(VirtualCardEnrollBubbleControllerImplBottomSheetTest,
 
   auto expected_model = VirtualCardEnrollUiModel::Create(
       test_support.virtual_card_enrollment_fields());
-  EXPECT_EQ(test_support.controller()->GetUiModel(), expected_model);
+  EXPECT_EQ(*test_support.controller()->GetUiModel(), *expected_model);
 }
 
 TEST_F(VirtualCardEnrollBubbleControllerImplBottomSheetTest, ShowBubble) {
@@ -95,7 +104,22 @@ TEST_F(VirtualCardEnrollBubbleControllerImplBottomSheetTest, ShowBubble) {
 
   EXPECT_TRUE(test_api(test_support.controller()).DidShowBottomSheet());
 }
-#endif
+
+TEST_F(VirtualCardEnrollBubbleControllerImplBottomSheetTest,
+       ShowConfirmationBubbleView) {
+  ControllerTestSupport test_support(web_contents());
+  std::unique_ptr<MockAutofillVCNEnrollBottomSheetBridge> mock =
+      std::make_unique<MockAutofillVCNEnrollBottomSheetBridge>();
+  MockAutofillVCNEnrollBottomSheetBridge* bridge = mock.get();
+  test_api(test_support.controller())
+      .SetSetAutofillVCNEnrollBottomSheetBridge(mock);
+
+  EXPECT_CALL(*bridge, Hide());
+
+  test_support.controller()->ShowConfirmationBubbleView(
+      payments::PaymentsAutofillClient::PaymentsRpcResult::kSuccess);
+}
+#endif  // BUILDFLAG(IS_ANDROID)
 
 class TestVirtualCardEnrollBubbleControllerImpl
     : public VirtualCardEnrollBubbleControllerImpl {
@@ -209,6 +233,7 @@ TEST_F(VirtualCardEnrollBubbleControllerImplBubbleViewTest,
       1);
 }
 
+#if !BUILDFLAG(IS_ANDROID)
 // Tests virtual card enrollment flow with loading and confirmation.
 TEST_F(VirtualCardEnrollBubbleControllerImplBubbleViewTest,
        ShowBubbleInLoadingAndConfirmationState) {
@@ -230,7 +255,8 @@ TEST_F(VirtualCardEnrollBubbleControllerImplBubbleViewTest,
           VIRTUAL_CARD_ENROLLMENT_BUBBLE_ACCEPTED,
       1);
 
-  controller()->ShowConfirmationBubbleView(/*is_vcn_enrolled=*/true);
+  controller()->ShowConfirmationBubbleView(
+      payments::PaymentsAutofillClient::PaymentsRpcResult::kSuccess);
   EXPECT_EQ(
       test_api(*controller()).GetEnrollmentStatus(),
       VirtualCardEnrollBubbleControllerImpl::EnrollmentStatus::kCompleted);
@@ -253,6 +279,20 @@ TEST_F(VirtualCardEnrollBubbleControllerImplBubbleViewTest,
       1);
 }
 
+// Test that on getting client-side timeout, virtual card bubble is closed in
+// loading state and confirmation dialog is not shown.
+TEST_F(VirtualCardEnrollBubbleControllerImplBubbleViewTest,
+       CloseBubbleInLoadingState_NoConfirmationBubble_ClientSideTimeout) {
+  ShowBubble();
+  EXPECT_NE(GetBubbleViews(), nullptr);
+  EXPECT_TRUE(controller()->IsIconVisible());
+  controller()->OnAcceptButton(/*did_switch_to_loading_state=*/true);
+  controller()->ShowConfirmationBubbleView(
+      payments::PaymentsAutofillClient::PaymentsRpcResult::kClientSideTimeout);
+  EXPECT_EQ(GetBubbleViews(), nullptr);
+  EXPECT_FALSE(controller()->IsIconVisible());
+}
+
 // Tests that the correct confirmation result metric is logged when the
 // confirmation bubble is closed after the card is not enrolled.
 TEST_F(VirtualCardEnrollBubbleControllerImplBubbleViewTest,
@@ -261,7 +301,8 @@ TEST_F(VirtualCardEnrollBubbleControllerImplBubbleViewTest,
 
   ShowBubble();
   controller()->OnAcceptButton(/*did_switch_to_loading_state=*/true);
-  controller()->ShowConfirmationBubbleView(/*is_vcn_enrolled=*/false);
+  controller()->ShowConfirmationBubbleView(
+      payments::PaymentsAutofillClient::PaymentsRpcResult::kPermanentFailure);
   controller()->OnBubbleClosed(PaymentsBubbleClosedReason::kClosed);
 
   histogram_tester.ExpectUniqueSample(
@@ -269,5 +310,6 @@ TEST_F(VirtualCardEnrollBubbleControllerImplBubbleViewTest,
       VirtualCardEnrollmentBubbleResult::VIRTUAL_CARD_ENROLLMENT_BUBBLE_CLOSED,
       1);
 }
+#endif  // !BUILDFLAG(IS_ANDROID)
 }  // namespace
 }  // namespace autofill

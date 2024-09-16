@@ -10,7 +10,7 @@
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
-#include "base/memory/memory_pressure_listener.h"
+#include "base/memory/memory_pressure_monitor.h"
 #include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -26,6 +26,7 @@
 #include "chrome/browser/ui/views/tabs/tab_hover_card_thumbnail_observer.h"
 #include "chrome/browser/ui/views/tabs/tab_strip.h"
 #include "chrome/browser/ui/views/tabs/tab_strip_controller.h"
+#include "chrome/browser/ui/web_applications/app_browser_controller.h"
 #include "chrome/common/pref_names.h"
 #include "components/omnibox/browser/omnibox_edit_model.h"
 #include "components/omnibox/browser/omnibox_popup_view.h"
@@ -43,34 +44,6 @@
 namespace {
 
 constexpr base::TimeDelta kMemoryPressureCaptureDelay = base::Milliseconds(500);
-
-// Provides the ability to simulate memory pressure other than the current
-// pressure on the system for testing purposes via an [undocumented]
-// command-line switch.
-std::optional<base::MemoryPressureListener::MemoryPressureLevel>
-GetMemoryPressureOverride() {
-  constexpr char kHoverCardMemoryPressureSwitch[] =
-      "hover-card-memory-pressure";
-
-  std::optional<base::MemoryPressureListener::MemoryPressureLevel> value;
-  const base::CommandLine* const command_line =
-      base::CommandLine::ForCurrentProcess();
-  if (command_line->HasSwitch(kHoverCardMemoryPressureSwitch)) {
-    auto arg =
-        command_line->GetSwitchValueASCII(kHoverCardMemoryPressureSwitch);
-    if (arg == "none") {
-      value = base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_NONE;
-    } else if (arg == "moderate") {
-      value = base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_MODERATE;
-    } else {
-      CHECK_EQ(arg, "critical")
-          << "Usage: --hover-card-memory-pressure=<value> where <value> is one "
-             "of [ none | moderate | critical ]";
-      value = base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_CRITICAL;
-    }
-  }
-  return value;
-}
 
 base::TimeDelta GetPreviewImageCaptureDelay(
     ThumbnailImage::CaptureReadiness readiness) {
@@ -145,6 +118,16 @@ base::TimeDelta GetShowDelay(int tab_width) {
   return delay;
 }
 
+bool IsBrowserForSystemWebApp(const Browser* browser) {
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  const auto* const app_controller = browser->app_controller();
+  if (app_controller && app_controller->system_app()) {
+    return true;
+  }
+#endif
+  return false;
+}
+
 }  // anonymous namespace
 
 //-------------------------------------------------------------------
@@ -165,8 +148,9 @@ class TabHoverCardController::EventSniffer : public ui::EventObserver {
         controller_->tab_strip_->GetWidget()
             ->GetTopLevelWidget()
             ->GetNativeWindow(),
-        {ui::ET_KEY_PRESSED, ui::ET_KEY_RELEASED, ui::ET_MOUSE_PRESSED,
-         ui::ET_MOUSE_RELEASED, ui::ET_GESTURE_BEGIN, ui::ET_GESTURE_END});
+        {ui::EventType::kKeyPressed, ui::EventType::kKeyReleased,
+         ui::EventType::kMousePressed, ui::EventType::kMouseReleased,
+         ui::EventType::kGestureBegin, ui::EventType::kGestureEnd});
   }
 
   ~EventSniffer() override = default;
@@ -210,25 +194,26 @@ TabHoverCardController::TabHoverCardController(TabStrip* tab_strip)
                                       base::Value(base::FeatureList::IsEnabled(
                                           features::kTabHoverCardImages)));
 
+    pref_change_registrar_.Init(pref_service);
+
     // Register for previews enabled pref change events.
     hover_card_image_previews_enabled_ = AreHoverCardImagesEnabled();
-    pref_change_registrar_.Init(pref_service);
     pref_change_registrar_.Add(
         prefs::kHoverCardImagesEnabled,
         base::BindRepeating(
             &TabHoverCardController::OnHovercardImagesEnabledChanged,
             base::Unretained(this)));
-  }
 
-  // Possibly apply memory pressure override for testing.
-  auto override = GetMemoryPressureOverride();
-  if (override) {
-    memory_pressure_level_ = override.value();
-  } else {
-    memory_pressure_listener_ = std::make_unique<base::MemoryPressureListener>(
-        FROM_HERE,
-        base::BindRepeating(&TabHoverCardController::OnMemoryPressureChanged,
-                            base::Unretained(this)));
+    // Register for memory usage enabled pref change events. Exclude
+    // tracking them for system web apps (e.g. ChromeOS terminal app).
+    if (!IsBrowserForSystemWebApp(tab_strip_->GetBrowser())) {
+      OnHovercardMemoryUsageEnabledChanged();
+      pref_change_registrar_.Add(
+          prefs::kHoverCardMemoryUsageEnabled,
+          base::BindRepeating(
+              &TabHoverCardController::OnHovercardMemoryUsageEnabledChanged,
+              base::Unretained(this)));
+    }
   }
 }
 
@@ -318,8 +303,9 @@ void TabHoverCardController::UpdateOrShowCard(
     TabSlotController::HoverCardUpdateType update_type) {
   // Close is asynchronous, so make sure that if we're closing we clear out all
   // of our data *now* rather than waiting for the deletion message.
-  if (hover_card_ && hover_card_->GetWidget()->IsClosed())
+  if (hover_card_ && hover_card_->GetWidget()->IsClosed()) {
     OnViewIsDeleting(hover_card_);
+  }
 
   // If a hover card is being updated because of a data change, the hover card
   // had better already be showing for the affected tab.
@@ -332,8 +318,9 @@ void TabHoverCardController::UpdateOrShowCard(
 
     // When a tab has been discarded, the thumbnail is moved to a new
     // ThumbnailTabHelper so it must be observed again.
-    if (tab->data().is_tab_discarded)
+    if (tab->data().is_tab_discarded) {
       MaybeStartThumbnailObservation(tab, /* is_initial_show */ false);
+    }
 
     slide_animator_->UpdateTargetBounds();
     return;
@@ -500,7 +487,14 @@ bool TabHoverCardController::ArePreviewsEnabled() const {
 }
 
 void TabHoverCardController::CreateHoverCard(Tab* tab) {
-  hover_card_ = new TabHoverCardBubbleView(tab);
+  TabHoverCardBubbleView::InitParams params;
+  params.use_animation = UseAnimations();
+  // In some browser types (e.g. ChromeOS terminal app) hide the domain label.
+  params.show_domain = !IsBrowserForSystemWebApp(tab_strip_->GetBrowser());
+  params.show_memory_usage = hover_card_memory_usage_enabled_;
+  params.show_image_preview = hover_card_image_previews_enabled_;
+
+  hover_card_ = new TabHoverCardBubbleView(tab, params);
   hover_card_observation_.Observe(hover_card_.get());
   event_sniffer_ = std::make_unique<EventSniffer>(this);
   slide_animator_ = std::make_unique<views::BubbleSlideAnimator>(hover_card_);
@@ -574,7 +568,8 @@ void TabHoverCardController::MaybeStartThumbnailObservation(
   // The crossfade parameter determines when a placeholder image is displayed.
   const auto crossfade_at =
       TabHoverCardBubbleView::GetPreviewImageCrossfadeStart();
-  if (crossfade_at.has_value() && crossfade_at.value() == 0.0) {
+  if (UseAnimations() && crossfade_at.has_value() &&
+      crossfade_at.value() == 0.0) {
     hover_card_->SetPlaceholderImage();
     thumbnail_wait_state_ = ThumbnailWaitState::kWaitingWithPlaceholder;
   } else {
@@ -590,16 +585,19 @@ void TabHoverCardController::MaybeStartThumbnailObservation(
           : GetPreviewImageCaptureDelay(thumbnail->GetCaptureReadiness());
 
   // Under memory pressure, we will additionally delay the initial capture, so
-  // that generating the image is a more deliberate choice from the user.
-  switch (memory_pressure_level_) {
-    case base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_CRITICAL:
-      capture_delay = base::TimeDelta::Max();
-      break;
-    case base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_MODERATE:
-      capture_delay += kMemoryPressureCaptureDelay;
-      break;
-    case base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_NONE:
-      break;
+  // that generating the image is a more deliberate choice from the user. The
+  // memory pressure monitor is disabled in tests.
+  if (const auto* const monitor = base::MemoryPressureMonitor::Get()) {
+    switch (monitor->GetCurrentPressureLevel()) {
+      case base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_CRITICAL:
+        capture_delay = base::TimeDelta::Max();
+        break;
+      case base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_MODERATE:
+        capture_delay += kMemoryPressureCaptureDelay;
+        break;
+      case base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_NONE:
+        break;
+    }
   }
 
   if (capture_delay.is_zero()) {
@@ -645,8 +643,10 @@ void TabHoverCardController::StartThumbnailObservation(Tab* tab) {
   DCHECK(waiting_for_preview());
 
   // Do not capture thumbnails during critical memory pressure.
-  if (memory_pressure_level_ ==
-      base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_CRITICAL) {
+  const auto* const monitor = base::MemoryPressureMonitor::Get();
+  if (monitor &&
+      monitor->GetCurrentPressureLevel() ==
+          base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_CRITICAL) {
     // Because we're blocked, we'll show a placeholder instead of nothing or
     // the wrong image.
     if (thumbnail_wait_state_ ==
@@ -777,32 +777,16 @@ void TabHoverCardController::OnPreviewImageAvailable(
   hover_card_->SetTargetTabImage(thumbnail_image);
 }
 
-void TabHoverCardController::OnMemoryPressureChanged(
-    base::MemoryPressureListener::MemoryPressureLevel memory_pressure_level) {
-  memory_pressure_level_ = memory_pressure_level;
-
-  // The following code is about stopping or restarting thumbnail capture due
-  // to memory pressure so if there's no capture there's no reason to continue.
-  if (!thumbnail_observer_)
-    return;
-
-  if (memory_pressure_level ==
-      base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_CRITICAL) {
-    // If we're at critical memory pressure, abandon any current effort to
-    // capture thumbnails.
-    thumbnail_observer_->Observe(nullptr);
-  }
-
-  // TODO(dfried): consider restarting capture for the current hover card if
-  // memory pressure drops back to zero; however, the user is unlikely to be
-  // hovering a card through an entire CRITICAL -> NORMAL transition so as a
-  // simplification we simply don't care.
-}
-
 void TabHoverCardController::OnHovercardImagesEnabledChanged() {
   hover_card_image_previews_enabled_ = AreHoverCardImagesEnabled();
   if (!hover_card_image_previews_enabled_) {
     thumbnail_subscription_ = base::CallbackListSubscription();
     thumbnail_observer_.reset();
   }
+}
+
+void TabHoverCardController::OnHovercardMemoryUsageEnabledChanged() {
+  hover_card_memory_usage_enabled_ =
+      g_browser_process->local_state()->GetBoolean(
+          prefs::kHoverCardMemoryUsageEnabled);
 }

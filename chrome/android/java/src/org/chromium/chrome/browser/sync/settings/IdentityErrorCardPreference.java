@@ -8,14 +8,15 @@ import android.content.Context;
 import android.util.AttributeSet;
 import android.view.View;
 import android.widget.Button;
+import android.widget.ImageView;
 import android.widget.TextView;
 
+import androidx.appcompat.content.res.AppCompatResources;
 import androidx.preference.Preference;
 import androidx.preference.PreferenceViewHolder;
 
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.sync.SyncServiceFactory;
 import org.chromium.chrome.browser.sync.settings.SyncSettingsUtils.ErrorCardDetails;
@@ -39,7 +40,7 @@ public class IdentityErrorCardPreference extends Preference
     public IdentityErrorCardPreference(Context context, AttributeSet attrs) {
         super(context, attrs);
 
-        setLayoutResource(R.layout.identity_error_card_view);
+        setLayoutResource(R.layout.signin_settings_card_view);
         mIdentityError = SyncError.NO_ERROR;
     }
 
@@ -74,8 +75,8 @@ public class IdentityErrorCardPreference extends Preference
         if (mIdentityError == SyncError.NO_ERROR) {
             return;
         }
-
-        setupIdentityErrorCardView(holder.findViewById(R.id.identity_error_card));
+        holder.setDividerAllowedAbove(false);
+        setupIdentityErrorCardView(holder.findViewById(R.id.signin_settings_card));
     }
 
     private void update() {
@@ -99,12 +100,19 @@ public class IdentityErrorCardPreference extends Preference
     }
 
     private void setupIdentityErrorCardView(View card) {
-        TextView error = (TextView) card.findViewById(R.id.identity_error_card_error_description);
-        Button button = (Button) card.findViewById(R.id.identity_error_card_button);
+        Context context = getContext();
+
+        ImageView image = (ImageView) card.findViewById(R.id.signin_settings_card_icon);
+        image.setContentDescription(
+                context.getResources()
+                        .getString(R.string.accessibility_account_management_row_account_error));
+        image.setImageDrawable(AppCompatResources.getDrawable(context, R.drawable.ic_error));
+
+        TextView error = card.findViewById(R.id.signin_settings_card_description);
+        Button button = card.findViewById(R.id.signin_settings_card_button);
 
         ErrorCardDetails error_card_details =
                 SyncSettingsUtils.getIdentityErrorErrorCardDetails(mIdentityError);
-        Context context = getContext();
         error.setText(context.getString(error_card_details.message));
         button.setText(context.getString(error_card_details.buttonLabel));
 
@@ -126,8 +134,6 @@ public class IdentityErrorCardPreference extends Preference
     }
 
     private boolean shouldShowErrorCard() {
-        return mIdentityError != SyncError.NO_ERROR
-                && ChromeFeatureList.isEnabled(
-                        ChromeFeatureList.SYNC_SHOW_IDENTITY_ERRORS_FOR_SIGNED_IN_USERS);
+        return mIdentityError != SyncError.NO_ERROR;
     }
 }

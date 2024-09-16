@@ -31,7 +31,6 @@
 #include "third_party/skia/include/core/SkColor.h"
 
 #if BUILDFLAG(ENABLE_PDF)
-#include "base/feature_list.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "components/grit/components_resources.h"
@@ -51,7 +50,7 @@ namespace extensions {
 
 namespace {
 
-// TODO(crbug.com/659750): Make this a proper resource.
+// TODO(crbug.com/40490789): Make this a proper resource.
 constexpr char kFullPageMimeHandlerViewHTML[] =
     "<!doctype html><html><body style='height: 100%%; width: 100%%; overflow: "
     "hidden; margin:0px; background-color: rgb(%d, %d, %d);'><embed "
@@ -106,7 +105,7 @@ std::string MimeHandlerViewAttachHelper::CreateTemplateMimeHandlerPage(
     const std::string& internal_id) {
   auto color = GetBackgroundColorStringForMimeType(resource_url, mime_type);
 #if BUILDFLAG(ENABLE_PDF)
-  if (base::FeatureList::IsEnabled(chrome_pdf::features::kPdfOopif) &&
+  if (chrome_pdf::features::IsOopifPdfEnabled() &&
       mime_type == pdf::kPDFMimeType) {
     std::string pdf_embedder_html =
         ui::ResourceBundle::GetSharedInstance().LoadDataResourceString(
@@ -128,7 +127,7 @@ std::string MimeHandlerViewAttachHelper::CreateTemplateMimeHandlerPage(
 
 // static
 std::string MimeHandlerViewAttachHelper::OverrideBodyForInterceptedResponse(
-    int32_t navigating_frame_tree_node_id,
+    content::FrameTreeNodeId navigating_frame_tree_node_id,
     const GURL& resource_url,
     const std::string& mime_type,
     const std::string& stream_id,
@@ -166,7 +165,7 @@ void MimeHandlerViewAttachHelper::AttachToOuterWebContents(
 
 // static
 void MimeHandlerViewAttachHelper::CreateFullPageMimeHandlerView(
-    int32_t frame_tree_node_id,
+    content::FrameTreeNodeId frame_tree_node_id,
     const GURL& resource_url,
     const std::string& stream_id,
     const std::string& token) {

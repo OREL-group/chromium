@@ -93,7 +93,7 @@ class CORE_EXPORT KeyframeEffectModelBase : public EffectModel {
 
   PropertyHandleSet Properties() const;
 
-  PropertyHandleSet DynamicProperties() const;
+  const PropertyHandleSet& EnsureDynamicProperties() const;
 
   bool HasStaticProperty() const;
 
@@ -129,6 +129,7 @@ class CORE_EXPORT KeyframeEffectModelBase : public EffectModel {
   // EffectModel implementation.
   bool Sample(int iteration,
               double fraction,
+              TimingFunction::LimitDirection,
               AnimationTimeDelta iteration_duration,
               HeapVector<Member<Interpolation>>&) const override;
 
@@ -179,8 +180,8 @@ class CORE_EXPORT KeyframeEffectModelBase : public EffectModel {
 
   // Update properties used in resolving logical properties. Returns true if
   // one or more keyframes changed as a result of the update.
-  bool SetLogicalPropertyResolutionContext(TextDirection text_direction,
-                                           WritingMode writing_mode);
+  bool SetLogicalPropertyResolutionContext(
+      WritingDirectionMode writing_direction);
 
   virtual KeyframeEffectModelBase* Clone() = 0;
 
@@ -244,6 +245,7 @@ class CORE_EXPORT KeyframeEffectModelBase : public EffectModel {
   // to get the 'property-specific keyframes'. For efficiency, we cache the
   // property-specific lists.
   mutable Member<KeyframeGroupMap> keyframe_groups_;
+  mutable std::unique_ptr<PropertyHandleSet> dynamic_properties_;
   mutable Member<InterpolationEffect> interpolation_effect_;
   mutable int last_iteration_;
   mutable double last_fraction_;

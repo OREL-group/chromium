@@ -104,7 +104,8 @@ void ImageContentAnnotator::ConnectToImageAnnotator() {
               LOG(ERROR) << "Language not supported error.";
               LogStatusUma(Status::kLanguageNotSupportedError);
             } else {
-              NOTREACHED() << "Implement logging for new error codes.";
+              NOTREACHED_IN_MIGRATION()
+                  << "Implement logging for new error codes.";
             }
             *ica_dlc_initialized = false;
           },
@@ -128,8 +129,14 @@ void ImageContentAnnotator::AnnotateEncodedImage(
   }
   base::MappedReadOnlyRegion mapped_region =
       base::ReadOnlySharedMemoryRegion::Create(data.length());
-  CHECK(mapped_region.IsValid());
-  memcpy(mapped_region.mapping.memory(), data.data(), data.length());
+  // It's safe to early return here as the caller function
+  // `ImageAnnotationWorker::OnDecodeImageFile()` has started the
+  // `timeout_timer_` and it will continue the process when the timer gets
+  // timeout.
+  if (!mapped_region.IsValid()) {
+    return;
+  }
+  base::span(mapped_region.mapping).copy_from(data.bytes());
 
   EnsureAnnotatorIsConnected();
   image_content_annotator_->AnnotateEncodedImage(

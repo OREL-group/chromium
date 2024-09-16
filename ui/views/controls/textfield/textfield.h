@@ -335,7 +335,8 @@ class VIEWS_EXPORT Textfield : public View,
 
   // View overrides:
   int GetBaseline() const override;
-  gfx::Size CalculatePreferredSize() const override;
+  gfx::Size CalculatePreferredSize(
+      const SizeBounds& available_size) const override;
   gfx::Size GetMinimumSize() const override;
   void SetBorder(std::unique_ptr<Border> b) override;
   ui::Cursor GetCursor(const ui::MouseEvent& event) override;
@@ -420,6 +421,7 @@ class VIEWS_EXPORT Textfield : public View,
   void ExecuteCommand(int command_id, int event_flags) override;
 
   // ui::TextInputClient overrides:
+  base::WeakPtr<ui::TextInputClient> AsWeakPtr() override;
   void SetCompositionText(const ui::CompositionText& composition) override;
   size_t ConfirmCompositionText(bool keep_selection) override;
   void ClearCompositionText() override;
@@ -560,6 +562,10 @@ class VIEWS_EXPORT Textfield : public View,
   // Returns true if a context menu for this view is showing.
   bool IsMenuShowing() const;
 
+  virtual void UpdateAccessibleTextSelection() {}
+
+  void AddedToWidget() override;
+
  private:
   friend class TextfieldTestApi;
 
@@ -608,6 +614,12 @@ class VIEWS_EXPORT Textfield : public View,
       TextChangeType text_change_type,
       bool cursor_changed,
       std::optional<bool> notify_caret_bounds_changed = std::nullopt);
+
+  virtual void UpdateAccessibilityTextDirection();
+
+  // Subclass OmniboxViewViews is overriding this method to update the
+  // accessible value.
+  virtual void UpdateAccessibleValue();
 
   // Updates cursor visibility and blinks the cursor if needed.
   void ShowCursor();
@@ -708,6 +720,8 @@ class VIEWS_EXPORT Textfield : public View,
 
   void StopSelectionDragging();
 
+  void UpdateAccessibleDefaultActionVerb();
+
 #if BUILDFLAG(SUPPORTS_AX_TEXT_OFFSETS)
   // Calculate widths for each grapheme and word starts and ends. Used for
   // accessibility. Currently only on Windows when UIA is enabled.
@@ -718,7 +732,7 @@ class VIEWS_EXPORT Textfield : public View,
   std::unique_ptr<TextfieldModel> model_;
 
   // This is the current listener for events from this Textfield.
-  raw_ptr<TextfieldController, DanglingUntriaged> controller_ = nullptr;
+  raw_ptr<TextfieldController> controller_ = nullptr;
 
   // An edit command to execute on the next key event. When set to a valid
   // value, the key event is still passed to |controller_|, but otherwise
@@ -917,7 +931,6 @@ class VIEWS_EXPORT Textfield : public View,
           base::BindRepeating(&Textfield::OnEnabledChanged,
                               base::Unretained(this)));
 
-  // Used to bind callback functions to this object.
   base::WeakPtrFactory<Textfield> weak_ptr_factory_{this};
 
   // Used to bind drop callback functions to this object.

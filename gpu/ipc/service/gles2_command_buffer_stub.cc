@@ -20,7 +20,6 @@
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "gpu/command_buffer/common/constants.h"
-#include "gpu/command_buffer/common/gpu_memory_buffer_support.h"
 #include "gpu/command_buffer/common/mailbox.h"
 #include "gpu/command_buffer/common/presentation_feedback_utils.h"
 #include "gpu/command_buffer/common/swap_buffers_flags.h"
@@ -28,7 +27,6 @@
 #include "gpu/command_buffer/service/gl_state_restorer_impl.h"
 #include "gpu/command_buffer/service/gpu_fence_manager.h"
 #include "gpu/command_buffer/service/logger.h"
-#include "gpu/command_buffer/service/mailbox_manager.h"
 #include "gpu/command_buffer/service/memory_tracking.h"
 #include "gpu/command_buffer/service/scheduler.h"
 #include "gpu/command_buffer/service/service_utils.h"
@@ -107,8 +105,7 @@ gpu::ContextResult GLES2CommandBufferStub::Initialize(
         manager->gpu_driver_bug_workarounds(), manager->gpu_feature_info());
     context_group_ = new gles2::ContextGroup(
         manager->gpu_preferences(), gles2::PassthroughCommandDecoderSupported(),
-        manager->mailbox_manager(), CreateMemoryTracker(),
-        manager->shader_translator_cache(),
+        CreateMemoryTracker(), manager->shader_translator_cache(),
         manager->framebuffer_completeness_cache(), feature_info,
         init_params.attribs.bind_generates_resource,
         manager->watchdog() /* progress_reporter */,
@@ -138,7 +135,7 @@ gpu::ContextResult GLES2CommandBufferStub::Initialize(
       channel_->sync_point_manager()->CreateSyncPointClientState(
           CommandBufferNamespace::GPU_IO, command_buffer_id_, sequence_id_);
 
-  // TODO(crbug.com/1251724): Remove this after testing.
+  // TODO(crbug.com/40198488): Remove this after testing.
   // Only enable multiple displays on ANGLE/Metal and only behind a feature.
   bool force_default_display = true;
   if (gl::GetGLImplementation() == gl::kGLImplementationEGLANGLE &&
@@ -197,7 +194,9 @@ gpu::ContextResult GLES2CommandBufferStub::Initialize(
     auto surface_format = default_surface->GetFormat();
     surface_ = ImageTransportSurface::CreateNativeGLSurface(
         display, init_params.surface_handle, surface_format);
-    if (!surface_ || !surface_->Initialize(surface_format)) {
+    // CreateNativeGLSurface should have already initialized the surface, and
+    // doubly initializing it can lead to errors.
+    if (!surface_) {
       surface_ = nullptr;
       LOG(ERROR) << "ContextResult::kSurfaceFailure: Failed to create surface.";
       return gpu::ContextResult::kSurfaceFailure;

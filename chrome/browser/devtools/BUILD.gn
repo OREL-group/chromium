@@ -100,8 +100,17 @@ static_library("devtools") {
     "//build/config:precompiled_headers",
   ]
 
+  public_deps = [
+    "//chrome/browser:browser_public_dependencies",
+    "//chrome/browser:primitives",
+  ]
+
   deps = [
     "//base",
+    "//chrome/browser/search",
+    "//chrome/browser/search_engines",
+    "//chrome/browser/sync",
+    "//chrome/browser/ui/autofill",
 
     # To prevent circular GN dependencies, this target does not depend on
     # //chrome/browser:browser, even though it has a real build dependency on
@@ -117,6 +126,7 @@ static_library("devtools") {
     "//chrome/browser/autofill:autofill",
     "//components/autofill/content/browser:browser",
     "//components/autofill/core/browser:browser",
+    "//components/enterprise/buildflags",
     "//components/paint_preview/buildflags:buildflags",
     "//components/variations/service:service",
     "//components/webapps/common:common",
@@ -129,6 +139,10 @@ static_library("devtools") {
   ]
 
   if (!is_android) {
+    public_deps += [
+      "//chrome/browser/ui:browser_list",
+      "//chrome/browser/ui/tabs:tab_strip_model_observer",
+    ]
     deps += [
       "//build:chromeos_buildflags",
       "//chrome:extra_resources",
@@ -136,13 +150,20 @@ static_library("devtools") {
       "//chrome:strings",
       "//chrome/app/theme:theme_resources",
       "//chrome/browser:browser_process",
+      "//chrome/browser/apps/app_service:constants",
       "//chrome/browser/media/router:media_router_feature",
       "//chrome/browser/profiles:profile",
+      "//chrome/browser/task_manager",
+      "//chrome/browser/themes",
+      "//chrome/browser/ui:browser_navigator_params_headers",
+      "//chrome/browser/ui/exclusive_access",
       "//chrome/browser/web_applications",
       "//chrome/common",
+      "//components/flags_ui",
       "//components/guest_view/browser",
       "//components/infobars/content",
       "//components/infobars/core",
+      "//components/input",
       "//components/javascript_dialogs",
       "//components/keep_alive_registry",
       "//components/keyed_service/content",
@@ -158,7 +179,7 @@ static_library("devtools") {
       "//components/viz/host",
       "//components/web_modal",
       "//components/zoom",
-      "//net/server:http_server",
+      "//net",
       "//skia",
       "//third_party/icu",
       "//third_party/leveldatabase",
@@ -273,6 +294,7 @@ static_library("devtools") {
       "//components/security_state/content",
       "//components/subresource_filter/content/browser:browser",
       "//components/webapps/browser",
+      "//third_party/blink/public/common:headers",
       "//third_party/inspector_protocol:crdtp",
     ]
     sources += [
@@ -311,6 +333,14 @@ static_library("devtools") {
         "//components/printing/browser/headless",
         "//components/printing/browser/print_to_pdf",
       ]
+      if (enable_oop_printing) {
+        # protocol/page_handler.cc directly includes
+        # chrome/browser/printing/print_view_manager.h, and thus is dependent
+        # upon some mojom files.  This could go away and have a cleaner dep on
+        # //chrome/browser/printing if the //chrome build layer could get
+        # sufficiently untangled.
+        deps += [ "//chrome/services/printing/public/mojom" ]
+      }
     }
     sources += rebase_path(_protocol_generated, ".", target_gen_dir)
   }

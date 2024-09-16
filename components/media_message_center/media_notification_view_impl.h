@@ -62,9 +62,6 @@ class COMPONENT_EXPORT(MEDIA_MESSAGE_CENTER) MediaNotificationViewImpl
       delete;
   ~MediaNotificationViewImpl() override;
 
-  // views::View:
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
-
   // MediaNotificationView:
   void SetExpanded(bool expanded) override;
   void UpdateCornerRadius(int top_radius, int bottom_radius) override;

@@ -44,6 +44,7 @@
 #include "components/history_clusters/core/config.h"
 #include "components/history_clusters/core/features.h"
 #include "components/history_clusters/core/history_clusters_prefs.h"
+#include "components/history_embeddings/history_embeddings_features.h"
 #include "components/keyed_service/core/service_access_type.h"
 #include "components/prefs/pref_service.h"
 #include "components/query_parser/snippet.h"
@@ -76,8 +77,7 @@ static const char kDeviceTypeTablet[] = "tablet";
 // Gets the name and type of a device for the given sync client ID.
 // |name| and |type| are out parameters.
 void GetDeviceNameAndType(const syncer::DeviceInfoTracker* tracker,
-                          const std::string& client_id,
-                          std::string* name,
+                          const std::string& client_id, std::string* name,
                           std::string* type) {
   // DeviceInfoTracker must be syncing in order for remote history entries to
   // be available.
@@ -94,8 +94,15 @@ void GetDeviceNameAndType(const syncer::DeviceInfoTracker* tracker,
       case syncer::DeviceInfo::FormFactor::kTablet:
         *type = kDeviceTypeTablet;
         break;
+      // return the laptop icon as default.
       case syncer::DeviceInfo::FormFactor::kUnknown:
-        [[fallthrough]];  // return the laptop icon as default.
+        [[fallthrough]];
+      case syncer::DeviceInfo::FormFactor::kAutomotive:
+        [[fallthrough]];
+      case syncer::DeviceInfo::FormFactor::kWearable:
+        [[fallthrough]];
+      case syncer::DeviceInfo::FormFactor::kTv:
+        [[fallthrough]];
       case syncer::DeviceInfo::FormFactor::kDesktop:
         *type = kDeviceTypeLaptop;
     }
@@ -149,7 +156,7 @@ bool IsUrlInLocalDatabase(const BrowsingHistoryService::HistoryEntry& entry) {
     case BrowsingHistoryService::HistoryEntry::EntryType::COMBINED_ENTRY:
       return true;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return false;
 }
 
@@ -165,7 +172,7 @@ bool IsEntryInRemoteUserData(
     case BrowsingHistoryService::HistoryEntry::EntryType::COMBINED_ENTRY:
       return true;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return false;
 }
 
@@ -174,15 +181,14 @@ constexpr UrlIdentity::TypeSet allowed_types = {
     UrlIdentity::Type::kDefault, UrlIdentity::Type::kFile,
     UrlIdentity::Type::kIsolatedWebApp, UrlIdentity::Type::kChromeExtension};
 constexpr UrlIdentity::FormatOptions url_identity_options{
-    .default_options = {UrlIdentity::DefaultFormatOptions::kHostname}};
+    .default_options = {UrlIdentity::DefaultFormatOptions::
+                            kOmitSchemePathAndTrivialSubdomains}};
 
 // Converts `entry` to a base::Value::Dict to be owned by the caller.
 base::Value::Dict HistoryEntryToValue(
     const BrowsingHistoryService::HistoryEntry& entry,
-    BookmarkModel* bookmark_model,
-    Profile& profile,
-    const syncer::DeviceInfoTracker* tracker,
-    base::Clock* clock) {
+    BookmarkModel* bookmark_model, Profile& profile,
+    const syncer::DeviceInfoTracker* tracker, base::Clock* clock) {
   base::Value::Dict result;
   SetHistoryEntryUrlAndTitle(entry, &result);
 
@@ -195,8 +201,7 @@ base::Value::Dict HistoryEntryToValue(
 
   // When the domain is empty, use the scheme instead. This allows for a
   // sensible treatment of e.g. file: URLs when group by domain is on.
-  if (domain.empty())
-    domain = base::UTF8ToUTF16(entry.url.scheme() + ":");
+  if (domain.empty()) domain = base::UTF8ToUTF16(entry.url.scheme() + ":");
 
   // The items which are to be written into result are also described in
   // chrome/browser/resources/history/history.js in @typedef for
@@ -255,7 +260,7 @@ base::Value::Dict HistoryEntryToValue(
   result.Set("deviceName", device_name);
   result.Set("deviceType", device_type);
 
-  if (supervised_user::IsSubjectToParentalControls(*profile.GetPrefs())) {
+  if (profile.IsChild()) {
     supervised_user::SupervisedUserService* supervised_user_service =
         SupervisedUserServiceFactory::GetForProfile(&profile);
     supervised_user::SupervisedUserURLFilter* url_filter =
@@ -313,7 +318,9 @@ void BrowsingHistoryHandler::OnJavascriptDisallowed() {
   initial_results_ = std::nullopt;
   deferred_callbacks_.clear();
   query_history_callback_id_.clear();
-  remove_visits_callback_.clear();
+  while (!remove_visits_callbacks_.empty()) {
+    remove_visits_callbacks_.pop();
+  }
 }
 
 void BrowsingHistoryHandler::RegisterMessages() {
@@ -360,7 +367,7 @@ void BrowsingHistoryHandler::StartQueryHistory() {
       this, local_history, sync_service);
 
   // 150 = RESULTS_PER_PAGE from chrome/browser/resources/history/constants.js
-  SendHistoryQuery(150, std::u16string());
+  SendHistoryQuery(150, std::u16string(), std::nullopt);
 }
 
 void BrowsingHistoryHandler::HandleQueryHistory(const base::Value::List& args) {
@@ -392,15 +399,21 @@ void BrowsingHistoryHandler::HandleQueryHistory(const base::Value::List& args) {
 
   const base::Value& count = args[2];
   if (!count.is_int()) {
-    NOTREACHED() << "Failed to convert argument 2.";
+    NOTREACHED_IN_MIGRATION() << "Failed to convert argument 2.";
     return;
   }
 
-  SendHistoryQuery(count.GetInt(), base::UTF8ToUTF16(search_text.GetString()));
+  std::optional<double> begin_timestamp;
+  if (args.size() == 4) {
+    begin_timestamp = args[3].GetIfDouble();
+  }
+  SendHistoryQuery(count.GetInt(), base::UTF8ToUTF16(search_text.GetString()),
+                   begin_timestamp);
 }
 
-void BrowsingHistoryHandler::SendHistoryQuery(int max_count,
-                                              const std::u16string& query) {
+void BrowsingHistoryHandler::SendHistoryQuery(
+    int max_count, const std::u16string& query,
+    std::optional<double> begin_timestamp) {
   history::QueryOptions options;
   options.max_count = max_count;
   options.duplicate_policy = history::QueryOptions::REMOVE_DUPLICATES_PER_DAY;
@@ -410,6 +423,11 @@ void BrowsingHistoryHandler::SendHistoryQuery(int max_count,
   if (base::StartsWith(query, kHostPrefix)) {
     options.host_only = true;
     query_without_prefix = query.substr(kHostPrefix.length());
+  }
+
+  if (begin_timestamp.has_value()) {
+    options.begin_time =
+        base::Time::FromMillisecondsSinceUnixEpoch(begin_timestamp.value());
   }
 
   browsing_history_service_->QueryHistory(query_without_prefix, options);
@@ -433,8 +451,7 @@ void BrowsingHistoryHandler::HandleQueryHistoryContinuation(
 void BrowsingHistoryHandler::HandleRemoveVisits(const base::Value::List& args) {
   CHECK_EQ(args.size(), 2U);
   const base::Value& callback_id = args[0];
-  CHECK(remove_visits_callback_.empty());
-  remove_visits_callback_ = callback_id.GetString();
+  remove_visits_callbacks_.push(callback_id.GetString());
 
   std::vector<BrowsingHistoryService::HistoryEntry> items_to_remove;
   const base::Value& items = args[1];
@@ -443,7 +460,7 @@ void BrowsingHistoryHandler::HandleRemoveVisits(const base::Value::List& args) {
   for (size_t i = 0; i < list.size(); ++i) {
     // Each argument is a dictionary with properties "url" and "timestamps".
     if (!list[i].is_dict()) {
-      NOTREACHED() << "Unable to extract arguments";
+      NOTREACHED_IN_MIGRATION() << "Unable to extract arguments";
       return;
     }
 
@@ -451,7 +468,7 @@ void BrowsingHistoryHandler::HandleRemoveVisits(const base::Value::List& args) {
     const base::Value::List* timestamps_ptr =
         list[i].GetDict().FindList("timestamps");
     if (!url_ptr || !timestamps_ptr) {
-      NOTREACHED() << "Unable to extract arguments";
+      NOTREACHED_IN_MIGRATION() << "Unable to extract arguments";
       return;
     }
 
@@ -461,7 +478,7 @@ void BrowsingHistoryHandler::HandleRemoveVisits(const base::Value::List& args) {
 
     for (const base::Value& timestamp : *timestamps_ptr) {
       if (!timestamp.is_double() && !timestamp.is_int()) {
-        NOTREACHED() << "Unable to extract visit timestamp.";
+        NOTREACHED_IN_MIGRATION() << "Unable to extract visit timestamp.";
         continue;
       }
 
@@ -547,16 +564,17 @@ void BrowsingHistoryHandler::OnQueryComplete(
 }
 
 void BrowsingHistoryHandler::OnRemoveVisitsComplete() {
-  CHECK(!remove_visits_callback_.empty());
-  ResolveJavascriptCallback(base::Value(remove_visits_callback_),
+  CHECK(!remove_visits_callbacks_.empty());
+  ResolveJavascriptCallback(base::Value(remove_visits_callbacks_.front()),
                             base::Value());
-  remove_visits_callback_.clear();
+  remove_visits_callbacks_.pop();
 }
 
 void BrowsingHistoryHandler::OnRemoveVisitsFailed() {
-  CHECK(!remove_visits_callback_.empty());
-  RejectJavascriptCallback(base::Value(remove_visits_callback_), base::Value());
-  remove_visits_callback_.clear();
+  CHECK(!remove_visits_callbacks_.empty());
+  RejectJavascriptCallback(base::Value(remove_visits_callbacks_.front()),
+                           base::Value());
+  remove_visits_callbacks_.pop();
 }
 
 void BrowsingHistoryHandler::HistoryDeleted() {
@@ -569,8 +587,7 @@ void BrowsingHistoryHandler::HistoryDeleted() {
 }
 
 void BrowsingHistoryHandler::HasOtherFormsOfBrowsingHistory(
-    bool has_other_forms,
-    bool has_synced_results) {
+    bool has_other_forms, bool has_synced_results) {
   if (IsJavascriptAllowed()) {
     FireWebUIListener("has-other-forms-changed", base::Value(has_other_forms));
   } else {

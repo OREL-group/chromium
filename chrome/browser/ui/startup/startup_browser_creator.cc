@@ -50,6 +50,7 @@
 #include "chrome/browser/lifetime/browser_shutdown.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
+#include "chrome/browser/profiles/nuke_profile_directory_utils.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_attributes_entry.h"
 #include "chrome/browser/profiles/profile_attributes_storage.h"
@@ -100,6 +101,7 @@
 #include "ash/constants/ash_switches.h"
 #include "chrome/browser/ash/app_mode/app_launch_utils.h"
 #include "chrome/browser/ash/app_mode/kiosk_app_types.h"
+#include "chrome/browser/ash/app_mode/kiosk_controller.h"
 #include "chrome/browser/ash/app_restore/full_restore_service.h"
 #include "chrome/browser/ash/floating_workspace/floating_workspace_service.h"
 #include "chrome/browser/ash/floating_workspace/floating_workspace_util.h"
@@ -122,7 +124,7 @@
 #endif
 
 #if BUILDFLAG(IS_MAC)
-#include "chrome/browser/web_applications/app_shim_registry_mac.h"
+#include "chrome/browser/web_applications/os_integration/mac/app_shim_registry.h"
 #endif
 
 #if BUILDFLAG(IS_WIN)
@@ -329,6 +331,7 @@ bool CanOpenProfileOnStartup(StartupProfileInfo profile_info) {
 #if !BUILDFLAG(IS_CHROMEOS_ASH)
 StartupProfileModeReason ShouldShowProfilePickerAtProcessLaunch(
     ProfileManager* profile_manager,
+    bool has_command_line_specified_profile_directory,
     const base::CommandLine& command_line) {
   // Skip the profile picker when Chrome is restarted (e.g. after an update) so
   // that the session can be restored.
@@ -341,8 +344,8 @@ StartupProfileModeReason ShouldShowProfilePickerAtProcessLaunch(
                                      g_browser_process->local_state(),
                                      /*show_warning=*/false) ||
       command_line.HasSwitch(switches::kIncognito) ||
-      command_line.HasSwitch(switches::kProfileDirectory)) {
-    // TODO(https://crbug.com/1418976): The profile directory and guest mode
+      has_command_line_specified_profile_directory) {
+    // TODO(crbug.com/40257919): The profile directory and guest mode
     // were already tested in the calling function `GetStartupProfilePath()`.
     // Consolidate these checks.
     return StartupProfileModeReason::kIncognitoModeRequested;
@@ -376,7 +379,7 @@ StartupProfileModeReason ShouldShowProfilePickerAtProcessLaunch(
   base::FilePath profile_basename =
       NotificationLaunchId::GetNotificationLaunchProfileBaseName(command_line);
   if (!profile_basename.empty()) {
-    // TODO(https://crbug.com/1418976): The notification ID was already tested
+    // TODO(crbug.com/40257919): The notification ID was already tested
     // in the calling function `GetStartupProfilePath()`. Consolidate these
     // checks.
     return StartupProfileModeReason::kNotificationLaunchIdWin2;
@@ -446,7 +449,7 @@ bool IsSilentLaunchEnabled(const base::CommandLine& command_line,
   // this function. But `LaunchBrowser()` can be called directly, for example by
   // //chrome/browser/ash/login/session/user_session_manager.cc, so it has to be
   // checked again.
-  // TODO(https://crbug.com/1293024): Investigate minimizing duplicate checks.
+  // TODO(crbug.com/40819749): Investigate minimizing duplicate checks.
 
   if (command_line.HasSwitch(switches::kNoStartupWindow))
     return true;
@@ -570,7 +573,6 @@ void OpenNewWindowForFirstRun(
     const std::vector<GURL>& first_run_urls,
     chrome::startup::IsProcessStartup process_startup,
     chrome::startup::IsFirstRun is_first_run,
-    std::unique_ptr<OldLaunchModeRecorder> launch_mode_recorder,
     bool proceed) {
   if (!proceed)
     return;
@@ -578,15 +580,14 @@ void OpenNewWindowForFirstRun(
   StartupBrowserCreator browser_creator;
   browser_creator.AddFirstRunTabs(first_run_urls);
   browser_creator.LaunchBrowser(command_line, profile, cur_dir, process_startup,
-                                is_first_run, std::move(launch_mode_recorder),
-                                /*restore_tabbed_browser=*/true);
+                                is_first_run, /*restore_tabbed_browser=*/true);
 }
 #endif  // BUILDFLAG(IS_CHROMEOS_LACROS) || BUILDFLAG(ENABLE_DICE_SUPPORT)
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 // Returns the app id of the kiosk app associated with the current user session.
-// Returns nullopt for non-kiosk user sessions and for ARC kiosk sessions, since
-// crash recovery is not supported there.
+// Returns nullopt for non-kiosk user sessions, since crash recovery is not
+// supported there.
 std::optional<ash::KioskAppId> GetAppId(const base::CommandLine& command_line,
                                         Profile* profile) {
   const user_manager::User* user =
@@ -684,7 +685,6 @@ void StartupBrowserCreator::LaunchBrowser(
     const base::FilePath& cur_dir,
     chrome::startup::IsProcessStartup process_startup,
     chrome::startup::IsFirstRun is_first_run,
-    std::unique_ptr<OldLaunchModeRecorder> launch_mode_recorder,
     bool restore_tabbed_browser) {
   TRACE_EVENT0("ui", "StartupBrowserCreator::LaunchBrowser");
   SCOPED_UMA_HISTOGRAM_TIMER("Startup.StartupBrowserCreator.LaunchBrowser");
@@ -711,7 +711,7 @@ void StartupBrowserCreator::LaunchBrowser(
           FirstRunService::EntryPoint::kProcessStartup,
           base::BindOnce(&OpenNewWindowForFirstRun, command_line, profile,
                          cur_dir, first_run_tabs_, process_startup,
-                         is_first_run, std::move(launch_mode_recorder)));
+                         is_first_run));
       return;
     }
 #endif
@@ -721,7 +721,7 @@ void StartupBrowserCreator::LaunchBrowser(
                in_synchronous_profile_launch_
                    ? chrome::startup::IsProcessStartup::kYes
                    : chrome::startup::IsProcessStartup::kNo,
-               std::move(launch_mode_recorder), restore_tabbed_browser);
+               restore_tabbed_browser);
   }
   in_synchronous_profile_launch_ = false;
   profile_launch_observer.Get().AddLaunched(profile);
@@ -750,7 +750,7 @@ void StartupBrowserCreator::LaunchBrowserForLastProfiles(
 
   if (profile_info.mode == StartupProfileMode::kProfilePicker) {
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
 #else
     ProfilePicker::Show(ProfilePicker::Params::FromEntryPoint(
         process_startup == chrome::startup::IsProcessStartup::kYes
@@ -799,14 +799,13 @@ void StartupBrowserCreator::LaunchBrowserForLastProfiles(
       }
 #endif
       LaunchBrowser(command_line, profile_to_open, cur_dir, process_startup,
-                    is_first_run, std::make_unique<OldLaunchModeRecorder>(),
-                    restore_tabbed_browser);
+                    is_first_run, restore_tabbed_browser);
       return;
     }
 
     // Show ProfilePicker if `profile` can't be auto opened.
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
 #else
     ProfilePicker::Show(ProfilePicker::Params::FromEntryPoint(
         process_startup == chrome::startup::IsProcessStartup::kYes
@@ -909,7 +908,7 @@ void StartupBrowserCreator::ClearLaunchedProfilesForTesting() {
 // static
 void StartupBrowserCreator::RegisterLocalStatePrefs(
     PrefRegistrySimple* registry) {
-  registry->RegisterBooleanPref(prefs::kPromotionalTabsEnabled, true);
+  registry->RegisterBooleanPref(prefs::kPromotionsEnabled, true);
 #if !BUILDFLAG(IS_CHROMEOS_ASH)
   registry->RegisterBooleanPref(prefs::kCommandLineFlagSecurityWarningsEnabled,
                                 true);
@@ -1028,7 +1027,10 @@ bool StartupBrowserCreator::ProcessCmdLineImpl(
   if (command_line.HasSwitch(ash::switches::kLoginManager))
     silent_launch = true;
 
-  if (chrome::IsRunningInForcedAppMode()) {
+  if (IsRunningInForcedAppMode()) {
+    // If we are here, it means the Chrome browser crashed/restarted while in
+    // Kiosk mode, since the 'force app mode' switch is only added to the
+    // commandline while in a kiosk session.
     Profile* profile = profile_info.profile;
 
     // Skip browser launch since app mode launches its app window.
@@ -1050,11 +1052,12 @@ bool StartupBrowserCreator::ProcessCmdLineImpl(
         chrome::AttemptUserExit();
         return false;
       } else {
-        ash::LaunchAppOrDie(profile, app_id.value());
+        ash::KioskController::Get().StartSessionAfterCrash(app_id.value(),
+                                                           profile);
       }
     } else {
-      // If we are here, we are either in ARC kiosk session or the user is
-      // invalid. We should terminate the session in such cases.
+      // If we are here, the user is invalid.
+      // We should terminate the session in such cases.
       chrome::AttemptUserExit();
       return false;
     }
@@ -1104,7 +1107,7 @@ bool StartupBrowserCreator::ProcessCmdLineImpl(
       // to validate the flag sets and reliably determine the startup mode.
       LOG(ERROR)
           << "Failed to launch a native message host: couldn't pick a profile";
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       base::debug::DumpWithoutCrashing();
     } else {
       extensions::LaunchNativeMessageHostFromNativeApp(
@@ -1156,8 +1159,17 @@ bool StartupBrowserCreator::ProcessCmdLineImpl(
 
   // If we don't want to launch a new browser window or tab we are done here.
   if (silent_launch) {
-    if (process_startup == chrome::startup::IsProcessStartup::kYes)
+    bool should_block_browser_startup_metrics =
+        process_startup == chrome::startup::IsProcessStartup::kYes;
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+    // Login screen is an expected common case. Startup metrics should still be
+    // recorded after the user logs in even though this is a `silent_launch`.
+    should_block_browser_startup_metrics &=
+        !command_line.HasSwitch(ash::switches::kLoginManager);
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+    if (should_block_browser_startup_metrics) {
       startup_metric_utils::GetBrowser().SetNonBrowserUIDisplayed();
+    }
     return true;
   }
 
@@ -1233,7 +1245,7 @@ bool StartupBrowserCreator::ProcessCmdLineImpl(
     } else {
       // TODO(http://crbug.com/1293024): Refactor command line processing logic
       // to validate the flag sets and reliably determine the startup mode.
-      DUMP_WILL_BE_NOTREACHED_NORETURN()
+      DUMP_WILL_BE_NOTREACHED()
           << "Failed start for jumplist action: couldn't pick a profile";
     }
   }
@@ -1243,8 +1255,6 @@ bool StartupBrowserCreator::ProcessCmdLineImpl(
   // Delegate to the notification system; do not open a browser window here.
   if (command_line.HasSwitch(switches::kNotificationLaunchId)) {
     if (NotificationPlatformBridgeWin::HandleActivation(command_line)) {
-      OldLaunchModeRecorder().SetLaunchMode(
-          OldLaunchMode::kWinPlatformNotification);
       return true;
     }
     return false;
@@ -1273,8 +1283,6 @@ bool StartupBrowserCreator::ProcessCmdLineImpl(
     if (!StartGCPWSignin(command_line, incognito_profile))
       return false;
 
-    OldLaunchModeRecorder().SetLaunchMode(
-        OldLaunchMode::kCredentialProviderSignIn);
     return true;
   }
 #endif  // BUILDFLAG(IS_WIN)
@@ -1401,9 +1409,6 @@ void StartupBrowserCreator::ProcessLastOpenedProfiles(
     LaunchBrowser((profile == last_used_profile) ? command_line
                                                  : command_line_without_urls,
                   profile, cur_dir, process_startup, is_first_run,
-                  profile == last_used_profile
-                      ? std::make_unique<OldLaunchModeRecorder>()
-                      : nullptr,
                   /*restore_tabbed_browser=*/true);
     // We've launched at least one browser.
     process_startup = chrome::startup::IsProcessStartup::kNo;
@@ -1573,7 +1578,7 @@ StartupProfilePathInfo GetStartupProfilePath(
   if (profiles::IsGuestModeRequested(command_line,
                                      g_browser_process->local_state(),
                                      /* show_warning= */ false)) {
-    // TODO(crbug.com/1150326): return a guest profile instead.
+    // TODO(crbug.com/40157821): return a guest profile instead.
     return {.path = profiles::GetDefaultProfileDir(user_data_dir),
             .reason = StartupProfileModeReason::kGuestModeRequested};
   }
@@ -1586,8 +1591,24 @@ StartupProfilePathInfo GetStartupProfilePath(
   }
 #endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
 
-  base::FilePath profile_directory =
+  base::FilePath command_line_profile_directory =
       command_line.GetSwitchValuePath(switches::kProfileDirectory);
+
+  if (!command_line_profile_directory.empty() &&
+      command_line.HasSwitch(switches::kIgnoreProfileDirectoryIfNotExists)) {
+    base::FilePath profile_dir_path =
+        user_data_dir.Append(command_line_profile_directory);
+    // This is a blocking call to the filesystem, but unfortunately it is
+    // required for startup to continue, as the
+    // `kIgnoreProfileDirectoryIfNotExists` switch needs to check the file
+    // system state to know if the profile directory exists.
+    base::ScopedAllowBlocking allow_blocking;
+    if (IsProfileDirectoryMarkedForDeletion(profile_dir_path) ||
+        !base::DirectoryExists(profile_dir_path)) {
+      command_line_profile_directory = base::FilePath();
+    }
+  }
+
 #if BUILDFLAG(IS_MAC)
   // On Mac OS, when an app shim fails to dlopen chrome, the app shim falls back
   // to trying to launch chrome passing its app-id on the command line. In this
@@ -1597,16 +1618,18 @@ StartupProfilePathInfo GetStartupProfilePath(
   // right profile to use, it is good enough for the purpose of (indirectly)
   // triggering a rebuild of the app shim, which should resolve whatever
   // problem existed that let to this situation.
-  if (profile_directory.empty() && command_line.HasSwitch(switches::kAppId)) {
+  if (command_line_profile_directory.empty() &&
+      command_line.HasSwitch(switches::kAppId)) {
     std::string app_id = command_line.GetSwitchValueASCII(switches::kAppId);
     std::set<base::FilePath> profile_paths =
         AppShimRegistry::Get()->GetInstalledProfilesForApp(app_id);
-    if (!profile_paths.empty())
-      profile_directory = profile_paths.begin()->BaseName();
+    if (!profile_paths.empty()) {
+      command_line_profile_directory = profile_paths.begin()->BaseName();
+    }
   }
 #endif
-  if (!profile_directory.empty()) {
-    return {.path = user_data_dir.Append(profile_directory),
+  if (!command_line_profile_directory.empty()) {
+    return {.path = user_data_dir.Append(command_line_profile_directory),
             .reason = StartupProfileModeReason::kProfileDirSwitch};
   }
 
@@ -1652,7 +1675,9 @@ StartupProfilePathInfo GetStartupProfilePath(
   }
 
   StartupProfileModeReason show_picker_reason =
-      ShouldShowProfilePickerAtProcessLaunch(profile_manager, command_line);
+      ShouldShowProfilePickerAtProcessLaunch(
+          profile_manager, !command_line_profile_directory.empty(),
+          command_line);
 
   if (StartupProfileModeFromReason(show_picker_reason) ==
       StartupProfileMode::kProfilePicker) {

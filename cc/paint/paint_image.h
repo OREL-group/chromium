@@ -42,7 +42,17 @@ class TextureBacking;
 
 enum class ImageType { kPNG, kJPEG, kWEBP, kGIF, kICO, kBMP, kAVIF, kInvalid };
 
-enum class AuxImage : size_t { kDefault = 0, kGainmap = 1 };
+// An encoded image may include several auxiliary images within it. This enum
+// is used to index those images. Auxiliary images can have different sizes and
+// pixel formats from the default image.
+enum class AuxImage : size_t {
+  // The default image that decoders unaware of independent auxiliary images
+  // will decode.
+  kDefault = 0,
+  // The UltraHDR or (equivalently) ISO 21496-1 gainmap image.
+  kGainmap = 1
+};
+
 static constexpr std::array<AuxImage, 2> kAllAuxImages = {AuxImage::kDefault,
                                                           AuxImage::kGainmap};
 constexpr size_t AuxImageIndex(AuxImage aux_image) {
@@ -294,6 +304,7 @@ class CC_PAINT_EXPORT PaintImage {
     return paint_record_ || paint_image_generator_;
   }
   bool IsPaintWorklet() const { return !!paint_worklet_input_; }
+  bool NeedsLayer() const;
   bool IsTextureBacked() const;
   // Skia internally buffers commands and flushes them as necessary but there
   // are some cases where we need to force a flush.
@@ -383,7 +394,7 @@ class CC_PAINT_EXPORT PaintImage {
   friend class DrawImageToneMapUtil;
   friend class DrawSkottieOp;
 
-  // TODO(crbug.com/1031051): Remove these once GetSkImage()
+  // TODO(crbug.com/40110279): Remove these once GetSkImage()
   // is fully removed.
   friend class ImagePaintFilter;
   friend class PaintShader;

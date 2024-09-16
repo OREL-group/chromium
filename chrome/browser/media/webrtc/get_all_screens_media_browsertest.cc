@@ -203,6 +203,10 @@ class MockMultiCaptureService : public crosapi::mojom::MultiCaptureService {
               IsMultiCaptureAllowed,
               (const GURL& url, IsMultiCaptureAllowedCallback),
               (override));
+  MOCK_METHOD(void,
+              IsMultiCaptureAllowedForAnyOriginOnMainProfile,
+              (IsMultiCaptureAllowedForAnyOriginOnMainProfileCallback),
+              (override));
 
  private:
   mojo::ReceiverSet<crosapi::mojom::MultiCaptureService> receivers_;
@@ -255,7 +259,12 @@ class GetAllScreensMediaBrowserTest
       public ::testing::WithParamInterface<GetAllScreensMediaTestParameters> {
  public:
   GetAllScreensMediaBrowserTest()
-      : GetAllScreensMediaBrowserTestBase(GetParam().base_page) {}
+      : GetAllScreensMediaBrowserTestBase(GetParam().base_page) {
+    // This call may happen but is not interesting for the tests in this file.
+    EXPECT_CALL(mock_multi_capture_service_,
+                IsMultiCaptureAllowedForAnyOriginOnMainProfile(testing::_))
+        .Times(testing::AnyNumber());
+  }
 
   void SetUpOnMainThread() override {
     GetAllScreensMediaBrowserTestBase::SetUpOnMainThread();
@@ -264,7 +273,7 @@ class GetAllScreensMediaBrowserTest
   }
 
  protected:
-  testing::StrictMock<MockMultiCaptureService> mock_multi_capture_service_;
+  testing::NiceMock<MockMultiCaptureService> mock_multi_capture_service_;
 };
 
 INSTANTIATE_TEST_SUITE_P(
@@ -283,22 +292,22 @@ INSTANTIATE_TEST_SUITE_P(
         {/*base_page=*/"/webrtc/"
                        "webrtc_getallscreensmedia_no_object_source_test.html",
          /*expected_csp_acceptable=*/false,
-         /*expected_error_name=*/"NotAllowedError",
+         /*expected_error_name=*/"TypeError",
          /*expected_script_should_load=*/true},
         {/*base_page=*/"/webrtc/"
                        "webrtc_getallscreensmedia_no_base_uri_test.html",
          /*expected_csp_acceptable=*/false,
-         /*expected_error_name=*/"NotAllowedError",
+         /*expected_error_name=*/"TypeError",
          /*expected_script_should_load=*/true},
         {/*base_page=*/"/webrtc/"
                        "webrtc_getallscreensmedia_no_script_source_test.html",
          /*expected_csp_acceptable=*/false,
-         /*expected_error_name=*/"NotAllowedError",
+         /*expected_error_name=*/"TypeError",
          /*expected_script_should_load=*/true},
         {/*base_page=*/"/webrtc/"
                        "webrtc_getallscreensmedia_no_trusted_types_test.html",
          /*expected_csp_acceptable=*/false,
-         /*expected_error_name=*/"NotAllowedError",
+         /*expected_error_name=*/"TypeError",
          /*expected_script_should_load=*/true},
         {/*base_page=*/"/webrtc/"
                        "webrtc_getallscreensmedia_invalid_csp_test.html",
@@ -447,9 +456,15 @@ IN_PROC_BROWSER_TEST_P(GetAllScreensMediaBrowserTest,
   std::string error_name;
   EXPECT_FALSE(RunGetAllScreensMediaAndGetIds(contents_, stream_ids, track_ids,
                                               &error_name));
-  EXPECT_EQ(param.expected_script_should_load ? "NotAllowedError"
-                                              : "ScriptNotLoadedError",
-            error_name);
+  if (!param.expected_script_should_load) {
+    EXPECT_EQ("ScriptNotLoadedError", error_name);
+  } else if (!param.expected_csp_acceptable) {
+    // If the CSP provided is not acceptable, then the API will not be exposed
+    // and a `TypeError` will be thrown when it's accessed.
+    EXPECT_EQ("TypeError", error_name);
+  } else {
+    EXPECT_EQ("NotAllowedError", error_name);
+  }
 }
 
 // Test that getDisplayMedia and getAllScreensMedia are independent,
@@ -501,7 +516,7 @@ class InteractionBetweenGetAllScreensMediaAndGetDisplayMediaTest
   }
 
  protected:
-  testing::StrictMock<MockMultiCaptureService> mock_multi_capture_service_;
+  testing::NiceMock<MockMultiCaptureService> mock_multi_capture_service_;
   const std::string method1_;
   const std::string method2_;
 };
@@ -551,7 +566,7 @@ IN_PROC_BROWSER_TEST_P(
   EXPECT_FALSE(AreAllTracksLive(method2_).value.GetBool());
 }
 
-// TODO(crbug.com/1479984): re-enable once the bug is fixed.
+// TODO(crbug.com/40071631): re-enable once the bug is fixed.
 IN_PROC_BROWSER_TEST_P(
     InteractionBetweenGetAllScreensMediaAndGetDisplayMediaTest,
     DISABLED_UserStoppingGetDisplayMediaDoesNotStopGetAllScreensMedia) {
@@ -663,8 +678,8 @@ class MultiCaptureNotificationTest : public InProcessBrowserTest {
   }
 
   webapps::AppId InstallPWA(Profile* profile, const GURL& start_url) {
-    auto web_app_info = std::make_unique<web_app::WebAppInstallInfo>();
-    web_app_info->start_url = start_url;
+    auto web_app_info =
+        web_app::WebAppInstallInfo::CreateWithStartUrlForTesting(start_url);
     web_app_info->scope = start_url.GetWithoutFilename();
     web_app_info->user_display_mode =
         web_app::mojom::UserDisplayMode::kStandalone;
@@ -692,7 +707,7 @@ class MultiCaptureNotificationTest : public InProcessBrowserTest {
            (int)crosapi::mojom::MultiCaptureService::MethodMinVersions::
                kMultiCaptureStartedFromAppMinVersion;
 #else
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
 #endif
   }
 
@@ -820,10 +835,10 @@ IN_PROC_BROWSER_TEST_F(MultiCaptureNotificationTest,
 
 class MultiScreenCaptureInIsolatedWebAppBrowserTest
     : public web_app::IsolatedWebAppBrowserTestHarness,
-      public ::testing::WithParamInterface<bool> {
+      public ::testing::WithParamInterface<std::tuple<bool, bool>> {
  public:
   MultiScreenCaptureInIsolatedWebAppBrowserTest()
-      : with_strict_csp_(GetParam()) {
+      : with_strict_csp_(std::get<0>(GetParam())) {
     scoped_feature_list_.InitFromCommandLine(
         /*enable_features=*/
         "GetAllScreensMedia",
@@ -869,8 +884,14 @@ class MultiScreenCaptureInIsolatedWebAppBrowserTest
   std::unique_ptr<web_app::ScopedBundledIsolatedWebApp> CreateIsolatedWebApp(
       const std::string html_text) {
     base::ScopedAllowBlockingForTesting allow_blocking;
-    auto builder = web_app::IsolatedWebAppBuilder(
-        web_app::ManifestBuilder().SetName("app-3.0.4").SetVersion("3.0.4"));
+    auto manifest_builder =
+        web_app::ManifestBuilder().SetName("app-3.0.4").SetVersion("3.0.4");
+    if (IsPermissionPolicySet()) {
+      manifest_builder.AddPermissionsPolicy(
+          blink::mojom::PermissionsPolicyFeature::kAllScreensCapture,
+          /*self=*/true, /*origins=*/{});
+    }
+    auto builder = web_app::IsolatedWebAppBuilder(std::move(manifest_builder));
 
     std::string csp;
     if (with_strict_csp_) {
@@ -909,6 +930,8 @@ class MultiScreenCaptureInIsolatedWebAppBrowserTest
     return app;
   }
 
+  bool IsPermissionPolicySet() { return std::get<1>(GetParam()); }
+
   base::FilePath GetSourceDir() {
     base::FilePath source_dir;
     base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &source_dir);
@@ -935,17 +958,22 @@ class MultiScreenCaptureInIsolatedWebAppBrowserTest
   testing::NiceMock<policy::MockConfigurationPolicyProvider> provider_;
 
 #if BUILDFLAG(IS_CHROMEOS_LACROS)
-  testing::StrictMock<MockMultiCaptureService> mock_multi_capture_service_;
+  testing::NiceMock<MockMultiCaptureService> mock_multi_capture_service_;
 #endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
 
  private:
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
-INSTANTIATE_TEST_SUITE_P(,
-                         MultiScreenCaptureInIsolatedWebAppBrowserTest,
-                         // Determines whether the IWA uses explicit strict CSP.
-                         ::testing::Bool());
+INSTANTIATE_TEST_SUITE_P(
+    ,
+    MultiScreenCaptureInIsolatedWebAppBrowserTest,
+    ::testing::Combine(
+        // Determines whether the IWA uses explicit strict CSP.
+        ::testing::Bool(),
+        // Determines whether the `all-screens-capture` permission policy is
+        // defined in the manifest.
+        ::testing::Bool()));
 
 IN_PROC_BROWSER_TEST_P(MultiScreenCaptureInIsolatedWebAppBrowserTest,
                        GetAllScreensMediaSuccessful) {
@@ -954,12 +982,14 @@ IN_PROC_BROWSER_TEST_P(MultiScreenCaptureInIsolatedWebAppBrowserTest,
   content::RenderFrameHost* app_frame = OpenApp(url_info.app_id());
 
 #if BUILDFLAG(IS_CHROMEOS_LACROS)
-  EXPECT_CALL(mock_multi_capture_service_,
-              IsMultiCaptureAllowed(url_info.origin().GetURL(), testing::_))
-      .WillOnce(testing::Invoke(
-          [](const GURL& url, base::OnceCallback<void(bool)> callback) {
-            std::move(callback).Run(true);
-          }));
+  if (IsPermissionPolicySet()) {
+    EXPECT_CALL(mock_multi_capture_service_,
+                IsMultiCaptureAllowed(url_info.origin().GetURL(), testing::_))
+        .WillOnce(testing::Invoke(
+            [](const GURL& url, base::OnceCallback<void(bool)> callback) {
+              std::move(callback).Run(true);
+            }));
+  }
 #endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
 
   std::set<std::string> stream_ids;
@@ -968,8 +998,14 @@ IN_PROC_BROWSER_TEST_P(MultiScreenCaptureInIsolatedWebAppBrowserTest,
   const bool result = RunGetAllScreensMediaAndGetIds(
       content::WebContents::FromRenderFrameHost(app_frame), stream_ids,
       track_ids, &error_name);
-  EXPECT_TRUE(result);
-  EXPECT_EQ(1u, track_ids.size());
+
+  if (IsPermissionPolicySet()) {
+    EXPECT_TRUE(result);
+    EXPECT_EQ(1u, track_ids.size());
+  } else {
+    EXPECT_FALSE(result);
+    EXPECT_EQ(0u, track_ids.size());
+  }
 }
 
 IN_PROC_BROWSER_TEST_P(MultiScreenCaptureInIsolatedWebAppBrowserTest,
@@ -983,12 +1019,14 @@ IN_PROC_BROWSER_TEST_P(MultiScreenCaptureInIsolatedWebAppBrowserTest,
   content::RenderFrameHost* app_frame = OpenApp(url_info.app_id());
 
 #if BUILDFLAG(IS_CHROMEOS_LACROS)
-  EXPECT_CALL(mock_multi_capture_service_,
-              IsMultiCaptureAllowed(url_info.origin().GetURL(), testing::_))
-      .WillOnce(testing::Invoke(
-          [](const GURL& url, base::OnceCallback<void(bool)> callback) {
-            std::move(callback).Run(false);
-          }));
+  if (IsPermissionPolicySet()) {
+    EXPECT_CALL(mock_multi_capture_service_,
+                IsMultiCaptureAllowed(url_info.origin().GetURL(), testing::_))
+        .WillOnce(testing::Invoke(
+            [](const GURL& url, base::OnceCallback<void(bool)> callback) {
+              std::move(callback).Run(false);
+            }));
+  }
 #endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
 
   std::set<std::string> stream_ids;

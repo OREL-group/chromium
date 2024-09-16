@@ -25,10 +25,15 @@ import {
 } from '../models/video_saver.js';
 import {ChromeHelper} from '../mojo/chrome_helper.js';
 import {DeviceOperator} from '../mojo/device_operator.js';
+import {
+  getInstanceForTest as getPhotoModeAutoScanner,
+} from '../photo_mode_auto_scanner.js';
 import * as state from '../state.js';
 import {Facing, Mode, Resolution} from '../type.js';
-import * as untrustedScripts from '../untrusted_scripts.js';
 import {FpsObserver, sleep} from '../util.js';
+import {
+  getInstanceForTest as getDocumentReview,
+} from '../views/document_review.js';
 import {windowController} from '../window_controller.js';
 
 import {
@@ -623,18 +628,27 @@ export class CCATest {
   }
 
   /**
-   * Sets measurement protocol's URL.
+   * Gets vid:pid of current active USB camera device in the format of a 8
+   * digits hex string, such as abcd:1234, or return '' for MIPI.
    */
-  static async setMeasurementProtocolUrl(url: string): Promise<void> {
-    const helper = await untrustedScripts.getGaHelper();
-    return helper.setMeasurementProtocolUrl(url);
+  static async getVidPid(): Promise<string> {
+    const deviceOperator = assertExists(
+        DeviceOperator.getInstance(), 'Failed to get deviceOperator instance.');
+    return (await deviceOperator.getVidPid(CCATest.getDeviceId())) ?? '';
   }
 
   /**
-   * Enables GA4 metrics.
+   * Returns average time performance of preview OCR in milliseconds.
    */
-  static async enableGa4Metrics(): Promise<void> {
-    const helper = await untrustedScripts.getGaHelper();
-    return helper.setGa4Enabled(true);
+  static getAverageOcrScanTime(): number {
+    return getPhotoModeAutoScanner().getAverageOcrScanTime();
+  }
+
+  /**
+   * Returns the processing time of last saved file from document scanning
+   * review dialog in milliseconds.
+   */
+  static getDocumentReviewLastFileProcessingTime(): number {
+    return getDocumentReview().getLastFileProcessingTime();
   }
 }

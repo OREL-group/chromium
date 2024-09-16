@@ -228,12 +228,12 @@ void ContentProtectionManager::OnContentProtectionApplied(
     DequeueTask();
 }
 
-void ContentProtectionManager::OnDisplayModeChanged(
+void ContentProtectionManager::OnDisplayConfigurationChanged(
     const DisplayConfigurator::DisplayStateList&) {
   KillTasks();
 }
 
-void ContentProtectionManager::OnDisplayModeChangeFailed(
+void ContentProtectionManager::OnDisplayConfigurationChangeFailed(
     const DisplayConfigurator::DisplayStateList&,
     MultipleDisplayState) {
   KillTasks();
@@ -306,7 +306,7 @@ void ContentProtectionManager::OnDisplaySecurityQueried(
                          connection_mask == DISPLAY_CONNECTION_TYPE_INTERNAL);
 
     for (Observer& observer : observers_)
-      observer.OnDisplaySecurityChanged(display_id, secure);
+      observer.OnDisplaySecurityMaybeChanged(display_id, secure);
   }
 
   if (status != Task::Status::KILLED)

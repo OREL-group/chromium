@@ -16,8 +16,6 @@
 #include "chrome/common/extensions/api/scripting.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
-#include "extensions/browser/api/scripting/scripting_constants.h"
-#include "extensions/browser/api/scripting/scripting_utils.h"
 #include "extensions/browser/extension_api_frame_id_map.h"
 #include "extensions/browser/extension_file_task_runner.h"
 #include "extensions/browser/extension_registry.h"
@@ -26,6 +24,8 @@
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/load_and_localize_file.h"
 #include "extensions/browser/script_executor.h"
+#include "extensions/browser/scripting_constants.h"
+#include "extensions/browser/scripting_utils.h"
 #include "extensions/browser/user_script_manager.h"
 #include "extensions/common/api/extension_types.h"
 #include "extensions/common/api/scripts_internal.h"
@@ -529,13 +529,12 @@ api::scripting::RegisteredContentScript CreateRegisteredContentScriptInfo(
       [](api::extension_types::ExecutionWorld world) {
         switch (world) {
           case api::extension_types::ExecutionWorld::kNone:
-            NOTREACHED_NORETURN()
+            NOTREACHED()
                 << "Execution world should always be present in serialization.";
           case api::extension_types::ExecutionWorld::kIsolated:
             return api::scripting::ExecutionWorld::kIsolated;
           case api::extension_types::ExecutionWorld::kUserScript:
-            NOTREACHED_NORETURN()
-                << "ISOLATED worlds are not supported in this API.";
+            NOTREACHED() << "ISOLATED worlds are not supported in this API.";
           case api::extension_types::ExecutionWorld::kMain:
             return api::scripting::ExecutionWorld::kMain;
         }

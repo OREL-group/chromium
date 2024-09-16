@@ -35,6 +35,7 @@
 #include "components/autofill/core/browser/test_autofill_manager_waiter.h"
 #include "components/autofill/core/browser/test_event_waiter.h"
 #include "components/autofill/core/common/autofill_payments_features.h"
+#include "components/autofill/core/common/autofill_test_utils.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
@@ -46,29 +47,30 @@
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
 
+namespace autofill {
 namespace {
+
 const char kIbanForm[] = "/autofill_iban_form.html";
 constexpr char kIbanValue[] = "DE91 1000 0000 0123 4567 89";
 constexpr char kIbanValueWithoutWhitespaces[] = "DE91100000000123456789";
 constexpr char kURLGetUploadDetailsRequest[] =
     "https://payments.google.com/payments/apis/chromepaymentsservice/"
-    "getdetailsforiban";
+    "getdetailsforcreatepaymentinstrument";
 constexpr char kResponseGetUploadDetailsSuccess[] =
-    "{\"legal_message\":{\"line\":[{\"template\":\"Legal message template with "
-    "link: "
-    "{0}.\",\"template_parameter\":[{\"display_text\":\"Link\",\"url\":\"https:"
-    "//www.example.com/\"}]}]},\"context_token\":\"dummy_context_token\"}";
+    "{\"iban_details\":{\"validation_regex\":"
+    "\"^[A-Z]{2}[0-9]{2}[A-Z0-9]{4}[0-9]{7}[A-Z0-9]{0,18}$\"},"
+    "\"legal_message\":{\"line\":[{\"template\":\"Legal message template with"
+    " link: {0}.\",\"template_parameter\":[{\"display_text\":\"Link\","
+    "\"url\":\"https://www.example.com/\"}]}]},\"context_token\":"
+    "\"dummy_context_token\"}";
 constexpr char kURLUploadIbanRequest[] =
     "https://payments.google.com/payments/apis-secure/chromepaymentsservice/"
-    "saveiban"
+    "createpaymentinstrument"
     "?s7e_suffix=chromewallet";
 constexpr char kResponsePaymentsSuccess[] = "Success";
 constexpr char kResponsePaymentsFailure[] =
     "{\"error\":{\"code\":\"FAILED_PRECONDITION\",\"user_error_message\":\"An "
     "unexpected error has occurred. Please try again later.\"}}";
-}  // namespace
-
-namespace autofill {
 
 class IbanBubbleViewFullFormBrowserTest
     : public SyncTest,
@@ -374,14 +376,14 @@ class IbanBubbleViewFullFormBrowserTest
 
   void ClickOnView(views::View* view) {
     CHECK(view);
-    ui::MouseEvent pressed(ui::ET_MOUSE_PRESSED, gfx::Point(), gfx::Point(),
-                           ui::EventTimeForNow(), ui::EF_LEFT_MOUSE_BUTTON,
-                           ui::EF_LEFT_MOUSE_BUTTON);
+    ui::MouseEvent pressed(ui::EventType::kMousePressed, gfx::Point(),
+                           gfx::Point(), ui::EventTimeForNow(),
+                           ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON);
     view->OnMousePressed(pressed);
     ui::MouseEvent released_event =
-        ui::MouseEvent(ui::ET_MOUSE_RELEASED, gfx::Point(), gfx::Point(),
-                       ui::EventTimeForNow(), ui::EF_LEFT_MOUSE_BUTTON,
-                       ui::EF_LEFT_MOUSE_BUTTON);
+        ui::MouseEvent(ui::EventType::kMouseReleased, gfx::Point(),
+                       gfx::Point(), ui::EventTimeForNow(),
+                       ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON);
     view->OnMouseReleased(released_event);
   }
 
@@ -431,8 +433,9 @@ class IbanBubbleViewFullFormBrowserTest
         CHECK(iban_bubble_view);
         break;
       }
+      case IbanBubbleType::kUploadCompleted:
       case IbanBubbleType::kInactive:
-        NOTREACHED_NORETURN();
+        NOTREACHED();
     }
     return iban_bubble_view;
   }
@@ -448,6 +451,7 @@ class IbanBubbleViewFullFormBrowserTest
 
   std::unique_ptr<autofill::EventWaiter<DialogEvent>> event_waiter_;
   scoped_refptr<network::SharedURLLoaderFactory> test_shared_loader_factory_;
+  test::AutofillBrowserTestEnvironment autofill_test_environment_;
   TestAutofillManagerInjector<TestAutofillManager> autofill_manager_injector_;
 };
 
@@ -845,4 +849,5 @@ IN_PROC_BROWSER_TEST_F(IbanBubbleViewSyncTransportFullFormBrowserTest,
   ASSERT_TRUE(WaitForObservedEvent());
 }
 
+}  // namespace
 }  // namespace autofill

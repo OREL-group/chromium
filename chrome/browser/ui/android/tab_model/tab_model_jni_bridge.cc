@@ -14,7 +14,6 @@
 #include "chrome/browser/android/tab_android.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/profiles/profile_android.h"
 #include "chrome/browser/tab_contents/tab_util.h"
 #include "chrome/browser/ui/android/tab_model/tab_model_list.h"
 #include "chrome/browser/ui/android/tab_model/tab_model_observer_jni_bridge.h"
@@ -24,7 +23,7 @@
 #include "ui/base/window_open_disposition.h"
 #include "url/android/gurl_android.h"
 
-// Must come after other includes, because FromJniType() uses Profile.
+// Must come after all headers that specialize FromJniType() / ToJniType().
 #include "chrome/android/chrome_jni_headers/TabModelJniBridge_jni.h"
 
 using base::android::AttachCurrentThread;
@@ -35,12 +34,20 @@ using chrome::android::ActivityType;
 using content::WebContents;
 
 TabModelJniBridge::TabModelJniBridge(JNIEnv* env,
-                                     jobject jobj,
+                                     const jni_zero::JavaRef<jobject>& jobj,
                                      Profile* profile,
-                                     ActivityType activity_type)
+                                     ActivityType activity_type,
+                                     bool is_archived_tab_model)
     : TabModel(profile, activity_type),
-      java_object_(env, env->NewWeakGlobalRef(jobj)) {
-  TabModelList::AddTabModel(this);
+      java_object_(env, jobj),
+      is_archived_tab_model_(is_archived_tab_model) {
+  // The archived tab model isn't tracked in native, except to comply with clear
+  // browsing data.
+  if (is_archived_tab_model_) {
+    TabModelList::SetArchivedTabModel(this);
+  } else {
+    TabModelList::AddTabModel(this);
+  }
 }
 
 void TabModelJniBridge::Destroy(JNIEnv* env, const JavaParamRef<jobject>& obj) {
@@ -75,15 +82,15 @@ int TabModelJniBridge::GetActiveIndex() const {
 }
 
 void TabModelJniBridge::CreateTab(TabAndroid* parent,
-                                  WebContents* web_contents) {
+                                  WebContents* web_contents,
+                                  bool select) {
   JNIEnv* env = AttachCurrentThread();
   Profile* profile =
       Profile::FromBrowserContext(web_contents->GetBrowserContext());
 
   Java_TabModelJniBridge_createTabWithWebContents(
       env, java_object_.get(env), (parent ? parent->GetJavaObject() : nullptr),
-      ProfileAndroid::FromProfile(profile)->GetJavaObject(),
-      web_contents->GetJavaWebContents());
+      profile->GetJavaObject(), web_contents->GetJavaWebContents(), select);
 }
 
 void TabModelJniBridge::HandlePopupNavigation(TabAndroid* parent,
@@ -209,7 +216,29 @@ void TabModelJniBridge::RemoveObserver(TabModelObserver* observer) {
 void TabModelJniBridge::BroadcastSessionRestoreComplete(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj) {
-  TabModel::BroadcastSessionRestoreComplete();
+  if (!is_archived_tab_model_) {
+    TabModel::BroadcastSessionRestoreComplete();
+  }
+}
+
+int TabModelJniBridge::GetTabCountNavigatedInTimeWindow(
+    const base::Time& begin_time,
+    const base::Time& end_time) const {
+  JNIEnv* env = AttachCurrentThread();
+  int64_t begin_time_ms = begin_time.InMillisecondsSinceUnixEpoch();
+  int64_t end_time_ms = end_time.InMillisecondsSinceUnixEpoch();
+  return Java_TabModelJniBridge_getTabCountNavigatedInTimeWindow(
+      env, java_object_.get(env), begin_time_ms, end_time_ms);
+}
+
+void TabModelJniBridge::CloseTabsNavigatedInTimeWindow(
+    const base::Time& begin_time,
+    const base::Time& end_time) {
+  JNIEnv* env = AttachCurrentThread();
+  int64_t begin_time_ms = begin_time.InMillisecondsSinceUnixEpoch();
+  int64_t end_time_ms = end_time.InMillisecondsSinceUnixEpoch();
+  return Java_TabModelJniBridge_closeTabsNavigatedInTimeWindow(
+      env, java_object_.get(env), begin_time_ms, end_time_ms);
 }
 
 // static
@@ -218,14 +247,18 @@ jclass TabModelJniBridge::GetClazz(JNIEnv* env) {
 }
 
 TabModelJniBridge::~TabModelJniBridge() {
-  TabModelList::RemoveTabModel(this);
+  if (!is_archived_tab_model_) {
+    TabModelList::RemoveTabModel(this);
+  }
 }
 
 static jlong JNI_TabModelJniBridge_Init(JNIEnv* env,
                                         const JavaParamRef<jobject>& obj,
                                         Profile* profile,
-                                        jint j_activity_type) {
+                                        jint j_activity_type,
+                                        unsigned char is_archived_tab_model) {
   TabModel* tab_model = new TabModelJniBridge(
-      env, obj, profile, static_cast<ActivityType>(j_activity_type));
+      env, obj, profile, static_cast<ActivityType>(j_activity_type),
+      is_archived_tab_model);
   return reinterpret_cast<intptr_t>(tab_model);
 }

@@ -8,11 +8,13 @@
 #include <string>
 
 #include "base/component_export.h"
+#include "base/scoped_observation_traits.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "chromeos/ash/components/dbus/shill/fake_shill_simulated_result.h"
 #include "chromeos/ash/components/dbus/shill/shill_client_helper.h"
-#include "chromeos/dbus/common/dbus_method_call_status.h"
+#include "chromeos/dbus/common/dbus_callback.h"
+#include "third_party/cros_system_api/dbus/service_constants.h"
 
 namespace dbus {
 class Bus;
@@ -46,47 +48,12 @@ class COMPONENT_EXPORT(SHILL_CLIENT) ShillManagerClient {
     uint32_t download_rate_kbits;
   };
 
-  // Represents the priority for the requested WiFi interface. This is used to
-  // solve the WiFi concurrency issue in the platform.
-  enum WifiConcurrencyPriority {
-    // Opportunistic requests; nice-to-have but don’t directly impact the user.
-    kPriority0 = 0,
-
-    // Background requests; not triggered by direct user input.
-    // Make-before-break STA+STA concurrency would have priority 1. Android ref:
-    // https://source.android.com/docs/core/connect/wifi-sta-sta-concurrency,
-    // Chrome OS does not currently support this.
-    kPriority1 = 1,
-
-    // Foreground requests with potential fallback media. I.e. functionality is
-    // still possible without the interface, but is degraded in some way. A
-    // Wi-Fi Direct request via the Nearby Share application would have
-    // priority 2. Station Wi-Fi could be downgraded to this priority when we
-    // have connectivity over Ethernet or Cellular.
-    kPriority2 = 2,
-
-    // Foreground requests which are required for user-requested functionality.
-    // A hypothetical tethering request from a non OS-native application would
-    // have priority 3.
-    kPriority3 = 3,
-
-    // Requests from OS-native applications like network settings that enable
-    // user use-cases. This is the default priority for Station Wi-Fi.
-    kPriority4 = 4,
-
-    // User-initiated requests in which the user has been explicitly informed
-    // that some Wi-Fi functionality may stop working, and agreed to start the
-    // interface anyway. A Tethering request from the network dialog has
-    // priority 5.
-    kPriority5 = 5,
-  };
-
   struct CreateP2PGroupParameter {
     CreateP2PGroupParameter(
         const std::optional<std::string> ssid,
         const std::optional<std::string> passphrase,
         const std::optional<uint32_t> frequency,
-        const std::optional<WifiConcurrencyPriority> priority);
+        const std::optional<shill::WiFiInterfacePriority> priority);
     CreateP2PGroupParameter(const std::optional<std::string> ssid,
                             const std::optional<std::string> passphrase);
 
@@ -104,7 +71,7 @@ class COMPONENT_EXPORT(SHILL_CLIENT) ShillManagerClient {
     std::optional<uint32_t> frequency;
 
     // Priority of the WiFi P2P interface
-    std::optional<WifiConcurrencyPriority> priority;
+    std::optional<shill::WiFiInterfacePriority> priority;
   };
 
   struct ConnectP2PGroupParameter {
@@ -112,7 +79,7 @@ class COMPONENT_EXPORT(SHILL_CLIENT) ShillManagerClient {
         const std::string ssid,
         const std::string passphrase,
         const std::optional<uint32_t> frequency,
-        const std::optional<WifiConcurrencyPriority> priority);
+        const std::optional<shill::WiFiInterfacePriority> priority);
     ~ConnectP2PGroupParameter();
 
     // SSID of the group to join.
@@ -125,7 +92,7 @@ class COMPONENT_EXPORT(SHILL_CLIENT) ShillManagerClient {
     std::optional<uint32_t> frequency;
 
     // Priority of the WiFi P2P interface
-    std::optional<WifiConcurrencyPriority> priority;
+    std::optional<shill::WiFiInterfacePriority> priority;
   };
 
   // Interface for setting up devices, services, and technologies for testing.
@@ -163,6 +130,9 @@ class COMPONENT_EXPORT(SHILL_CLIENT) ShillManagerClient {
     virtual void SetManagerProperty(const std::string& key,
                                     const base::Value& value) = 0;
 
+    // Get stub manager properties.
+    virtual base::Value::Dict GetStubProperties() = 0;
+
     // Modify services in the Manager's list.
     virtual void AddManagerService(const std::string& service_path,
                                    bool notify_observers) = 0;
@@ -171,6 +141,10 @@ class COMPONENT_EXPORT(SHILL_CLIENT) ShillManagerClient {
 
     // Returns all enabled services in the given property.
     virtual base::Value::List GetEnabledServiceList() const = 0;
+
+    // Restarts hotspot by disabling and enabling after configured interactive
+    // delay.
+    virtual void RestartTethering() = 0;
 
     // Called by ShillServiceClient when a service's State property changes,
     // before notifying observers. Sets the DefaultService property to empty
@@ -225,9 +199,21 @@ class COMPONENT_EXPORT(SHILL_CLIENT) ShillManagerClient {
         FakeShillSimulatedResult operation_result,
         const std::string& result_code) = 0;
 
+    // Makes DestroyP2PGroup succeed, fail, or timeout and simulate the result
+    // code if it succeeds.
+    virtual void SetSimulateDestroyP2PGroupResult(
+        FakeShillSimulatedResult operation_result,
+        const std::string& result_code) = 0;
+
     // Makes ConnectToP2PGroup succeed, fail, or timeout and simulate the result
     // code if it succeeds.
     virtual void SetSimulateConnectToP2PGroupResult(
+        FakeShillSimulatedResult operation_result,
+        const std::string& result_code) = 0;
+
+    // Makes DisconnectFromP2PGroup succeed, fail, or timeout and simulate the
+    // result code if it succeeds.
+    virtual void SetSimulateDisconnectFromP2PGroupResult(
         FakeShillSimulatedResult operation_result,
         const std::string& result_code) = 0;
 
@@ -243,6 +229,12 @@ class COMPONENT_EXPORT(SHILL_CLIENT) ShillManagerClient {
     // services created using ConfigureService.
     virtual void SetWifiServicesVisibleByDefault(
         bool wifi_services_visible_by_default) = 0;
+
+    // Returns the shill id of the recently destroyed P2P group.
+    virtual int GetRecentlyDestroyedP2PGroupId() = 0;
+
+    // Returns the shill id of the recently disconnected P2P group.
+    virtual int GetRecentlyDisconnectedP2PGroupId() = 0;
 
    protected:
     virtual ~TestInterface() = default;
@@ -351,10 +343,23 @@ class COMPONENT_EXPORT(SHILL_CLIENT) ShillManagerClient {
                                           ErrorCallback error_callback) = 0;
 
   // Enables or disables tethering hotspot. Only supports cellular as the
-  // upstream technologies and WiFi as the downstream technology.
+  // upstream technology and WiFi as the downstream technology. This API
+  // will be deprecated once ChromeOS migrate to WiFi concurrency APIs.
   virtual void SetTetheringEnabled(bool enabled,
                                    StringCallback callback,
                                    ErrorCallback error_callback) = 0;
+
+  // Enables tethering hotspot. Only supports cellular as the upstream
+  // technology and WiFi as the downstream technology. `priority` specifies
+  // the tethering interface priority and may bring down other WiFi interface
+  // automatically if necessary.
+  virtual void EnableTethering(const shill::WiFiInterfacePriority& priority,
+                               StringCallback callback,
+                               ErrorCallback error_callback) = 0;
+
+  // Disable tethering hotspot.
+  virtual void DisableTethering(StringCallback callback,
+                                ErrorCallback error_callback) = 0;
 
   // Checks whether the upstream technology is ready to tether. Returns a status
   // string indicating the readiness. Returns "allowed" if the readiness check
@@ -382,13 +387,13 @@ class COMPONENT_EXPORT(SHILL_CLIENT) ShillManagerClient {
 
   // Destroys P2PGroup
   virtual void DestroyP2PGroup(
-      const uint32_t shill_id,
+      const int shill_id,
       base::OnceCallback<void(base::Value::Dict result)> callback,
       ErrorCallback error_callback) = 0;
 
   // Disconnects from P2PGroup
   virtual void DisconnectFromP2PGroup(
-      const uint32_t shill_id,
+      const int shill_id,
       base::OnceCallback<void(base::Value::Dict result)> callback,
       ErrorCallback error_callback) = 0;
 
@@ -404,5 +409,22 @@ class COMPONENT_EXPORT(SHILL_CLIENT) ShillManagerClient {
 };
 
 }  // namespace ash
+
+namespace base {
+
+template <>
+struct ScopedObservationTraits<ash::ShillManagerClient,
+                               ash::ShillPropertyChangedObserver> {
+  static void AddObserver(ash::ShillManagerClient* source,
+                          ash::ShillPropertyChangedObserver* observer) {
+    source->AddPropertyChangedObserver(observer);
+  }
+  static void RemoveObserver(ash::ShillManagerClient* source,
+                             ash::ShillPropertyChangedObserver* observer) {
+    source->RemovePropertyChangedObserver(observer);
+  }
+};
+
+}  // namespace base
 
 #endif  // CHROMEOS_ASH_COMPONENTS_DBUS_SHILL_SHILL_MANAGER_CLIENT_H_

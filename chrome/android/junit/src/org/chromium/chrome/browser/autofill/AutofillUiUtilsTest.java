@@ -14,20 +14,18 @@ import androidx.test.filters.SmallTest;
 
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.autofill.AutofillUiUtils.ErrorType;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.components.autofill.ImageSize;
 import org.chromium.components.autofill.payments.LegalMessageLine;
 import org.chromium.url.GURL;
 
@@ -43,8 +41,6 @@ public class AutofillUiUtilsTest {
     private EditText mYearInput;
     private int mThisMonth;
     private int mTwoDigitThisYear;
-
-    @Rule public TestRule mProcessor = new Features.JUnitProcessor();
 
     @Before
     public void setUp() {
@@ -320,7 +316,7 @@ public class AutofillUiUtilsTest {
         Bitmap testImage = Bitmap.createBitmap(400, 300, Bitmap.Config.ARGB_8888);
         AutofillUiUtils.CardIconSpecs testSpecs =
                 AutofillUiUtils.CardIconSpecs.create(
-                        ContextUtils.getApplicationContext(), AutofillUiUtils.CardIconSize.LARGE);
+                        ContextUtils.getApplicationContext(), ImageSize.LARGE);
 
         Bitmap resizedTestImage =
                 AutofillUiUtils.resizeAndAddRoundedCornersAndGreyBorder(

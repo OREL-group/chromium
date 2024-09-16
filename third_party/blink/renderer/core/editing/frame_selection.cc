@@ -145,8 +145,12 @@ const SelectionInDOMTree& FrameSelection::GetSelectionInDOMTree() const {
 }
 
 Element* FrameSelection::RootEditableElementOrDocumentElement() const {
+  // TODO(editing-dev): The use of UpdateStyleAndLayout
+  // needs to be audited.  See http://crbug.com/590369 for more details.
+  GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kSelection);
+
   Element* selection_root =
-      ComputeVisibleSelectionInDOMTreeDeprecated().RootEditableElement();
+      ComputeVisibleSelectionInDOMTree().RootEditableElement();
   // Note that RootEditableElementOrDocumentElement can return null if the
   // documentElement is null.
   return selection_root ? selection_root : GetDocument().documentElement();
@@ -358,11 +362,27 @@ void FrameSelection::DidSetSelectionDeprecated(
   NotifyAccessibilityForSelectionChange();
   NotifyCompositorForSelectionChange();
   NotifyEventHandlerForSelectionChange();
-  // The task source should be kDOMManipulation, but the spec doesn't say
-  // anything about this.
-  frame_->DomWindow()->EnqueueDocumentEvent(
-      *Event::Create(event_type_names::kSelectionchange),
-      TaskType::kMiscPlatformAPI);
+
+  // Dispatch selectionchange events per element based on the new spec:
+  // https://w3c.github.io/selection-api/#selectionchange-event
+  if (RuntimeEnabledFeatures::DispatchSelectionchangeEventPerElementEnabled()) {
+    TextControlElement* text_control =
+        EnclosingTextControl(GetSelectionInDOMTree().Anchor());
+    if (text_control && !text_control->IsInShadowTree()) {
+      text_control->ScheduleSelectionchangeEvent();
+    } else {
+      GetDocument().ScheduleSelectionchangeEvent();
+    }
+  }
+  // When DispatchSelectionchangeEventPerElement is disabled, fall back to old
+  // path.
+  else {
+    // The task source should be kDOMManipulation, but the spec doesn't say
+    // anything about this.
+    frame_->DomWindow()->EnqueueDocumentEvent(
+        *Event::Create(event_type_names::kSelectionchange),
+        TaskType::kMiscPlatformAPI);
+  }
 }
 
 void FrameSelection::SetSelectionForAccessibility(
@@ -517,8 +537,9 @@ bool FrameSelection::SelectionHasFocus() const {
   Element* const focused_element = GetDocument().FocusedElement()
                                        ? GetDocument().FocusedElement()
                                        : GetDocument().documentElement();
-  if (!focused_element)
+  if (!focused_element || focused_element->IsScrollMarkerPseudoElement()) {
     return false;
+  }
 
   if (focused_element->IsTextControl())
     return focused_element->ContainsIncludingHostElements(*current);
@@ -763,7 +784,8 @@ static Node* NonBoundaryShadowTreeRootNode(const Position& position) {
              : nullptr;
 }
 
-void FrameSelection::SelectAll(SetSelectionBy set_selection_by) {
+void FrameSelection::SelectAll(SetSelectionBy set_selection_by,
+                               bool canonicalize_selection) {
   if (auto* select_element =
           DynamicTo<HTMLSelectElement>(GetDocument().FocusedElement())) {
     if (select_element->CanSelectAll()) {
@@ -815,13 +837,20 @@ void FrameSelection::SelectAll(SetSelectionBy set_selection_by) {
       return;
   }
 
-  // TODO(editing-dev): Should we pass in set_selection_by?
-  SetSelection(SelectionInDOMTree::Builder().SelectAllChildren(*root).Build(),
+  const SelectionInDOMTree& dom_selection =
+      SelectionInDOMTree::Builder().SelectAllChildren(*root).Build();
+  if (canonicalize_selection) {
+    GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kEditing);
+  }
+  SetSelection(canonicalize_selection
+                   ? CreateVisibleSelection(dom_selection).AsSelection()
+                   : dom_selection,
                SetSelectionOptions::Builder()
                    .SetShouldCloseTyping(true)
                    .SetShouldClearTypingStyle(true)
                    .SetShouldShowHandle(IsHandleVisible())
                    .Build());
+
   SelectFrameElementInParentIfFullySelected();
   // TODO(editing-dev): Should we pass in set_selection_by?
   NotifyTextControlOfSelectionChange(SetSelectionBy::kUser);
@@ -833,7 +862,7 @@ void FrameSelection::SelectAll(SetSelectionBy set_selection_by) {
 }
 
 void FrameSelection::SelectAll() {
-  SelectAll(SetSelectionBy::kSystem);
+  SelectAll(SetSelectionBy::kSystem, false);
 }
 
 // Implementation of |SVGTextControlElement::selectSubString()|
@@ -987,13 +1016,16 @@ static bool IsFrameElement(const Node* n) {
 }
 
 void FrameSelection::SetFocusedNodeIfNeeded() {
-  if (ComputeVisibleSelectionInDOMTreeDeprecated().IsNone() ||
-      !FrameIsFocused()) {
+  // TODO(editing-dev): The use of UpdateStyleAndLayout
+  // needs to be audited.  See http://crbug.com/590369 for more details.
+  GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kSelection);
+
+  if (ComputeVisibleSelectionInDOMTree().IsNone() || !FrameIsFocused()) {
     return;
   }
 
   if (Element* target =
-          ComputeVisibleSelectionInDOMTreeDeprecated().RootEditableElement()) {
+          ComputeVisibleSelectionInDOMTree().RootEditableElement()) {
     // Walk up the DOM tree to search for a node to focus.
     GetDocument().UpdateStyleAndLayoutTree();
     while (target) {
@@ -1045,9 +1077,14 @@ static String ExtractSelectedText(const FrameSelection& selection,
 String FrameSelection::SelectedHTMLForClipboard() const {
   const EphemeralRangeInFlatTree& range =
       ComputeRangeForSerialization(GetSelectionInDOMTree());
+  CreateMarkupOptions::Builder builder;
+  if (RuntimeEnabledFeatures::
+          IgnoresCSSTextTransformsForPlainTextCopyEnabled()) {
+    builder.SetIgnoresCSSTextTransformsForRenderedText(true);
+  }
+
   return CreateMarkup(range.StartPosition(), range.EndPosition(),
-                      CreateMarkupOptions::Builder()
-                          .SetShouldAnnotateForInterchange(true)
+                      builder.SetShouldAnnotateForInterchange(true)
                           .SetShouldResolveURLs(kResolveNonLocalURLs)
                           .Build());
 }
@@ -1062,8 +1099,14 @@ String FrameSelection::SelectedText() const {
 }
 
 String FrameSelection::SelectedTextForClipboard() const {
+  TextIteratorBehavior::Builder builder;
+  if (RuntimeEnabledFeatures::
+          IgnoresCSSTextTransformsForPlainTextCopyEnabled()) {
+    builder.SetIgnoresCSSTextTransforms(true);
+  }
+
   return ExtractSelectedText(
-      *this, TextIteratorBehavior::Builder()
+      *this, builder
                  .SetEmitsImageAltText(
                      frame_->GetSettings() &&
                      frame_->GetSettings()->GetSelectionIncludesAltImageText())
@@ -1132,7 +1175,7 @@ void FrameSelection::RevealSelection(
 
   scroll_into_view_util::ScrollRectToVisible(
       *start.AnchorNode()->GetLayoutObject(), selection_rect,
-      ScrollAlignment::CreateScrollIntoViewParams(alignment, alignment));
+      scroll_into_view_util::CreateScrollIntoViewParams(alignment, alignment));
   UpdateAppearance();
 }
 
@@ -1140,10 +1183,15 @@ void FrameSelection::SetSelectionFromNone() {
   // Put a caret inside the body if the entire frame is editable (either the
   // entire WebView is editable or designMode is on for this document).
 
+  // TODO(editing-dev): The use of UpdateStyleAndLayout
+  // needs to be audited.  See http://crbug.com/590369 for more details.
+  GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kSelection);
+
   Document* document = frame_->GetDocument();
-  if (!ComputeVisibleSelectionInDOMTreeDeprecated().IsNone() ||
-      !(blink::IsEditable(*document)))
+  if (!ComputeVisibleSelectionInDOMTree().IsNone() ||
+      !(blink::IsEditable(*document))) {
     return;
+  }
 
   Element* document_element = document->documentElement();
   if (!document_element)
@@ -1160,7 +1208,11 @@ void FrameSelection::SetSelectionFromNone() {
 #if DCHECK_IS_ON()
 
 void FrameSelection::ShowTreeForThis() const {
-  ComputeVisibleSelectionInDOMTreeDeprecated().ShowTreeForThis();
+  // TODO(editing-dev): The use of UpdateStyleAndLayout
+  // needs to be audited.  See http://crbug.com/590369 for more details.
+  GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kSelection);
+
+  ComputeVisibleSelectionInDOMTree().ShowTreeForThis();
 }
 
 #endif

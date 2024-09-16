@@ -8,6 +8,7 @@
 #include <iterator>
 #include <numeric>
 
+#include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/i18n/time_formatting.h"
 #include "base/metrics/histogram.h"
@@ -19,7 +20,9 @@
 #include "base/time/time.h"
 #include "base/types/optional_util.h"
 #include "build/branding_buildflags.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/privacy_sandbox/privacy_sandbox_notice_confirmation.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chromeos/components/mgs/managed_guest_session_utils.h"
 #include "components/browsing_topics/browsing_topics_service.h"
@@ -29,8 +32,10 @@
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/content_settings/core/common/pref_names.h"
+#include "components/metrics/metrics_pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/privacy_sandbox/privacy_sandbox_features.h"
+#include "components/privacy_sandbox/privacy_sandbox_notice_constants.h"
 #include "components/privacy_sandbox/privacy_sandbox_prefs.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/url_formatter/url_formatter.h"
@@ -52,6 +57,11 @@
 #include "ui/views/widget/widget.h"
 #endif  // !BUILDFLAG(IS_ANDROID)
 
+#if BUILDFLAG(IS_ANDROID)
+#include "base/json/values_util.h"
+#include "base/time/time.h"
+#endif  // BUILDFLAG(IS_ANDROID)
+
 #if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/profiles/profiles_state.h"
 #include "chromeos/components/kiosk/kiosk_utils.h"
@@ -59,18 +69,45 @@
 
 namespace {
 
+using PromptAction = ::PrivacySandboxService::PromptAction;
+using SurfaceType = ::PrivacySandboxService::SurfaceType;
+
 constexpr char kBlockedTopicsTopicKey[] = "topic";
 
 bool g_prompt_disabled_for_tests = false;
 
+bool IsFirstRunSuppressed(const base::CommandLine& command_line) {
+  return command_line.HasSwitch(switches::kNoFirstRun);
+}
+
 // Returns whether 3P cookies are blocked by |cookie_settings|. This can be
 // either through blocking 3P cookies directly, or blocking all cookies.
-bool AreThirdPartyCookiesBlocked(
+// Blocking in this case also covers the "3P cookies limited" state.
+bool ShouldBlockThirdPartyOrFirstPartyCookies(
     content_settings::CookieSettings* cookie_settings) {
   const auto default_content_setting =
       cookie_settings->GetDefaultCookieSetting();
   return cookie_settings->ShouldBlockThirdPartyCookies() ||
          default_content_setting == ContentSetting::CONTENT_SETTING_BLOCK;
+}
+
+// Similar to the function above, but checks for ALL 3P cookies to be blocked
+// pre and post 3PCD.
+bool AreAllThirdPartyCookiesBlocked(
+    content_settings::CookieSettings* cookie_settings,
+    PrefService* prefs,
+    privacy_sandbox::TrackingProtectionSettings* tracking_protection_settings) {
+  // Check if 1PCs are blocked.
+  if (cookie_settings->GetDefaultCookieSetting() ==
+      ContentSetting::CONTENT_SETTING_BLOCK) {
+    return true;
+  }
+  // Check if all 3PCs are blocked.
+  return tracking_protection_settings->AreAllThirdPartyCookiesBlocked() ||
+         (!tracking_protection_settings->IsTrackingProtection3pcdEnabled() &&
+          prefs->GetInteger(prefs::kCookieControlsMode) ==
+              static_cast<int>(
+                  content_settings::CookieControlsMode::kBlockThirdParty));
 }
 
 // Sorts |topics| alphabetically by topic display name for display.
@@ -199,6 +236,86 @@ void RecordProtectedAudienceJoiningTopFrameDisplayedHistogram(bool value) {
       "PrivacySandbox.ProtectedAudience.JoiningTopFrameDisplayed", value);
 }
 
+constexpr std::string_view GetTopicsConsentNoticeName(
+    SurfaceType surface_type) {
+  switch (surface_type) {
+    case SurfaceType::kDesktop: {
+      return privacy_sandbox::kTopicsConsentModal;
+    }
+    case SurfaceType::kBrApp: {
+      return privacy_sandbox::kTopicsConsentModalClankBrApp;
+    }
+    case SurfaceType::kAGACCT: {
+      return privacy_sandbox::kTopicsConsentModalClankCCT;
+    }
+  }
+}
+
+constexpr std::string_view GetProtectedAudienceMeasurementNoticeName(
+    SurfaceType surface_type) {
+  switch (surface_type) {
+    case SurfaceType::kDesktop: {
+      return privacy_sandbox::kProtectedAudienceMeasurementNoticeModal;
+    }
+    case SurfaceType::kBrApp: {
+      return privacy_sandbox::
+          kProtectedAudienceMeasurementNoticeModalClankBrApp;
+    }
+    case SurfaceType::kAGACCT: {
+      return privacy_sandbox::kProtectedAudienceMeasurementNoticeModalClankCCT;
+    }
+  }
+}
+
+constexpr std::string_view GetThreeAdsAPIsNoticeName(SurfaceType surface_type) {
+  switch (surface_type) {
+    case SurfaceType::kDesktop: {
+      return privacy_sandbox::kThreeAdsAPIsNoticeModal;
+    }
+    case SurfaceType::kBrApp: {
+      return privacy_sandbox::kThreeAdsAPIsNoticeModalClankBrApp;
+    }
+    case SurfaceType::kAGACCT: {
+      return privacy_sandbox::kThreeAdsAPIsNoticeModalClankCCT;
+    }
+  }
+}
+
+constexpr std::string_view GetMeasurementNoticeName(SurfaceType surface_type) {
+  switch (surface_type) {
+    case SurfaceType::kDesktop: {
+      return privacy_sandbox::kMeasurementNoticeModal;
+    }
+    case SurfaceType::kBrApp: {
+      return privacy_sandbox::kMeasurementNoticeModalClankBrApp;
+    }
+    case SurfaceType::kAGACCT: {
+      return privacy_sandbox::kMeasurementNoticeModalClankCCT;
+    }
+  }
+}
+
+std::string_view GetNoticeName(PromptAction action, SurfaceType surface_type) {
+  std::string_view empty_view;
+  switch (action) {
+    case PromptAction::kConsentShown:
+    case PromptAction::kConsentAccepted:
+    case PromptAction::kConsentDeclined:
+      return GetTopicsConsentNoticeName(surface_type);
+    case PromptAction::kRestrictedNoticeShown:
+    case PromptAction::kRestrictedNoticeAcknowledge:
+    case PromptAction::kRestrictedNoticeOpenSettings:
+      return GetMeasurementNoticeName(surface_type);
+    case PromptAction::kNoticeShown:
+    case PromptAction::kNoticeAcknowledge:
+    case PromptAction::kNoticeOpenSettings:
+      return privacy_sandbox::IsConsentRequired()
+                 ? GetProtectedAudienceMeasurementNoticeName(surface_type)
+                 : GetThreeAdsAPIsNoticeName(surface_type);
+    default:
+      return empty_view;
+  }
+}
 }  // namespace
 
 // static
@@ -235,6 +352,7 @@ void PrivacySandboxService::SetPromptDisabledForTests(bool disabled) {
 
 PrivacySandboxServiceImpl::PrivacySandboxServiceImpl(
     privacy_sandbox::PrivacySandboxSettings* privacy_sandbox_settings,
+    privacy_sandbox::TrackingProtectionSettings* tracking_protection_settings,
     scoped_refptr<content_settings::CookieSettings> cookie_settings,
     PrefService* pref_service,
     content::InterestGroupManager* interest_group_manager,
@@ -247,6 +365,7 @@ PrivacySandboxServiceImpl::PrivacySandboxServiceImpl(
     browsing_topics::BrowsingTopicsService* browsing_topics_service,
     first_party_sets::FirstPartySetsPolicyService* first_party_sets_service)
     : privacy_sandbox_settings_(privacy_sandbox_settings),
+      tracking_protection_settings_(tracking_protection_settings),
       cookie_settings_(cookie_settings),
       pref_service_(pref_service),
       interest_group_manager_(interest_group_manager),
@@ -258,9 +377,16 @@ PrivacySandboxServiceImpl::PrivacySandboxServiceImpl(
 #endif
       browsing_topics_service_(browsing_topics_service),
       first_party_sets_policy_service_(first_party_sets_service) {
+
+  // Create notice storage
+  notice_storage_ =
+      std::make_unique<privacy_sandbox::PrivacySandboxNoticeStorage>();
+
   DCHECK(privacy_sandbox_settings_);
   DCHECK(pref_service_);
   DCHECK(cookie_settings_);
+  CHECK(tracking_protection_settings_);
+  CHECK(notice_storage_);
 
   // Register observers for the Privacy Sandbox preferences.
   user_prefs_registrar_.Init(pref_service_);
@@ -286,7 +412,7 @@ PrivacySandboxServiceImpl::PrivacySandboxServiceImpl(
     // notice feature is enabled.
     pref_service_->SetBoolean(prefs::kPrivacySandboxM1TopicsEnabled, false);
     pref_service_->SetBoolean(prefs::kPrivacySandboxM1FledgeEnabled, false);
-    if (!privacy_sandbox::kPrivacySandboxSettings4RestrictedNotice.Get()) {
+    if (!privacy_sandbox::IsRestrictedNoticeRequired()) {
       pref_service_->SetBoolean(prefs::kPrivacySandboxM1AdMeasurementEnabled,
                                 false);
     }
@@ -302,7 +428,7 @@ PrivacySandboxServiceImpl::PrivacySandboxServiceImpl(
 
   // kRestricted prompt suppression reason must be cleared at startup when
   // restricted notice feature is enabled.
-  if (privacy_sandbox::kPrivacySandboxSettings4RestrictedNotice.Get() &&
+  if (privacy_sandbox::IsRestrictedNoticeRequired() &&
       static_cast<PromptSuppressedReason>(
           pref_service->GetInteger(prefs::kPrivacySandboxM1PromptSuppressed)) ==
           PromptSuppressedReason::kRestricted) {
@@ -320,17 +446,97 @@ PrivacySandboxServiceImpl::PrivacySandboxServiceImpl(
 PrivacySandboxServiceImpl::~PrivacySandboxServiceImpl() = default;
 
 PrivacySandboxService::PromptType
-PrivacySandboxServiceImpl::GetRequiredPromptType() {
-  const auto third_party_cookies_blocked =
-      AreThirdPartyCookiesBlocked(cookie_settings_.get());
+// TODO(crbug.com/352575567): Use the SurfaceType passed in.
+PrivacySandboxServiceImpl::GetRequiredPromptType(SurfaceType surface_type) {
+  bool third_party_cookies_blocked = AreAllThirdPartyCookiesBlocked(
+      cookie_settings_.get(), pref_service_, tracking_protection_settings_);
   return GetRequiredPromptTypeInternal(
       pref_service_, profile_type_, privacy_sandbox_settings_,
       third_party_cookies_blocked,
       force_chrome_build_for_tests_ || IsChromeBuild());
 }
 
-void PrivacySandboxServiceImpl::PromptActionOccurred(PromptAction action) {
+void UpdateNoticeStorage(
+    PromptAction action,
+    privacy_sandbox::PrivacySandboxNoticeStorage* notice_storage,
+    PrefService* pref_service,
+    SurfaceType surface_type) {
+  if (!base::FeatureList::IsEnabled(
+          privacy_sandbox::kPsDualWritePrefsToNoticeStorage)) {
+    return;
+  }
+
+  // Set correct notice names, ready to receive and log PromptActions
+  std::string_view notice_name = GetNoticeName(action, surface_type);
+
+  switch (action) {
+    // Topics notices (only shown for EEA, consent option)
+    case PromptAction::kConsentShown: {
+      notice_storage->SetNoticeShown(pref_service, notice_name,
+                                     base::Time::Now());
+      break;
+    }
+    case PromptAction::kConsentAccepted: {
+      notice_storage->SetNoticeActionTaken(
+          pref_service, notice_name, privacy_sandbox::NoticeActionTaken::kOptIn,
+          base::Time::Now());
+      break;
+    }
+    case PromptAction::kConsentDeclined: {
+      notice_storage->SetNoticeActionTaken(
+          pref_service, notice_name,
+          privacy_sandbox::NoticeActionTaken::kOptOut, base::Time::Now());
+      break;
+    }
+    // EEA and ROW notices
+    case PromptAction::kNoticeShown: {
+      notice_storage->SetNoticeShown(pref_service, notice_name,
+                                     base::Time::Now());
+      break;
+    }
+    case PromptAction::kNoticeAcknowledge: {
+      notice_storage->SetNoticeActionTaken(
+          pref_service, notice_name, privacy_sandbox::NoticeActionTaken::kAck,
+          base::Time::Now());
+      break;
+    }
+    case PromptAction::kNoticeOpenSettings: {
+      notice_storage->SetNoticeActionTaken(
+          pref_service, notice_name,
+          privacy_sandbox::NoticeActionTaken::kSettings, base::Time::Now());
+      break;
+    }
+    // Restricted notices
+    case PromptAction::kRestrictedNoticeShown: {
+      DCHECK(privacy_sandbox::IsRestrictedNoticeRequired());
+      notice_storage->SetNoticeShown(pref_service, notice_name,
+                                     base::Time::Now());
+      break;
+    }
+    case PromptAction::kRestrictedNoticeAcknowledge: {
+      DCHECK(privacy_sandbox::IsRestrictedNoticeRequired());
+      notice_storage->SetNoticeActionTaken(
+          pref_service, notice_name, privacy_sandbox::NoticeActionTaken::kAck,
+          base::Time::Now());
+      break;
+    }
+    case PromptAction::kRestrictedNoticeOpenSettings: {
+      DCHECK(privacy_sandbox::IsRestrictedNoticeRequired());
+      notice_storage->SetNoticeActionTaken(
+          pref_service, notice_name,
+          privacy_sandbox::NoticeActionTaken::kSettings, base::Time::Now());
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+void PrivacySandboxServiceImpl::PromptActionOccurred(PromptAction action,
+                                                     SurfaceType surface_type) {
   RecordPromptActionMetrics(action);
+  UpdateNoticeStorage(action, notice_storage_.get(), pref_service_.get(),
+                      surface_type);
 
   InformSentimentService(action);
   if (PromptAction::kNoticeAcknowledge == action ||
@@ -359,6 +565,7 @@ void PrivacySandboxServiceImpl::PromptActionOccurred(PromptAction action) {
 #if !BUILDFLAG(IS_ANDROID)
     MaybeCloseOpenPrompts();
 #endif  // !BUILDFLAG(IS_ANDROID)
+    // Consent-related PromptActions refer to to Topics Notice Consent
   } else if (PromptAction::kConsentAccepted == action) {
     DCHECK(privacy_sandbox::IsConsentRequired());
     pref_service_->SetBoolean(prefs::kPrivacySandboxM1ConsentDecisionMade,
@@ -375,7 +582,7 @@ void PrivacySandboxServiceImpl::PromptActionOccurred(PromptAction action) {
         privacy_sandbox::TopicsConsentUpdateSource::kConfirmation, false);
   } else if (PromptAction::kRestrictedNoticeAcknowledge == action ||
              PromptAction::kRestrictedNoticeOpenSettings == action) {
-    CHECK(privacy_sandbox::kPrivacySandboxSettings4RestrictedNotice.Get());
+    CHECK(privacy_sandbox::IsRestrictedNoticeRequired());
     pref_service_->SetBoolean(
         prefs::kPrivacySandboxM1RestrictedNoticeAcknowledged, true);
     pref_service_->SetBoolean(prefs::kPrivacySandboxM1AdMeasurementEnabled,
@@ -563,11 +770,6 @@ void PrivacySandboxServiceImpl::SetFledgeJoiningAllowed(
 void PrivacySandboxServiceImpl::RecordFirstPartySetsStateHistogram(
     FirstPartySetsState state) {
   base::UmaHistogramEnumeration("Settings.FirstPartySets.State", state);
-}
-
-void PrivacySandboxServiceImpl::RecordPrivacySandboxHistogram(
-    SettingsPrivacySandboxEnabled state) {
-  base::UmaHistogramEnumeration("Settings.PrivacySandbox.Enabled", state);
 }
 
 void PrivacySandboxServiceImpl::RecordPrivacySandbox4StartupMetrics() {
@@ -780,6 +982,14 @@ void PrivacySandboxServiceImpl::LogPrivacySandboxState() {
   RecordFirstPartySetsStateHistogram(fps_status);
 
   RecordPrivacySandbox4StartupMetrics();
+
+  // TODO(crbug.com/333406690): After migration, move this portion to the
+  // chrome/browser/privacy_sandbox/privacy_sandbox_notice_service.h constructor
+  // and emit ALL startup histograms instead of just Topics consent related
+  // histograms.
+  for (const auto& notice_name : privacy_sandbox::kPrivacySandboxNoticeNames) {
+    notice_storage_->RecordHistogramsOnStartup(pref_service_, notice_name);
+  }
 }
 
 void PrivacySandboxServiceImpl::ConvertInterestGroupDataKeysForDisplay(
@@ -1010,6 +1220,12 @@ PrivacySandboxServiceImpl::GetRequiredPromptTypeInternal(
     return PromptType::kM1NoticeRestricted;
   }
 
+  // Suppress the prompt if we force --no-first-run for testing
+  // and benchmarking.
+  if (IsFirstRunSuppressed(*base::CommandLine::ForCurrentProcess())) {
+    return PromptType::kNone;
+  }
+
   // If this a non-Chrome build, do not show a prompt.
   if (!is_chrome_build) {
     return PromptType::kNone;
@@ -1051,14 +1267,14 @@ PrivacySandboxServiceImpl::GetRequiredPromptTypeInternal(
   // If the Privacy Sandbox is restricted, set the suppression reason as such,
   // and do not show a prompt.
   if (privacy_sandbox_settings->IsPrivacySandboxRestricted() &&
-      !privacy_sandbox::kPrivacySandboxSettings4RestrictedNotice.Get()) {
+      !privacy_sandbox::IsRestrictedNoticeRequired()) {
     pref_service->SetInteger(
         prefs::kPrivacySandboxM1PromptSuppressed,
         static_cast<int>(PromptSuppressedReason::kRestricted));
     return PromptType::kNone;
   }
 
-  if (privacy_sandbox::kPrivacySandboxSettings4RestrictedNotice.Get()) {
+  if (privacy_sandbox::IsRestrictedNoticeRequired()) {
     CHECK(privacy_sandbox::IsConsentRequired() ||
           privacy_sandbox::IsNoticeRequired());
     if (!pref_service->GetBoolean(
@@ -1155,7 +1371,7 @@ void PrivacySandboxServiceImpl::MaybeInitializeFirstPartySetsPref() {
   // side of privacy, this init logic is run per-device (the pref recording that
   // init has been run is not synced). If any of the user's devices local state
   // would disable the pref, it is disabled across all devices.
-  if (AreThirdPartyCookiesBlocked(cookie_settings_.get())) {
+  if (ShouldBlockThirdPartyOrFirstPartyCookies(cookie_settings_.get())) {
     pref_service_->SetBoolean(prefs::kPrivacySandboxRelatedWebsiteSetsEnabled,
                               false);
   }
@@ -1170,7 +1386,7 @@ void PrivacySandboxServiceImpl::RecordUpdatedTopicsConsent(
   std::string consent_text;
   switch (source) {
     case privacy_sandbox::TopicsConsentUpdateSource::kDefaultValue: {
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
     }
     case privacy_sandbox::TopicsConsentUpdateSource::kConfirmation: {
@@ -1185,7 +1401,7 @@ void PrivacySandboxServiceImpl::RecordUpdatedTopicsConsent(
       break;
     }
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 
   pref_service_->SetBoolean(prefs::kPrivacySandboxTopicsConsentGiven,
@@ -1200,10 +1416,6 @@ void PrivacySandboxServiceImpl::RecordUpdatedTopicsConsent(
 
 #if !BUILDFLAG(IS_ANDROID)
 void PrivacySandboxServiceImpl::MaybeCloseOpenPrompts() {
-  if (!privacy_sandbox::kPrivacySandboxSettings4CloseAllPrompts.Get()) {
-    return;
-  }
-
   // Take a copy to avoid concurrent modification issues as widgets close and
   // remove themselves from the map synchronously. The map will typically have
   // at most a few elements, so this is cheap.
@@ -1424,3 +1636,212 @@ bool PrivacySandboxServiceImpl::IsM1PrivacySandboxEffectivelyManaged(
          pref_service->IsManagedPreference(
              prefs::kPrivacySandboxM1AdMeasurementEnabled);
 }
+
+// TODO(b/341978070): Move Clank Activity Type Impl into it's own service.
+#if BUILDFLAG(IS_ANDROID)
+void RecordPercentageMetrics(const base::Value::List& activity_type_record) {
+  using ActivityType = PrivacySandboxService::PrivacySandboxStorageActivityType;
+  std::unordered_map<ActivityType, int> activity_type_counts{
+      {ActivityType::kOther, 0},
+      {ActivityType::kTabbed, 0},
+      {ActivityType::kAGSACustomTab, 0},
+      {ActivityType::kNonAGSACustomTab, 0},
+      {ActivityType::kTrustedWebActivity, 0},
+      {ActivityType::kWebapp, 0},
+      {ActivityType::kWebApk, 0},
+      {ActivityType::kPreFirstTab, 0}};
+
+  for (const base::Value& record : activity_type_record) {
+    std::optional<int> activity_type_int =
+        record.GetDict().FindInt("activity_type");
+    CHECK(activity_type_int.has_value());
+    ActivityType activity_type =
+        static_cast<ActivityType>(activity_type_int.value());
+    activity_type_counts[activity_type]++;
+  }
+
+  std::unordered_map<ActivityType, int> activity_type_percentages;
+  // Set each activity type percentage based on the count / total_records.
+  for (const auto& [key, value] : activity_type_counts) {
+    double raw_percentage = (value * 100.0) / activity_type_record.size();
+    activity_type_percentages[key] = std::round(raw_percentage);
+  }
+
+  constexpr auto kTypesToHistogramSuffix =
+      base::MakeFixedFlatMap<ActivityType, std::string_view>(
+          {{ActivityType::kOther, "Other"},
+           {ActivityType::kTabbed, "BrApp"},
+           {ActivityType::kAGSACustomTab, "AGSACCT"},
+           {ActivityType::kNonAGSACustomTab, "NonAGSACCT"},
+           {ActivityType::kTrustedWebActivity, "TWA"},
+           {ActivityType::kWebapp, "WebApp"},
+           {ActivityType::kWebApk, "WebApk"},
+           {ActivityType::kPreFirstTab, "PreFirstTab"}});
+
+  // Emit all the histograms with each percentage value.
+  for (const auto& [type, suffix] : kTypesToHistogramSuffix) {
+    if (!activity_type_percentages.contains(type)) {
+      return;
+    }
+    base::UmaHistogramPercentage(
+        base::StrCat(
+            {"PrivacySandbox.ActivityTypeStorage.Percentage.", suffix, "2"}),
+        activity_type_percentages[type]);
+  }
+}
+
+void RecordUserSegmentMetrics(const base::Value::List& activity_type_record,
+                              int records_in_a_row) {
+  // If a different value for records_in_a_row is needed for these metrics,
+  // tools/metrics/histograms/metadata/privacy/histograms.xml needs to be
+  // updated with new histograms. Currently, only 10MostRecentRecordsUserSegment
+  // and 20MostRecentRecordsUserSegment histograms are necessary.
+  DCHECK(records_in_a_row == 10 || records_in_a_row == 20);
+  // Can't emit user segment metrics when the size of the list is less than
+  // records_in_a_row
+  if (activity_type_record.size() < static_cast<size_t>(records_in_a_row)) {
+    return;
+  }
+  using ActivityType = PrivacySandboxService::PrivacySandboxStorageActivityType;
+  using SegmentType =
+      PrivacySandboxService::PrivacySandboxStorageUserSegmentByRecentActivity;
+
+  // Helper function to get the activity type from a base::Value
+  auto GetActivityType = [](const base::Value& record) -> ActivityType {
+    std::optional<int> activity_type_int =
+        record.GetDict().FindInt("activity_type");
+    CHECK(activity_type_int.has_value());
+    return static_cast<ActivityType>(activity_type_int.value());
+  };
+
+  std::unordered_set<ActivityType> encountered_activities;
+  for (int i = 0; i < records_in_a_row; ++i) {
+    encountered_activities.insert(GetActivityType(activity_type_record[i]));
+  }
+
+  SegmentType segment_type = SegmentType::kHasOther;
+  if (encountered_activities.contains(ActivityType::kTabbed)) {
+    segment_type = SegmentType::kHasBrowserApp;
+  } else if (encountered_activities.contains(ActivityType::kAGSACustomTab)) {
+    segment_type = SegmentType::kHasAGSACCT;
+  } else if (encountered_activities.contains(ActivityType::kNonAGSACustomTab)) {
+    segment_type = SegmentType::kHasNonAGSACCT;
+  } else if (encountered_activities.contains(ActivityType::kWebApk)) {
+    segment_type = SegmentType::kHasPWA;
+  } else if (encountered_activities.contains(
+                 ActivityType::kTrustedWebActivity)) {
+    segment_type = SegmentType::kHasTWA;
+  } else if (encountered_activities.contains(ActivityType::kWebapp)) {
+    segment_type = SegmentType::kHasWebapp;
+  } else if (encountered_activities.contains(ActivityType::kPreFirstTab)) {
+    segment_type = SegmentType::kHasPreFirstTab;
+  }
+  base::UmaHistogramEnumeration(
+      base::StrCat({"PrivacySandbox.ActivityTypeStorage.",
+                    base::NumberToString(records_in_a_row),
+                    "MostRecentRecordsUserSegment2"}),
+      segment_type);
+}
+
+void RecordDaysSinceMetrics(const base::Value::List& activity_type_record) {
+  auto* timestamp =
+      activity_type_record[activity_type_record.size() - 1].GetDict().Find(
+          "timestamp");
+  CHECK(timestamp);
+  std::optional<base::Time> oldest_record_timestamp =
+      base::ValueToTime(*timestamp);
+  CHECK(oldest_record_timestamp.has_value());
+  int days_since_oldest_record =
+      (base::Time::Now() - oldest_record_timestamp.value()).InDays();
+  base::UmaHistogramCustomCounts(
+      "PrivacySandbox.ActivityTypeStorage.DaysSinceOldestRecord",
+      days_since_oldest_record, 1, 61, 60);
+}
+
+void RecordActivityTypeMetrics(const base::Value::List& activity_type_record,
+                               base::Time current_time) {
+  int total_records = static_cast<int>(activity_type_record.size());
+  auto* oldest_record_timestamp_ptr =
+      activity_type_record[total_records - 1].GetDict().Find("timestamp");
+  CHECK(oldest_record_timestamp_ptr);
+  std::optional<base::Time> oldest_record_timestamp =
+      base::ValueToTime(*oldest_record_timestamp_ptr);
+  base::Time uma_enabled_timestamp =
+      base::Time::FromTimeT(g_browser_process->local_state()->GetInt64(
+          metrics::prefs::kMetricsReportingEnabledTimestamp));
+  // If a user has opted in, but the opt-in date is after the oldest record
+  // timestamp in the activity type list, then no metrics should be emitted.
+  if (oldest_record_timestamp.value() < uma_enabled_timestamp) {
+    return;
+  }
+  // Min: 1, Max: 201 (exclusive), Buckets: 200 (in case the max total records
+  // changes from 100).
+  base::UmaHistogramCustomCounts(
+      "PrivacySandbox.ActivityTypeStorage.RecordsLength",
+      static_cast<int>(activity_type_record.size()), 1, 201, 200);
+  RecordPercentageMetrics(activity_type_record);
+  RecordUserSegmentMetrics(activity_type_record, 10);
+  RecordUserSegmentMetrics(activity_type_record, 20);
+  RecordDaysSinceMetrics(activity_type_record);
+}
+
+void PrivacySandboxServiceImpl::RecordActivityType(
+    PrivacySandboxStorageActivityType type) const {
+  base::UmaHistogramEnumeration(
+      "PrivacySandbox.ActivityTypeStorage.TypeReceived", type);
+
+  // If skip-pre-first-tab is turned on, the list is not updated when the type
+  // passed in is kPreFirstTab.
+  if (type == PrivacySandboxService::PrivacySandboxStorageActivityType::
+                  kPreFirstTab &&
+      privacy_sandbox::kPrivacySandboxActivityTypeStorageSkipPreFirstTab
+          .Get()) {
+    return;
+  }
+
+  // Activity type launches can only be recorded if they fall within a specific
+  // timeframe. This timeframe is determined by the within-x-days parameter,
+  // where oldest_timestamp_allowed marks the end of the timeframe and
+  // current_time marks the beginning.
+  base::Time current_time = base::Time::Now();
+  base::Time oldest_timestamp_allowed =
+      current_time -
+      base::Days(
+          privacy_sandbox::kPrivacySandboxActivityTypeStorageWithinXDays.Get());
+
+  base::Value::Dict new_dict;
+  new_dict.Set("timestamp", base::TimeToValue(current_time));
+  new_dict.Set("activity_type", static_cast<int>(type));
+
+  const base::Value::List& old_activity_type_record =
+      pref_service_->GetList(prefs::kPrivacySandboxActivityTypeRecord2);
+
+  base::Value::List new_activity_type_record;
+  new_activity_type_record.Append(std::move(new_dict));
+
+  int last_n_launches =
+      privacy_sandbox::kPrivacySandboxActivityTypeStorageLastNLaunches.Get();
+  // The list is ordered from most recent records in the beginning of the list
+  // and old records at the end of the list.
+  for (const base::Value& child : old_activity_type_record) {
+    const base::Value* child_timestamp_ptr = child.GetDict().Find("timestamp");
+    if (!child_timestamp_ptr) {
+      continue;
+    }
+    std::optional<base::Time> child_timestamp =
+        base::ValueToTime(*child_timestamp_ptr);
+    if (!child_timestamp.has_value()) {
+      continue;
+    }
+    if (current_time >= child_timestamp.value() &&
+        child_timestamp.value() >= oldest_timestamp_allowed &&
+        new_activity_type_record.size() <
+            static_cast<size_t>(last_n_launches)) {
+      new_activity_type_record.Append(child.Clone());
+    }
+  }
+  RecordActivityTypeMetrics(new_activity_type_record, current_time);
+  pref_service_->SetList(prefs::kPrivacySandboxActivityTypeRecord2,
+                         std::move(new_activity_type_record));
+}
+#endif  // BUILDFLAG(IS_ANDROID)

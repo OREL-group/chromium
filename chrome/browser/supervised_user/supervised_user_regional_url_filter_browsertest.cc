@@ -26,7 +26,7 @@
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/supervised_user/core/browser/fetcher_config.h"
 #include "components/supervised_user/core/browser/proto/kidsmanagement_messages.pb.h"
-#include "components/supervised_user/core/browser/supervised_user_preferences.h"
+#include "components/supervised_user/core/browser/supervised_user_capabilities.h"
 #include "components/supervised_user/core/common/features.h"
 #include "components/supervised_user/test_support/kids_management_api_server_mock.h"
 #include "components/variations/variations_switches.h"
@@ -80,7 +80,7 @@ class SupervisedUserRegionalURLFilterTest
       public ::testing::WithParamInterface<SupervisionMixin::SignInMode> {
  public:
   SupervisedUserRegionalURLFilterTest() {
-    // TODO(crbug.com/1394910): Use HTTPS URLs in tests to avoid having to
+    // TODO(crbug.com/40248833): Use HTTPS URLs in tests to avoid having to
     // disable this feature.
     feature_list_.InitWithFeatures(
         /*enabled_features=*/{},
@@ -115,8 +115,9 @@ class SupervisedUserRegionalURLFilterTest
   }
 
   bool IsUrlFilteringEnabled() const {
-    return supervised_user::IsSubjectToParentalControls(
-        *browser()->profile()->GetPrefs());
+    return signin::Tribool::kTrue ==
+           supervised_user::IsPrimaryAccountSubjectToParentalControls(
+               IdentityManagerFactory::GetForProfile(browser()->profile()));
   }
 
  private:

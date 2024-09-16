@@ -9,7 +9,6 @@
 
 #include "base/android/jni_string.h"
 #include "components/webxr/android/webxr_utils.h"
-#include "components/webxr/android/xr_jni_headers/XrSessionCoordinator_jni.h"
 #include "device/vr/android/compositor_delegate_provider.h"
 #include "device/vr/buildflags/buildflags.h"
 #include "gpu/ipc/common/gpu_surface_tracker.h"
@@ -21,6 +20,9 @@
 #include "base/android/bundle_utils.h"
 #include "device/vr/android/arcore/arcore_shim.h"
 #endif
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "components/webxr/android/xr_jni_headers/XrSessionCoordinator_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::ScopedJavaLocalRef;
@@ -91,8 +93,6 @@ void XrSessionCoordinator::RequestVrSession(
 }
 
 void XrSessionCoordinator::RequestXrSession(
-    int render_process_id,
-    int render_frame_id,
     ActivityReadyCallback ready_callback,
     device::JavaShutdownCallback shutdown_callback) {
   DVLOG(1) << __func__;
@@ -101,9 +101,7 @@ void XrSessionCoordinator::RequestXrSession(
   activity_ready_callback_ = std::move(ready_callback);
   java_shutdown_callback_ = std::move(shutdown_callback);
 
-  Java_XrSessionCoordinator_startXrSession(
-      env, j_xr_session_coordinator_,
-      webxr::GetJavaWebContents(render_process_id, render_frame_id));
+  Java_XrSessionCoordinator_startXrSession(env, j_xr_session_coordinator_);
 }
 
 void XrSessionCoordinator::EndSession() {

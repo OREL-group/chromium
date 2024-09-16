@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_GPU_DRAWING_BUFFER_TEST_HELPERS_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_GPU_DRAWING_BUFFER_TEST_HELPERS_H_
 
@@ -18,6 +23,7 @@
 #include "third_party/blink/renderer/platform/graphics/canvas_color_params.h"
 #include "third_party/blink/renderer/platform/graphics/gpu/drawing_buffer.h"
 #include "third_party/blink/renderer/platform/graphics/gpu/extensions_3d_util.h"
+#include "third_party/blink/renderer/platform/graphics/test/test_webgraphics_shared_image_interface_provider.h"
 #include "ui/gl/gpu_preference.h"
 
 namespace blink {
@@ -40,12 +46,12 @@ class WebGraphicsContext3DProviderForTests
       std::unique_ptr<gpu::gles2::GLES2Interface> gl)
       : gl_(std::move(gl)),
         test_shared_image_interface_(
-            base::MakeRefCounted<viz::TestSharedImageInterface>()) {}
+            base::MakeRefCounted<gpu::TestSharedImageInterface>()) {}
   WebGraphicsContext3DProviderForTests(
       std::unique_ptr<gpu::webgpu::WebGPUInterface> webgpu)
       : webgpu_(std::move(webgpu)),
         test_shared_image_interface_(
-            base::MakeRefCounted<viz::TestSharedImageInterface>()) {}
+            base::MakeRefCounted<gpu::TestSharedImageInterface>()) {}
 
   gpu::InterfaceBase* InterfaceBase() override { return gl_.get(); }
   gpu::gles2::GLES2Interface* ContextGL() override { return gl_.get(); }
@@ -74,7 +80,7 @@ class WebGraphicsContext3DProviderForTests
   cc::ImageDecodeCache* ImageDecodeCache(SkColorType color_type) override {
     return &image_decode_cache_;
   }
-  viz::TestSharedImageInterface* SharedImageInterface() override {
+  gpu::TestSharedImageInterface* SharedImageInterface() override {
     return test_shared_image_interface_.get();
   }
   void CopyVideoFrame(media::PaintCanvasVideoRenderer* video_render,
@@ -97,7 +103,7 @@ class WebGraphicsContext3DProviderForTests
   gpu::Capabilities capabilities_;
   gpu::GpuFeatureInfo gpu_feature_info_;
   WebglPreferences webgl_preferences_;
-  scoped_refptr<viz::TestSharedImageInterface> test_shared_image_interface_;
+  scoped_refptr<gpu::TestSharedImageInterface> test_shared_image_interface_;
 };
 
 class GLES2InterfaceForTests : public gpu::gles2::GLES2InterfaceStub,
@@ -411,6 +417,8 @@ class DrawingBufferForTests : public DrawingBuffer {
  public:
   static scoped_refptr<DrawingBufferForTests> Create(
       std::unique_ptr<WebGraphicsContext3DProvider> context_provider,
+      std::unique_ptr<TestWebGraphicsSharedImageInterfaceProvider>
+          shared_image_interface_provider_for_shared_bitmap,
       const Platform::GraphicsInfo& graphics_info,
       DrawingBuffer::Client* client,
       const gfx::Size& size,
@@ -427,6 +435,9 @@ class DrawingBufferForTests : public DrawingBuffer {
       drawing_buffer->BeginDestruction();
       return nullptr;
     }
+    drawing_buffer->SetSharedImageInterfaceProviderForBitmapTest(
+        std::move(shared_image_interface_provider_for_shared_bitmap));
+
     return drawing_buffer;
   }
 
@@ -466,8 +477,8 @@ class DrawingBufferForTests : public DrawingBuffer {
     return static_cast<GLES2InterfaceForTests*>(ContextGL());
   }
 
-  viz::TestSharedImageInterface* SharedImageInterfaceForTests() {
-    return static_cast<viz::TestSharedImageInterface*>(
+  gpu::TestSharedImageInterface* SharedImageInterfaceForTests() {
+    return static_cast<gpu::TestSharedImageInterface*>(
         ContextProvider()->SharedImageInterface());
   }
 

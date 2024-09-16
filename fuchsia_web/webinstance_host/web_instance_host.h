@@ -42,7 +42,8 @@ class OutgoingDirectory;
 // To ensure proper product data registration, Components using the class must:
 // * Have the same version and channel as WebEngine.
 // * Instantiate the class on a thread with an async_dispatcher.
-// TODO(crbug.com/1275224): Remove these requirements when platform supports it.
+// TODO(crbug.com/42050393): Remove these requirements when platform supports
+// it.
 class WebInstanceHost {
  public:
   virtual ~WebInstanceHost();
@@ -76,7 +77,7 @@ class WebInstanceHost {
   // `outgoing_directory`. WebInstanceHost owners must serve the directory
   // before creating web instances, and must ensure that the directory outlives
   // the WebInstanceHost instance.
-  // TODO(crbug.com/1327587): Remove `outgoing_directory` if and when it is
+  // TODO(crbug.com/40841277): Remove `outgoing_directory` if and when it is
   // possible for tests to serve a test-specific outgoing directory via
   // base::TestComponentContextForProcess on a separate thread.
   WebInstanceHost(sys::OutgoingDirectory& outgoing_directory,
@@ -136,7 +137,7 @@ class WebInstanceHost {
   fidl::InterfaceHandle<fuchsia::io::Directory> tmp_dir_;
 
   // Whether `web_instance.cm` is in the same Package as this host Component.
-  // TODO(crbug.com/1255292): Determine this based on a static Structured
+  // TODO(crbug.com/42050363): Determine this based on a static Structured
   // Configuration value once Structured Configuration is supported.
   const bool is_web_instance_component_in_same_package_;
 

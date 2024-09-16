@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/content_settings/core/browser/content_settings_utils.h"
 
 #include <stddef.h>
@@ -130,7 +135,7 @@ void GetRendererContentSettingRules(const HostContentSettingsMap* map,
   // it.
   rules->mixed_content_rules.push_back(ContentSettingPatternSource(
       ContentSettingsPattern::Wildcard(), ContentSettingsPattern::Wildcard(),
-      ContentSettingToValue(CONTENT_SETTING_BLOCK), std::string(),
+      ContentSettingToValue(CONTENT_SETTING_BLOCK), ProviderType::kNone,
       map->IsOffTheRecord()));
 #endif
 }
@@ -144,7 +149,7 @@ bool IsMorePermissive(ContentSetting a, ContentSetting b) {
     if (setting == a)
       return true;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return true;
 }
 
@@ -236,11 +241,43 @@ bool IsGrantedByRelatedWebsiteSets(ContentSettingsType type,
   switch (type) {
     case ContentSettingsType::STORAGE_ACCESS:
     case ContentSettingsType::TOP_LEVEL_STORAGE_ACCESS:
-      return metadata.session_model() ==
-             mojom::SessionModel::NON_RESTORABLE_USER_SESSION;
+      return metadata.decided_by_related_website_sets() ||
+             // TODO(b/344678400): Delete after NON_RESTORABLE_USER_SESSION is
+             // removed.
+             metadata.session_model() ==
+                 mojom::SessionModel::NON_RESTORABLE_USER_SESSION;
     default:
       return false;
   }
+}
+
+const std::vector<ContentSettingsType>& GetTypesWithTemporaryGrants() {
+  static base::NoDestructor<const std::vector<ContentSettingsType>> types{{
+#if !BUILDFLAG(IS_ANDROID)
+      ContentSettingsType::CAMERA_PAN_TILT_ZOOM,
+#endif
+      ContentSettingsType::KEYBOARD_LOCK,
+      ContentSettingsType::GEOLOCATION,
+      ContentSettingsType::MEDIASTREAM_MIC,
+      ContentSettingsType::MEDIASTREAM_CAMERA,
+      ContentSettingsType::HAND_TRACKING,
+      ContentSettingsType::SMART_CARD_DATA,
+  }};
+  return *types;
+}
+
+const std::vector<ContentSettingsType>& GetTypesWithTemporaryGrantsInHcsm() {
+  static base::NoDestructor<const std::vector<ContentSettingsType>> types{{
+#if !BUILDFLAG(IS_ANDROID)
+      ContentSettingsType::CAMERA_PAN_TILT_ZOOM,
+#endif
+      ContentSettingsType::KEYBOARD_LOCK,
+      ContentSettingsType::GEOLOCATION,
+      ContentSettingsType::MEDIASTREAM_MIC,
+      ContentSettingsType::MEDIASTREAM_CAMERA,
+      ContentSettingsType::HAND_TRACKING,
+  }};
+  return *types;
 }
 
 }  // namespace content_settings

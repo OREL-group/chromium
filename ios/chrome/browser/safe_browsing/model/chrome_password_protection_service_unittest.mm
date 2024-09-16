@@ -29,7 +29,7 @@
 #import "ios/chrome/browser/history/model/history_service_factory.h"
 #import "ios/chrome/browser/passwords/model/ios_chrome_profile_password_store_factory.h"
 #import "ios/chrome/browser/safe_browsing/model/safe_browsing_metrics_collector_factory.h"
-#import "ios/chrome/browser/shared/model/browser_state/test_chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/chrome/browser/sync/model/ios_user_event_service_factory.h"
 #import "ios/components/security_interstitials/safe_browsing/fake_safe_browsing_service.h"
 #import "ios/web/public/navigation/referrer.h"
@@ -83,6 +83,12 @@ constexpr struct {
      PasswordReuseLookup::REQUEST_FAILURE},
     {RequestOutcome::DISABLED_DUE_TO_USER_POPULATION,
      PasswordReuseLookup::REQUEST_FAILURE}};
+
+// A test factory to create a FakeUserEventService.
+std::unique_ptr<KeyedService> CreateFakeUserEventService(
+    web::BrowserState* browser_state) {
+  return std::make_unique<syncer::FakeUserEventService>();
+}
 }  // namespace
 
 class FakeChromePasswordProtectionService
@@ -144,12 +150,9 @@ class ChromePasswordProtectionServiceTest : public PlatformTest {
         base::BindRepeating(&password_manager::BuildPasswordStoreInterface<
                             web::BrowserState,
                             password_manager::MockPasswordStoreInterface>));
-    builder.AddTestingFactory(
-        IOSUserEventServiceFactory::GetInstance(),
-        base::BindRepeating(
-            &ChromePasswordProtectionServiceTest::CreateFakeUserEventService,
-            base::Unretained(this)));
-    browser_state_ = builder.Build();
+    builder.AddTestingFactory(IOSUserEventServiceFactory::GetInstance(),
+                              base::BindRepeating(&CreateFakeUserEventService));
+    browser_state_ = std::move(builder).Build();
 
     web::WebState::CreateParams params(browser_state_.get());
     web_state_ = web::WebState::Create(params);
@@ -172,14 +175,6 @@ class ChromePasswordProtectionServiceTest : public PlatformTest {
     fake_web_state_.SetBrowserState(browser_state_.get());
   }
 
-  TestChromeBrowserState::TestingFactories GetTestingFactories() {
-    return {
-        {IOSUserEventServiceFactory::GetInstance(),
-         base::BindRepeating(
-             &ChromePasswordProtectionServiceTest::CreateFakeUserEventService,
-             base::Unretained(this))}};
-  }
-
   void NavigateAndCommit(const GURL& url) {
     fake_navigation_manager_->AddItem(
         url, ui::PageTransition::PAGE_TRANSITION_TYPED);
@@ -192,11 +187,6 @@ class ChromePasswordProtectionServiceTest : public PlatformTest {
   syncer::FakeUserEventService* GetUserEventService() {
     return static_cast<syncer::FakeUserEventService*>(
         IOSUserEventServiceFactory::GetForBrowserState(browser_state_.get()));
-  }
-
-  std::unique_ptr<KeyedService> CreateFakeUserEventService(
-      web::BrowserState* browser_state) {
-    return std::make_unique<syncer::FakeUserEventService>();
   }
 
   CoreAccountInfo SetPrimaryAccount(const std::string& email) {

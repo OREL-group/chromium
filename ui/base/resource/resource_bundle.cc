@@ -2,11 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/base/resource/resource_bundle.h"
 
 #include <stdint.h>
 
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -24,7 +30,6 @@
 #include "base/path_service.h"
 #include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
@@ -120,7 +125,7 @@ SkBitmap CreateEmptyBitmap() {
 }
 
 // Helper function for determining whether a resource is gzipped.
-bool HasGzipHeader(base::StringPiece data) {
+bool HasGzipHeader(std::string_view data) {
   net::GZipHeader header;
   const char* header_end = nullptr;
   net::GZipHeader::Status header_status =
@@ -129,7 +134,7 @@ bool HasGzipHeader(base::StringPiece data) {
 }
 
 // Helper function for determining whether a resource is brotli compressed.
-bool HasBrotliHeader(base::StringPiece data) {
+bool HasBrotliHeader(std::string_view data) {
   // Check that the data is brotli decoded by checking for kBrotliConst in
   // header. Header added during compression at tools/grit/grit/node/base.py.
   const uint8_t* data_bytes = reinterpret_cast<const uint8_t*>(data.data());
@@ -141,7 +146,7 @@ bool HasBrotliHeader(base::StringPiece data) {
 }
 
 // Returns the uncompressed size of Brotli compressed |input| from header.
-size_t GetBrotliDecompressSize(base::StringPiece input) {
+size_t GetBrotliDecompressSize(std::string_view input) {
   CHECK(input.data());
   CHECK(HasBrotliHeader(input));
   const uint8_t* raw_input = reinterpret_cast<const uint8_t*>(input.data());
@@ -174,7 +179,7 @@ base::span<uint8_t> GetBufferForWriting(OutputBufferType out_buf, size_t len) {
 // Decompresses data in |input| using brotli, storing
 // the result in |output|, which is resized as necessary. Returns true for
 // success. To be used for grit compressed resources only.
-bool BrotliDecompress(base::StringPiece input, OutputBufferType output) {
+bool BrotliDecompress(std::string_view input, OutputBufferType output) {
   size_t decompress_size = GetBrotliDecompressSize(input);
   const uint8_t* raw_input = reinterpret_cast<const uint8_t*>(input.data());
   raw_input = raw_input + ResourceBundle::kBrotliHeaderSize;
@@ -187,7 +192,7 @@ bool BrotliDecompress(base::StringPiece input, OutputBufferType output) {
 }
 
 // Helper function for decompressing resource.
-void DecompressIfNeeded(base::StringPiece data, OutputBufferType output) {
+void DecompressIfNeeded(std::string_view data, OutputBufferType output) {
   if (!data.empty() && HasGzipHeader(data)) {
     TRACE_EVENT0("ui", "DecompressIfNeeded::GzipUncompress");
     const uint32_t uncompressed_size = compression::GetUncompressedSize(data);
@@ -236,8 +241,8 @@ class ResourceBundle::BitmapImageSource : public gfx::ImageSkiaSource {
       // TODO(oshima): Android unit_tests runs at DSF=3 with 100P assets.
       return gfx::ImageSkiaRep();
 #else
-      NOTREACHED() << "Unable to load bitmap image with id " << resource_id_
-                   << ", scale=" << scale;
+      DUMP_WILL_BE_NOTREACHED() << "Unable to load bitmap image with id "
+                                << resource_id_ << ", scale=" << scale;
       return gfx::ImageSkiaRep(CreateEmptyBitmap(), scale);
 #endif
     }
@@ -317,11 +322,8 @@ void ResourceBundle::InitSharedInstanceWithPakFileRegion(
     const base::MemoryMappedFile::Region& region) {
   InitSharedInstance(nullptr);
   auto data_pack = std::make_unique<DataPack>(k100Percent);
-  if (!data_pack->LoadFromFileRegion(std::move(pak_file), region)) {
-    LOG(WARNING) << "failed to load pak file";
-    NOTREACHED();
-    return;
-  }
+  CHECK(data_pack->LoadFromFileRegion(std::move(pak_file), region))
+      << "failed to load pak file";
   g_shared_instance_->locale_resources_data_ = std::move(data_pack);
   g_shared_instance_->InitDefaultFontList();
 }
@@ -374,11 +376,8 @@ void ResourceBundle::LoadSecondaryLocaleDataWithPakFileRegion(
     base::File pak_file,
     const base::MemoryMappedFile::Region& region) {
   auto data_pack = std::make_unique<DataPack>(k100Percent);
-  if (!data_pack->LoadFromFileRegion(std::move(pak_file), region)) {
-    LOG(WARNING) << "failed to load secondary pak file";
-    NOTREACHED();
-    return;
-  }
+  CHECK(data_pack->LoadFromFileRegion(std::move(pak_file), region))
+      << "failed to load secondary pak file";
   secondary_locale_resources_data_ = std::move(data_pack);
 }
 
@@ -592,12 +591,8 @@ gfx::Image& ResourceBundle::GetImageNamed(int resource_id) {
 
   if (image.IsEmpty()) {
     gfx::ImageSkia image_skia = CreateImageSkia(resource_id);
-    if (image_skia.isNull()) {
-      LOG(WARNING) << "Unable to load image with id " << resource_id;
-      NOTREACHED();  // Want to assert in debug mode.
-      // The load failed to retrieve the image; show a debugging red square.
-      return GetEmptyImage();
-    }
+    CHECK(!image_skia.isNull())
+        << "Unable to load image with id " << resource_id;
     image_skia.SetReadOnly();
     image = gfx::Image(image_skia);
   }
@@ -614,9 +609,9 @@ std::optional<ResourceBundle::LottieData> ResourceBundle::GetLottieData(
   // See: tools/grit/grit/node/structure.py
   constexpr char kLottiePrefix[6] = {'L', 'O', 'T', 'T', 'I', 'E'};
 
-  const base::StringPiece potential_lottie = GetRawDataResource(resource_id);
+  const std::string_view potential_lottie = GetRawDataResource(resource_id);
   if (potential_lottie.substr(0u, std::size(kLottiePrefix)) !=
-      base::StringPiece(kLottiePrefix, std::size(kLottiePrefix))) {
+      std::string_view(kLottiePrefix, std::size(kLottiePrefix))) {
     return std::nullopt;
   }
 
@@ -637,14 +632,7 @@ const ui::ImageModel& ResourceBundle::GetThemedLottieImageNamed(
     return found->second;
 
   std::optional<LottieData> data = GetLottieData(resource_id);
-  if (!data) {
-    LOG(WARNING) << "Unable to load themed Lottie image with id "
-                 << resource_id;
-    NOTREACHED();  // Want to assert in debug mode.
-    // The load failed to retrieve the bytes string; show a debugging red
-    // square.
-    return GetEmptyImageModel();
-  }
+  CHECK(data) << "Unable to load themed Lottie image with id " << resource_id;
 
   // The bytes string was successfully loaded, so parse it and cache the
   // resulting image.
@@ -680,30 +668,29 @@ base::RefCountedMemory* ResourceBundle::LoadDataResourceBytesForScale(
       return bytes;
   }
 
-  base::StringPiece data =
-      GetRawDataResourceForScale(resource_id, scale_factor);
+  std::string_view data = GetRawDataResourceForScale(resource_id, scale_factor);
   if (data.empty())
     return nullptr;
 
   if (HasGzipHeader(data) || HasBrotliHeader(data)) {
     base::RefCountedString* bytes_string = new base::RefCountedString();
-    DecompressIfNeeded(data, &(bytes_string->data()));
+    DecompressIfNeeded(data, &bytes_string->as_string());
     return bytes_string;
   }
 
-  return new base::RefCountedStaticMemory(data.data(), data.length());
+  return new base::RefCountedStaticMemory(base::as_byte_span(data));
 }
 
-base::StringPiece ResourceBundle::GetRawDataResource(int resource_id) const {
+std::string_view ResourceBundle::GetRawDataResource(int resource_id) const {
   return GetRawDataResourceForScale(resource_id, ui::kScaleFactorNone);
 }
 
-base::StringPiece ResourceBundle::GetRawDataResourceForScale(
+std::string_view ResourceBundle::GetRawDataResourceForScale(
     int resource_id,
     ResourceScaleFactor scale_factor,
     ResourceScaleFactor* loaded_scale_factor) const {
   if (delegate_) {
-    base::StringPiece data;
+    std::string_view data;
     if (delegate_->GetRawDataResource(resource_id, scale_factor, &data)) {
       if (loaded_scale_factor) {
         *loaded_scale_factor = scale_factor;
@@ -744,7 +731,7 @@ base::StringPiece ResourceBundle::GetRawDataResourceForScale(
   }
   if (loaded_scale_factor)
     *loaded_scale_factor = ui::kScaleFactorNone;
-  return base::StringPiece();
+  return std::string_view();
 }
 
 std::string ResourceBundle::LoadDataResourceString(int resource_id) const {
@@ -769,16 +756,16 @@ std::string ResourceBundle::LoadDataResourceStringForScale(
 
 std::string ResourceBundle::LoadLocalizedResourceString(int resource_id) const {
   base::AutoLock lock_scope(*locale_resources_data_lock_);
-  base::StringPiece data;
+  std::string_view data;
   if (locale_resources_data_.get()) {
     data = locale_resources_data_
                ->GetStringPiece(static_cast<uint16_t>(resource_id))
-               .value_or(base::StringPiece());
+               .value_or(std::string_view());
   }
   if (data.empty() && secondary_locale_resources_data_.get()) {
     data = secondary_locale_resources_data_
                ->GetStringPiece(static_cast<uint16_t>(resource_id))
-               .value_or(base::StringPiece());
+               .value_or(std::string_view());
   }
   if (data.empty()) {
     data = GetRawDataResource(resource_id);
@@ -789,7 +776,7 @@ std::string ResourceBundle::LoadLocalizedResourceString(int resource_id) const {
 }
 
 bool ResourceBundle::IsGzipped(int resource_id) const {
-  base::StringPiece raw_data = GetRawDataResource(resource_id);
+  std::string_view raw_data = GetRawDataResource(resource_id);
   if (!raw_data.data())
     return false;
 
@@ -797,7 +784,7 @@ bool ResourceBundle::IsGzipped(int resource_id) const {
 }
 
 bool ResourceBundle::IsBrotli(int resource_id) const {
-  base::StringPiece raw_data = GetRawDataResource(resource_id);
+  std::string_view raw_data = GetRawDataResource(resource_id);
   if (!raw_data.data())
     return false;
 
@@ -828,7 +815,7 @@ base::RefCountedMemory* ResourceBundle::LoadLocalizedResourceBytes(
       if (auto data = locale_resources_data_->GetStringPiece(
               static_cast<uint16_t>(resource_id));
           data.has_value() && !data->empty()) {
-        return new base::RefCountedStaticMemory(data->data(), data->length());
+        return new base::RefCountedStaticMemory(base::as_byte_span(*data));
       }
     }
 
@@ -836,7 +823,7 @@ base::RefCountedMemory* ResourceBundle::LoadLocalizedResourceBytes(
       if (auto data = secondary_locale_resources_data_->GetStringPiece(
               static_cast<uint16_t>(resource_id));
           data.has_value() && !data->empty()) {
-        return new base::RefCountedStaticMemory(data->data(), data->length());
+        return new base::RefCountedStaticMemory(base::as_byte_span(*data));
       }
     }
   }
@@ -1102,14 +1089,15 @@ bool ResourceBundle::LoadBitmap(const ResourceHandle& data_handle,
   if (!memory.get())
     return false;
 
-  if (DecodePNG(memory->front(), memory->size(), bitmap, fell_back_to_1x))
+  if (DecodePNG(memory->data(), memory->size(), bitmap, fell_back_to_1x)) {
     return true;
+  }
 
 #if !BUILDFLAG(IS_IOS)
   // iOS does not compile or use the JPEG codec.  On other platforms,
   // 99% of our assets are PNGs, however fallback to JPEG.
   std::unique_ptr<SkBitmap> jpeg_bitmap(
-      gfx::JPEGCodec::Decode(memory->front(), memory->size()));
+      gfx::JPEGCodec::Decode(memory->data(), memory->size()));
   if (jpeg_bitmap.get()) {
     bitmap->swap(*jpeg_bitmap.get());
     *fell_back_to_1x = false;
@@ -1118,7 +1106,6 @@ bool ResourceBundle::LoadBitmap(const ResourceHandle& data_handle,
 #endif
 
   NOTREACHED() << "Unable to decode theme image resource " << resource_id;
-  return false;
 }
 
 bool ResourceBundle::LoadBitmap(int resource_id,
@@ -1197,7 +1184,7 @@ std::u16string ResourceBundle::GetLocalizedStringImpl(int resource_id) const {
     return std::u16string();
   }
 
-  std::optional<base::StringPiece> data;
+  std::optional<std::string_view> data;
   ResourceHandle::TextEncodingType encoding =
       locale_resources_data_->GetTextEncodingType();
   if (!(data = locale_resources_data_->GetStringPiece(
@@ -1284,7 +1271,7 @@ bool ResourceBundle::DecodePNG(const unsigned char* buf,
   *fell_back_to_1x = PNGContainsFallbackMarker(
       // TODO(crbug.com/40284755): DecodePNG should be receiving a span. We
       // can't tell that the size is correct from here.
-      UNSAFE_BUFFERS(base::span(buf, size)));
+      UNSAFE_TODO(base::span(buf, size)));
   return gfx::PNGCodec::Decode(buf, size, bitmap);
 }
 

@@ -52,7 +52,6 @@ class MockDownloadBubbleNavigationHandler
               OnSecurityDialogButtonPress,
               (const DownloadUIModel& model, DownloadCommands::Command command),
               (override));
-  void ResizeDialog() override {}
   void OnDialogInteracted() override {}
   std::unique_ptr<views::BubbleDialogDelegate::CloseOnDeactivatePin>
   PreventDialogCloseOnDeactivate() override {
@@ -152,7 +151,9 @@ class DownloadBubbleContentsViewTest
     params.window = window_.get();
     browser_ = std::unique_ptr<Browser>(Browser::Create(params));
 
-    anchor_widget_ = CreateTestWidget(views::Widget::InitParams::TYPE_WINDOW);
+    anchor_widget_ =
+        CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET,
+                         views::Widget::InitParams::TYPE_WINDOW);
     auto bubble_delegate = std::make_unique<views::BubbleDialogDelegate>(
         anchor_widget_->GetContentsView(), views::BubbleBorder::TOP_RIGHT);
     bubble_delegate_ = bubble_delegate.get();

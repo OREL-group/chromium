@@ -37,6 +37,7 @@
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/favicon_size.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/layout/flex_layout.h"
@@ -142,17 +143,19 @@ class TabTest : public ChromeViewsTestBase {
     // centered on the contents bounds.
     const gfx::Rect contents_bounds = tab.GetContentsBounds();
     if (tab.showing_icon_) {
+      gfx::Rect icon_bounds = tab.icon_->bounds();
+      icon_bounds.Inset(tab.icon_->GetInsets());
       if (tab.center_icon_) {
-        EXPECT_LE(tab.icon_->x(), contents_bounds.x());
+        EXPECT_LE(icon_bounds.x(), contents_bounds.x());
       } else {
-        EXPECT_LE(contents_bounds.x(), tab.icon_->x());
+        EXPECT_LE(contents_bounds.x(), icon_bounds.x());
       }
       if (tab.title_->GetVisible()) {
         EXPECT_LE(tab.icon_->bounds().right(), tab.title_->x());
       }
 
       // Tab Icon content now exactly fit the content bounds.
-      EXPECT_EQ(tab.icon_->bounds().y(), contents_bounds.y());
+      EXPECT_EQ(icon_bounds.y(), contents_bounds.y());
       EXPECT_GE(tab.icon_->bounds().bottom(), contents_bounds.bottom());
     }
 
@@ -257,7 +260,8 @@ class AlertIndicatorButtonTest : public ChromeViewsTestBase {
                                      views::MaximumFlexSizeRule::kUnbounded));
     parent->AddChildView(tab_strip_.get());
 
-    widget_ = CreateTestWidget();
+    widget_ =
+        CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
     widget_->SetContentsView(std::move(parent));
   }
 
@@ -299,7 +303,8 @@ class AlertIndicatorButtonTest : public ChromeViewsTestBase {
 
 TEST_F(TabTest, HitTest) {
   auto tab_slot_controller = std::make_unique<FakeTabSlotController>();
-  std::unique_ptr<views::Widget> widget = CreateTestWidget();
+  std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   Tab* tab =
       widget->SetContentsView(std::make_unique<Tab>(tab_slot_controller.get()));
   tab->SizeToPreferredSize();
@@ -363,7 +368,8 @@ TEST_F(TabTest, LayoutAndVisibilityOfElements) {
   };
 
   auto controller = std::make_unique<FakeTabSlotController>();
-  std::unique_ptr<views::Widget> widget = CreateTestWidget();
+  std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   Tab* tab = widget->SetContentsView(std::make_unique<Tab>(controller.get()));
 
   SkBitmap bitmap;
@@ -434,13 +440,14 @@ TEST_F(TabTest, CloseButtonLayout) {
 // get focus on right click.
 TEST_F(TabTest, CloseButtonFocus) {
   auto controller = std::make_unique<FakeTabSlotController>();
-  std::unique_ptr<views::Widget> widget = CreateTestWidget();
+  std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   Tab* tab = widget->SetContentsView(std::make_unique<Tab>(controller.get()));
 
   TabCloseButton* tab_close_button = GetCloseButton(tab);
 
   // Verify tab_close_button does not get focus on right click.
-  ui::MouseEvent right_click_event(ui::ET_KEY_PRESSED, gfx::Point(),
+  ui::MouseEvent right_click_event(ui::EventType::kKeyPressed, gfx::Point(),
                                    gfx::Point(), base::TimeTicks(),
                                    ui::EF_RIGHT_MOUSE_BUTTON, 0);
   tab_close_button->OnMousePressed(right_click_event);
@@ -448,11 +455,36 @@ TEST_F(TabTest, CloseButtonFocus) {
             tab_close_button->GetFocusManager()->GetFocusedView());
 }
 
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+TEST_F(TabTest, CloseButtonHiddenWhenLockedForOnTask) {
+  const auto tab_slot_controller = std::make_unique<FakeTabSlotController>();
+  tab_slot_controller->SetLockedForOnTask(true);
+  const std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
+  Tab* const tab =
+      widget->SetContentsView(std::make_unique<Tab>(tab_slot_controller.get()));
+  TabCloseButton* const tab_close_button = GetCloseButton(tab);
+  EXPECT_FALSE(tab_close_button->GetVisible());
+}
+
+TEST_F(TabTest, CloseButtonShownWhenNotLockedForOnTask) {
+  const auto tab_slot_controller = std::make_unique<FakeTabSlotController>();
+  tab_slot_controller->SetLockedForOnTask(false);
+  const std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
+  Tab* const tab =
+      widget->SetContentsView(std::make_unique<Tab>(tab_slot_controller.get()));
+  TabCloseButton* const tab_close_button = GetCloseButton(tab);
+  EXPECT_TRUE(tab_close_button->GetVisible());
+}
+#endif
+
 // Tests expected changes to the ThrobberView state when the WebContents loading
 // state changes or the animation timer (usually in BrowserView) triggers.
 TEST_F(TabTest, LayeredThrobber) {
   auto tab_slot_controller = std::make_unique<FakeTabSlotController>();
-  std::unique_ptr<views::Widget> widget = CreateTestWidget();
+  std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   Tab* tab =
       widget->SetContentsView(std::make_unique<Tab>(tab_slot_controller.get()));
   tab->SizeToPreferredSize();
@@ -558,7 +590,8 @@ TEST_F(TabTest, TitleHiddenWhenSmall) {
 
 TEST_F(TabTest, FaviconDoesntMoveWhenShowingAlertIndicator) {
   auto controller = std::make_unique<FakeTabSlotController>();
-  std::unique_ptr<views::Widget> widget = CreateTestWidget();
+  std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
 
   for (bool is_active_tab : {false, true}) {
     Tab* tab = widget->SetContentsView(std::make_unique<Tab>(controller.get()));
@@ -576,7 +609,8 @@ TEST_F(TabTest, FaviconDoesntMoveWhenShowingAlertIndicator) {
 
 TEST_F(TabTest, SmallTabsHideCloseButton) {
   auto controller = std::make_unique<FakeTabSlotController>();
-  std::unique_ptr<views::Widget> widget = CreateTestWidget();
+  std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   Tab* tab = widget->SetContentsView(std::make_unique<Tab>(controller.get()));
   const int width = tab->tab_style_views()->GetContentsInsets().width() +
                     Tab::kMinimumContentsWidthForCloseButtons;
@@ -591,12 +625,13 @@ TEST_F(TabTest, SmallTabsHideCloseButton) {
 
 TEST_F(TabTest, ExtraLeftPaddingShownOnSiteWithoutFavicon) {
   auto controller = std::make_unique<FakeTabSlotController>();
-  std::unique_ptr<views::Widget> widget = CreateTestWidget();
+  std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   Tab* tab = widget->SetContentsView(std::make_unique<Tab>(controller.get()));
 
   tab->SizeToPreferredSize();
   const views::View* icon = GetTabIcon(tab);
-  const int icon_x = icon->x();
+  const int icon_x = icon->x() + icon->GetInsets().left();
 
   // Remove the favicon.
   TabRendererData data;
@@ -610,7 +645,8 @@ TEST_F(TabTest, ExtraLeftPaddingShownOnSiteWithoutFavicon) {
 
 TEST_F(TabTest, ExtraAlertPaddingNotShownOnSmallActiveTab) {
   auto controller = std::make_unique<FakeTabSlotController>();
-  std::unique_ptr<views::Widget> widget = CreateTestWidget();
+  std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   Tab* tab = widget->SetContentsView(std::make_unique<Tab>(controller.get()));
   controller->set_active_tab(tab);
   TabRendererData data;
@@ -661,7 +697,8 @@ TEST_F(TabTest, TitleTextHasSufficientContrast) {
   auto controller = std::make_unique<FakeTabSlotController>();
   // Create a tab inside a Widget, so it has a theme provider, so the call to
   // UpdateForegroundColors() below doesn't no-op.
-  std::unique_ptr<views::Widget> widget = CreateTestWidget();
+  std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   Tab* tab = widget->SetContentsView(std::make_unique<Tab>(controller.get()));
 
   for (const auto& colors : color_schemes) {
@@ -799,4 +836,38 @@ TEST_F(AlertIndicatorButtonTest, 1SecondFadeoutAnimationTest) {
   EXPECT_EQ(base::Time(), get_camera_mic_indicator_start_time(media_tab));
   EXPECT_EQ(base::Seconds(1),
             get_fadeout_animation_duration_for_testing_(media_tab));
+}
+
+TEST_F(TabTest, DiscardIndicatorResponsiveness) {
+  auto controller = std::make_unique<FakeTabSlotController>();
+  std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
+  Tab* tab = widget->SetContentsView(std::make_unique<Tab>(controller.get()));
+  const TabIcon* tab_icon = GetTabIcon(tab);
+
+  struct TestCase {
+    int tab_width;
+    int expected_increased_radius;
+  };
+  std::list<TestCase> test_cases{
+      {256, 2}, {45, 2}, {44, 2}, {43, 0}, {32, 0},
+  };
+
+  for (auto const& test_case : test_cases) {
+    controller->SetInactiveTabWidth(test_case.tab_width);
+    tab->SetBounds(0, 0, test_case.tab_width, 50);
+    EXPECT_EQ(test_case.expected_increased_radius,
+              tab_icon->increased_discard_indicator_radius_);
+  }
+}
+
+TEST_F(TabTest, AccessibleProperties) {
+  auto controller = std::make_unique<FakeTabSlotController>();
+  std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
+  Tab* tab = widget->SetContentsView(std::make_unique<Tab>(controller.get()));
+  ui::AXNodeData data;
+
+  tab->GetViewAccessibility().GetAccessibleNodeData(&data);
+  EXPECT_EQ(ax::mojom::Role::kTab, data.role);
 }

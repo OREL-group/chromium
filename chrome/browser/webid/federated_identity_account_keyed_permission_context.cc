@@ -15,6 +15,8 @@
 #include "base/values.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/webid/federated_identity_auto_reauthn_permission_context.h"
+#include "chrome/browser/webid/federated_identity_auto_reauthn_permission_context_factory.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/content_settings/core/common/content_settings_utils.h"
@@ -23,6 +25,7 @@
 #include "content/public/common/content_features.h"
 #include "net/base/schemeful_site.h"
 #include "services/network/public/mojom/cookie_manager.mojom.h"
+#include "third_party/blink/public/common/features_generated.h"
 #include "url/origin.h"
 
 namespace {
@@ -135,8 +138,7 @@ bool FederatedIdentityAccountKeyedPermissionContext::HasPermission(
 bool FederatedIdentityAccountKeyedPermissionContext::HasPermission(
     const url::Origin& relying_party_requester,
     const url::Origin& relying_party_embedder,
-    const url::Origin& identity_provider,
-    const std::optional<std::string>& account_id) {
+    const url::Origin& identity_provider) {
   // TODO(crbug.com/40846157): This is currently origin-bound, but we would like
   // this grant to apply at the 'site' (aka eTLD+1) level. We should override
   // GetGrantedObject to find a grant that matches the RP's site rather
@@ -151,15 +153,48 @@ bool FederatedIdentityAccountKeyedPermissionContext::HasPermission(
 
   base::Value::List* account_list =
       granted_object->value.FindList(kAccountIdsKey);
+  return !!account_list;
+}
+
+std::optional<base::Time>
+FederatedIdentityAccountKeyedPermissionContext::GetLastUsedTimestamp(
+    const url::Origin& relying_party_requester,
+    const url::Origin& relying_party_embedder,
+    const url::Origin& identity_provider,
+    const std::string& account_id) {
+  std::string key = BuildKey(relying_party_requester, relying_party_embedder,
+                             identity_provider);
+  const auto granted_object = GetGrantedObject(relying_party_requester, key);
+
+  if (!granted_object) {
+    return std::nullopt;
+  }
+
+  base::Value::List* account_list =
+      granted_object->value.FindList(kAccountIdsKey);
   if (!account_list) {
-    return false;
+    return std::nullopt;
   }
 
-  if (!account_id) {
-    return true;
+  auto it = FindAccount(*account_list, account_id);
+  if (it == account_list->end()) {
+    return std::nullopt;
   }
 
-  return FindAccount(*account_list, *account_id) != account_list->end();
+  if (it->is_string()) {
+    // The account is returning but we do not have a timestamp.
+    return base::Time();
+  } else if (it->is_dict()) {
+    base::Value* timestamp = it->GetDict().Find(kTimestampKey);
+    CHECK(timestamp);
+    std::optional<base::Time> time = base::ValueToTime(timestamp);
+    // We stored a time in here, so it shouldn't fail when retrieving it.
+    DCHECK(time);
+    return time.value_or(base::Time());
+  }
+  // We do not expect this to happen, but account was found and no timestamp in
+  // this case.
+  return base::Time();
 }
 
 void FederatedIdentityAccountKeyedPermissionContext::GrantPermission(
@@ -283,6 +318,20 @@ void FederatedIdentityAccountKeyedPermissionContext::MarkStorageAccessEligible(
   SyncSharingPermissionGrantsToNetworkService(std::move(callback));
 }
 
+void FederatedIdentityAccountKeyedPermissionContext::OnSetRequiresUserMediation(
+    const url::Origin& relying_party,
+    base::OnceClosure callback) {
+  net::SchemefulSite relying_party_site(relying_party);
+  if (base::ranges::none_of(
+          storage_access_eligible_connections_, [&](const auto& pair) -> bool {
+            return net::SchemefulSite(pair.first) == relying_party_site;
+          })) {
+    std::move(callback).Run();
+    return;
+  }
+  SyncSharingPermissionGrantsToNetworkService(std::move(callback));
+}
+
 std::string FederatedIdentityAccountKeyedPermissionContext::GetKeyForObject(
     const base::Value::Dict& object) {
   DCHECK(IsValidObject(object));
@@ -355,7 +404,8 @@ void FederatedIdentityAccountKeyedPermissionContext::
 
 ContentSettingsForOneType FederatedIdentityAccountKeyedPermissionContext::
     GetSharingPermissionGrantsAsContentSettings() {
-  if (!base::FeatureList::IsEnabled(features::kFedCmWithStorageAccessAPI)) {
+  if (!base::FeatureList::IsEnabled(
+          blink::features::kFedCmWithStorageAccessAPI)) {
     return ContentSettingsForOneType();
   }
   // ObjectPermissionContext stores its settings in the HostContentSettingsMap
@@ -369,6 +419,9 @@ ContentSettingsForOneType FederatedIdentityAccountKeyedPermissionContext::
   // <origin, origin>.
 
   ContentSettingsForOneType settings;
+  FederatedIdentityAutoReauthnPermissionContext* reauth_context =
+      FederatedIdentityAutoReauthnPermissionContextFactory::GetForProfile(
+          &*browser_context_);
 
   for (const std::unique_ptr<Object>& object : GetAllGrantedObjects()) {
     if (!object) {
@@ -379,10 +432,20 @@ ContentSettingsForOneType FederatedIdentityAccountKeyedPermissionContext::
         object->value.FindString(kRpEmbedderKey);
     const std::string* idp_origin = object->value.FindString(kSharingIdpKey);
 
-    if (!rp_embedder_origin || !idp_origin ||
-        !storage_access_eligible_connections_.contains(
-            std::make_pair(net::SchemefulSite(GURL(*rp_embedder_origin)),
-                           net::SchemefulSite(GURL(*idp_origin))))) {
+    if (!rp_embedder_origin || !idp_origin) {
+      continue;
+    }
+
+    const url::Origin rp_embedder =
+        url::Origin::Create(GURL(*rp_embedder_origin));
+    if (reauth_context->RequiresUserMediation(rp_embedder)) {
+      continue;
+    }
+
+    const net::SchemefulSite rp_embedder_site(rp_embedder);
+    const net::SchemefulSite idp_site((GURL(*idp_origin)));
+    if (!storage_access_eligible_connections_.contains(
+            std::make_pair(rp_embedder_site, idp_site))) {
       continue;
     }
 
@@ -392,7 +455,8 @@ ContentSettingsForOneType FederatedIdentityAccountKeyedPermissionContext::
         ContentSettingsPattern::FromURLToSchemefulSitePattern(
             GURL(*rp_embedder_origin)),
         content_settings::ContentSettingToValue(CONTENT_SETTING_ALLOW),
-        /*source=*/"", browser_context_->IsOffTheRecord());
+        content_settings::ProviderType::kNone,
+        browser_context_->IsOffTheRecord());
   }
   return settings;
 }

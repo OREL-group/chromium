@@ -1,16 +1,17 @@
 // Copyright 2024 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
-import 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything_toolbar.js';
+import 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js';
 
-import type {ReadAnythingElement} from 'chrome-untrusted://read-anything-side-panel.top-chrome/app.js';
-import {NEXT_GRANULARITY_EVENT, PREVIOUS_GRANULARITY_EVENT} from 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything_toolbar.js';
+import type {AppElement} from 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js';
+import {ToolbarEvent} from 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js';
 import {assertEquals, assertFalse} from 'chrome-untrusted://webui-test/chai_assert.js';
+import {microtasksFinished} from 'chrome-untrusted://webui-test/test_util.js';
 
-import {emitEvent, suppressInnocuousErrors} from './common.js';
+import {emitEvent, suppressInnocuousErrors, waitForPlayFromSelection} from './common.js';
 
 suite('ReadAloudHighlight', () => {
-  let app: ReadAnythingElement;
+  let app: AppElement;
   const sentence1 = 'Only need the light when it\'s burning low.\n';
   const sentence2 = 'Only miss the sun when it starts to snow.\n';
   const sentenceSegment1 = 'Only know you love her when you let her go';
@@ -48,12 +49,14 @@ suite('ReadAloudHighlight', () => {
     ],
   };
 
-  function emitNextGranularity(): void {
-    emitEvent(app, NEXT_GRANULARITY_EVENT);
+  function emitNextGranularity() {
+    emitEvent(app, ToolbarEvent.NEXT_GRANULARITY);
+    return microtasksFinished();
   }
 
-  function emitPreviousGranularity(): void {
-    emitEvent(app, PREVIOUS_GRANULARITY_EVENT);
+  function emitPreviousGranularity() {
+    emitEvent(app, ToolbarEvent.PREVIOUS_GRANULARITY);
+    return microtasksFinished();
   }
 
   setup(() => {
@@ -69,25 +72,15 @@ suite('ReadAloudHighlight', () => {
     chrome.readingMode.setContentForTesting(axTree, leafIds);
   });
 
-  suite('on speak first sentence', () => {
-    let currentHighlight: HTMLElement|null;
-    let previousHighlight: HTMLElement|null;
+  test('on speak first sentence highlights are correct', () => {
+    app.playSpeech();
+    const currentHighlight =
+        app.$.container.querySelector('.current-read-highlight');
+    const previousHighlight =
+        app.$.container.querySelector('.previous-read-highlight');
 
-    setup(() => {
-      app.playSpeech();
-      currentHighlight =
-          app.$.container.querySelector('.current-read-highlight');
-      previousHighlight =
-          app.$.container.querySelector('.previous-read-highlight');
-    });
-
-    test('sentence is highlighted', () => {
-      assertEquals(currentHighlight!.textContent, sentence1);
-    });
-
-    test('no previous highlight', () => {
-      assertFalse(!!previousHighlight);
-    });
+    assertEquals(sentence1, currentHighlight!.textContent);
+    assertFalse(!!previousHighlight);
   });
 
   suite('on sentence spread across multiple segments', () => {
@@ -98,6 +91,7 @@ suite('ReadAloudHighlight', () => {
       app.playSpeech();
       emitNextGranularity();
       emitNextGranularity();
+      return microtasksFinished();
     });
 
     test('all segments highlighted', () => {
@@ -106,12 +100,12 @@ suite('ReadAloudHighlight', () => {
       previousHighlights =
           app.$.container.querySelectorAll('.previous-read-highlight');
 
-      assertEquals(previousHighlights.length, 2);
-      assertEquals(previousHighlights[0]!.textContent, sentence1);
-      assertEquals(previousHighlights[1]!.textContent, sentence2);
-      assertEquals(currentHighlights.length, 2);
-      assertEquals(currentHighlights[0]!.textContent, sentenceSegment1);
-      assertEquals(currentHighlights[1]!.textContent, sentenceSegment2);
+      assertEquals(2, previousHighlights.length);
+      assertEquals(sentence1, previousHighlights[0]!.textContent);
+      assertEquals(sentence2, previousHighlights[1]!.textContent);
+      assertEquals(2, currentHighlights.length);
+      assertEquals(sentenceSegment1, currentHighlights[0]!.textContent);
+      assertEquals(sentenceSegment2, currentHighlights[1]!.textContent);
     });
 
     test('going back after multiple segments resets all segments', () => {
@@ -122,66 +116,48 @@ suite('ReadAloudHighlight', () => {
       previousHighlights =
           app.$.container.querySelectorAll('.previous-read-highlight');
 
-      assertEquals(previousHighlights.length, 1);
-      assertEquals(previousHighlights[0]!.textContent, sentence1);
-      assertEquals(currentHighlights.length, 1);
-      assertEquals(currentHighlights[0]!.textContent, sentence2);
+      assertEquals(1, previousHighlights.length);
+      assertEquals(sentence1, previousHighlights[0]!.textContent);
+      assertEquals(1, currentHighlights.length);
+      assertEquals(sentence2, currentHighlights[0]!.textContent);
     });
   });
 
-  suite('on speak next sentence', () => {
-    let currentHighlight: HTMLElement|null;
-    let previousHighlight: HTMLElement|null;
+  test('on speak next sentence highlights are correct', async () => {
+    app.playSpeech();
+    await emitNextGranularity();
+    const currentHighlight =
+        app.$.container.querySelector('.current-read-highlight');
+    const previousHighlight =
+        app.$.container.querySelector('.previous-read-highlight');
 
-    setup(() => {
-      app.playSpeech();
-      emitNextGranularity();
-      currentHighlight =
-          app.$.container.querySelector('.current-read-highlight');
-      previousHighlight =
-          app.$.container.querySelector('.previous-read-highlight');
-    });
-
-    test('sentence is highlighted', () => {
-      assertEquals(currentHighlight!.textContent, sentence2);
-    });
-
-    test('previous sentence has highlight', () => {
-      assertEquals(previousHighlight!.textContent, sentence1);
-    });
+    assertEquals(sentence2, currentHighlight!.textContent);
+    assertEquals(sentence1, previousHighlight!.textContent);
   });
 
   suite('on finish speaking', () => {
     let currentHighlight: HTMLElement|null;
-    let previousHighlight: NodeListOf<Element>;
+    let previousHighlights: NodeListOf<Element>;
 
-    setup(() => {
+    setup(async () => {
       app.playSpeech();
-      emitNextGranularity();
-      emitNextGranularity();
-      emitNextGranularity();
+      await emitNextGranularity();
+      await emitNextGranularity();
+      await emitNextGranularity();
 
       currentHighlight =
           app.$.container.querySelector('.current-read-highlight');
-      previousHighlight =
+      previousHighlights =
           app.$.container.querySelectorAll('.previous-read-highlight');
     });
 
-    test('no current highlight', () => {
+    test('no highlights and keeps content', () => {
       assertFalse(!!currentHighlight);
-    });
+      assertEquals(0, previousHighlights.length);
 
-    test('all sentences are marked previous', () => {
-      assertEquals(previousHighlight.length, leafIds.length);
-      assertEquals(previousHighlight[0]!.textContent, sentence1);
-      assertEquals(previousHighlight[1]!.textContent, sentence2);
-      assertEquals(previousHighlight[2]!.textContent, sentenceSegment1);
-      assertEquals(previousHighlight[3]!.textContent, sentenceSegment2);
-    });
-
-    test('playing next granularity does not crash', () => {
-      emitNextGranularity();
-      emitNextGranularity();
+      const expectedText =
+          sentence1 + sentence2 + sentenceSegment1 + sentenceSegment2;
+      assertEquals(expectedText, app.$.container.textContent);
     });
   });
 
@@ -189,10 +165,10 @@ suite('ReadAloudHighlight', () => {
     let currentHighlight: HTMLElement|null;
     let previousHighlights: NodeListOf<Element>;
 
-    setup(() => {
+    setup(async () => {
       app.playSpeech();
-      emitNextGranularity();
-      emitPreviousGranularity();
+      await emitNextGranularity();
+      await emitPreviousGranularity();
 
       currentHighlight =
           app.$.container.querySelector('.current-read-highlight');
@@ -200,51 +176,115 @@ suite('ReadAloudHighlight', () => {
           app.$.container.querySelectorAll('.previous-read-highlight');
     });
 
-    test('previous sentence is now current', () => {
-      assertEquals(currentHighlight!.textContent, sentence1);
+    test('previous sentence is now current and nothing marked previous', () => {
+      assertEquals(sentence1, currentHighlight!.textContent);
+      assertEquals(0, previousHighlights.length);
     });
 
-    test('nothing marked previous', () => {
-      assertEquals(previousHighlights.length, 0);
-    });
-
-    test('going back before first sentence does not crash', () => {
-      emitPreviousGranularity();
-      emitPreviousGranularity();
-      emitPreviousGranularity();
-      emitPreviousGranularity();
+    test('going back before first sentence does not crash', async () => {
+      await emitPreviousGranularity();
+      await emitPreviousGranularity();
+      await emitPreviousGranularity();
+      await emitPreviousGranularity();
 
       currentHighlight =
           app.$.container.querySelector('.current-read-highlight');
       previousHighlights =
           app.$.container.querySelectorAll('.previous-read-highlight');
 
-      assertEquals(currentHighlight!.textContent, sentence1);
+      assertEquals(sentence1, currentHighlight!.textContent);
     });
 
-    test('going forward after going back shows correct highlights', () => {
-      emitNextGranularity();
+    test(
+        'going forward after going back shows correct highlights', async () => {
+          await emitNextGranularity();
+          currentHighlight =
+              app.$.container.querySelector('.current-read-highlight');
+          previousHighlights =
+              app.$.container.querySelectorAll('.previous-read-highlight');
+
+          assertEquals(sentence2, currentHighlight!.textContent);
+          assertEquals(1, previousHighlights.length);
+          assertEquals(sentence1, previousHighlights[0]!.textContent);
+
+          await emitNextGranularity();
+          const currentHighlights =
+              app.$.container.querySelectorAll('.current-read-highlight');
+          previousHighlights =
+              app.$.container.querySelectorAll('.previous-read-highlight');
+
+          assertEquals(2, currentHighlights.length);
+          assertEquals(sentenceSegment1, currentHighlights[0]!.textContent);
+          assertEquals(sentenceSegment2, currentHighlights[1]!.textContent);
+          assertEquals(2, previousHighlights.length);
+          assertEquals(sentence1, previousHighlights[0]!.textContent);
+          assertEquals(sentence2, previousHighlights[1]!.textContent);
+        });
+  });
+
+  suite('on speaking from selection', async () => {
+    let currentHighlight: HTMLElement|null;
+    let previousHighlights: NodeListOf<Element>;
+
+    async function selectAndPlay(
+        anchorId: number, anchorOffset: number, focusId: number,
+        focusOffset: number): Promise<void> {
+      const selectedTree = Object.assign(
+          {
+            selection: {
+              anchor_object_id: anchorId,
+              focus_object_id: focusId,
+              anchor_offset: anchorOffset,
+              focus_offset: focusOffset,
+              is_backward: false,
+            },
+          },
+          axTree);
+      chrome.readingMode.setContentForTesting(selectedTree, leafIds);
+      await microtasksFinished();
+      app.updateSelection();
+      await microtasksFinished();
+      app.playSpeech();
+      return waitForPlayFromSelection();
+    }
+
+    setup(() => {
+      return selectAndPlay(3, 1, 3, 5);
+    });
+
+    test('shows correct highlights', () => {
       currentHighlight =
           app.$.container.querySelector('.current-read-highlight');
       previousHighlights =
           app.$.container.querySelectorAll('.previous-read-highlight');
 
-      assertEquals(currentHighlight!.textContent, sentence2);
-      assertEquals(previousHighlights.length, 1);
-      assertEquals(previousHighlights[0]!.textContent, sentence1);
+      assertEquals(sentence2, currentHighlight!.textContent);
+      assertEquals(1, previousHighlights!.length);
+      assertEquals(sentence1, previousHighlights![0]!.textContent);
+    });
 
-      emitNextGranularity();
-      const currentHighlights =
-          app.$.container.querySelectorAll('.current-read-highlight');
+    test('next granularity shows correct highlights', async () => {
+      await emitNextGranularity();
+
+      currentHighlight =
+          app.$.container.querySelector('.current-read-highlight');
       previousHighlights =
           app.$.container.querySelectorAll('.previous-read-highlight');
+      assertEquals(sentenceSegment1, currentHighlight!.textContent);
+      assertEquals(2, previousHighlights!.length);
+      assertEquals(sentence1, previousHighlights![0]!.textContent);
+      assertEquals(sentence2, previousHighlights![1]!.textContent);
+    });
 
-      assertEquals(currentHighlights.length, 2);
-      assertEquals(currentHighlights[0]!.textContent, sentenceSegment1);
-      assertEquals(currentHighlights[1]!.textContent, sentenceSegment2);
-      assertEquals(previousHighlights.length, 2);
-      assertEquals(previousHighlights[0]!.textContent, sentence1);
-      assertEquals(previousHighlights[1]!.textContent, sentence2);
+    test('previous granularity shows correct highlights', async () => {
+      await emitPreviousGranularity();
+
+      currentHighlight =
+          app.$.container.querySelector('.current-read-highlight');
+      previousHighlights =
+          app.$.container.querySelectorAll('.previous-read-highlight');
+      assertEquals(sentence1, currentHighlight!.textContent);
+      assertEquals(0, previousHighlights!.length);
     });
   });
 });

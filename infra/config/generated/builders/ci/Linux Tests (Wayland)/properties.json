@@ -76,18 +76,10 @@
           "builder": "linux-wayland-rel",
           "group": "tryserver.chromium.linux"
         }
-      ]
+      ],
+      "retry_failed_shards": true,
+      "targets_spec_directory": "src/infra/config/generated/builders/ci/Linux Tests (Wayland)/targets"
     }
-  },
-  "$build/siso": {
-    "configs": [
-      "builder"
-    ],
-    "enable_cloud_profiler": true,
-    "enable_cloud_trace": true,
-    "experiments": [],
-    "project": "rbe-chromium-trusted",
-    "remote_jobs": 500
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],
@@ -97,6 +89,9 @@
     ]
   },
   "builder_group": "chromium.linux",
+  "gardener_rotations": [
+    "chromium"
+  ],
   "recipe": "chromium",
   "sheriff_rotations": [
     "chromium"

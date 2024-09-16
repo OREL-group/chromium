@@ -2,11 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/core/fetch/body_stream_buffer.h"
 
 #include <memory>
 
 #include "base/auto_reset.h"
+#include "base/compiler_specific.h"
 #include "base/numerics/safe_conversions.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_throw_dom_exception.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
@@ -89,7 +95,7 @@ class BodyStreamBuffer::LoaderClient final
     client_->DidFetchDataLoadFailed();
   }
 
-  void Abort() override { NOTREACHED(); }
+  void Abort() override { NOTREACHED_IN_MIGRATION(); }
 
   void Trace(Visitor* visitor) const override {
     visitor->Trace(buffer_);
@@ -327,32 +333,34 @@ void BodyStreamBuffer::Tee(BodyStreamBuffer** branch1,
                                       cached_metadata_handler, side_data_blob);
 }
 
-ScriptPromiseUntyped BodyStreamBuffer::Pull(
+ScriptPromise<IDLUndefined> BodyStreamBuffer::Pull(
     ReadableByteStreamController* controller,
     ExceptionState& exception_state) {
   if (!consumer_) {
     // This is a speculative workaround for a crash. See
     // https://crbug.com/773525.
     // TODO(yhirano): Remove this branch or have a better comment.
-    return ScriptPromiseUntyped::CastUndefined(GetScriptState());
+    return ToResolvedUndefinedPromise(GetScriptState());
   }
 
   if (stream_needs_more_) {
-    return ScriptPromiseUntyped::CastUndefined(GetScriptState());
+    return ToResolvedUndefinedPromise(GetScriptState());
   }
   stream_needs_more_ = true;
   if (!in_process_data_) {
     ProcessData(exception_state);
   }
-  return ScriptPromiseUntyped::CastUndefined(GetScriptState());
+  return ToResolvedUndefinedPromise(GetScriptState());
 }
 
-ScriptPromiseUntyped BodyStreamBuffer::Cancel(ExceptionState& exception_state) {
+ScriptPromise<IDLUndefined> BodyStreamBuffer::Cancel(
+    ExceptionState& exception_state) {
   return Cancel(v8::Undefined(GetScriptState()->GetIsolate()), exception_state);
 }
 
-ScriptPromiseUntyped BodyStreamBuffer::Cancel(v8::Local<v8::Value> reason,
-                                              ExceptionState& exception_state) {
+ScriptPromise<IDLUndefined> BodyStreamBuffer::Cancel(
+    v8::Local<v8::Value> reason,
+    ExceptionState& exception_state) {
   ReadableStreamController* controller = Stream()->GetController();
   DCHECK(controller->IsByteStreamController());
   ReadableByteStreamController* byte_controller =
@@ -360,7 +368,7 @@ ScriptPromiseUntyped BodyStreamBuffer::Cancel(v8::Local<v8::Value> reason,
   byte_controller->Close(GetScriptState(), byte_controller, exception_state);
   DCHECK(!exception_state.HadException());
   CancelConsumer();
-  return ScriptPromiseUntyped::CastUndefined(GetScriptState());
+  return ToResolvedUndefinedPromise(GetScriptState());
 }
 
 ScriptState* BodyStreamBuffer::GetScriptState() {
@@ -373,7 +381,7 @@ void BodyStreamBuffer::OnStateChange() {
     return;
   }
   ExceptionState exception_state(script_state_->GetIsolate(),
-                                 ExceptionContextType::kUnknown, "", "");
+                                 v8::ExceptionContext::kUnknown, "", "");
 
   switch (consumer_->GetPublicState()) {
     case BytesConsumer::PublicState::kReadableOrWaiting:
@@ -554,9 +562,8 @@ void BodyStreamBuffer::ProcessData(ExceptionState& exception_state) {
       }
       if (!byob_view) {
         CHECK(!array);
-        array = DOMUint8Array::CreateOrNull(
-            reinterpret_cast<const unsigned char*>(buffer),
-            base::checked_cast<uint32_t>(available));
+        array = DOMUint8Array::CreateOrNull(UNSAFE_TODO(base::span(
+            reinterpret_cast<const unsigned char*>(buffer), available)));
       }
       result = consumer_->EndRead(available);
       if (!array && !byob_view) {
@@ -604,7 +611,7 @@ void BodyStreamBuffer::ProcessData(ExceptionState& exception_state) {
         }
         break;
       case BytesConsumer::Result::kShouldWait:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
         return;
       case BytesConsumer::Result::kError:
         GetError();

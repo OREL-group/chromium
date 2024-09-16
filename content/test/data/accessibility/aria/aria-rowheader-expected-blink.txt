@@ -2,23 +2,23 @@ rootWebArea
 ++genericContainer ignored
 ++++genericContainer ignored
 ++++++grid
-++++++++row
+++++++++row name='Browser ChromeSafari'
 ++++++++++rowHeader name='Browser'
 ++++++++++++staticText name='Browser'
-++++++++++++++inlineTextBox
-++++++++++cell name='Chrome'
+++++++++++++++inlineTextBox name='Browser'
+++++++++++gridCell name='Chrome'
 ++++++++++++staticText name='Chrome'
-++++++++++++++inlineTextBox
-++++++++++cell name='Safari'
+++++++++++++++inlineTextBox name='Chrome'
+++++++++++gridCell name='Safari'
 ++++++++++++staticText name='Safari'
-++++++++++++++inlineTextBox
-++++++++row
+++++++++++++++inlineTextBox name='Safari'
+++++++++row name='Rendering Engine BlinkWebKit'
 ++++++++++rowHeader name='Rendering Engine'
 ++++++++++++staticText name='Rendering Engine'
-++++++++++++++inlineTextBox
-++++++++++cell name='Blink'
+++++++++++++++inlineTextBox name='Rendering Engine'
+++++++++++gridCell name='Blink'
 ++++++++++++staticText name='Blink'
-++++++++++++++inlineTextBox
-++++++++++cell name='WebKit'
+++++++++++++++inlineTextBox name='Blink'
+++++++++++gridCell name='WebKit'
 ++++++++++++staticText name='WebKit'
-++++++++++++++inlineTextBox
+++++++++++++++inlineTextBox name='WebKit'

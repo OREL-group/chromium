@@ -141,7 +141,7 @@ class CONTENT_EXPORT ServiceWorkerRaceNetworkRequestURLLoaderClient
   // handler doesn't dispatch the corresponding fetch request. In that case the
   // pipe may be stacked. So this method provides a way to just consume data.
   //
-  // TODO(crbug.com/1472634): Consider migrating this to CancelWriteData().
+  // TODO(crbug.com/40278676): Consider migrating this to CancelWriteData().
   void DrainData(mojo::ScopedDataPipeConsumerHandle source);
 
   // Close the corresponding data pipe based on |commit_responsibility|, and
@@ -164,7 +164,7 @@ class CONTENT_EXPORT ServiceWorkerRaceNetworkRequestURLLoaderClient
 
   // mojo::DataPipeDrainer::Client overrides:
   // These just do nothing.
-  void OnDataAvailable(const void* data, size_t num_bytes) override {}
+  void OnDataAvailable(base::span<const uint8_t> data) override {}
   void OnDataComplete() override {}
 
   // Commits the head and body through |owner_|'s commit methods.
@@ -197,22 +197,11 @@ class CONTENT_EXPORT ServiceWorkerRaceNetworkRequestURLLoaderClient
   // commit process. And when the data transfer is finished, this complete the
   // commit process.
   //
-  // TODO(crbug.com/1420517) Add more UMAs to measure how long time to take this
-  // process, and there could be the case if the response is not returned due to
-  // the long fetch handler execution. and test case the mechanism to wait for
-  // the fetch handler
+  // TODO(crbug.com/40258805) Add more UMAs to measure how long time to take
+  // this process, and there could be the case if the response is not returned
+  // due to the long fetch handler execution. and test case the mechanism to
+  // wait for the fetch handler
   void TwoPhaseWrite(MojoResult result, const mojo::HandleSignalsState& state);
-  // Writes data in RaceNetworkRequestReadBufferManager into the data
-  // pipe producer that handles for both the race network request and the fetch
-  // handler respectively.
-  //
-  // Unlike |TwoPhaseWrite()|, this doesn't use two-phase operations to
-  // write data into data pipes. However, the result should be the same as
-  // |TwoPhaseWrite()| because mojo's |WriteData()| is expected to write
-  // the same amount of data from the given data pipe consumer handle to read.
-  // also |Write()| has CHECK to guarantee that the actual written sizes
-  // to data pips are exactly same.
-  void Write(MojoResult result, const mojo::HandleSignalsState& state);
 
   bool IsReadyToHandleReadWrite(MojoResult result);
 

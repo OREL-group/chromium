@@ -32,6 +32,7 @@
 #include "ui/gfx/swap_result.h"
 #include "ui/ozone/common/features.h"
 #include "ui/ozone/platform/drm/common/drm_util.h"
+#include "ui/ozone/platform/drm/common/tile_property.h"
 #include "ui/ozone/platform/drm/gpu/crtc_controller.h"
 #include "ui/ozone/platform/drm/gpu/drm_device.h"
 #include "ui/ozone/platform/drm/gpu/drm_dumb_buffer.h"
@@ -83,9 +84,9 @@ bool IsRockchipAfbc(uint64_t modifier) {
 }
 
 std::unique_ptr<DrmDumbBuffer> MakeCursorDrmBuffer(
-    int size,
+    gfx::Size size,
     scoped_refptr<DrmDevice> drm_device) {
-  SkImageInfo info = SkImageInfo::MakeN32Premul(size, size);
+  SkImageInfo info = SkImageInfo::MakeN32Premul(size.width(), size.height());
   auto buffer = std::make_unique<DrmDumbBuffer>(drm_device);
 
   // Don't register a framebuffer for cursors since they are special (they
@@ -103,9 +104,11 @@ HardwareDisplayController::HardwareDisplayController(
     std::unique_ptr<CrtcController> controller,
     const gfx::Point& origin,
     raw_ptr<DrmModifiersFilter> drm_modifiers_filter)
-    : origin_(origin), drm_modifiers_filter_(drm_modifiers_filter) {
+    : origin_(origin),
+      drm_modifiers_filter_(drm_modifiers_filter),
+      tile_property_(controller->tile_property()) {
   AddCrtc(std::move(controller));
-  ProbeValidCursorSizes();
+  InitSupportedCursorSizes();
   AllocateCursorBuffers();
 }
 
@@ -144,14 +147,50 @@ void HardwareDisplayController::GetModesetPropsForCrtcs(
     drmModeModeInfo modeset_mode =
         use_current_crtc_mode ? controller->mode() : mode;
 
-    DrmOverlayPlaneList overlays = DrmOverlayPlane::Clone(modeset_planes);
+    if (ShouldDisableNonprimaryTileController(*controller, modeset_mode,
+                                              use_current_crtc_mode)) {
+      if (controller->is_enabled()) {
+        CrtcCommitRequest request = CrtcCommitRequest::DisableCrtcRequest(
+            controller->crtc(), controller->connector());
+        commit_request->push_back(std::move(request));
+      }
 
+      continue;
+    }
+
+    DrmOverlayPlaneList overlays = DrmOverlayPlane::Clone(modeset_planes);
     CrtcCommitRequest request = CrtcCommitRequest::EnableCrtcRequest(
         controller->crtc(), controller->connector(), modeset_mode, origin_,
         &owned_hardware_planes_, std::move(overlays),
         enable_vrr.value_or(controller->vrr_enabled()));
     commit_request->push_back(std::move(request));
   }
+}
+
+bool HardwareDisplayController::ShouldDisableNonprimaryTileController(
+    const CrtcController& controller,
+    const drmModeModeInfo& mode,
+    const bool use_current_crtc_mode) const {
+  const bool is_nonprimary_tile =
+      IsTiled() &&
+      // The |controller| is a non-primary tile.
+      controller.tile_property()->location != tile_property_->location;
+  if (!is_nonprimary_tile) {
+    return false;
+  }
+
+  // For tiled displays, all non-primary tiles should be disabled if the
+  // requested mode is not a tile mode.
+  bool should_disable = !IsTileMode(ModeSize(mode), *tile_property_);
+
+  // Handles disconnect - the primary tile mode is not the same as the
+  // current mode of the nonprimary |controller|.
+  const bool is_same_mode_as_primary_controller =
+      SameMode(crtc_controllers_[0]->mode(), controller.mode());
+  should_disable = should_disable || (use_current_crtc_mode &&
+                                      !is_same_mode_as_primary_controller);
+
+  return should_disable;
 }
 
 void HardwareDisplayController::GetDisableProps(CommitRequest* commit_request) {
@@ -180,6 +219,7 @@ void HardwareDisplayController::SchedulePageFlip(
     SwapCompletionOnceCallback submission_callback,
     PresentationOnceCallback presentation_callback) {
   DCHECK(!page_flip_request_);
+  TRACE_EVENT0("drm", "HDC::SchedulePageFlip");
   scoped_refptr<PageFlipRequest> page_flip_request =
       base::MakeRefCounted<PageFlipRequest>(GetRefreshInterval());
   gfx::GpuFenceHandle release_fence;
@@ -255,6 +295,7 @@ void HardwareDisplayController::SchedulePageFlip(
 
 bool HardwareDisplayController::TestPageFlip(
     const DrmOverlayPlaneList& plane_list) {
+  TRACE_EVENT0("drm", "HDC::TestPageFlip");
   return PageFlipResult::kSuccess ==
          ScheduleOrTestPageFlip(plane_list, nullptr, nullptr);
 }
@@ -264,7 +305,7 @@ HardwareDisplayController::ScheduleOrTestPageFlip(
     const DrmOverlayPlaneList& plane_list,
     scoped_refptr<PageFlipRequest> page_flip_request,
     gfx::GpuFenceHandle* release_fence) {
-  TRACE_EVENT0("drm", "HDC::SchedulePageFlip");
+  TRACE_EVENT0("drm", "HDC::ScheduleOrTestPageFlip");
   DCHECK(IsEnabled());
 
   // Ignore requests with no planes to schedule.
@@ -279,6 +320,10 @@ HardwareDisplayController::ScheduleOrTestPageFlip(
   GetDrmDevice()->plane_manager()->BeginFrame(&owned_hardware_planes_);
 
   for (const auto& controller : crtc_controllers_) {
+    if (!controller->is_enabled()) {
+      continue;
+    }
+
     if (!controller->AssignOverlayPlanes(
             &owned_hardware_planes_, pending_planes, /*is_modesetting=*/false))
       return PageFlipResult::kFailedPlaneAssignment;
@@ -291,17 +336,8 @@ HardwareDisplayController::ScheduleOrTestPageFlip(
                         : PageFlipResult::kFailedCommit;
 }
 
-bool HardwareDisplayController::TestSeamlessRefreshRate(
-    int32_t crtc_id,
-    const drmModeModeInfo& mode) {
-  // Don't consider modes that have a different visible size from the currently
-  // configured mode.
-  if (GetModeSize() != ui::ModeSize(mode)) {
-    LOG(WARNING) << "Requested mode's visible size differs from the currently "
-                    "configured mode.";
-    return false;
-  }
-
+bool HardwareDisplayController::TestSeamlessMode(int32_t crtc_id,
+                                                 const drmModeModeInfo& mode) {
   return GetDrmDevice()->plane_manager()->TestSeamlessMode(crtc_id, mode);
 }
 
@@ -454,22 +490,29 @@ bool HardwareDisplayController::HasCrtc(const scoped_refptr<DrmDevice>& drm,
 }
 
 bool HardwareDisplayController::IsMirrored() const {
-  return crtc_controllers_.size() > 1;
+  return crtc_controllers_.size() > 1 && !IsTiled();
 }
 
 bool HardwareDisplayController::IsEnabled() const {
-  bool is_enabled = true;
+  bool is_enabled = false;
 
   for (const auto& controller : crtc_controllers_)
-    is_enabled &= controller->is_enabled();
+    is_enabled |= controller->is_enabled();
 
   return is_enabled;
 }
 
+bool HardwareDisplayController::IsTiled() const {
+  return tile_property_.has_value();
+}
+
 gfx::Size HardwareDisplayController::GetModeSize() const {
   // If there are multiple CRTCs they should all have the same size.
-  return gfx::Size(crtc_controllers_[0]->mode().hdisplay,
-                   crtc_controllers_[0]->mode().vdisplay);
+  const gfx::Size mode_size = ModeSize(crtc_controllers_[0]->mode());
+  if (tile_property_.has_value() && mode_size == tile_property_->tile_size) {
+    return GetTotalTileDisplaySize(*tile_property_);
+  }
+  return mode_size;
 }
 
 float HardwareDisplayController::GetRefreshRate() const {
@@ -537,6 +580,14 @@ void HardwareDisplayController::WriteIntoTrace(
   }
 }
 
+size_t HardwareDisplayController::NumOfSupportedCursorSizesForTesting() const {
+  return supported_cursor_sizes_.size();
+}
+
+gfx::Size HardwareDisplayController::CurrentCursorSizeForTesting() const {
+  return current_cursor_ ? current_cursor_->GetSize() : gfx::Size();
+}
+
 void HardwareDisplayController::OnModesetComplete(
     const DrmOverlayPlaneList& modeset_planes) {
   // Modesetting is blocking so it has an immediate effect. We can assume that
@@ -553,7 +604,7 @@ void HardwareDisplayController::AllocateCursorBuffers() {
   TRACE_EVENT0("drm", "HDC::AllocateCursorBuffers");
   constexpr int kActiveBufferCount = 2;
 
-  for (auto& size : valid_cursor_sizes_) {
+  for (auto& size : supported_cursor_sizes_) {
     for (int i = 0; i < kActiveBufferCount; i++) {
       cursor_buffer_map_[size].push_back(
           MakeCursorDrmBuffer(size, GetDrmDevice()));
@@ -563,23 +614,27 @@ void HardwareDisplayController::AllocateCursorBuffers() {
 
 DrmDumbBuffer* HardwareDisplayController::NextCursorBuffer(
     const SkBitmap& image) {
-  DrmDumbBuffer* next_buffer = nullptr;
-  // Find the smallest buffer size that fits the |image| size and return the not
-  // in-use buffer with that size.
-  for (auto size : valid_cursor_sizes_) {
-    if (image.width() <= size && image.height() <= size) {
-      auto& active_buffers = cursor_buffer_map_[size];
-      next_buffer = active_buffers.front().get();
-      if (next_buffer == current_cursor_) {
-        next_buffer = active_buffers.back().get();
-      }
+  // Use the largest buffer as default.
+  gfx::Size buffer_size = supported_cursor_sizes_.back();
+
+  // Find the smallest buffer size that fits the |image| size.
+  for (auto size : supported_cursor_sizes_) {
+    if (image.width() <= size.width() && image.height() <= size.width()) {
+      buffer_size = size;
       break;
     }
+  }
+
+  // Return the not in-use buffer with the |buffer_size|.
+  auto& active_buffers = cursor_buffer_map_[buffer_size];
+  DrmDumbBuffer* next_buffer = active_buffers.front().get();
+  if (next_buffer == current_cursor_) {
+    return active_buffers.back().get();
   }
   return next_buffer;
 }
 
-bool HardwareDisplayController::UpdateCursorImage() {
+void HardwareDisplayController::UpdateCursorImage() {
   uint32_t handle = 0;
   gfx::Size size;
 
@@ -588,14 +643,9 @@ bool HardwareDisplayController::UpdateCursorImage() {
     size = current_cursor_->GetSize();
   }
 
-  // |success| is only used for tests in ProbeValidCursorSizes().
-  bool success = true;
   for (const auto& controller : crtc_controllers_) {
-    if (!controller->SetCursor(handle, size)) {
-      success = false;
-    }
+    controller->SetCursor(handle, size);
   }
-  return success;
 }
 
 void HardwareDisplayController::UpdateCursorLocation() {
@@ -608,45 +658,44 @@ void HardwareDisplayController::ResetCursor() {
   UpdateCursorImage();
 }
 
-void HardwareDisplayController::ProbeValidCursorSizes() {
-  gfx::Size max_cursor_size_supported = GetMaximumCursorSize(*GetDrmDevice());
-  int max_cursor_buffer_size = std::min(max_cursor_size_supported.width(),
-                                        max_cursor_size_supported.height());
-
+void HardwareDisplayController::InitSupportedCursorSizes() {
   // Only use dynamic cursor size on Intel GPUs.
   std::optional<std::string> driver = GetDrmDevice()->GetDriverName();
   bool use_dynamic_cursor_size = IsUseDynamicCursorSizeEnabled() &&
                                  driver.has_value() && *driver == "i915";
-  if (!use_dynamic_cursor_size) {
-    valid_cursor_sizes_.push_back(max_cursor_buffer_size);
-    return;
+  if (use_dynamic_cursor_size) {
+    const std::vector<std::unique_ptr<HardwareDisplayPlane>>& planes =
+        GetDrmDevice()->plane_manager()->planes();
+    for (const auto& plane : planes) {
+      // Currently on Intel, if there are multiple CRTCs they should all have
+      // the same supported cursor sizes.
+      if (plane->type() == DRM_PLANE_TYPE_CURSOR) {
+        const std::vector<gfx::Size>& supported_cursor_sizes =
+            plane->supported_cursor_sizes();
+        supported_cursor_sizes_.assign(supported_cursor_sizes.begin(),
+                                       supported_cursor_sizes.end());
+        break;
+      }
+    }
   }
 
-  // According to Intel GPU spec and i915 driver code, Intel GPUs support cursor
-  // buffer with width of 64, 128 or 256 for the cursor plane. As we can only
-  // read the max supported width from DRM directly, a probe is done here to
-  // determine all the supported sizes.
-  constexpr int kMinCursorSize = 64;
-  int size = kMinCursorSize;
-  while (size <= max_cursor_buffer_size) {
-    // Create a test buffer and try UpdateCursorImage() to determine if a buffer
-    // size is supported.
-    // Although rectangle buffers are supported, square sizes are used here to
-    // simplify the probe process.
-    SkBitmap image;
-    SkImageInfo info =
-        SkImageInfo::Make(size, size, kN32_SkColorType, kPremul_SkAlphaType);
-    image.allocPixels(info);
-    image.eraseColor(SK_ColorTRANSPARENT);
-    auto cursor_buffer = MakeCursorDrmBuffer(size, GetDrmDevice());
-    current_cursor_ = cursor_buffer.get();
-    DrawCursor(current_cursor_, image);
-    if (UpdateCursorImage()) {
-      valid_cursor_sizes_.push_back(size);
-    }
-    current_cursor_ = nullptr;
-    size *= 2;
+  if (supported_cursor_sizes_.empty()) {
+    // Get the maximum cursor size supported by the GPU.
+    const gfx::Size max_cursor_size_supported =
+        GetMaximumCursorSize(*GetDrmDevice());
+    // max_cursor_size_supported can be as large as 4096 depending on platform
+    // and driver capabilities, but we don't need huge buffer like that for the
+    // cursor.
+    supported_cursor_sizes_.push_back(gfx::Size(
+        std::min(max_cursor_size_supported.width(), kMaxCursorBufferSize),
+        std::min(max_cursor_size_supported.height(), kMaxCursorBufferSize)));
   }
+
+  // Sort the supported cursor sizes in ascending order so that we can use the
+  // smallest buffer.
+  DCHECK(!supported_cursor_sizes_.empty());
+  std::sort(supported_cursor_sizes_.begin(), supported_cursor_sizes_.end(),
+            CursorSizeComparator());
 }
 
 }  // namespace ui

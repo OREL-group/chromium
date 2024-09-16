@@ -2,9 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chromeos/ash/components/scalable_iph/scalable_iph.h"
+
 #include <string_view>
 
-#include "ash/constants/app_types.h"
 #include "ash/constants/ash_features.h"
 #include "ash/constants/ash_switches.h"
 #include "ash/game_dashboard/game_dashboard_controller.h"
@@ -28,7 +29,6 @@
 #include "chrome/browser/ash/app_list/test/chrome_app_list_test_support.h"
 #include "chrome/browser/ash/login/lock/screen_locker_tester.h"
 #include "chrome/browser/ash/login/test/device_state_mixin.h"
-#include "chrome/browser/ash/login/ui/user_adding_screen.h"
 #include "chrome/browser/ash/login/wizard_controller.h"
 #include "chrome/browser/ash/printing/cups_print_job.h"
 #include "chrome/browser/ash/printing/cups_print_job_manager.h"
@@ -41,6 +41,7 @@
 #include "chrome/browser/ash/system_web_apps/system_web_app_manager.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/scalable_iph/scalable_iph_factory.h"
+#include "chrome/browser/ui/ash/login/user_adding_screen.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_window_manager_helper.h"
 #include "chrome/browser/ui/ash/system_web_apps/system_web_app_ui_utils.h"
 #include "chrome/browser/ui/browser.h"
@@ -51,7 +52,6 @@
 #include "chromeos/ash/components/phonehub/fake_feature_status_provider.h"
 #include "chromeos/ash/components/phonehub/feature_status.h"
 #include "chromeos/ash/components/scalable_iph/iph_session.h"
-#include "chromeos/ash/components/scalable_iph/scalable_iph.h"
 #include "chromeos/ash/components/scalable_iph/scalable_iph_constants.h"
 #include "chromeos/ash/components/scalable_iph/scalable_iph_delegate.h"
 #include "chromeos/dbus/power/fake_power_manager_client.h"
@@ -586,13 +586,31 @@ class ScalableIphBrowserTestPhoneHubOnboardingEligible
 };
 
 class ScalableIphBrowserTestParameterized
-    : public ash::CustomizableTestEnvBrowserTestBase,
+    : public ScalableIphBrowserTest,
       public testing::WithParamInterface<TestEnvironment> {
  public:
+  ScalableIphBrowserTestParameterized() {
+    // Set `false` as `ScalableIphBrowserTestParameterized` is used to test
+    // ScalableIph is not eligible cases.
+    setup_scalable_iph_ = false;
+  }
+
   void SetUp() override {
     SetTestEnvironment(GetParam());
 
     ash::CustomizableTestEnvBrowserTestBase::SetUp();
+  }
+};
+
+class ScalableIphBrowserTestMinor : public ScalableIphBrowserTest {
+ public:
+  ScalableIphBrowserTestMinor() {
+    // `ScalableIphFactoryImpl::GetBrowserContextToUseInternal` uses manta
+    // service eligibility as a signal to see if a user is a minor or not. Force
+    // disable manta service to simulate minor user case.
+    force_disable_manta_service_ = true;
+
+    setup_scalable_iph_ = false;
   }
 };
 
@@ -951,7 +969,7 @@ IN_PROC_BROWSER_TEST_F(ScalableIphBrowserTest, OnSuspendDoneWithLockScreen) {
   testing::Mock::VerifyAndClearExpectations(mock_tracker());
 }
 
-// TODO(crbug.com/1491942): This fails with the field trial testing config.
+// TODO(crbug.com/40285326): This fails with the field trial testing config.
 class ScalableIphBrowserTestNoTestingConfig : public ScalableIphBrowserTest {
  public:
   void SetUpCommandLine(base::CommandLine* command_line) override {
@@ -1188,7 +1206,7 @@ IN_PROC_BROWSER_TEST_F(ScalableIphBrowserTestPreinstallApps,
       NotifyEvent(scalable_iph::kEventNameAppListItemActivationYouTube));
   app_list_client_impl->ActivateItem(
       /*profile_id=*/0, web_app::kYoutubeAppId, /*event_flags=*/0,
-      ash::AppListLaunchedFrom::kLaunchedFromGrid);
+      ash::AppListLaunchedFrom::kLaunchedFromGrid, /*is_above_the_fold=*/true);
 }
 
 // TODO(crbug.com/328713274): Test is flaky.
@@ -1935,6 +1953,16 @@ INSTANTIATE_TEST_SUITE_P(
 
 IN_PROC_BROWSER_TEST_P(ScalableIphBrowserTestParameterized,
                        ScalableIphNotAvailable) {
+  EXPECT_EQ(nullptr,
+            ScalableIphFactory::GetForBrowserContext(browser()->profile()));
+}
+
+IN_PROC_BROWSER_TEST_F(ScalableIphBrowserTestMinor, ScalableIphNotAvailable) {
+  ASSERT_EQ(ash::CustomizableTestEnvBrowserTestBase::UserSessionType::kRegular,
+            test_environment().user_session_type())
+      << "This test uses kRegular user session type without "
+         "can_use_manta_service=true capability to simulate minor account.";
+
   EXPECT_EQ(nullptr,
             ScalableIphFactory::GetForBrowserContext(browser()->profile()));
 }

@@ -24,26 +24,12 @@ ChangePinController* ChangePinController::instance_for_testing_ = nullptr;
 
 ChangePinController::~ChangePinController() = default;
 
-bool ChangePinController::IsChangePinFlowAvailable() {
-  return false;
-}
-
-bool ChangePinController::StartChangePin() {
-  return false;
-}
-
 // static
 ChangePinController* ChangePinController::ForWebContents(
     content::WebContents* web_contents) {
   if (instance_for_testing_) {
     return instance_for_testing_;
   }
-  static constexpr char kChangePinControllerKey[] = "ChangePinControllerKey";
-  if (!web_contents->GetUserData(kChangePinControllerKey)) {
-    web_contents->SetUserData(
-        kChangePinControllerKey,
-        std::make_unique<ChangePinControllerImpl>(web_contents));
-  }
-  return static_cast<ChangePinControllerImpl*>(
-      web_contents->GetUserData(kChangePinControllerKey));
+  return ChangePinControllerImpl::GetOrCreateForCurrentDocument(
+      web_contents->GetPrimaryMainFrame());
 }

@@ -23,7 +23,6 @@
 #include "chrome/browser/ui/views/frame/browser_frame.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/immersive_mode_controller.h"
-#include "chrome/browser/ui/views/frame/tab_search_frame_caption_button.h"
 #include "chrome/browser/ui/views/frame/tab_strip_region_view.h"
 #include "chrome/browser/ui/views/frame/top_container_view.h"
 #include "chrome/browser/ui/views/profiles/profile_indicator_icon.h"
@@ -57,7 +56,9 @@
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rounded_corners_f.h"
+#include "ui/gfx/geometry/size.h"
 #include "ui/gfx/image/image_skia.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/animation/animation_builder.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/webview/webview.h"
@@ -76,7 +77,7 @@
 #include "ash/wm/window_util.h"
 #include "chrome/browser/ash/system_web_apps/types/system_web_app_delegate.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_window_manager_helper.h"
-#include "chrome/browser/ui/ash/session_util.h"
+#include "chrome/browser/ui/ash/session/session_util.h"
 #include "chrome/browser/ui/ash/system_web_apps/system_web_app_ui_utils.h"
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
@@ -143,12 +144,17 @@ BrowserNonClientFrameViewChromeOS::BrowserNonClientFrameViewChromeOS(
 
 #if BUILDFLAG(IS_CHROMEOS_LACROS)
   frame->GetNativeWindow()->SetEventTargeter(
-      std::make_unique<chromeos::InteriorResizeHandleTargeter>());
+      std::make_unique<chromeos::InteriorResizeHandleTargeter>(
+          base::BindRepeating([](const aura::Window* window) {
+            return window->GetProperty(chromeos::kWindowStateTypeKey);
+          })));
 #endif
 
   // TODO: b/330360595 - Confirm if this is needed in Lacros.
   aura::Window* frame_window = frame->GetNativeWindow();
   frame_window->SetProperty(kBrowserNonClientFrameViewChromeOSKey, this);
+
+  GetViewAccessibility().SetRole(ax::mojom::Role::kTitleBar);
 }
 
 BrowserNonClientFrameViewChromeOS::~BrowserNonClientFrameViewChromeOS() {
@@ -170,20 +176,13 @@ BrowserNonClientFrameViewChromeOS* BrowserNonClientFrameViewChromeOS::Get(
 void BrowserNonClientFrameViewChromeOS::Init() {
   Browser* browser = browser_view()->browser();
 
-  std::unique_ptr<TabSearchFrameCaptionButton> tab_search_button;
-  if (TabSearchFrameCaptionButton::IsTabSearchCaptionButtonEnabled(browser)) {
-    tab_search_button =
-        std::make_unique<TabSearchFrameCaptionButton>(browser->profile());
-    tab_search_bubble_host_ = tab_search_button->tab_search_bubble_host();
-  }
-
   const bool is_close_button_enabled =
       !(browser->app_controller() &&
         browser->app_controller()->IsPreventCloseEnabled());
 
   caption_button_container_ =
       AddChildView(std::make_unique<chromeos::FrameCaptionButtonContainerView>(
-          frame(), is_close_button_enabled, std::move(tab_search_button)));
+          frame(), is_close_button_enabled));
 
   // Initializing the TabIconView is expensive, so only do it if we need to.
   if (browser_view()->ShouldShowWindowIcon()) {
@@ -283,18 +282,17 @@ int BrowserNonClientFrameViewChromeOS::GetTopInset(bool restored) const {
     }
   }
 
+  if (browser_view()->GetTabStripVisible()) {
+    return 0;
+  }
+
   Browser* browser = browser_view()->browser();
 
   int header_height = frame_header_ ? frame_header_->GetHeaderHeight() : 0;
-  auto toolbar_size = browser_view()->GetWebAppFrameToolbarPreferredSize();
+  const gfx::Size toolbar_size =
+      browser_view()->GetWebAppFrameToolbarPreferredSize();
   if (!toolbar_size.IsEmpty()) {
     header_height = std::max(header_height, toolbar_size.height());
-  }
-  if (browser_view()->GetTabStripVisible()) {
-    if (features::IsChromeRefresh2023()) {
-      return 0;
-    }
-    return header_height - browser_view()->GetTabStripHeight();
   }
 
   return UsePackagedAppHeaderStyle(browser)
@@ -349,11 +347,6 @@ SkColor BrowserNonClientFrameViewChromeOS::GetFrameColor(
   }
 
   return color.value_or(fallback_color);
-}
-
-TabSearchBubbleHost*
-BrowserNonClientFrameViewChromeOS::GetTabSearchBubbleHost() {
-  return tab_search_bubble_host_;
 }
 
 void BrowserNonClientFrameViewChromeOS::UpdateMinimumSize() {
@@ -498,11 +491,6 @@ void BrowserNonClientFrameViewChromeOS::Layout(PassKey) {
   }
 }
 
-void BrowserNonClientFrameViewChromeOS::GetAccessibleNodeData(
-    ui::AXNodeData* node_data) {
-  node_data->role = ax::mojom::Role::kTitleBar;
-}
-
 gfx::Size BrowserNonClientFrameViewChromeOS::GetMinimumSize() const {
 #if BUILDFLAG(IS_CHROMEOS_ASH)
   // System web apps (e.g. Settings) may have a fixed minimum size.
@@ -513,6 +501,15 @@ gfx::Size BrowserNonClientFrameViewChromeOS::GetMinimumSize() const {
       return minimum_size;
   }
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+
+  // The minimum size of a borderless window is only limited by the window's
+  // `highlight_border_overlay_`.
+  if (browser_view()->IsBorderlessModeEnabled()) {
+    // `CalculateImageSourceSize()` returns the minimum size needed to draw the
+    // highlight border, which in turn is the minimum size of a borderless
+    // window.
+    return highlight_border_overlay_->CalculateImageSourceSize();
+  }
 
   gfx::Size min_client_view_size(frame()->client_view()->GetMinimumSize());
   const int min_frame_width =
@@ -536,22 +533,11 @@ gfx::Size BrowserNonClientFrameViewChromeOS::GetMinimumSize() const {
     min_height = min_height + caption_button_container_->size().height();
   }
 
-  if (browser_view()->IsBorderlessModeEnabled()) {
-    gfx::Size border_size =
-        highlight_border_overlay_->CalculateImageSourceSize();
-    // The minimum size of a borderless window is only limited by the window's
-    // `highlight_border_overlay_`s. The minimum size for the window is then
-    // twice as much as there are always two overlays vertically or
-    // horizontally.
-    min_width = 2 * border_size.width();
-    min_height = 2 * border_size.height();
-  }
-
   const int window_corner_radius = frame()->GetNativeWindow()->GetProperty(
       aura::client::kWindowCornerRadiusKey);
   if (chromeos::features::IsRoundedWindowsEnabled() &&
       window_corner_radius > 0) {
-    // Include bottom rounded corners region.
+    // Include bottom rounded corners region. See b/294588040.
     min_height = min_height + window_corner_radius;
   }
 
@@ -961,9 +947,12 @@ bool BrowserNonClientFrameViewChromeOS::GetShouldPaint() const {
 void BrowserNonClientFrameViewChromeOS::OnAddedToOrRemovedFromOverview() {
   const bool should_show_caption_buttons = GetShowCaptionButtons();
   caption_button_container_->SetVisible(should_show_caption_buttons);
-  // The WebAppFrameToolbarView is part of the BrowserView, so make sure the
-  // BrowserView is re-layed out to take into account these changes.
-  browser_view()->InvalidateLayout();
+  if (!chromeos::features::AreOverviewSessionInitOptimizationsEnabled() ||
+      browser_view()->GetIsWebAppType()) {
+    // The WebAppFrameToolbarView is part of the BrowserView, so make sure the
+    // BrowserView is re-layed out to take into account these changes.
+    browser_view()->InvalidateLayout();
+  }
 }
 
 std::unique_ptr<chromeos::FrameHeader>

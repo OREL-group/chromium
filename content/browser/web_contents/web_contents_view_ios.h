@@ -20,7 +20,6 @@ class RenderWidgetHostViewIOS;
 class RenderWidgetHostImpl;
 class WebContentsImpl;
 class WebContentsViewDelegate;
-class WebContentsUIButtonHolder;
 class WebContentsUIViewHolder;
 
 // iOS-specific implementation of the WebContentsView. It owns an UIView that
@@ -51,7 +50,6 @@ class WebContentsViewIOS : public WebContentsView,
   void RestoreFocus() override;
   void FocusThroughTabTraversal(bool reverse) override;
   DropData* GetDropData() const override;
-  void TransferDragSecurityInfo(WebContentsView* view) override;
   gfx::Rect GetViewBounds() const override;
   void CreateView(gfx::NativeView context) override;
   RenderWidgetHostViewBase* CreateViewForWidget(
@@ -107,9 +105,6 @@ class WebContentsViewIOS : public WebContentsView,
   // The WebContentsImpl whose contents we display.
   raw_ptr<WebContentsImpl> web_contents_;
   std::unique_ptr<WebContentsUIViewHolder> ui_view_;
-
-  // A hidden button used for displaying context menus.
-  std::unique_ptr<WebContentsUIButtonHolder> hidden_button_;
 
   std::unique_ptr<PopupMenuHelper> popup_menu_helper_;
 

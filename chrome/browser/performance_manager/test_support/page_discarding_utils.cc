@@ -5,8 +5,8 @@
 #include "chrome/browser/performance_manager/test_support/page_discarding_utils.h"
 
 #include "base/time/time.h"
-#include "chrome/browser/performance_manager/decorators/page_aggregator.h"
 #include "chrome/browser/performance_manager/policies/page_discarding_helper.h"
+#include "components/performance_manager/decorators/page_aggregator.h"
 #include "components/performance_manager/graph/frame_node_impl.h"
 #include "components/performance_manager/graph/graph_impl.h"
 #include "components/performance_manager/graph/page_node_impl.h"
@@ -40,14 +40,14 @@ GraphTestHarnessWithMockDiscarder::~GraphTestHarnessWithMockDiscarder() =
     default;
 
 void GraphTestHarnessWithMockDiscarder::SetUp() {
+  // Some tests depends on the existence of the PageAggregator.
+  GetGraphFeatures().EnablePageAggregator();
+
   GraphTestHarness::SetUp();
 
   performance_manager::user_tuning::prefs::RegisterLocalStatePrefs(
       local_state_.registry());
   user_performance_tuning_manager_environment_.SetUp(&local_state_);
-
-  // Some tests depends on the existence of the PageAggregator.
-  graph()->PassToGraph(std::make_unique<PageAggregator>());
 
   // Make the policy use a mock PageDiscarder.
   auto mock_discarder = std::make_unique<MockPageDiscarder>();
@@ -96,7 +96,10 @@ void MakePageNodeDiscardable(PageNodeImpl* page_node,
   page_node->OnMainFrameNavigationCommitted(
       false, base::TimeTicks::Now(), 42, kUrl, "text/html",
       /*notification_permission_status=*/blink::mojom::PermissionStatus::ASK);
-  (*page_node->main_frame_nodes().begin())->OnNavigationCommitted(kUrl, false);
+  (*page_node->main_frame_nodes().begin())
+      ->OnNavigationCommitted(kUrl, url::Origin::Create(kUrl),
+                              /*same_document=*/false,
+                              /*is_served_from_back_forward_cache=*/false);
   task_env.FastForwardBy(base::Minutes(10));
   const auto* helper =
       policies::PageDiscardingHelper::GetFromGraph(page_node->graph());
@@ -105,6 +108,8 @@ void MakePageNodeDiscardable(PageNodeImpl* page_node,
   CHECK_EQ(helper->CanDiscard(page_node, DiscardReason::PROACTIVE),
            CanDiscardResult::kEligible);
   CHECK_EQ(helper->CanDiscard(page_node, DiscardReason::EXTERNAL),
+           CanDiscardResult::kEligible);
+  CHECK_EQ(helper->CanDiscard(page_node, DiscardReason::SUGGESTED),
            CanDiscardResult::kEligible);
 }
 

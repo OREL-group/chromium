@@ -138,7 +138,7 @@ ScriptPromise<IDLAny> ScriptEvaluationResult::GetPromise(
   switch (result_type_) {
     case ResultType::kSuccess:
       return ScriptPromise<IDLAny>::FromV8Promise(
-          script_state, GetSuccessValue().As<v8::Promise>());
+          script_state->GetIsolate(), GetSuccessValue().As<v8::Promise>());
 
     case ResultType::kException:
       return ScriptPromise<IDLAny>::Reject(script_state,
@@ -146,7 +146,7 @@ ScriptPromise<IDLAny> ScriptEvaluationResult::GetPromise(
 
     case ResultType::kNotRun:
     case ResultType::kAborted:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 

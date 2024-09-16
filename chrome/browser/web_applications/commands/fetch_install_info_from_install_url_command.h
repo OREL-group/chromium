@@ -24,9 +24,6 @@ class WebAppDataRetriever;
 enum class FetchInstallInfoResult {
   kAppInfoObtained,
   kWebContentsDestroyed,
-  kInstallUrlInvalid,
-  kManifestIdInvalid,
-  kParentManifestIdInvalid,
   kUrlLoadingFailure,
   kNoValidManifest,
   kWrongManifestId,
@@ -61,7 +58,6 @@ class FetchInstallInfoFromInstallUrlCommand
   void OnGetWebAppInstallInfo(std::unique_ptr<WebAppInstallInfo> install_info);
   void OnManifestRetrieved(std::unique_ptr<WebAppInstallInfo> web_app_info,
                            blink::mojom::ManifestPtr opt_manifest,
-                           const GURL& manifest_url,
                            bool valid_manifest_for_web_app,
                            webapps::InstallableStatusCode error_code);
   void OnIconsRetrieved(std::unique_ptr<WebAppInstallInfo> web_app_info,
@@ -74,9 +70,9 @@ class FetchInstallInfoFromInstallUrlCommand
 
   std::unique_ptr<SharedWebContentsLock> lock_;
 
-  webapps::ManifestId manifest_id_;
-  GURL install_url_;
-  std::optional<webapps::ManifestId> parent_manifest_id_;
+  const webapps::ManifestId manifest_id_;
+  const GURL install_url_;
+  const std::optional<webapps::ManifestId> parent_manifest_id_;
 
   std::unique_ptr<webapps::WebAppUrlLoader> url_loader_;
   std::unique_ptr<WebAppDataRetriever> data_retriever_;

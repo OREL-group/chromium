@@ -12,7 +12,6 @@
 #include <vector>
 
 #include "base/command_line.h"
-#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/message_loop/message_pump_type.h"
@@ -359,10 +358,13 @@ class OzonePlatformWayland : public OzonePlatform,
   }
 
   const PlatformRuntimeProperties& GetPlatformRuntimeProperties() override {
-    using SupportsSsdForTest =
-        OzonePlatform::PlatformRuntimeProperties::SupportsSsdForTest;
+    using SupportsForTest =
+        OzonePlatform::PlatformRuntimeProperties::SupportsForTest;
     const auto& override_supports_ssd_for_test = OzonePlatform::
         PlatformRuntimeProperties::override_supports_ssd_for_test;
+    const auto& override_supports_per_window_scaling_for_test =
+        OzonePlatform::PlatformRuntimeProperties::
+            override_supports_per_window_scaling_for_test;
 
     static OzonePlatform::PlatformRuntimeProperties properties;
     if (connection_) {
@@ -371,8 +373,8 @@ class OzonePlatformWayland : public OzonePlatform,
       // the browser process side.
       properties.supports_server_side_window_decorations =
           (connection_->xdg_decoration_manager_v1() != nullptr &&
-          override_supports_ssd_for_test == SupportsSsdForTest::kNotSet) ||
-          override_supports_ssd_for_test == SupportsSsdForTest::kYes;
+           override_supports_ssd_for_test == SupportsForTest::kNotSet) ||
+          override_supports_ssd_for_test == SupportsForTest::kYes;
       properties.supports_overlays =
           connection_->ShouldUseOverlayDelegation() &&
           connection_->viewporter();
@@ -395,9 +397,17 @@ class OzonePlatformWayland : public OzonePlatform,
           zaura_shell_get_version(connection_->zaura_shell()->wl_object()) >=
               ZAURA_TOPLEVEL_ACTIVATE_SINCE_VERSION;
       properties.supports_subwindows_as_accelerated_widgets =
-          connection_->ShouldUseOverlayDelegation() &&
-          connection_->surface_augmenter() &&
-          connection_->surface_augmenter()->SupportsCompositingOnlySurface();
+          connection_->ShouldUseOverlayDelegation()
+              ? connection_->surface_augmenter() &&
+                    connection_->surface_augmenter()
+                        ->SupportsCompositingOnlySurface()
+              : true;
+      properties.supports_per_window_scaling =
+          (connection_->UsePerSurfaceScaling() &&
+           override_supports_per_window_scaling_for_test ==
+               SupportsForTest::kNotSet) ||
+          (override_supports_per_window_scaling_for_test ==
+           SupportsForTest::kYes);
 
       if (surface_factory_) {
         DCHECK(has_initialized_gpu());
@@ -471,7 +481,7 @@ class OzonePlatformWayland : public OzonePlatform,
   void PostMainMessageLoopRun() override {
     // TODO(b/324294360): This will cause a lot of dangling pointers, which
     // breaks linux wayland bot. Fix them and enable on linux as well.
-#if BUILDFLAG(IS_CHROMEOS) || !BUILDFLAG(ENABLE_DANGLING_RAW_PTR_CHECKS)
+#if BUILDFLAG(IS_CHROMEOS) || !PA_BUILDFLAG(ENABLE_DANGLING_RAW_PTR_CHECKS)
     connection_.reset();
 #endif
   }

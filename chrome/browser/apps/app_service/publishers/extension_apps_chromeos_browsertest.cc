@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <memory>
 #include <string_view>
 #include <utility>
@@ -212,10 +217,10 @@ IN_PROC_BROWSER_TEST_F(ExtensionAppsChromeOsBrowserTest, SetConsumerCalled) {
         InstallDefaultInstalledExtension(extension_dir.UnpackedPath());
     ASSERT_TRUE(extension);
 
-    // TODO(crbug.com/1179530): setConsumer is called, but launchParams is empty
-    // in the test. However, it is populated when run manually. Find a better
-    // way to automate launchParams testing such that it's populated in the
-    // test, like it is when executed manually.
+    // TODO(crbug.com/40169582): setConsumer is called, but launchParams is
+    // empty in the test. However, it is populated when run manually. Find a
+    // better way to automate launchParams testing such that it's populated in
+    // the test, like it is when executed manually.
     LaunchExtensionAndCatchResult(*extension);
   }
 }

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ash/components/arc/arc_util.h"
 
 #include <algorithm>
@@ -11,7 +16,6 @@
 #include "ash/components/arc/arc_features.h"
 #include "ash/components/arc/arc_prefs.h"
 #include "ash/components/arc/session/arc_vm_data_migration_status.h"
-#include "ash/constants/app_types.h"
 #include "ash/constants/ash_switches.h"
 #include "ash/system/time/calendar_utils.h"
 #include "ash/system/time/date_helper.h"
@@ -28,6 +32,7 @@
 #include "chromeos/ash/components/dbus/concierge/concierge_client.h"
 #include "chromeos/ash/components/dbus/debug_daemon/debug_daemon_client.h"
 #include "chromeos/ash/components/dbus/upstart/upstart_client.h"
+#include "chromeos/ash/components/dbus/vm_concierge/concierge_service.pb.h"
 #include "chromeos/version/version_loader.h"
 #include "components/exo/shell_surface_util.h"
 #include "components/prefs/pref_service.h"
@@ -267,36 +272,9 @@ bool ShouldShowOptInForTesting() {
       ash::switches::kArcForceShowOptInUi);
 }
 
-bool IsArcKioskAvailable() {
-  const auto* command_line = base::CommandLine::ForCurrentProcess();
-
-  if (command_line->HasSwitch(ash::switches::kArcAvailability)) {
-    std::string value =
-        command_line->GetSwitchValueASCII(ash::switches::kArcAvailability);
-    if (value == kAvailabilityInstalled) {
-      return true;
-    }
-    return IsArcAvailable();
-  }
-
-  // TODO(hidehiko): Remove this when session_manager supports the new flag.
-  if (command_line->HasSwitch(ash::switches::kArcAvailable)) {
-    return true;
-  }
-
-  // If not special kiosk device case, use general ARC check.
-  return IsArcAvailable();
-}
-
-bool IsArcKioskMode() {
-  return user_manager::UserManager::IsInitialized() &&
-         user_manager::UserManager::Get()->IsLoggedInAsArcKioskApp();
-}
-
 bool IsRobotOrOfflineDemoAccountMode() {
   return user_manager::UserManager::IsInitialized() &&
-         (user_manager::UserManager::Get()->IsLoggedInAsArcKioskApp() ||
-          user_manager::UserManager::Get()->IsLoggedInAsManagedGuestSession());
+         user_manager::UserManager::Get()->IsLoggedInAsManagedGuestSession();
 }
 
 bool IsArcAllowedForUser(const user_manager::User* user) {
@@ -307,16 +285,14 @@ bool IsArcAllowedForUser(const user_manager::User* user) {
 
   // ARC is only supported for the following cases:
   // - Users have Gaia accounts;
-  // - ARC kiosk session;
   // - Public Session users;
-  //   kUserTypeArcKioskApp check is compatible with IsArcKioskMode()
-  //   above because ARC kiosk user is always the primary/active user of a
-  //   user session. The same for kPublicAccount.
+  //   kPublicAccount check is compatible with IsRobotOrOfflineDemoAccountMode()
+  //   above because public account user is always the primary/active user of a
+  //   user session.
   if (!user->HasGaiaAccount() &&
-      user->GetType() != user_manager::UserType::kArcKioskApp &&
       user->GetType() != user_manager::UserType::kPublicAccount) {
-    VLOG(1) << "Users without GAIA account, or not ARC kiosk apps are not "
-               "supported in ARC.";
+    VLOG(1) << "Only users with GAIA account or managed guest session users "
+               "are supported in ARC.";
     return false;
   }
 
@@ -495,7 +471,6 @@ void ConfigureUpstartJobs(std::deque<JobDesc> jobs,
       break;
     case UpstartOperation::JOB_STOP_AND_START:
       NOTREACHED();
-      break;
   }
 }
 
@@ -550,6 +525,12 @@ bool ShouldUseArcKeyMint() {
          (!base::CommandLine::ForCurrentProcess()->HasSwitch(
               ash::switches::kArcBlockKeyMint) ||
           base::FeatureList::IsEnabled(kSwitchToKeyMintOnTOverride));
+}
+
+bool ShouldUseArcAttestation() {
+  // Attesation depends on keymint.
+  return ShouldUseArcKeyMint() &&
+         base::FeatureList::IsEnabled(kEnableArcAttestation);
 }
 
 int GetDaysUntilArcVmDataMigrationDeadline(PrefService* prefs) {

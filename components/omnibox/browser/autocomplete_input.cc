@@ -2,8 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/omnibox/browser/autocomplete_input.h"
 
+#include <string_view>
 #include <vector>
 
 #include "base/logging.h"
@@ -28,6 +34,7 @@
 
 #if BUILDFLAG(IS_CHROMEOS)
 #if BUILDFLAG(IS_CHROMEOS_ASH)
+#include "chromeos/constants/url_constants.h"           // nogncheck
 #include "chromeos/crosapi/cpp/lacros_startup_state.h"  // nogncheck
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 #include "chromeos/crosapi/cpp/gurl_os_handler_utils.h"  // nogncheck
@@ -82,8 +89,8 @@ void OffsetComponentsExcludingScheme(url::Parsed* parts, int offset) {
       &parts->username, &parts->password, &parts->host, &parts->port,
       &parts->path,     &parts->query,    &parts->ref,
   };
-  for (size_t i = 0; i < std::size(components); ++i) {
-    url_formatter::OffsetComponent(offset, components[i]);
+  for (url::Component* component : components) {
+    url_formatter::OffsetComponent(offset, component);
   }
 }
 
@@ -293,6 +300,15 @@ metrics::OmniboxInputType AutocompleteInput::Parse(
     return metrics::OmniboxInputType::URL;
   }
 #endif  // BUILDFLAG(IS_CHROMEOS)
+
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  if (base::EqualsCaseInsensitiveASCII(parsed_scheme_utf8,
+                                       chromeos::kAppInstallUriScheme) ||
+      base::EqualsCaseInsensitiveASCII(parsed_scheme_utf8,
+                                       chromeos::kLegacyAppInstallUriScheme)) {
+    return metrics::OmniboxInputType::URL;
+  }
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
   if (base::EqualsCaseInsensitiveASCII(parsed_scheme_utf8, url::kFileScheme)) {
     // A user might or might not type a scheme when entering a file URL.  In
@@ -540,7 +556,7 @@ metrics::OmniboxInputType AutocompleteInput::Parse(
   // https://tools.ietf.org/html/rfc6761. Unlike localhost, these are not valid
   // host names, so they must have at least one subdomain to be a URL.
   // .local is used for Multicast DNS in https://www.rfc-editor.org/rfc/rfc6762.
-  for (const base::StringPiece domain : {"example", "test", "local"}) {
+  for (const std::string_view domain : {"example", "test", "local"}) {
     // The +1 accounts for a possible trailing period.
     if (canonicalized_url->DomainIs(domain) &&
         (canonicalized_url->host().length() > (domain.length() + 1)))

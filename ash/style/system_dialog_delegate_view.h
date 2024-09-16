@@ -13,6 +13,7 @@
 #include "base/functional/callback_forward.h"
 #include "ui/base/interaction/element_identifier.h"
 #include "ui/base/metadata/metadata_header_macros.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/gfx/vector_icon_types.h"
 #include "ui/views/layout/layout_types.h"
@@ -142,7 +143,8 @@ class ASH_EXPORT SystemDialogDelegateView : public views::WidgetDelegateView {
   void SetTitleMargins(const gfx::Insets& margins);
 
   // views::WidgetDelegateView:
-  gfx::Size CalculatePreferredSize() const override;
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override;
   gfx::Size GetMinimumSize() const override;
   gfx::Size GetMaximumSize() const override;
   void OnWidgetInitialized() override;
@@ -221,7 +223,7 @@ VIEW_BUILDER_PROPERTY(views::LayoutAlignment, TopContentAlignment)
 VIEW_BUILDER_PROPERTY(views::LayoutAlignment, MiddleContentAlignment)
 VIEW_BUILDER_PROPERTY(bool, AcceptButtonVisible)
 VIEW_BUILDER_PROPERTY(const gfx::Insets&, TitleMargins)
-VIEW_BUILDER_PROPERTY(ui::ModalType, ModalType)
+VIEW_BUILDER_PROPERTY(ui::mojom::ModalType, ModalType)
 END_VIEW_BUILDER
 
 }  // namespace ash

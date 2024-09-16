@@ -83,7 +83,6 @@ class FetchManifestAndInstallCommand
       std::unique_ptr<WebAppInstallInfo> fallback_web_app_info);
   void FetchManifest();
   void OnDidPerformInstallableCheck(blink::mojom::ManifestPtr opt_manifest,
-                                    const GURL& manifest_url,
                                     bool valid_manifest_for_web_app,
                                     webapps::InstallableStatusCode error_code);
 
@@ -135,7 +134,6 @@ class FetchManifestAndInstallCommand
 
   InstallErrorLogEntry install_error_log_entry_;
 
-  webapps::AppId app_id_;
   std::unique_ptr<WebAppInstallInfo> web_app_info_;
   blink::mojom::ManifestPtr opt_manifest_;
   bool valid_manifest_for_crafted_web_app_ = false;

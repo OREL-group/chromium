@@ -22,39 +22,4 @@ Object: {
 	tid: number
 	ts: number
 }
-Object: {
-	args: {
-		data: {
-			compositeFailed: 8193
-			unsupportedProperties: [
-				string,
-			]
-		}
-	}
-	cat: string
-	id2: {
-		local: string
-	}
-	name: Animation
-	ph: n
-	pid: number
-	tid: number
-	ts: number
-}
-Object: {
-	args: {
-		data: {
-			state: running
-		}
-	}
-	cat: string
-	id2: {
-		local: string
-	}
-	name: Animation
-	ph: n
-	pid: number
-	tid: number
-	ts: number
-}
 

@@ -13,7 +13,6 @@
 #include "base/containers/contains.h"
 #include "base/containers/heap_array.h"
 #include "base/files/file_util.h"
-#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
@@ -29,7 +28,8 @@
 #include "media/gpu/v4l2/v4l2_framerate_control.h"
 #include "media/gpu/v4l2/v4l2_queue.h"
 #include "media/gpu/v4l2/v4l2_utils.h"
-#include "media/video/h264_parser.h"
+#include "media/parsers/h264_parser.h"
+#include "third_party/abseil-cpp/absl/cleanup/cleanup.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace {
@@ -173,7 +173,7 @@ scoped_refptr<media::DecoderBuffer> ReassembleFragments(
   }
 
   auto reassembled_frame =
-      media::DecoderBuffer::FromArray(std::move(temp_buffer), frame_size);
+      media::DecoderBuffer::FromArray(std::move(temp_buffer));
   // Use the last fragment's timestamp as the |reassembled_frame|'s' timestamp.
   reassembled_frame->set_timestamp(fragments.back()->timestamp());
 
@@ -285,6 +285,7 @@ void V4L2StatefulVideoDecoder::Initialize(const VideoDecoderConfig& config,
       num_decoder_instances_.Increment() < decoder_instances_limit;
   if (!can_create_decoder) {
     num_decoder_instances_.Decrement();
+    LOG(ERROR) << "Too many decoder instances, max=" << decoder_instances_limit;
     std::move(init_cb).Run(DecoderStatus::Codes::kTooManyDecoders);
     return;
   }
@@ -340,10 +341,26 @@ void V4L2StatefulVideoDecoder::Initialize(const VideoDecoderConfig& config,
     // after a flush ("Drain" in the V4L2 documentation) via either a START
     // command or sending a VIDIOC_STREAMOFF - VIDIOC_STREAMON to either queue
     // [1]. The START command is what we issue when seeing the LAST dequeued
-    // CAPTURE buffer, but this is not enough for Hana MTK8173, so we do a full
-    // Reset() (see crbug.com/270039 for historical context). [1]
-    // https://www.kernel.org/doc/html/v5.15/userspace-api/media/v4l/dev-decoder.html#drain
-    Reset(base::DoNothing());
+    // CAPTURE buffer, but this is not enough for Hana MTK8173, so we issue a
+    // full stream off here (see crbug.com/270039 for historical context).
+    // [1] https://www.kernel.org/doc/html/v5.15/userspace-api/media/v4l/dev-decoder.html#drain
+
+    // There should be no pending work.
+    DCHECK(decoder_buffer_and_callbacks_.empty());
+
+    // Invalidate pointers from and cancel all hypothetical in-flight requests
+    // to the WaitOnceForEvents() routine.
+    weak_ptr_factory_for_events_.InvalidateWeakPtrs();
+    weak_ptr_factory_for_CAPTURE_availability_.InvalidateWeakPtrs();
+    cancelable_task_tracker_.TryCancelAll();
+    encoding_timestamps_.clear();
+
+    if (OUTPUT_queue_ && !OUTPUT_queue_->Streamoff()) {
+      LOG(ERROR) << "Failed to stop (VIDIOC_STREAMOFF) |OUTPUT_queue_|.";
+    }
+    if (CAPTURE_queue_ && !CAPTURE_queue_->Streamoff()) {
+      LOG(ERROR) << "Failed to stop (VIDIOC_STREAMOFF) |CAPTURE_queue_|.";
+    }
   }
 
   framerate_control_ = std::make_unique<V4L2FrameRateControl>(
@@ -355,9 +372,7 @@ void V4L2StatefulVideoDecoder::Initialize(const VideoDecoderConfig& config,
   // must wait until there are enough encoded chunks fed into said
   // |OUTPUT_queue_| for the driver to know the output details. The driver will
   // let us know that moment via a V4L2_EVENT_SOURCE_CHANGE.
-  // [1]
-  // https://www.kernel.org/doc/html/v5.15/userspace-api/media/v4l/dev-decoder.html#initialization
-
+  // [1] https://www.kernel.org/doc/html/v5.15/userspace-api/media/v4l/dev-decoder.html#initialization
   OUTPUT_queue_ = base::WrapRefCounted(new V4L2Queue(
       base::BindRepeating(&HandledIoctl, device_fd_.get()),
       /*schedule_poll_cb=*/base::DoNothing(),
@@ -368,14 +383,14 @@ void V4L2StatefulVideoDecoder::Initialize(const VideoDecoderConfig& config,
   const auto profile_as_v4l2_fourcc =
       VideoCodecProfileToV4L2PixFmt(config.profile(), /*slice_based=*/false);
 
-  // In legacy code this was good for up to 1080p.
-  // TODO(mcasas): Increase this by 4x to support 4K decoding, if needed.
-  // Input buffer size is increased from 1024 * 1024 to accommodate bistreams
-  // with big data size (CAPCM1_Sand_E.h264, CAPCMNL1_Sand_E.h264).
+  // Allocate larger |OUTPUT_queue_| buffers for resolutions above 1080p.
   // TODO(hnt): Investigate ways to reduce this size.
-  constexpr size_t kInputBufferMaxSize = 1024 * 1024 * 2;
+  constexpr size_t kMiB = 1024 * 1024;
+  constexpr int kFullHDNumPixels = 1920 * 1080;
+  const size_t kInputBufferInMBs =
+      (config.coded_size().GetArea() <= kFullHDNumPixels) ? 2 : 4;
   const auto v4l2_format = OUTPUT_queue_->SetFormat(
-      profile_as_v4l2_fourcc, gfx::Size(), kInputBufferMaxSize);
+      profile_as_v4l2_fourcc, gfx::Size(), kInputBufferInMBs * kMiB);
   if (!v4l2_format) {
     std::move(init_cb).Run(DecoderStatus::Codes::kFailedToCreateDecoder);
     return;
@@ -424,7 +439,21 @@ void V4L2StatefulVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
                                       DecodeCB decode_cb) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   VLOGF(3) << buffer->AsHumanReadableString(/*verbose=*/false);
-  DCHECK(IsInitialized());
+  if (!IsInitialized()) {
+    DecoderStatus init_result;
+    Initialize(
+        config_, /*low_delay=*/false, /*cdm_context=*/nullptr,
+        base::BindOnce([](DecoderStatus* out, DecoderStatus in) { *out = in; },
+                       &init_result),
+        output_cb_,
+        /*waiting_cb=*/base::DoNothing());
+    if (!init_result.is_ok()) {
+      // Destroy output queue so IsInitialized() return false.
+      OUTPUT_queue_.reset();
+      std::move(decode_cb).Run(init_result);
+      return;
+    }
+  }
 
   if (buffer->end_of_stream()) {
     if (!event_task_runner_) {
@@ -513,10 +542,11 @@ void V4L2StatefulVideoDecoder::Reset(base::OnceClosure closure) {
 
   // In order to preserve the order of the callbacks between Decode() and
   // Reset(), we also trampoline |closure|.
-  base::ScopedClosureRunner scoped_trampoline_reset_cb(
-      base::BindOnce(base::IgnoreResult(&base::SequencedTaskRunner::PostTask),
-                     base::SequencedTaskRunner::GetCurrentDefault(), FROM_HERE,
-                     std::move(closure)));
+  absl::Cleanup scoped_trampoline_reset = [closure =
+                                               std::move(closure)]() mutable {
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, std::move(closure));
+  };
 
   // Invalidate pointers from and cancel all hypothetical in-flight requests
   // to the WaitOnceForEvents() routine.
@@ -536,61 +566,51 @@ void V4L2StatefulVideoDecoder::Reset(base::OnceClosure closure) {
     std::move(media_decode_cb).Run(DecoderStatus::Codes::kAborted);
   }
 
-  if (OUTPUT_queue_ && !OUTPUT_queue_->Streamoff()) {
-    LOG(ERROR) << "Failed to stop (VIDIOC_STREAMOFF) |OUTPUT_queue_|.";
-  }
-  if (CAPTURE_queue_ && !CAPTURE_queue_->Streamoff()) {
-    LOG(ERROR) << "Failed to stop (VIDIOC_STREAMOFF) |CAPTURE_queue_|.";
-  }
+  OUTPUT_queue_.reset();
+  CAPTURE_queue_.reset();
+  device_fd_.reset();
 
-  if (OUTPUT_queue_ && !OUTPUT_queue_->Streamon()) {
-    LOG(ERROR) << "Failed to start (VIDIOC_STREAMON) |OUTPUT_queue_|.";
-  }
-  if (CAPTURE_queue_ && !CAPTURE_queue_->Streamon()) {
-    LOG(ERROR) << "Failed to start (VIDIOC_STREAMON) |CAPTURE_queue_|.";
-  }
-
+  event_task_runner_.reset();
+  num_decoder_instances_.Decrement();
   encoding_timestamps_.clear();
 
   if (flush_cb_) {
     std::move(flush_cb_).Run(DecoderStatus::Codes::kAborted);
   }
-
-  // There might be available resources for |CAPTURE_queue_| from previous
-  // cycles, i.e. from before Reset(); try and make them available for the
-  // driver.
-  if (CAPTURE_queue_) {
-    TryAndEnqueueCAPTUREQueueBuffers();
-  }
 }
 
 bool V4L2StatefulVideoDecoder::NeedsBitstreamConversion() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  NOTREACHED() << "Our only owner VideoDecoderPipeline never calls here";
+  NOTREACHED_IN_MIGRATION()
+      << "Our only owner VideoDecoderPipeline never calls here";
   return false;
 }
 
 bool V4L2StatefulVideoDecoder::CanReadWithoutStalling() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  NOTREACHED() << "Our only owner VideoDecoderPipeline never calls here";
+  NOTREACHED_IN_MIGRATION()
+      << "Our only owner VideoDecoderPipeline never calls here";
   return true;
 }
 
 int V4L2StatefulVideoDecoder::GetMaxDecodeRequests() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  NOTREACHED() << "Our only owner VideoDecoderPipeline never calls here";
+  NOTREACHED_IN_MIGRATION()
+      << "Our only owner VideoDecoderPipeline never calls here";
   return 4;
 }
 
 VideoDecoderType V4L2StatefulVideoDecoder::GetDecoderType() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  NOTREACHED() << "Our only owner VideoDecoderPipeline never calls here";
+  NOTREACHED_IN_MIGRATION()
+      << "Our only owner VideoDecoderPipeline never calls here";
   return VideoDecoderType::kV4L2;
 }
 
 bool V4L2StatefulVideoDecoder::IsPlatformDecoder() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  NOTREACHED() << "Our only owner VideoDecoderPipeline never calls here";
+  NOTREACHED_IN_MIGRATION()
+      << "Our only owner VideoDecoderPipeline never calls here";
   return true;
 }
 
@@ -757,7 +777,11 @@ bool V4L2StatefulVideoDecoder::InitializeCAPTUREQueue() {
 
   const auto allocated_buffers = CAPTURE_queue_->AllocateBuffers(
       v4l2_num_buffers, buffer_type, /*incoherent=*/false);
-  CHECK_GE(allocated_buffers, v4l2_num_buffers);
+  if (allocated_buffers < v4l2_num_buffers) {
+    LOGF(ERROR) << "Failed to allocate enough CAPTURE buffers, requested= "
+                << v4l2_num_buffers << " actual= " << allocated_buffers;
+    return false;
+  }
   if (!CAPTURE_queue_->Streamon()) {
     return false;
   }
@@ -843,10 +867,19 @@ void V4L2StatefulVideoDecoder::RearmCAPTUREQueueMonitoring() {
       weak_ptr_factory_for_events_.GetWeakPtr()));
   // |client_| needs to be told of a hypothetical resolution change (to wait for
   // frames in flight etc). Once that's done they will ping us via
-  // ApplyResolutionChange().
+  // ApplyResolutionChange(). We use a trampoline lambda to make sure
+  // |weak_ptr_factory_for_events_|'s pointers have not been invalidated (e.g.
+  // by a Reset()).
   auto resolution_change_callback =
       base::BindPostTaskToCurrentDefault(base::BindOnce(
-          &VideoDecoderMixin::Client::PrepareChangeResolution, client_));
+          [](base::WeakPtr<VideoDecoderMixin::Client> client,
+             base::WeakPtr<V4L2StatefulVideoDecoder> weak_this) {
+            if (weak_this && client) {
+              client->PrepareChangeResolution();
+            }
+          },
+          client_, weak_ptr_factory_for_events_.GetWeakPtr()));
+
   // Here we launch a single "wait for a |CAPTURE_queue_| event" monitoring
   // Task (via an infinite-wait POSIX poll()). It lives on a background
   // SequencedTaskRunner whose lifetime we don't control (comes from a pool), so
@@ -1181,12 +1214,11 @@ H264FrameReassembler::Process(scoped_refptr<DecoderBuffer> buffer,
   std::vector<std::pair<scoped_refptr<DecoderBuffer>, VideoDecoder::DecodeCB>>
       whole_frames;
 
-  auto* buffer_pointer = buffer->data();
-  auto remaining_buffer_size = buffer->size();
+  auto remaining = base::span(*buffer);
 
   do {
     const auto nalu_info =
-        FindH264FrameBoundary(buffer_pointer, remaining_buffer_size);
+        FindH264FrameBoundary(remaining.data(), remaining.size());
     if (!nalu_info.has_value()) {
       LOG(ERROR) << "Failed parsing H.264 DecoderBuffer";
       std::move(decode_cb).Run(DecoderStatus::Codes::kFailed);
@@ -1198,30 +1230,28 @@ H264FrameReassembler::Process(scoped_refptr<DecoderBuffer> buffer,
     if (nalu_info->is_start_of_new_frame && HasFragments()) {
       VLOGF(4) << frame_fragments_.size()
                << " currently stored frame fragment(s) can be reassembled.";
-      whole_frames.emplace_back(std::make_pair(
-          ReassembleFragments(frame_fragments_), base::DoNothing()));
+      whole_frames.emplace_back(ReassembleFragments(frame_fragments_),
+                                base::DoNothing());
     }
 
     if (nalu_info->is_whole_frame) {
       VLOGF(3) << "Found a whole frame, size=" << found_nalu_size << " bytes";
-      whole_frames.emplace_back(std::make_pair(
-          DecoderBuffer::CopyFrom(buffer_pointer, found_nalu_size),
-          base::DoNothing()));
+      whole_frames.emplace_back(
+          DecoderBuffer::CopyFrom(remaining.first(found_nalu_size)),
+          base::DoNothing());
       whole_frames.back().first->set_timestamp(buffer->timestamp());
 
-      buffer_pointer += found_nalu_size;
-      remaining_buffer_size -= found_nalu_size;
+      remaining = remaining.subspan(found_nalu_size);
       continue;
     }
 
     VLOGF(4) << "This was a frame fragment; storing it for later reassembly.";
     frame_fragments_.emplace_back(
-        DecoderBuffer::CopyFrom(buffer_pointer, found_nalu_size));
+        DecoderBuffer::CopyFrom(remaining.first(found_nalu_size)));
     frame_fragments_.back()->set_timestamp(buffer->timestamp());
 
-    buffer_pointer += found_nalu_size;
-    remaining_buffer_size -= found_nalu_size;
-  } while (remaining_buffer_size);
+    remaining = remaining.subspan(found_nalu_size);
+  } while (!remaining.empty());
 
   // |decode_cb| is used to signal to our client that encoded chunks have been
   // "accepted", and that we are ready to receive more. If we have found (some)

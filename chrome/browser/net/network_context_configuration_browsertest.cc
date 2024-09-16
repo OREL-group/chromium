@@ -218,6 +218,11 @@ class NetworkContextConfigurationBrowserTest
 
   NetworkContextConfigurationBrowserTest()
       : https_server_(net::EmbeddedTestServer::TYPE_HTTPS) {
+    // TODO(crbug.com/334954143) Fix the tests when turning on the reduce
+    // accept-language feature.
+    scoped_feature_list_.InitWithFeatures(
+        {}, {network::features::kReduceAcceptLanguage});
+
     // Have to get a port before setting up the command line, but can only set
     // up the connection listener after there's a main thread, so can't start
     // the test server here.
@@ -326,7 +331,7 @@ class NetworkContextConfigurationBrowserTest
     switch (network_context_type) {
       case NetworkContextType::kSystem:
       case NetworkContextType::kSafeBrowsing:
-        NOTREACHED() << "Network context has no storage partition";
+        NOTREACHED_IN_MIGRATION() << "Network context has no storage partition";
         return nullptr;
       case NetworkContextType::kProfile:
         return browser()->profile()->GetDefaultStoragePartition();
@@ -350,7 +355,7 @@ class NetworkContextConfigurationBrowserTest
         return incognito_->profile()->GetStoragePartition(kIncognitoConfig);
       }
     }
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return nullptr;
   }
 
@@ -377,7 +382,7 @@ class NetworkContextConfigurationBrowserTest
             ->GetURLLoaderFactoryForBrowserProcess()
             .get();
     }
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return nullptr;
   }
 
@@ -402,7 +407,7 @@ class NetworkContextConfigurationBrowserTest
         return GetStoragePartitionForContextType(network_context_type)
             ->GetNetworkContext();
     }
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return nullptr;
   }
 
@@ -419,7 +424,7 @@ class NetworkContextConfigurationBrowserTest
       case NetworkContextType::kOnDiskAppWithIncognitoProfile:
         return StorageType::kMemory;
     }
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return StorageType::kNone;
   }
 
@@ -435,7 +440,7 @@ class NetworkContextConfigurationBrowserTest
       case NetworkContextType::kOnDiskApp:
         return StorageType::kDisk;
     }
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return StorageType::kNone;
   }
 
@@ -733,6 +738,7 @@ class NetworkContextConfigurationBrowserTest
   std::unique_ptr<network::SimpleURLLoader> live_during_shutdown_simple_loader_;
   std::unique_ptr<content::SimpleURLLoaderTestHelper>
       live_during_shutdown_simple_loader_helper_;
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 IN_PROC_BROWSER_TEST_P(NetworkContextConfigurationBrowserTest,

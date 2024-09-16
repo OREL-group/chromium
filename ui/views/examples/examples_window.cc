@@ -152,7 +152,8 @@ class ExamplesWindowContents : public WidgetDelegateView,
     if (on_close_)
       std::move(on_close_).Run();
   }
-  gfx::Size CalculatePreferredSize() const override {
+  gfx::Size CalculatePreferredSize(
+      const SizeBounds& /*available_size*/) const override {
     gfx::Size size(800, 300);
     for (size_t i = 0; i < tabbed_pane_->GetTabCount(); i++) {
       size.set_height(std::max(
@@ -198,7 +199,8 @@ void ShowExamplesWindow(base::OnceClosure on_close,
   } else {
     examples = GetExamplesToShow(std::move(examples));
     Widget* widget = new Widget;
-    Widget::InitParams params;
+    Widget::InitParams params(Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET,
+                              Widget::InitParams::TYPE_WINDOW);
     params.delegate =
         new ExamplesWindowContents(std::move(on_close), std::move(examples));
     params.context = window_context;

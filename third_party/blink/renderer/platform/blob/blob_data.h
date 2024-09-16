@@ -49,7 +49,7 @@
 #include "mojo/public/cpp/system/data_pipe.h"
 #include "third_party/blink/public/mojom/blob/data_element.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/blob/file_backed_blob_factory.mojom-blink-forward.h"
-#include "third_party/blink/renderer/platform/weborigin/kurl.h"
+#include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
@@ -87,7 +87,7 @@ class PLATFORM_EXPORT RawData : public ThreadSafeRefCounted<RawData> {
   }
 
   const char* data() const { return data_.data(); }
-  size_t length() const { return data_.size(); }
+  size_t size() const { return data_.size(); }
   Vector<char>* MutableData() { return &data_; }
 
  private:
@@ -120,7 +120,7 @@ class PLATFORM_EXPORT BlobData {
   }
   Vector<mojom::blink::DataElementPtr> ReleaseElements();
 
-  void AppendBytes(const void*, size_t length);
+  void AppendBytes(base::span<const uint8_t> bytes);
   void AppendData(scoped_refptr<RawData>);
 
   // The given blob must not be a file with unknown size. Please use the

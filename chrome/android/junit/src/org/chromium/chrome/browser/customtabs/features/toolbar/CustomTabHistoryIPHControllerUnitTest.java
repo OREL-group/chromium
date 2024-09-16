@@ -7,6 +7,7 @@ package org.chromium.chrome.browser.customtabs.features.toolbar;
 import static org.junit.Assert.assertEquals;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import android.app.Activity;
@@ -17,7 +18,6 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
@@ -26,9 +26,8 @@ import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.Callback;
-import org.chromium.base.supplier.Supplier;
+import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ActivityTabProvider;
@@ -55,12 +54,11 @@ public class CustomTabHistoryIPHControllerUnitTest {
     public ActivityScenarioRule<CustomTabActivity> mActivityScenarioRule =
             new ActivityScenarioRule<>(CustomTabActivity.class);
 
-    @Rule public TestRule mProcessor = new Features.JUnitProcessor();
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
 
     @Mock private ActivityTabProvider mTabProvider;
     @Mock private UserEducationHelper mUserEducationHelper;
-    @Mock private Supplier<Profile> mProfileSupplier;
+    @Mock private Profile mMockProfile;
     @Mock private AppMenuHandler mAppMenuHandler;
     @Mock private Tracker mTracker;
     @Mock private Tab mTab;
@@ -73,10 +71,11 @@ public class CustomTabHistoryIPHControllerUnitTest {
         when(mTracker.isInitialized()).thenReturn(true);
         when(mTracker.wouldTriggerHelpUI(FeatureConstants.CCT_HISTORY_FEATURE)).thenReturn(true);
         TrackerFactory.setTrackerForTests(mTracker);
-        when(mProfileSupplier.hasValue()).thenReturn(true);
+        when(mMockProfile.isOffTheRecord()).thenReturn(false);
+        var profileSupplier = new ObservableSupplierImpl<>(mMockProfile);
         mController =
                 new CustomTabHistoryIPHController(
-                        mActivity, mTabProvider, mProfileSupplier, mAppMenuHandler);
+                        mActivity, mTabProvider, profileSupplier, mAppMenuHandler);
         mController.setUserEducationHelperForTesting(mUserEducationHelper);
     }
 
@@ -97,6 +96,14 @@ public class CustomTabHistoryIPHControllerUnitTest {
         assertEquals(R.string.custom_tab_history_iph_bubble_text, cmd.accessibilityStringId);
         assertEquals(mActivity.findViewById(R.id.menu_button_wrapper), cmd.anchorView);
         assertEquals(HighlightShape.CIRCLE, cmd.highlightParams.getShape());
+    }
+
+    @Test
+    public void testNoIPHInOTR() {
+        when(mMockProfile.isOffTheRecord()).thenReturn(true);
+        var tabObserver = mController.getTabObserverForTesting();
+        tabObserver.onPageLoadStarted(mTab, JUnitTestGURLs.EXAMPLE_URL);
+        verifyNoInteractions(mUserEducationHelper);
     }
 
     @Test

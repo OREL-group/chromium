@@ -21,7 +21,6 @@ import org.jni_zero.CalledByNative;
 import org.jni_zero.JNINamespace;
 
 import org.chromium.base.Log;
-import org.chromium.base.compat.ApiHelperForN;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -352,7 +351,7 @@ class MediaCodecUtil {
                 // To work around an issue that we cannot get the codec info
                 // from the secure decoder, create an insecure decoder first
                 // so that we can query its codec info. http://b/15587335.
-                // Futhermore, it is impossible to create an insecure
+                // Furthermore, it is impossible to create an insecure
                 // decoder if the secure one is already created.
                 MediaCodec insecureCodec = MediaCodec.createByCodecName(decoderName);
                 result.supportsAdaptivePlayback =
@@ -664,12 +663,11 @@ class MediaCodecUtil {
     }
 
     /**
-     * Sets the encryption pattern value if and only if CryptoInfo.setPattern method is
-     * supported.
+     * Sets the encryption pattern value if and only if CryptoInfo.setPattern method is supported.
      * Note that if platformSupportsCbcsEncryption returns true, then this function will set the
      * pattern.
      */
     static void setPatternIfSupported(CryptoInfo cryptoInfo, int encrypt, int skip) {
-        ApiHelperForN.setCryptoInfoPattern(cryptoInfo, encrypt, skip);
+        cryptoInfo.setPattern(new CryptoInfo.Pattern(encrypt, skip));
     }
 }

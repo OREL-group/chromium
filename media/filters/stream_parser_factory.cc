@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/filters/stream_parser_factory.h"
 
 #include <stddef.h>
@@ -577,15 +582,15 @@ std::unique_ptr<StreamParser> StreamParserFactory::CreateRelaxedParser(
       // TODO(issue/40253609): Figure out how to determine SBR presence.
       return std::make_unique<mp2t::Mp2tStreamParser>(std::nullopt, false);
     }
+    case RelaxedParserSupportedType::kAAC: {
+      return std::make_unique<ADTSStreamParser>();
+    }
     case RelaxedParserSupportedType::kMP4: {
       // TODO(issue/40253609): Figure out how to determine presence of SBR,
       // FLAC, IAMF, DolbyVision.
       return enable_mp4 ? std::make_unique<mp4::MP4StreamParser>(
                               std::nullopt, false, true, false, false)
                         : nullptr;
-    }
-    case RelaxedParserSupportedType::kAAC: {
-      return enable_mp4 ? std::make_unique<ADTSStreamParser>() : nullptr;
     }
   }
 }
@@ -736,7 +741,7 @@ std::unique_ptr<StreamParser> StreamParserFactory::Create(
   std::vector<CodecInfo::HistogramTag> audio_codecs;
   std::vector<CodecInfo::HistogramTag> video_codecs;
 
-  // TODO(crbug.com/535738): Relax the requirement for specific codecs (allow
+  // TODO(crbug.com/41204005): Relax the requirement for specific codecs (allow
   // kMaybeSupported here), and relocate the logging to the parser configuration
   // callback. This creation method is called in AddId(), and also in
   // CanChangeType() and ChangeType(), so potentially overlogs codecs leading to
@@ -776,7 +781,7 @@ std::unique_ptr<StreamParser> StreamParserFactory::Create(
     std::unique_ptr<AudioDecoderConfig> audio_config) {
   DCHECK(audio_config);
 
-  // TODO(crbug.com/1144908): Histogram-log the codec used for buffering
+  // TODO(crbug.com/40155657): Histogram-log the codec used for buffering
   // WebCodecs in MSE?
 
   return std::make_unique<media::WebCodecsEncodedChunkStreamParser>(
@@ -788,7 +793,7 @@ std::unique_ptr<StreamParser> StreamParserFactory::Create(
     std::unique_ptr<VideoDecoderConfig> video_config) {
   DCHECK(video_config);
 
-  // TODO(crbug.com/1144908): Histogram-log the codec used for buffering
+  // TODO(crbug.com/40155657): Histogram-log the codec used for buffering
   // WebCodecs in MSE?
 
   return std::make_unique<media::WebCodecsEncodedChunkStreamParser>(

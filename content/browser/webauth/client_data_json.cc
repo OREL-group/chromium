@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "content/browser/webauth/client_data_json.h"
 
 #include <string_view>
@@ -10,7 +15,6 @@
 #include "base/check.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/utf_string_conversion_utils.h"
 #include "content/public/common/content_features.h"
 
@@ -68,10 +72,12 @@ std::string ToJSONString(std::string_view in) {
 
 ClientDataJsonParams::ClientDataJsonParams(ClientDataRequestType type,
                                            url::Origin origin,
+                                           url::Origin top_origin,
                                            std::vector<uint8_t> challenge,
                                            bool is_cross_origin_iframe)
     : type(type),
       origin(std::move(origin)),
+      top_origin(std::move(top_origin)),
       challenge(std::move(challenge)),
       is_cross_origin_iframe(is_cross_origin_iframe) {}
 ClientDataJsonParams::ClientDataJsonParams(ClientDataJsonParams&&) = default;
@@ -101,8 +107,12 @@ std::string BuildClientDataJson(ClientDataJsonParams params) {
   ret.append(R"(,"origin":)");
   ret.append(ToJSONString(params.origin.Serialize()));
 
+  std::string serialized_top_origin =
+      ToJSONString(params.top_origin.Serialize());
   if (params.is_cross_origin_iframe) {
     ret.append(R"(,"crossOrigin":true)");
+    ret.append(R"(,"topOrigin":)");
+    ret.append(serialized_top_origin);
   } else {
     ret.append(R"(,"crossOrigin":false)");
   }
@@ -114,7 +124,7 @@ std::string BuildClientDataJson(ClientDataJsonParams params) {
     ret.append(ToJSONString(params.payment_rp));
 
     ret.append(R"(,"topOrigin":)");
-    ret.append(ToJSONString(params.payment_top_origin));
+    ret.append(serialized_top_origin);
 
     if (params.payment_options->payee_name.has_value()) {
       ret.append(R"(,"payeeName":)");

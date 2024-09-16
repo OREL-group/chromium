@@ -121,7 +121,9 @@ void GeolocationServiceImpl::CreateGeolocationWithPermissionStatus(
   auto requesting_url =
       render_frame_host_->GetMainFrame()->GetLastCommittedURL();
 
-  geolocation_context_->BindGeolocation(std::move(receiver), requesting_url);
+  geolocation_context_->BindGeolocation(
+      std::move(receiver), requesting_url,
+      device::mojom::GeolocationClientId::kGeolocationServiceImpl);
   subscription_id_ =
       PermissionControllerImpl::FromBrowserContext(
           render_frame_host_->GetBrowserContext())
@@ -129,6 +131,7 @@ void GeolocationServiceImpl::CreateGeolocationWithPermissionStatus(
               blink::PermissionType::GEOLOCATION,
               /*render_process_host=*/nullptr, render_frame_host_,
               requesting_url,
+              /*should_include_device_status=*/false,
               base::BindRepeating(
                   &GeolocationServiceImpl::HandlePermissionStatusChange,
                   weak_factory_.GetWeakPtr()));

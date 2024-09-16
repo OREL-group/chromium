@@ -13,6 +13,7 @@
 #include "base/ranges/algorithm.h"
 #include "components/password_manager/core/browser/form_saver.h"
 #include "components/password_manager/core/browser/password_feature_manager.h"
+#include "components/password_manager/core/browser/password_form.h"
 #include "components/password_manager/core/browser/password_form_manager_for_ui.h"
 #include "components/password_manager/core/browser/password_manager_client.h"
 #include "components/password_manager/core/browser/password_manager_driver.h"
@@ -27,8 +28,9 @@ std::vector<PasswordForm> DeepCopyVector(
     const std::vector<raw_ptr<const PasswordForm, VectorExperimental>>& forms) {
   std::vector<PasswordForm> result;
   result.reserve(forms.size());
-  for (const PasswordForm* form : forms)
+  for (const PasswordForm* form : forms) {
     result.emplace_back(*form);
+  }
   return result;
 }
 
@@ -42,6 +44,7 @@ class PasswordDataForUI : public PasswordFormManagerForUI {
           matches,
       const std::vector<raw_ptr<const PasswordForm, VectorExperimental>>&
           federated,
+      PasswordForm::Store store_for_saving,
       base::RepeatingCallback<void(bool, const PasswordForm&)>
           bubble_interaction);
   ~PasswordDataForUI() override = default;
@@ -51,18 +54,15 @@ class PasswordDataForUI : public PasswordFormManagerForUI {
   // PasswordFormManagerForUI:
   const GURL& GetURL() const override;
   base::span<const PasswordForm> GetBestMatches() const override;
-  std::vector<raw_ptr<const PasswordForm, VectorExperimental>>
-  GetFederatedMatches() const override;
+  base::span<const PasswordForm> GetFederatedMatches() const override;
   const PasswordForm& GetPendingCredentials() const override;
   metrics_util::CredentialSourceType GetCredentialSource() const override;
   PasswordFormMetricsRecorder* GetMetricsRecorder() override;
   base::span<const InteractionsStats> GetInteractionsStats() const override;
-  std::vector<raw_ptr<const PasswordForm, VectorExperimental>>
-  GetInsecureCredentials() const override;
+  base::span<const PasswordForm> GetInsecureCredentials() const override;
   bool IsBlocklisted() const override;
   bool IsMovableToAccountStore() const override;
   void Save() override;
-  void Update(const PasswordForm& credentials_to_update) override;
   bool IsUpdateAffectingPasswordsStoredInTheGoogleAccount() const override;
   void OnUpdateUsernameFromPrompt(const std::u16string& new_username) override;
   void OnUpdatePasswordFromPrompt(const std::u16string& new_password) override;
@@ -73,12 +73,15 @@ class PasswordDataForUI : public PasswordFormManagerForUI {
   void OnPasswordsRevealed() override;
   void MoveCredentialsToAccountStore() override;
   void BlockMovingCredentialsToAccountStore() override;
+  PasswordForm::Store GetPasswordStoreForSaving(
+      const PasswordForm& password_form) const override;
 
  private:
   PasswordForm pending_form_;
   std::vector<PasswordForm> matches_;
   const std::vector<PasswordForm> federated_matches_;
   const std::vector<PasswordForm> non_federated_matches_;
+  PasswordForm::Store store_for_saving_;
 
   // Observer that waits for bubble interaction.
   // The first parameter is true iff the bubble was accepted.
@@ -92,13 +95,16 @@ PasswordDataForUI::PasswordDataForUI(
     const std::vector<raw_ptr<const PasswordForm, VectorExperimental>>& matches,
     const std::vector<raw_ptr<const PasswordForm, VectorExperimental>>&
         federated,
+    PasswordForm::Store store_for_saving,
     base::RepeatingCallback<void(bool, const PasswordForm&)> bubble_interaction)
     : pending_form_(std::move(pending_form)),
       federated_matches_(DeepCopyVector(federated)),
       non_federated_matches_(DeepCopyVector(matches)),
+      store_for_saving_(store_for_saving),
       bubble_interaction_cb_(std::move(bubble_interaction)) {
-  for (const PasswordForm& form : non_federated_matches_)
+  for (const PasswordForm& form : non_federated_matches_) {
     matches_.push_back(form);
+  }
 }
 
 const GURL& PasswordDataForUI::GetURL() const {
@@ -109,13 +115,8 @@ base::span<const PasswordForm> PasswordDataForUI::GetBestMatches() const {
   return matches_;
 }
 
-std::vector<raw_ptr<const PasswordForm, VectorExperimental>>
-PasswordDataForUI::GetFederatedMatches() const {
-  std::vector<raw_ptr<const PasswordForm, VectorExperimental>> result(
-      federated_matches_.size());
-  base::ranges::transform(federated_matches_, result.begin(),
-                          [](const PasswordForm& form) { return &form; });
-  return result;
+base::span<const PasswordForm> PasswordDataForUI::GetFederatedMatches() const {
+  return federated_matches_;
 }
 
 const PasswordForm& PasswordDataForUI::GetPendingCredentials() const {
@@ -136,8 +137,8 @@ base::span<const InteractionsStats> PasswordDataForUI::GetInteractionsStats()
   return {};
 }
 
-std::vector<raw_ptr<const PasswordForm, VectorExperimental>>
-PasswordDataForUI::GetInsecureCredentials() const {
+base::span<const PasswordForm> PasswordDataForUI::GetInsecureCredentials()
+    const {
   return {};
 }
 
@@ -153,11 +154,6 @@ bool PasswordDataForUI::IsMovableToAccountStore() const {
 
 void PasswordDataForUI::Save() {
   bubble_interaction_cb_.Run(true, pending_form_);
-}
-
-void PasswordDataForUI::Update(const PasswordForm&) {
-  // The method is obsolete.
-  NOTREACHED();
 }
 
 bool PasswordDataForUI::IsUpdateAffectingPasswordsStoredInTheGoogleAccount()
@@ -196,14 +192,20 @@ void PasswordDataForUI::MoveCredentialsToAccountStore() {}
 
 void PasswordDataForUI::BlockMovingCredentialsToAccountStore() {}
 
+PasswordForm::Store PasswordDataForUI::GetPasswordStoreForSaving(
+    const PasswordForm& password_form) const {
+  return store_for_saving_;
+}
+
 // Returns a form from |matches| that causes a name conflict with |generated|.
 const PasswordForm* FindUsernameConflict(
     const PasswordForm& generated,
     const std::vector<raw_ptr<const PasswordForm, VectorExperimental>>&
         matches) {
   for (const password_manager::PasswordForm* form : matches) {
-    if (form->username_value == generated.username_value)
+    if (form->username_value == generated.username_value) {
       return form;
+    }
   }
   return nullptr;
 }
@@ -337,6 +339,7 @@ void PasswordGenerationManager::GeneratedPasswordAccepted(
         non_federated_matches,
     const std::vector<raw_ptr<const PasswordForm, VectorExperimental>>&
         federated_matches,
+    PasswordForm::Store store_for_saving,
     base::WeakPtr<PasswordManagerDriver> driver) {
   // Clear the username value if there are already saved credentials with
   // the same username in order to prevent overwriting.
@@ -347,6 +350,7 @@ void PasswordGenerationManager::GeneratedPasswordAccepted(
     if (conflict) {
       auto bubble_launcher = std::make_unique<PasswordDataForUI>(
           std::move(generated), non_federated_matches, federated_matches,
+          store_for_saving,
           base::BindRepeating(&PasswordGenerationManager::OnPresaveBubbleResult,
                               weak_factory_.GetWeakPtr(), std::move(driver)));
       client_->PromptUserToSaveOrUpdatePassword(std::move(bubble_launcher),
@@ -364,8 +368,9 @@ void PasswordGenerationManager::PresaveGeneratedPassword(
   CHECK(!generated.password_value.empty());
   // Clear the username value if there are already saved credentials with
   // the same username in order to prevent overwriting.
-  if (FindUsernameConflict(generated, matches))
+  if (FindUsernameConflict(generated, matches)) {
     generated.username_value.clear();
+  }
   generated.date_created = base::Time::Now();
   if (presaved_) {
     form_saver->UpdateReplace(generated, {} /* matches */,
@@ -389,9 +394,9 @@ void PasswordGenerationManager::PasswordNoLongerGenerated(
 
 void PasswordGenerationManager::CommitGeneratedPassword(
     PasswordForm generated,
-    const std::vector<raw_ptr<const PasswordForm, VectorExperimental>>& matches,
+    base::span<const PasswordForm> matches,
     const std::u16string& old_password,
-    const PendingCredentialsStates& states,
+    PasswordForm::Store store_to_save,
     FormSaver* profile_store_form_saver,
     FormSaver* account_store_form_saver) {
   DCHECK(presaved_);
@@ -404,14 +409,16 @@ void PasswordGenerationManager::CommitGeneratedPassword(
         initial_generated_password_, generated.password_value);
   }
 
-  if (account_store_form_saver &&
-      client_->GetPasswordFeatureManager()->IsOptedInForAccountStorage()) {
+  if ((store_to_save & PasswordForm::Store::kAccountStore) ==
+      PasswordForm::Store::kAccountStore) {
     account_store_form_saver->UpdateReplace(
         generated, AccountStoreMatches(matches), old_password,
         presaved_.value() /* old_primary_key */);
     // When the credential with the same username is detected in the profile
-    // store, then update in there too.
-    if (states.profile_store_state == PendingCredentialsState::UPDATE) {
+    // store, then update in there too (here UpdateReplace is not necessary
+    // because the pre-saved one would be saved in the account store).
+    if ((store_to_save & PasswordForm::Store::kProfileStore) ==
+        PasswordForm::Store::kProfileStore) {
       profile_store_form_saver->Update(generated, ProfileStoreMatches(matches),
                                        old_password);
     }

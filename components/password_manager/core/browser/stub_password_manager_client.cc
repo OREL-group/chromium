@@ -98,6 +98,11 @@ PasswordReuseManager* StubPasswordManagerClient::GetPasswordReuseManager()
   return nullptr;
 }
 
+const PasswordManagerInterface* StubPasswordManagerClient::GetPasswordManager()
+    const {
+  return nullptr;
+}
+
 const GURL& StubPasswordManagerClient::GetLastCommittedURL() const {
   return GURL::EmptyGURL();
 }
@@ -148,6 +153,13 @@ StubPasswordManagerClient::GetMetricsRecorder() {
   return base::OptionalToPtr(metrics_recorder_);
 }
 
+#if BUILDFLAG(IS_ANDROID)
+FirstCctPageLoadPasswordsUkmRecorder*
+StubPasswordManagerClient::GetFirstCctPageLoadUkmRecorder() {
+  return nullptr;
+}
+#endif
+
 signin::IdentityManager* StubPasswordManagerClient::GetIdentityManager() {
   return nullptr;
 }
@@ -176,6 +188,9 @@ version_info::Channel StubPasswordManagerClient::GetChannel() const {
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || \
     BUILDFLAG(IS_CHROMEOS)
+void StubPasswordManagerClient::OpenPasswordDetailsBubble(
+    const password_manager::PasswordForm& form) {}
+
 std::unique_ptr<
     password_manager::PasswordCrossDomainConfirmationPopupController>
 StubPasswordManagerClient::ShowCrossDomainConfirmationPopup(

@@ -109,7 +109,8 @@ HandlerSigninReason GetHandlerSigninReason(const GURL& url) {
     case signin_metrics::Reason::kFetchLstOnly:
       return HandlerSigninReason::kFetchLstOnly;
     default:
-      NOTREACHED() << "Unexpected signin reason: " << static_cast<int>(reason);
+      NOTREACHED_IN_MIGRATION()
+          << "Unexpected signin reason: " << static_cast<int>(reason);
       return HandlerSigninReason::kForcedSigninPrimaryAccount;
   }
 }
@@ -120,7 +121,7 @@ class ForcedSigninTurnSyncOnHelperDelegate
     : public TurnSyncOnHelperDelegateImpl {
  public:
   explicit ForcedSigninTurnSyncOnHelperDelegate(Browser* browser)
-      : TurnSyncOnHelperDelegateImpl(browser) {}
+      : TurnSyncOnHelperDelegateImpl(browser, /*is_sync_promo=*/false) {}
 
  protected:
   void ShouldEnterpriseConfirmationPromptForNewProfile(
@@ -134,7 +135,7 @@ class ForcedSigninTurnSyncOnHelperDelegate
       const std::string& previous_email,
       const std::string& new_email,
       signin::SigninChoiceCallback callback) override {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
   }
 };
 
@@ -219,7 +220,7 @@ void OnSigninComplete(Profile* profile,
   DCHECK(signin_util::IsForceSigninEnabled());
   signin::IdentityManager* identity_manager =
       IdentityManagerFactory::GetForProfile(profile);
-  bool can_be_managed = chrome::enterprise_util::ProfileCanBeManaged(profile);
+  bool can_be_managed = enterprise_util::ProfileCanBeManaged(profile);
   if (can_be_managed && !password.empty()) {
     password_manager::PasswordReuseManager* reuse_manager =
         PasswordReuseManagerFactory::GetForProfile(profile);
@@ -356,7 +357,8 @@ void InlineSigninHelper::OnClientOAuthSuccessAndBrowserOpened(
 
     handler_->SendLSTFetchResultsMessage(base::Value(std::move(args)));
 #else
-    NOTREACHED() << "Google Credential Provider is only available on Windows";
+    NOTREACHED_IN_MIGRATION()
+        << "Google Credential Provider is only available on Windows";
 #endif  // BUILDFLAG(IS_WIN)
     base::SingleThreadTaskRunner::GetCurrentDefault()->DeleteSoon(FROM_HERE,
                                                                   this);
@@ -388,7 +390,7 @@ void InlineSigninHelper::OnClientOAuthSuccessAndBrowserOpened(
 
   if (reason == HandlerSigninReason::kReauthentication) {
     DCHECK(identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSignin) &&
-           chrome::enterprise_util::UserAcceptedAccountManagement(profile_));
+           enterprise_util::UserAcceptedAccountManagement(profile_));
     // TODO(b/278545484): support LST binding for refresh tokens created by
     // InlineSigninHelper.
     identity_manager->GetAccountsMutator()->AddOrUpdateAccount(

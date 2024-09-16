@@ -14,12 +14,11 @@ import static org.mockito.Mockito.verify;
 import android.app.Activity;
 import android.view.View;
 import android.view.View.MeasureSpec;
+import android.view.ViewGroup;
 
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
@@ -27,9 +26,6 @@ import org.robolectric.Robolectric;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features;
-import org.chromium.base.test.util.Features.EnableFeatures;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.omnibox.suggestions.base.SuggestionLayout.LayoutParams;
 import org.chromium.chrome.browser.omnibox.test.R;
 
@@ -37,7 +33,6 @@ import org.chromium.chrome.browser.omnibox.test.R;
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class BaseSuggestionViewTest {
-    public @Rule TestRule mProcessor = new Features.JUnitProcessor();
     private static final int CONTENT_VIEW_REPORTED_HEIGHT_PX = 10;
     // Used as a (fixed) width of a refine icon.
     private int mActionIconWidthPx;
@@ -595,18 +590,10 @@ public class BaseSuggestionViewTest {
     }
 
     @Test
-    @EnableFeatures(ChromeFeatureList.OMNIBOX_MODERNIZE_VISUAL_UPDATE)
-    public void testRevamp_smallestMargins() {
-        View contentView = new View(mActivity);
-        contentView.setMinimumHeight(CONTENT_VIEW_REPORTED_HEIGHT_PX);
-        BaseSuggestionViewForTest suggestionViewForTest =
-                new BaseSuggestionViewForTest(contentView);
-
-        Assert.assertEquals(mDecorationIconWidthPx, suggestionViewForTest.mDecorationIconWidthPx);
-        Assert.assertEquals(
-                mSemicompactSuggestionViewHeight, suggestionViewForTest.mContentHeightPx);
-        Assert.assertEquals(
-                mCompactSuggestionViewHeight, suggestionViewForTest.mCompactContentHeightPx);
+    public void layout_dimensions() {
+        Assert.assertEquals(mDecorationIconWidthPx, mView.mDecorationIconWidthPx);
+        Assert.assertEquals(mSemicompactSuggestionViewHeight, mView.mContentHeightPx);
+        Assert.assertEquals(mCompactSuggestionViewHeight, mView.mCompactContentHeightPx);
     }
 
     @Test
@@ -624,14 +611,24 @@ public class BaseSuggestionViewTest {
         final int paddingStart = 11;
 
         mView.setPaddingRelative(paddingStart, 0, 0, 0);
-        View decorationView = mView.getChildAt(0);
-        decorationView.setLayoutParams(SuggestionLayout.LayoutParams.forLargeDecorationIcon());
+        mView.setUseLargeDecorationIcon(true);
         executeLayoutTest(giveSuggestionWidth, giveContentHeight, View.LAYOUT_DIRECTION_LTR);
         verifyViewLayout(
-                decorationView,
+                mView.getChildAt(0),
                 paddingStart + mLargeDecorationIconWidthPx / 2,
                 mSemicompactSuggestionViewHeight / 2,
                 paddingStart + mLargeDecorationIconWidthPx / 2,
                 mSemicompactSuggestionViewHeight);
+
+        mView.decorationIcon.getLayoutParams().width = 66;
+        mView.decorationIcon.getLayoutParams().height = ViewGroup.LayoutParams.WRAP_CONTENT;
+        mView.setUseLargeDecorationIcon(false);
+        executeLayoutTest(giveSuggestionWidth, giveContentHeight, View.LAYOUT_DIRECTION_LTR);
+        // Calling setUseLargeDecorationIcon should preserve its layout params' width and height.
+        // Updating the width and height for a larger intrinsic image size is the responsibility of
+        // BaseSuggestionViewBinder#updateSuggestionIcon.
+        Assert.assertEquals(66, mView.decorationIcon.getLayoutParams().width);
+        Assert.assertEquals(
+                ViewGroup.LayoutParams.WRAP_CONTENT, mView.decorationIcon.getLayoutParams().height);
     }
 }

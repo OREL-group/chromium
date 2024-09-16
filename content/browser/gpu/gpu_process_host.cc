@@ -2,11 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "content/browser/gpu/gpu_process_host.h"
 
 #include <stddef.h>
 
 #include <algorithm>
+#include <array>
 #include <list>
 #include <memory>
 #include <utility>
@@ -102,8 +108,7 @@
 #include "base/win/access_token.h"
 #include "base/win/security_descriptor.h"
 #include "base/win/win_util.h"
-#include "content/browser/child_process_launcher_helper.h"
-#include "content/public/common/prefetch_type_win.h"
+#include "components/app_launch_prefetch/app_launch_prefetch.h"
 #include "sandbox/policy/win/sandbox_win.h"
 #include "sandbox/win/src/sandbox_policy.h"
 #include "sandbox/win/src/window.h"
@@ -150,7 +155,7 @@ const char* GetProcessLifetimeUmaName(gpu::GpuMode gpu_mode) {
   switch (gpu_mode) {
     // TODO(rivr): Add separate histograms for the different hardware modes.
     case gpu::GpuMode::UNKNOWN:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return nullptr;
     case gpu::GpuMode::HARDWARE_GL:
     case gpu::GpuMode::HARDWARE_GRAPHITE:
@@ -225,11 +230,11 @@ GpuTerminationStatus ConvertToGpuTerminationStatus(
     case base::TERMINATION_STATUS_OOM:
       return GpuTerminationStatus::OOM;
     case base::TERMINATION_STATUS_MAX_ENUM:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return GpuTerminationStatus::MAX_ENUM;
       // Do not add default.
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return GpuTerminationStatus::ABNORMAL_TERMINATION;
 }
 
@@ -240,6 +245,9 @@ static const char* const kSwitchNames[] = {
     sandbox::policy::switches::kGpuSandboxFailuresFatal,
     sandbox::policy::switches::kDisableGpuSandbox,
     sandbox::policy::switches::kNoSandbox,
+#if BUILDFLAG(IS_WIN)
+    sandbox::policy::switches::kAllowThirdPartyModules,
+#endif
 #if BUILDFLAG(IS_LINUX) && !BUILDFLAG(IS_CHROMEOS)
     switches::kDisableDevShmUsage,
 #endif
@@ -249,6 +257,7 @@ static const char* const kSwitchNames[] = {
     switches::kUseRedistributableDirectML,
 #endif  // BUILDFLAG(IS_WIN)
     switches::kEnableANGLEFeatures,
+    switches::kDelegatedInkRenderer,
     switches::kDisableANGLEFeatures,
     switches::kDisableBreakpad,
     switches::kDisableGpuRasterization,
@@ -258,6 +267,7 @@ static const char* const kSwitchNames[] = {
     switches::kDisableSkiaRuntimeOpts,
     switches::kDRMVirtualConnectorIsExternal,
     switches::kEnableBackgroundThreadPool,
+    switches::kEnableGpuMainTimeKeeperMetrics,
     switches::kEnableGpuRasterization,
     switches::kEnableSkiaGraphite,
     switches::kDoubleBufferCompositing,
@@ -284,13 +294,13 @@ static const char* const kSwitchNames[] = {
     sandbox::policy::switches::kEnableSandboxLogging,
     sandbox::policy::switches::kDisableMetalShaderCache,
     switches::kShowMacOverlayBorders,
-    switches::kUseHighGPUThreadPriorityForPerfTests,
     switches::kWebNNCoreMlDumpModel,
 #endif
 #if BUILDFLAG(IS_OZONE)
     switches::kOzonePlatform,
     switches::kDisableExplicitDmaFences,
     switches::kOzoneDumpFile,
+    switches::kEnableNativeGpuMemoryBuffers,
 #endif
 #if BUILDFLAG(IS_LINUX)
     switches::kX11Display,
@@ -339,7 +349,7 @@ enum GPUProcessLifetimeEvent {
 
 // Indexed by GpuProcessKind. There is one of each kind maximum. This array may
 // only be accessed from the UI thread.
-GpuProcessHost* g_gpu_process_hosts[GPU_PROCESS_KIND_COUNT];
+std::array<GpuProcessHost*, GPU_PROCESS_KIND_COUNT> g_gpu_process_hosts;
 
 static void RunCallbackOnUI(
     GpuProcessKind kind,
@@ -392,10 +402,6 @@ class GpuSandboxedProcessLauncherDelegate
   };
 
   bool GetAppContainerId(std::string* appcontainer_id) override {
-    if (UseOpenGLRenderer()) {
-      return false;
-    }
-
     if (!enable_appcontainer_) {
       return false;
     }
@@ -411,38 +417,25 @@ class GpuSandboxedProcessLauncherDelegate
   bool InitializeConfig(sandbox::TargetConfig* config) override {
     DCHECK(!config->IsConfigured());
 
-    if (UseOpenGLRenderer()) {
-      // Open GL path.
-      sandbox::ResultCode result = config->SetTokenLevel(
-          sandbox::USER_RESTRICTED_SAME_ACCESS, sandbox::USER_LIMITED);
-      if (result != sandbox::SBOX_ALL_OK)
-        return false;
+    sandbox::ResultCode result = config->SetTokenLevel(
+        sandbox::USER_RESTRICTED_SAME_ACCESS, sandbox::USER_LIMITED);
+    if (result != sandbox::SBOX_ALL_OK) {
+      return false;
+    }
 
-      result = sandbox::policy::SandboxWin::SetJobLevel(
-          sandbox::mojom::Sandbox::kGpu, sandbox::JobLevel::kUnprotected, 0,
-          config);
-      if (result != sandbox::SBOX_ALL_OK)
-        return false;
-    } else {
-      sandbox::ResultCode result = config->SetTokenLevel(
-          sandbox::USER_RESTRICTED_SAME_ACCESS, sandbox::USER_LIMITED);
-      if (result != sandbox::SBOX_ALL_OK)
-        return false;
-
-      // UI restrictions break when we access Windows from outside our job.
-      // However, we don't want a proxy window in this process because it can
-      // introduce deadlocks where the renderer blocks on the gpu, which in
-      // turn blocks on the browser UI thread. So, instead we forgo a window
-      // message pump entirely and just add job restrictions to prevent child
-      // processes.
-      result = sandbox::policy::SandboxWin::SetJobLevel(
-          sandbox::mojom::Sandbox::kGpu, sandbox::JobLevel::kLimitedUser,
-          JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS | JOB_OBJECT_UILIMIT_DESKTOP |
-              JOB_OBJECT_UILIMIT_EXITWINDOWS |
-              JOB_OBJECT_UILIMIT_DISPLAYSETTINGS,
-          config);
-      if (result != sandbox::SBOX_ALL_OK)
-        return false;
+    // UI restrictions break when we access Windows from outside our job.
+    // However, we don't want a proxy window in this process because it can
+    // introduce deadlocks where the renderer blocks on the gpu, which in
+    // turn blocks on the browser UI thread. So, instead we forgo a window
+    // message pump entirely and just add job restrictions to prevent child
+    // processes.
+    result = sandbox::policy::SandboxWin::SetJobLevel(
+        sandbox::mojom::Sandbox::kGpu, sandbox::JobLevel::kLimitedUser,
+        JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS | JOB_OBJECT_UILIMIT_DESKTOP |
+            JOB_OBJECT_UILIMIT_EXITWINDOWS | JOB_OBJECT_UILIMIT_DISPLAYSETTINGS,
+        config);
+    if (result != sandbox::SBOX_ALL_OK) {
+      return false;
     }
 
     // Check if we are running on the winlogon desktop and set a delayed
@@ -455,8 +448,7 @@ class GpuSandboxedProcessLauncherDelegate
     if (ShouldSetDelayedIntegrity()) {
       config->SetDelayedIntegrityLevel(sandbox::INTEGRITY_LEVEL_LOW);
     } else {
-      sandbox::ResultCode result =
-          config->SetIntegrityLevel(sandbox::INTEGRITY_LEVEL_LOW);
+      result = config->SetIntegrityLevel(sandbox::INTEGRITY_LEVEL_LOW);
       if (result != sandbox::SBOX_ALL_OK)
         return false;
     }
@@ -501,11 +493,6 @@ class GpuSandboxedProcessLauncherDelegate
       kMaxValue = kDesktopAccessMediumIl,
   };
 
-  bool UseOpenGLRenderer() {
-    return cmd_line_.GetSwitchValueASCII(switches::kUseGL) ==
-           gl::kGLImplementationDesktopName;
-  }
-
   bool CanLowIntegrityAccessDesktop() {
     // Access required for UI thread to initialize (when user32.dll loads
     // without win32k lockdown).
@@ -539,10 +526,6 @@ class GpuSandboxedProcessLauncherDelegate
   }
 
   bool ShouldSetDelayedIntegrity() {
-    if (UseOpenGLRenderer()) {
-      return true;
-    }
-
     // Desktop access is needed to load user32.dll, we can lower token in child
     // process after that's done.
     if (CanLowIntegrityAccessDesktop()) {
@@ -778,7 +761,7 @@ GpuProcessHost::GpuProcessHost(int host_id, GpuProcessKind kind)
 }
 
 GpuProcessHost::~GpuProcessHost() {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (in_process_gpu_thread_)
     DCHECK(process_);
 
@@ -791,7 +774,7 @@ GpuProcessHost::~GpuProcessHost() {
   }
 #endif
 
-  // This is only called on the IO thread so no race against the constructor
+  // This is only called on the UI thread so no race against the constructor
   // for another GpuProcessHost.
   if (g_gpu_process_hosts[kind_] == this)
     g_gpu_process_hosts[kind_] = nullptr;
@@ -887,7 +870,7 @@ GpuProcessHost::~GpuProcessHost() {
         break;
 #endif
       case base::TERMINATION_STATUS_MAX_ENUM:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
         break;
     }
     if (base::CommandLine::ForCurrentProcess()->HasSwitch(
@@ -925,14 +908,14 @@ bool GpuProcessHost::Init() {
     in_process_gpu_thread_.reset(GetGpuMainThreadFactory()(
         InProcessChildThreadParams(
             base::SingleThreadTaskRunner::GetCurrentDefault(),
-            process_->GetInProcessMojoInvitation()),
+            process_->GetInProcessMojoInvitation(), GetIOThreadTaskRunner()),
         gpu_preferences));
     base::Thread::Options options;
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
     // WGL needs to create its own window and pump messages on it.
     options.message_pump_type = base::MessagePumpType::UI;
 #endif
-    options.thread_type = base::ThreadType::kCompositing;
+    options.thread_type = base::ThreadType::kDisplayCritical;
     in_process_gpu_thread_->StartWithOptions(std::move(options));
   } else if (!LaunchGpuProcess()) {
     return false;
@@ -1186,7 +1169,7 @@ std::string GpuProcessHost::GetIsolationKey(
     }
   }
 
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 void GpuProcessHost::BlockDomainsFrom3DAPIs(const std::set<GURL>& urls,
@@ -1202,8 +1185,8 @@ void GpuProcessHost::DisableGpuCompositing() {
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_CHROMEOS_ASH)
   DLOG(ERROR) << "Can't disable GPU compositing";
 #else
-  // TODO(crbug.com/819474): The switch from GPU to software compositing should
-  // be handled here instead of by ImageTransportFactory.
+  // TODO(crbug.com/40565996): The switch from GPU to software compositing
+  // should be handled here instead of by ImageTransportFactory.
   GetUIThreadTaskRunner({})->PostTask(
       FROM_HERE, base::BindOnce([]() {
         if (auto* factory = ImageTransportFactory::GetInstance())
@@ -1234,7 +1217,9 @@ GpuProcessKind GpuProcessHost::kind() {
 
 // Atomically shut down the GPU process with a normal termination status.
 void GpuProcessHost::ForceShutdown() {
-  // This is only called on the IO thread so no race against the constructor
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  // This is only called on the UI thread so no race against the constructor
   // for another GpuProcessHost.
   if (g_gpu_process_hosts[kind_] == this)
     g_gpu_process_hosts[kind_] = nullptr;
@@ -1287,17 +1272,15 @@ bool GpuProcessHost::LaunchGpuProcess() {
 
   cmd_line->AppendSwitchASCII(switches::kProcessType, switches::kGpuProcess);
 
-  BrowserChildProcessHostImpl::CopyTraceStartupFlags(cmd_line.get());
-
 #if BUILDFLAG(IS_WIN)
   if (kind_ == GPU_PROCESS_KIND_INFO_COLLECTION &&
       base::FeatureList::IsEnabled(
           features::kGpuInfoCollectionSeparatePrefetch)) {
-    cmd_line->AppendArg(internal::ChildProcessLauncherHelper::GetPrefetchSwitch(
-        AppLaunchPrefetchType::kGPUInfo));
+    cmd_line->AppendArgNative(app_launch_prefetch::GetPrefetchSwitch(
+        app_launch_prefetch::SubprocessType::kGPUInfo));
   } else {
-    cmd_line->AppendArg(internal::ChildProcessLauncherHelper::GetPrefetchSwitch(
-        AppLaunchPrefetchType::kGPU));
+    cmd_line->AppendArgNative(app_launch_prefetch::GetPrefetchSwitch(
+        app_launch_prefetch::SubprocessType::kGPU));
   }
 #endif  // BUILDFLAG(IS_WIN)
 

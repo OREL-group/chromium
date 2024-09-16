@@ -32,7 +32,6 @@ std::string GetRestartMarkerFromId(int animation_id) {
   }
 
   NOTREACHED();
-  return base::EmptyString();
 }
 
 base::TimeDelta GetCycleRestartTimestamp(const cc::SkottieWrapper& skottie,

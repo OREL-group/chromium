@@ -208,7 +208,7 @@ void WebmEncoderMuxer::InitializeVideoEncoder(
                           weak_ptr_factory_.GetWeakPtr()),
       base::BindOnce(&WebmEncoderMuxer::OnVideoEncoderInitialized,
                      weak_ptr_factory_.GetWeakPtr(),
-                     // TODO(https://crbug.com/1380714): Remove
+                     // TODO(crbug.com/40061562): Remove
                      // `UnsafeDanglingUntriaged`
                      base::UnsafeDanglingUntriaged(video_encoder_.get())));
 }
@@ -234,7 +234,7 @@ void WebmEncoderMuxer::EncodeVideo(scoped_refptr<media::VideoFrame> frame) {
 }
 
 void WebmEncoderMuxer::EncodeRgbVideo(RgbVideoFrame rgb_video_frame) {
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 EncodeAudioCallback WebmEncoderMuxer::GetEncodeAudioCallback() {
@@ -396,12 +396,8 @@ void WebmEncoderMuxer::OnAudioEncoded(
 
   // TODO(crbug.com/1143798): Explore changing the WebmMuxer so it doesn't work
   // with strings, to avoid copying the encoded data.
-  //
-  // Don't use encoded_buffer.encoded_data.end() as the encoded data size could
-  // be smaller than the allocated encoded_data.
-  std::string encoded_data(
-      encoded_audio.encoded_data.begin(),
-      encoded_audio.encoded_data.begin() + encoded_audio.encoded_data_size);
+  std::string encoded_data(encoded_audio.encoded_data.begin(),
+                           encoded_audio.encoded_data.end());
   muxer_adapter_.OnEncodedAudio(encoded_audio.params, std::move(encoded_data),
                                 std::move(codec_description),
                                 encoded_audio.timestamp);

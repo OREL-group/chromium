@@ -10,6 +10,8 @@
 #import "components/keyed_service/core/keyed_service.h"
 #import "url/gurl.h"
 
+@class ContentNotificationNAUConfiguration;
+
 // Service responsible for interacting with the content notification service.
 class ContentNotificationService : public KeyedService {
  public:
@@ -24,8 +26,10 @@ class ContentNotificationService : public KeyedService {
   virtual NSDictionary<NSString*, NSString*>* GetFeedbackPayload(
       NSDictionary<NSString*, id>* payload) = 0;
 
-  // KeyedService implementation.
-  void Shutdown() override;
+  // Completion handler indicates the success of the NAU request for a content
+  // notification.
+  virtual void SendNAUForConfiguration(
+      ContentNotificationNAUConfiguration* configuration) = 0;
 };
 
 #endif  // IOS_CHROME_BROWSER_CONTENT_NOTIFICATION_MODEL_CONTENT_NOTIFICATION_SERVICE_H_

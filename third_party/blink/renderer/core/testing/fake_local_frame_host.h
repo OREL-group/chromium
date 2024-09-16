@@ -198,15 +198,13 @@ class FakeLocalFrameHost : public mojom::blink::LocalFrameHost {
       mojom::blink::LegacyTechEventCodeLocationPtr code_location) override;
   void SendPrivateAggregationRequestsForFencedFrameEvent(
       const WTF::String& event_type) override;
-  void SetAttributionReportingRuntimeFeatures(
-      network::AttributionReportingRuntimeFeatures features) override;
   void CreateFencedFrame(
       mojo::PendingAssociatedReceiver<mojom::blink::FencedFrameOwnerHost>,
       mojom::blink::RemoteFrameInterfacesFromRendererPtr
           remote_frame_interfaces,
       const RemoteFrameToken& frame_token,
       const base::UnguessableToken& devtools_frame_token) override;
-  void ForwardFencedFrameEventToEmbedder(
+  void ForwardFencedFrameEventAndUserActivationToEmbedder(
       const WTF::String& event_type) override;
   void OnViewTransitionOptInChanged(
       mojom::blink::ViewTransitionSameOriginOptIn) override {}
@@ -219,6 +217,11 @@ class FakeLocalFrameHost : public mojom::blink::LocalFrameHost {
   void IssueKeepAliveHandle(
       mojo::PendingReceiver<mojom::blink::NavigationStateKeepAliveHandle>
           receiver) override;
+  void NotifyStorageAccessed(blink::mojom::StorageTypeAccessed storageType,
+                             bool blocked) override;
+  void RecordWindowProxyUsageMetrics(
+      const blink::FrameToken& target_frame_token,
+      blink::mojom::WindowProxyAccessType access_type) override;
 
  private:
   void BindFrameHostReceiver(mojo::ScopedInterfaceEndpointHandle handle);

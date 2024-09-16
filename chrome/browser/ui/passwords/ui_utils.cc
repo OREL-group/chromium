@@ -10,6 +10,7 @@
 
 #include "base/feature_list.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/branding_buildflags.h"
 #include "chrome/app/vector_icons/vector_icons.h"
@@ -24,6 +25,7 @@
 #include "chrome/grit/generated_resources.h"
 #include "components/affiliations/core/browser/affiliation_utils.h"
 #include "components/password_manager/core/browser/leak_detection_dialog_utils.h"
+#include "components/password_manager/core/browser/manage_passwords_referrer.h"
 #include "components/password_manager/core/browser/password_form.h"
 #include "components/password_manager/core/browser/password_manager_client.h"
 #include "components/password_manager/core/browser/password_manager_constants.h"
@@ -82,15 +84,18 @@ gfx::ImageSkia ScaleImageForAccountAvatar(gfx::ImageSkia skia_image) {
 std::pair<std::u16string, std::u16string> GetCredentialLabelsForAccountChooser(
     const password_manager::PasswordForm& form) {
   std::u16string federation;
-  if (!form.federation_origin.opaque())
+  if (form.IsFederatedCredential()) {
     federation = GetDisplayFederation(form);
+  }
 
-  if (form.display_name.empty())
+  if (form.display_name.empty()) {
     return std::make_pair(form.username_value, std::move(federation));
+  }
 
   // Display name isn't empty.
-  if (federation.empty())
+  if (federation.empty()) {
     return std::make_pair(form.display_name, form.username_value);
+  }
 
   return std::make_pair(form.display_name,
                         form.username_value + u"\n" + federation);
@@ -175,12 +180,13 @@ std::u16string GetDisplayUsername(
 
 std::u16string GetDisplayFederation(
     const password_manager::PasswordForm& form) {
-  return url_formatter::FormatOriginForSecurityDisplay(
-      form.federation_origin, url_formatter::SchemeDisplay::OMIT_CRYPTOGRAPHIC);
+  return url_formatter::FormatUrlForSecurityDisplay(
+      form.federation_origin.GetURL(),
+      url_formatter::SchemeDisplay::OMIT_CRYPTOGRAPHIC);
 }
 
 std::u16string GetDisplayPassword(const password_manager::PasswordForm& form) {
-  return form.federation_origin.opaque()
+  return !form.IsFederatedCredential()
              ? form.password_value
              : l10n_util::GetStringFUTF16(IDS_PASSWORDS_VIA_FEDERATION,
                                           GetDisplayFederation(form));
@@ -191,8 +197,6 @@ bool IsSyncingAutosignSetting(Profile* profile) {
       SyncServiceFactory::GetForProfile(profile);
   return (
       sync_service &&
-      sync_service->GetUserSettings()->IsInitialSyncFeatureSetupComplete() &&
-      sync_service->IsSyncFeatureActive() &&
       sync_service->GetActiveDataTypes().Has(syncer::PRIORITY_PREFERENCES));
 }
 
@@ -240,6 +244,11 @@ GURL GetGooglePasswordManagerURL(ManagePasswordsReferrer referrer) {
       case ManagePasswordsReferrer::kSearchPasswordsWidget:
       case ManagePasswordsReferrer::kOmniboxPedalSuggestion:
       case ManagePasswordsReferrer::kManagePasswordDetailsBubble:
+      case ManagePasswordsReferrer::kPasskeySavedConfirmationBubble:
+      case ManagePasswordsReferrer::kPasskeyDeletedConfirmationBubble:
+      case ManagePasswordsReferrer::kPasskeyUpdatedConfirmationBubble:
+      case ManagePasswordsReferrer::kPasskeyNotAcceptedBubble:
+      case ManagePasswordsReferrer::kAccessLossWarning:
         NOTREACHED_NORETURN();
     }
 
@@ -247,6 +256,11 @@ GURL GetGooglePasswordManagerURL(ManagePasswordsReferrer referrer) {
   }();
 
   return net::AppendQueryParameter(url, "utm_campaign", campaign);
+}
+
+std::string GetGooglePasswordManagerSubPageURLStr() {
+  return base::StrCat({chrome::kChromeUIPasswordManagerURL, "/",
+                       chrome::kPasswordManagerSubPage});
 }
 
 // Navigation is handled differently on Android.

@@ -27,7 +27,6 @@ base::i18n::TextDirection GetTextDirectionFromCommandId(int command_id) {
       return base::i18n::RIGHT_TO_LEFT;
     default:
       NOTREACHED();
-      return base::i18n::UNKNOWN_DIRECTION;
   }
 }
 
@@ -187,7 +186,6 @@ bool TextServicesContextMenu::IsCommandIdChecked(int command_id) const {
   }
 
   NOTREACHED();
-  return false;
 }
 
 bool TextServicesContextMenu::IsCommandIdEnabled(int command_id) const {
@@ -207,7 +205,6 @@ bool TextServicesContextMenu::IsCommandIdEnabled(int command_id) const {
   }
 
   NOTREACHED();
-  return false;
 }
 
 void TextServicesContextMenu::ExecuteCommand(int command_id, int event_flags) {

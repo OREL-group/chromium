@@ -732,7 +732,7 @@ IN_PROC_BROWSER_TEST_P(ProfileManagerBrowserTest, EphemeralProfile) {
   EXPECT_EQ(initial_profile_count, storage.GetNumberOfProfiles());
 
 // The following check is flaky on Windows.
-// TODO(https://crbug.com/1191455): re-enable this check when the profile
+// TODO(crbug.com/40756611): re-enable this check when the profile
 // directory deletion works more reliably on Windows.
 #if !BUILDFLAG(IS_WIN)
   if (base::FeatureList::IsEnabled(features::kDestroyProfileOnBrowserClose)) {
@@ -960,7 +960,7 @@ class ChildProfileTransitionBrowserTest
           content::IsPreTest() ? crosapi::mojom::SessionType::kRegularSession
                                : crosapi::mojom::SessionType::kChildSession;
     } else {
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
     }
 
     chromeos::BrowserInitParams::SetInitParamsForTests(std::move(init_params));
@@ -973,13 +973,13 @@ class ChildProfileTransitionBrowserTest
     const bool is_pre_test = content::IsPreTest();
 
     if (transition == TransitionType::kChildToRegular) {
-      return is_pre_test ? true : false;
-    } else if (transition == TransitionType::kRegularToChild) {
-      return is_pre_test ? false : true;
-    } else {
-      NOTREACHED();
-      return false;
+      return is_pre_test;
     }
+    if (transition == TransitionType::kRegularToChild) {
+      return !is_pre_test;
+    }
+    NOTREACHED_IN_MIGRATION();
+    return false;
   }
 
   const ProfileAttributesEntry* GetProfileAttributesEntry(
@@ -1012,7 +1012,7 @@ IN_PROC_BROWSER_TEST_P(ChildProfileTransitionBrowserTest, PRE_Transition) {
   // Check stored profile attributes.
   const ProfileAttributesEntry* entry = GetProfileAttributesEntry(profile);
   ASSERT_NE(entry, nullptr);
-  EXPECT_EQ(is_child_profile_expected, entry->IsChild());
+  EXPECT_EQ(is_child_profile_expected, entry->IsSupervised());
 }
 
 IN_PROC_BROWSER_TEST_P(ChildProfileTransitionBrowserTest, Transition) {
@@ -1029,6 +1029,6 @@ IN_PROC_BROWSER_TEST_P(ChildProfileTransitionBrowserTest, Transition) {
   // Check stored profile attributes.
   const ProfileAttributesEntry* entry = GetProfileAttributesEntry(profile);
   ASSERT_NE(entry, nullptr);
-  EXPECT_EQ(is_child_profile_expected, entry->IsChild());
+  EXPECT_EQ(is_child_profile_expected, entry->IsSupervised());
 }
 #endif

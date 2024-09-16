@@ -210,7 +210,7 @@
     <template is="dom-if" route-path="/osPrivacy/lockScreen/fingerprint">
       <os-settings-subpage page-title="$i18n{lockScreenFingerprintTitle}">
         <settings-fingerprint-list-subpage id="fingerprint-list"
-            auth-token="[[getAuthToken_(authTokenInfo_, authTokenReply_]]"
+            auth-token="[[getAuthToken_(authTokenInfo_, authTokenReply_)]]"
             on-password-requested="onPasswordRequested_">
         </settings-fingerprint-list-subpage>
       </os-settings-subpage>

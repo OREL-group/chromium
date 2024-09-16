@@ -6,18 +6,23 @@
 
 #include <algorithm>
 #include <cstring>
+#include <memory>
+#include <optional>
 #include <ostream>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
+#include "base/check.h"
 #include "base/check_op.h"
+#include "base/dcheck_is_on.h"
 #include "base/files/file.h"
+#include "base/files/file_path.h"
 #include "base/no_destructor.h"
 #include "base/notreached.h"
 #include "base/threading/platform_thread.h"
-#include "build/build_config.h"
+#include "base/time/time.h"
 #include "sql/initialization.h"
 #include "sql/sandboxed_vfs_file.h"
 #include "sql/vfs_wrapper.h"
@@ -136,7 +141,7 @@ SandboxedVfsFileType VfsFileTypeFromPath(const char* full_path_cstr) {
     return SandboxedVfsFileType::kWal;
   }
 
-  NOTREACHED()
+  NOTREACHED_IN_MIGRATION()
       << "Argument is not a file name buffer passed from SQLite to a VFS: "
       << full_path;
   return SandboxedVfsFileType::kDatabase;
@@ -212,7 +217,7 @@ int SandboxedVfs::Access(const char* full_path, int flags, int& result) {
       result = (access->can_read && access->can_write) ? 1 : 0;
       break;
     default:
-      NOTREACHED() << "Unsupported xAccess flags: " << flags;
+      NOTREACHED_IN_MIGRATION() << "Unsupported xAccess flags: " << flags;
       return SQLITE_ERROR;
   }
   return SQLITE_OK;

@@ -16,16 +16,16 @@
 #import "components/sync/service/sync_service.h"
 #import "components/sync/service/sync_service_utils.h"
 #import "components/sync/service/sync_user_settings.h"
+#import "components/trusted_vault/trusted_vault_server_constants.h"
 #import "ios/chrome/browser/search_engines/model/template_url_service_factory.h"
 #import "ios/chrome/browser/shared/coordinator/alert/action_sheet_coordinator.h"
 #import "ios/chrome/browser/shared/coordinator/alert/alert_coordinator.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/model/url/chrome_url_constants.h"
 #import "ios/chrome/browser/shared/public/commands/application_commands.h"
 #import "ios/chrome/browser/shared/public/commands/browser_commands.h"
-#import "ios/chrome/browser/shared/public/commands/browsing_data_commands.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
 #import "ios/chrome/browser/shared/public/commands/open_new_tab_command.h"
 #import "ios/chrome/browser/shared/public/commands/settings_commands.h"
@@ -45,13 +45,13 @@
 #import "ios/chrome/browser/ui/settings/google_services/bulk_upload/bulk_upload_coordinator_delegate.h"
 #import "ios/chrome/browser/ui/settings/google_services/features.h"
 #import "ios/chrome/browser/ui/settings/google_services/manage_accounts/accounts_coordinator.h"
-#import "ios/chrome/browser/ui/settings/google_services/manage_accounts/accounts_table_view_controller.h"
 #import "ios/chrome/browser/ui/settings/google_services/manage_sync_settings_command_handler.h"
 #import "ios/chrome/browser/ui/settings/google_services/manage_sync_settings_constants.h"
 #import "ios/chrome/browser/ui/settings/google_services/manage_sync_settings_mediator.h"
 #import "ios/chrome/browser/ui/settings/google_services/manage_sync_settings_table_view_controller.h"
 #import "ios/chrome/browser/ui/settings/google_services/personalize_google_services_coordinator.h"
 #import "ios/chrome/browser/ui/settings/google_services/sync_error_settings_command_handler.h"
+#import "ios/chrome/browser/ui/settings/settings_controller_protocol.h"
 #import "ios/chrome/browser/ui/settings/settings_navigation_controller.h"
 #import "ios/chrome/browser/ui/settings/sync/sync_encryption_passphrase_table_view_controller.h"
 #import "ios/chrome/browser/ui/settings/sync/sync_encryption_table_view_controller.h"
@@ -80,6 +80,9 @@ using DismissViewCallback = SystemIdentityManager::DismissViewCallback;
   BulkUploadCoordinator* _bulkUploadCoordinator;
   // The coordinator for the Accounts view.
   AccountsCoordinator* _accountsCoordinator;
+  SyncEncryptionTableViewController* _syncEncryptionTableViewController;
+  SyncEncryptionPassphraseTableViewController*
+      _syncEncryptionPassphraseTableViewController;
 }
 
 // View controller.
@@ -106,7 +109,7 @@ using DismissViewCallback = SystemIdentityManager::DismissViewCallback;
   // Dismiss callback for Web and app setting details view.
   DismissViewCallback _dismissWebAndAppSettingDetailsController;
   // Dismiss callback for account details view.
-  DismissViewCallback _dismissAccountDetailsController;
+  DismissViewCallback _accountDetailsControllerDismissCallback;
   // The account sync state.
   SyncSettingsAccountState _accountState;
   // The navigation controller to use only when presenting the
@@ -115,7 +118,7 @@ using DismissViewCallback = SystemIdentityManager::DismissViewCallback;
   // The coordinator for the Personalize Google Services view.
   PersonalizeGoogleServicesCoordinator* _personalizeGoogleServicesCoordinator;
   // Prevents any data from syncing while the UI is open.
-  // TODO(crbug.com/330772894): This is currently needed for syncing users,
+  // TODO(crbug.com/40066949): This is currently needed for syncing users,
   // otherwise accidentally touching a toggle immediately uploads existing data.
   // For non-syncing users that's not true. So remove this after the syncing
   // state is gone on iOS.
@@ -124,24 +127,13 @@ using DismissViewCallback = SystemIdentityManager::DismissViewCallback;
 
 @synthesize baseNavigationController = _baseNavigationController;
 
-- (instancetype)initWithBaseViewController:(UIViewController*)viewController
-                                   browser:(Browser*)browser
-                              accountState:
-                                  (SyncSettingsAccountState)accountState {
-  if (self = [super initWithBaseViewController:viewController
-                                       browser:browser]) {
-    _accountState = accountState;
-  }
-  return self;
-}
-
 - (instancetype)initWithBaseNavigationController:
                     (UINavigationController*)navigationController
                                          browser:(Browser*)browser
                                     accountState:
                                         (SyncSettingsAccountState)accountState {
-  if (self = [super initWithBaseViewController:navigationController
-                                       browser:browser]) {
+  if ((self = [super initWithBaseViewController:navigationController
+                                        browser:browser])) {
     _baseNavigationController = navigationController;
     _accountState = accountState;
   }
@@ -161,14 +153,13 @@ using DismissViewCallback = SystemIdentityManager::DismissViewCallback;
     case SyncSettingsAccountState::kSignedIn:
       break;
     case SyncSettingsAccountState::kSignedOut:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
   }
 
   self.mediator = [[ManageSyncSettingsMediator alloc]
         initWithSyncService:self.syncService
-            identityManager:IdentityManagerFactory::GetForBrowserState(
-                                browserState)
+            identityManager:IdentityManagerFactory::GetForProfile(browserState)
       authenticationService:self.authService
       accountManagerService:ChromeAccountManagerServiceFactory::
                                 GetForBrowserState(browserState)
@@ -207,8 +198,6 @@ using DismissViewCallback = SystemIdentityManager::DismissViewCallback;
       HandlerForProtocol(dispatcher, ApplicationCommands);
   viewController.browserHandler =
       HandlerForProtocol(dispatcher, BrowserCommands);
-  viewController.browsingDataHandler =
-      HandlerForProtocol(dispatcher, BrowsingDataCommands);
   viewController.settingsHandler =
       HandlerForProtocol(dispatcher, SettingsCommands);
   viewController.snackbarHandler =
@@ -216,12 +205,9 @@ using DismissViewCallback = SystemIdentityManager::DismissViewCallback;
 
   self.mediator.consumer = viewController;
 
-  if (_baseNavigationController) {
-    [self.baseNavigationController pushViewController:viewController
-                                             animated:YES];
-  } else {
-    [self presentViewController:viewController];
-  }
+  CHECK(_baseNavigationController, base::NotFatalUntil::M129);
+  [self.baseNavigationController pushViewController:viewController
+                                           animated:YES];
   _syncObserver = std::make_unique<SyncObserverBridge>(self, self.syncService);
 }
 
@@ -235,6 +221,10 @@ using DismissViewCallback = SystemIdentityManager::DismissViewCallback;
   self.viewController = nil;
   // Unblock any sync data type changes.
   _syncSetupInProgressHandle.reset();
+  [_syncEncryptionPassphraseTableViewController settingsWillBeDismissed];
+  _syncEncryptionPassphraseTableViewController = nil;
+  [_syncEncryptionTableViewController settingsWillBeDismissed];
+  _syncEncryptionTableViewController = nil;
 
   _syncObserver.reset();
   [self.signoutActionSheetCoordinator stop];
@@ -265,16 +255,8 @@ using DismissViewCallback = SystemIdentityManager::DismissViewCallback;
 
 #pragma mark - Private
 
-- (void)presentViewController:(UIViewController*)controller {
-  SettingsNavigationController* navigationController =
-      [[SettingsNavigationController alloc]
-          initWithRootViewController:controller
-                             browser:self.browser
-                            delegate:self];
-  _navigationControllerInModalView = navigationController;
-  [self.baseViewController presentViewController:navigationController
-                                        animated:YES
-                                      completion:nil];
+- (void)resetDismissAccountDetailsController {
+  _accountDetailsControllerDismissCallback.Reset();
 }
 
 - (void)stopBulkUpload {
@@ -298,8 +280,9 @@ using DismissViewCallback = SystemIdentityManager::DismissViewCallback;
       std::move(_dismissWebAndAppSettingDetailsController)
           .Run(/*animated*/ false);
     }
-    if (!_dismissAccountDetailsController.is_null()) {
-      std::move(_dismissAccountDetailsController).Run(/*animated=*/false);
+    if (!_accountDetailsControllerDismissCallback.is_null()) {
+      std::move(_accountDetailsControllerDismissCallback)
+          .Run(/*animated=*/false);
     }
 
     NSEnumerator<UIViewController*>* inversedViewControllers =
@@ -326,9 +309,21 @@ using DismissViewCallback = SystemIdentityManager::DismissViewCallback;
                                  completion:nil];
         }
       }
-      [self.baseNavigationController popToViewController:self.viewController
-                                                animated:NO];
-      [self.baseNavigationController popViewControllerAnimated:YES];
+      if (self.baseNavigationController.viewControllers.count == 1) {
+        // If the manage sync settings is the only view in
+        // `baseNavigationController`, `baseNavigationController` needs to be
+        // closed.
+        CHECK([self.baseNavigationController
+                  isKindOfClass:[SettingsNavigationController class]],
+              base::NotFatalUntil::M129);
+        [self.baseNavigationController
+            performSelector:@selector(closeSettings)];
+      } else {
+        [self.baseNavigationController popToViewController:self.viewController
+                                                  animated:NO];
+        [self.baseNavigationController popViewControllerAnimated:YES];
+        [self.delegate manageSyncSettingsCoordinatorWasRemoved:self];
+      }
     } else {
       [self.navigationControllerForChildPages.presentingViewController
           dismissViewControllerAnimated:YES
@@ -375,8 +370,9 @@ using DismissViewCallback = SystemIdentityManager::DismissViewCallback;
   _dismissWebAndAppSettingDetailsController =
       GetApplicationContext()
           ->GetSystemIdentityManager()
-          ->PresentWebAndAppSettingDetailsController(identity,
-                                                     self.viewController, YES);
+          ->PresentWebAndAppSettingDetailsController(
+              identity, self.viewController, /*animated=*/YES,
+              base::DoNothing());
 }
 
 - (void)openPersonalizeGoogleServices {
@@ -471,14 +467,20 @@ using DismissViewCallback = SystemIdentityManager::DismissViewCallback;
 }
 
 - (void)showManageYourGoogleAccount {
-  _dismissAccountDetailsController =
+  __weak __typeof(self) weakself = self;
+  _accountDetailsControllerDismissCallback =
       GetApplicationContext()
           ->GetSystemIdentityManager()
           ->PresentAccountDetailsController(
               self.authService->GetPrimaryIdentity(
                   signin::ConsentLevel::kSignin),
               self.viewController,
-              /*animated=*/YES);
+              /*animated=*/YES,
+              base::BindOnce(
+                  [](__typeof(self) weakSelf) {
+                    [weakSelf resetDismissAccountDetailsController];
+                  },
+                  weakself));
 }
 
 #pragma mark - SignoutActionSheetCoordinatorDelegate
@@ -498,32 +500,34 @@ using DismissViewCallback = SystemIdentityManager::DismissViewCallback;
 #pragma mark - SyncErrorSettingsCommandHandler
 
 - (void)openPassphraseDialogWithModalPresentation:(BOOL)presentModally {
-  DCHECK(self.mediator.shouldEncryptionItemBeEnabled);
   if (presentModally) {
-    CHECK(self.syncService->GetUserSettings()->IsPassphraseRequired());
-    SyncEncryptionPassphraseTableViewController* controllerToPresent =
+    _syncEncryptionPassphraseTableViewController =
         [[SyncEncryptionPassphraseTableViewController alloc]
             initWithBrowser:self.browser];
-    controllerToPresent.presentModally = YES;
+    _syncEncryptionPassphraseTableViewController.presentModally = YES;
     UINavigationController* navigationController =
         [[UINavigationController alloc]
-            initWithRootViewController:controllerToPresent];
-    [self.viewController
-        configureHandlersForRootViewController:controllerToPresent];
+            initWithRootViewController:
+                _syncEncryptionPassphraseTableViewController];
+    navigationController.modalPresentationStyle = UIModalPresentationFormSheet;
+    [self.viewController configureHandlersForRootViewController:
+                             _syncEncryptionPassphraseTableViewController];
     [self.viewController presentViewController:navigationController
                                       animated:YES
                                     completion:nil];
     return;
   }
-  UIViewController<SettingsRootViewControlling>* controllerToPush;
   // If there was a sync error, prompt the user to enter the passphrase.
   // Otherwise, show the full encryption options.
+  UIViewController<SettingsRootViewControlling>* controllerToPush;
   if (self.syncService->GetUserSettings()->IsPassphraseRequired()) {
-    controllerToPush = [[SyncEncryptionPassphraseTableViewController alloc]
-        initWithBrowser:self.browser];
+    controllerToPush = _syncEncryptionPassphraseTableViewController =
+        [[SyncEncryptionPassphraseTableViewController alloc]
+            initWithBrowser:self.browser];
   } else {
-    controllerToPush = [[SyncEncryptionTableViewController alloc]
-        initWithBrowser:self.browser];
+    controllerToPush = _syncEncryptionTableViewController =
+        [[SyncEncryptionTableViewController alloc]
+            initWithBrowser:self.browser];
   }
 
   [self.viewController configureHandlersForRootViewController:controllerToPush];
@@ -535,31 +539,36 @@ using DismissViewCallback = SystemIdentityManager::DismissViewCallback;
   id<ApplicationCommands> applicationCommands =
       static_cast<id<ApplicationCommands>>(
           self.browser->GetCommandDispatcher());
+  trusted_vault::SecurityDomainId chromeSyncID =
+      trusted_vault::SecurityDomainId::kChromeSync;
+  syncer::TrustedVaultUserActionTriggerForUMA settingsTrigger =
+      syncer::TrustedVaultUserActionTriggerForUMA::kSettings;
+  AccessPoint settingsAccessPoint = AccessPoint::ACCESS_POINT_SETTINGS;
   [applicationCommands
       showTrustedVaultReauthForFetchKeysFromViewController:self.viewController
-                                                   trigger:
-                                                       syncer::
-                                                           TrustedVaultUserActionTriggerForUMA::
-                                                               kSettings
-                                               accessPoint:
-                                                   AccessPoint::
-                                                       ACCESS_POINT_SETTINGS];
+                                          securityDomainID:chromeSyncID
+                                                   trigger:settingsTrigger
+                                               accessPoint:settingsAccessPoint];
 }
 
 - (void)openTrustedVaultReauthForDegradedRecoverability {
   id<ApplicationCommands> applicationCommands =
       static_cast<id<ApplicationCommands>>(
           self.browser->GetCommandDispatcher());
+  trusted_vault::SecurityDomainId chromeSyncID =
+      trusted_vault::SecurityDomainId::kChromeSync;
+  syncer::TrustedVaultUserActionTriggerForUMA settingsTrigger =
+      syncer::TrustedVaultUserActionTriggerForUMA::kSettings;
+  AccessPoint settingsAccessPoint = AccessPoint::ACCESS_POINT_SETTINGS;
   [applicationCommands
       showTrustedVaultReauthForDegradedRecoverabilityFromViewController:
           self.viewController
+                                                       securityDomainID:
+                                                           chromeSyncID
                                                                 trigger:
-                                                                    syncer::
-                                                                        TrustedVaultUserActionTriggerForUMA::
-                                                                            kSettings
+                                                                    settingsTrigger
                                                             accessPoint:
-                                                                AccessPoint::
-                                                                    ACCESS_POINT_SETTINGS];
+                                                                settingsAccessPoint];
 }
 
 - (void)openMDMErrodDialogWithSystemIdentity:(id<SystemIdentity>)identity {

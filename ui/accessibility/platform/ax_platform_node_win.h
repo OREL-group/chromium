@@ -43,6 +43,8 @@ const GUID GUID_IAccessibleContentDocument = {
 // IMPORTANT!
 // These values are written to logs.  Do not renumber or delete
 // existing items; add new entries to the end of the list.
+//
+// LINT.IfChange
 enum {
   UMA_API_ACC_DO_DEFAULT_ACTION = 0,
   UMA_API_ACC_HIT_TEST = 1,
@@ -305,6 +307,7 @@ enum {
   // increase, but none of the other enum values may change.
   UMA_API_MAX
 };
+// LINT.ThenChange(/tools/metrics/histograms/metadata/accessibility/enums.xml:AccessibilityWinAPIEnum)
 
 #define WIN_ACCESSIBILITY_API_HISTOGRAM(enum_value) \
   UMA_HISTOGRAM_ENUMERATION("Accessibility.WinAPIs", enum_value, UMA_API_MAX)
@@ -312,25 +315,6 @@ enum {
 #define WIN_ACCESSIBILITY_API_PERF_HISTOGRAM(enum_value) \
   SCOPED_UMA_HISTOGRAM_TIMER_MICROS(                     \
       "Accessibility.Performance.WinAPIs." #enum_value)
-
-#define StringForSource_WebContents "WebContents."
-#define StringForSource_Views "Views."
-
-#define WIN_ACCESSIBILITY_SOURCE_API_PERF_HISTOGRAM(api_enum)                  \
-  if (GetDelegate() && GetDelegate()->node()) {                                \
-    if (!GetDelegate()->node()->IsView()) {                                    \
-      SCOPED_UMA_HISTOGRAM_TIMER_MICROS(                                       \
-          "Accessibility.Performance."                                         \
-          "WinAPIs." StringForSource_WebContents #api_enum);                   \
-    } else {                                                                   \
-      SCOPED_UMA_HISTOGRAM_TIMER_MICROS(                                       \
-          "Accessibility.Performance."                                         \
-          "WinAPIs." StringForSource_Views #api_enum);                         \
-    }                                                                          \
-  } else {                                                                     \
-    SCOPED_UMA_HISTOGRAM_TIMER_MICROS(                                         \
-        "Accessibility.Performance.WinAPIs." StringForSource_Views #api_enum); \
-  }
 
 //
 // Macros to use at the top of any AXPlatformNodeWin (or derived class) method
@@ -1371,12 +1355,6 @@ class COMPONENT_EXPORT(AX_PLATFORM) __declspec(
                               ax::mojom::State state,
                               const char* uia_aria_property);
 
-  // If the Html attribute |html_attribute_name| is present, add its value as a
-  // UIA AriaProperties Property with the name |uia_aria_property|.
-  void HtmlAttributeToUIAAriaProperty(std::vector<std::wstring>& properties,
-                                      const char* html_attribute_name,
-                                      const char* uia_aria_property);
-
   // If the IntList attribute |attribute| is present, return an array
   // of automation elements referenced by the ids in the
   // IntList attribute. Otherwise return an empty array.
@@ -1575,6 +1553,12 @@ class COMPONENT_EXPORT(AX_PLATFORM) __declspec(
   UIARoleProperties GetUIARoleProperties();
 
   AXPlatformNodeWin* GetUIATableAncestor() const;
+
+  bool IsSelectionItemSupported() const;
+
+  bool IsToggleSupported() const;
+
+  bool IsInvokeSupported() const;
 
   // Start and end offsets of an active composition
   gfx::Range active_composition_range_;

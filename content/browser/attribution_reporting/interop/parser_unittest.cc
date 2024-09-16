@@ -29,6 +29,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/abseil-cpp/absl/types/variant.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 namespace content {
 namespace {
@@ -112,6 +113,7 @@ TEST(AttributionInteropParserTest, ValidRegistrationsParse) {
       "registration_request": {
         "Attribution-Reporting-Eligible": "event-source",
         "context_origin": "https://b.s.test",
+        "fenced": true
       },
       "responses": [
         {
@@ -159,6 +161,7 @@ TEST(AttributionInteropParserTest, ValidRegistrationsParse) {
                     RequestIdIs(kExpectedRequestId1),
                     Field(&StartRequest::context_origin,
                           *SuitableOrigin::Deserialize("https://a.s.test")),
+                    Field(&StartRequest::fenced, false),
                     Field(&StartRequest::eligibility,
                           network::mojom::AttributionReportingEligibility::
                               kNavigationSource)))),
@@ -179,7 +182,8 @@ TEST(AttributionInteropParserTest, ValidRegistrationsParse) {
           AllOf(SimulationEventTimeIs(kExpectedTime1),
                 EndRequestIs(RequestIdIs(kExpectedRequestId1))),
           AllOf(SimulationEventTimeIs(kExpectedTime2),
-                StartRequestIs(RequestIdIs(kExpectedRequestId2))),
+                StartRequestIs(AllOf(RequestIdIs(kExpectedRequestId2),
+                                     Field(&StartRequest::fenced, true)))),
           AllOf(SimulationEventTimeIs(kExpectedTime2),
                 ResponseIs(
                     AllOf(RequestIdIs(kExpectedRequestId2),
@@ -249,6 +253,14 @@ const ParseErrorTestCase kParseErrorTestCases[] = {
         R"json({"registrations": [{
           "registration_request": {
             "context_origin": "http://s.test"
+          }
+        }]})json",
+    },
+    {
+        R"(["registrations"][0]["registration_request"]["fenced"]: must be a bool)",
+        R"json({"registrations": [{
+          "registration_request": {
+            "fenced": 0
           }
         }]})json",
     },
@@ -485,6 +497,10 @@ TEST(AttributionInteropParserTest, ValidConfig) {
        [](AttributionConfig& c) {
          c.destination_rate_limit = {.rate_limit_window = base::Minutes(5)};
        }},
+      {R"json({"max_destinations_per_reporting_site_per_day":"20"})json", false,
+       [](AttributionConfig& c) {
+         c.destination_rate_limit = {.max_per_reporting_site_per_day = 20};
+       }},
       {R"json({"rate_limit_time_window_in_days":"30"})json", false,
        [](AttributionConfig& c) { c.rate_limit.time_window = base::Days(30); }},
       {R"json({"rate_limit_max_source_registration_reporting_origins":"10"})json",
@@ -516,17 +532,28 @@ TEST(AttributionInteropParserTest, ValidConfig) {
        [](AttributionConfig& c) {
          c.event_level_limit.max_reports_per_destination = 10;
        }},
-      {R"json({"max_navigation_info_gain":"0.2"})json", false,
+      {R"json({"max_event_level_channel_capacity_navigation":"0.2"})json",
+       false,
        [](AttributionConfig& c) {
-         c.event_level_limit.max_navigation_info_gain = 0.2;
+         c.privacy_math_config.max_channel_capacity_navigation = 0.2;
        }},
-      {R"json({"max_event_info_gain":"0.2"})json", false,
+      {R"json({"max_event_level_channel_capacity_event":"0.2"})json", false,
        [](AttributionConfig& c) {
-         c.event_level_limit.max_event_info_gain = 0.2;
+         c.privacy_math_config.max_channel_capacity_event = 0.2;
        }},
-      {R"json({"max_trigger_state_cardinality":"10"})json", false,
+      {R"json({"max_event_level_channel_capacity_scopes_navigation":"0.2"})json",
+       false,
        [](AttributionConfig& c) {
-         c.event_level_limit.max_trigger_state_cardinality = 10;
+         c.privacy_math_config.max_channel_capacity_scopes_navigation = 0.2;
+       }},
+      {R"json({"max_event_level_channel_capacity_scopes_event":"0.2"})json",
+       false,
+       [](AttributionConfig& c) {
+         c.privacy_math_config.max_channel_capacity_scopes_event = 0.2;
+       }},
+      {R"json({"max_trigger_state_cardinality":"4294967295"})json", false,
+       [](AttributionInteropConfig& c) {
+         c.max_trigger_state_cardinality = 4294967295;
        }},
       {R"json({"max_aggregatable_reports_per_destination":"10"})json", false,
        [](AttributionConfig& c) {
@@ -540,12 +567,22 @@ TEST(AttributionInteropParserTest, ValidConfig) {
        [](AttributionConfig& c) {
          c.aggregate_limit.delay_span = base::TimeDelta();
        }},
+      {R"json({"max_aggregatable_debug_budget_per_context_site":"65537"})json",
+       false,
+       [](AttributionConfig& c) {
+         c.aggregatable_debug_rate_limit.max_budget_per_context_site = 65537;
+       }},
+      {R"json({"max_aggregatable_debug_reports_per_source":"3"})json", false,
+       [](AttributionConfig& c) {
+         c.aggregatable_debug_rate_limit.max_reports_per_source = 3;
+       }},
       {R"json({
         "max_sources_per_origin":"10",
         "max_destinations_per_source_site_reporting_site":"10",
         "max_destinations_per_rate_limit_window_reporting_site": "1",
         "max_destinations_per_rate_limit_window": "2",
         "destination_rate_limit_window_in_minutes": "10",
+        "max_destinations_per_reporting_site_per_day": "15",
         "rate_limit_time_window_in_days":"10",
         "rate_limit_max_source_registration_reporting_origins":"20",
         "rate_limit_max_attribution_reporting_origins":"15",
@@ -554,12 +591,17 @@ TEST(AttributionInteropParserTest, ValidConfig) {
         "rate_limit_origins_per_site_window_in_days":"5",
         "max_settable_event_level_epsilon":"0.2",
         "max_event_level_reports_per_destination":"10",
-        "max_navigation_info_gain":"5.5",
-        "max_event_info_gain":"0.5",
+        "max_event_level_channel_capacity_navigation":"5.5",
+        "max_event_level_channel_capacity_event":"0.5",
+        "max_event_level_channel_capacity_scopes_navigation":"5.55",
+        "max_event_level_channel_capacity_scopes_event":"0.55",
         "max_trigger_state_cardinality":"10",
         "max_aggregatable_reports_per_destination":"10",
         "aggregatable_report_min_delay":"10",
-        "aggregatable_report_delay_span":"20"
+        "aggregatable_report_delay_span":"20",
+        "aggregation_coordinator_origins":["https://c.test/123"],
+        "max_aggregatable_debug_budget_per_context_site": "1024",
+        "max_aggregatable_debug_reports_per_source": "10"
       })json",
        true, [](AttributionInteropConfig& config) {
          AttributionConfig& c = config.attribution_config;
@@ -576,17 +618,28 @@ TEST(AttributionInteropParserTest, ValidConfig) {
 
          config.max_event_level_epsilon = 0.2;
          c.event_level_limit.max_reports_per_destination = 10;
-         c.event_level_limit.max_navigation_info_gain = 5.5;
-         c.event_level_limit.max_event_info_gain = 0.5;
-         c.event_level_limit.max_trigger_state_cardinality = 10;
+         c.privacy_math_config.max_channel_capacity_navigation = 5.5;
+         c.privacy_math_config.max_channel_capacity_event = 0.5;
+         c.privacy_math_config.max_channel_capacity_scopes_navigation = 5.55;
+         c.privacy_math_config.max_channel_capacity_scopes_event = 0.55;
+         config.max_trigger_state_cardinality = 10;
 
          c.aggregate_limit.max_reports_per_destination = 10;
          c.aggregate_limit.min_delay = base::Minutes(10);
          c.aggregate_limit.delay_span = base::Minutes(20);
 
-         c.destination_rate_limit = {.max_total = 2,
-                                     .max_per_reporting_site = 1,
-                                     .rate_limit_window = base::Minutes(10)};
+         c.destination_rate_limit = {
+             .max_total = 2,
+             .max_per_reporting_site = 1,
+             .rate_limit_window = base::Minutes(10),
+             .max_per_reporting_site_per_day = 15,
+         };
+
+         config.aggregation_coordinator_origins.emplace_back(
+             url::Origin::Create(GURL("https://c.test")));
+
+         c.aggregatable_debug_rate_limit.max_budget_per_context_site = 1024;
+         c.aggregatable_debug_rate_limit.max_reports_per_source = 10;
        }}};
 
   for (const auto& test_case : kTestCases) {
@@ -601,12 +654,13 @@ TEST(AttributionInteropParserTest, ValidConfig) {
                 },
                 test_case.make_expected);
 
-    base::Value::Dict json = base::test::ParseJsonDict(test_case.json);
+    base::Value::Dict dict = base::test::ParseJsonDict(test_case.json);
     if (test_case.required) {
-      EXPECT_THAT(ParseAttributionInteropConfig(json), ValueIs(expected));
+      EXPECT_THAT(ParseAttributionInteropConfig(std::move(dict)),
+                  ValueIs(expected));
     } else {
       AttributionInteropConfig config;
-      EXPECT_THAT(MergeAttributionInteropConfig(json, config),
+      EXPECT_THAT(MergeAttributionInteropConfig(std::move(dict), config),
                   base::test::HasValue());
       EXPECT_EQ(config, expected);
     }
@@ -628,7 +682,8 @@ TEST(AttributionInteropParserTest, InvalidConfigPositiveIntegers) {
       "rate_limit_origins_per_site_window_in_days",
       "max_event_level_reports_per_destination",
       "max_aggregatable_reports_per_destination",
-  };
+      "max_aggregatable_debug_budget_per_context_site",
+      "max_aggregatable_debug_reports_per_source"};
 
   {
     auto result = ParseAttributionInteropConfig(base::Value::Dict());
@@ -648,7 +703,7 @@ TEST(AttributionInteropParserTest, InvalidConfigPositiveIntegers) {
       dict.Set(field, "0");
     }
 
-    auto result = MergeAttributionInteropConfig(dict, config);
+    auto result = MergeAttributionInteropConfig(std::move(dict), config);
 
     for (const char* field : kFields) {
       EXPECT_THAT(
@@ -684,7 +739,7 @@ TEST(AttributionInteropParserTest, InvalidConfigNonNegativeIntegers) {
       dict.Set(field, "-10");
     }
 
-    auto result = MergeAttributionInteropConfig(dict, config);
+    auto result = MergeAttributionInteropConfig(std::move(dict), config);
 
     for (const char* field : kFields) {
       EXPECT_THAT(
@@ -710,31 +765,95 @@ TEST(AttributionInteropParserTest, InvalidConfigMaxSettableEpsilon) {
     base::Value::Dict dict;
     dict.Set("max_settable_event_level_epsilon", "-1.5");
     EXPECT_THAT(
-        MergeAttributionInteropConfig(dict, config),
+        MergeAttributionInteropConfig(std::move(dict), config),
         ErrorIs(HasSubstr(
             "[\"max_settable_event_level_epsilon\"]: must be \"inf\" or a "
             "non-negative double formated as a base-10 string")));
   }
 }
 
-TEST(AttributionInteropParserTest, InvalidConfigMaxInfGain) {
+TEST(AttributionInteropParserTest, InvalidConfigMaxInfoGain) {
   {
     AttributionInteropConfig config;
     base::Value::Dict dict;
-    dict.Set("max_navigation_info_gain", "-1.5");
-    EXPECT_THAT(MergeAttributionInteropConfig(dict, config),
-                ErrorIs(HasSubstr(
-                    "[\"max_navigation_info_gain\"]: must be \"inf\" or a "
-                    "non-negative double formated as a base-10 string")));
+    dict.Set("max_event_level_channel_capacity_navigation", "-1.5");
+    EXPECT_THAT(
+        MergeAttributionInteropConfig(std::move(dict), config),
+        ErrorIs(HasSubstr("[\"max_event_level_channel_capacity_navigation\"]: "
+                          "must be \"inf\" or a "
+                          "non-negative double formated as a base-10 string")));
   }
   {
     AttributionInteropConfig config;
     base::Value::Dict dict;
-    dict.Set("max_event_info_gain", "-1.5");
+    dict.Set("max_event_level_channel_capacity_event", "-1.5");
     EXPECT_THAT(
-        MergeAttributionInteropConfig(dict, config),
-        ErrorIs(HasSubstr("[\"max_event_info_gain\"]: must be \"inf\" or a "
+        MergeAttributionInteropConfig(std::move(dict), config),
+        ErrorIs(HasSubstr("[\"max_event_level_channel_capacity_event\"]: must "
+                          "be \"inf\" or a "
                           "non-negative double formated as a base-10 string")));
+  }
+}
+
+TEST(AttributionInteropParserTest, InvalidConfigMaxTriggerStateCardinality) {
+  {
+    AttributionInteropConfig config;
+    base::Value::Dict dict;
+    dict.Set("max_trigger_state_cardinality", "0");
+    EXPECT_THAT(MergeAttributionInteropConfig(std::move(dict), config),
+                ErrorIs(HasSubstr(
+                    "[\"max_trigger_state_cardinality\"]: must be a positive "
+                    "integer formatted as base-10 string")));
+  }
+  {
+    AttributionInteropConfig config;
+    base::Value::Dict dict;
+    dict.Set("max_trigger_state_cardinality", "4294967296");
+    EXPECT_THAT(
+        MergeAttributionInteropConfig(std::move(dict), config),
+        ErrorIs(HasSubstr("[\"max_trigger_state_cardinality\"]: must be "
+                          "representable by an unsigned 32-bit integer")));
+  }
+}
+
+TEST(AttributionInteropParserTest, InvalidConfigAggregationCoordinatorOrigins) {
+  {
+    AttributionInteropConfig config;
+    base::Value::Dict dict;
+    dict.Set("aggregation_coordinator_origins", base::Value());
+    EXPECT_THAT(MergeAttributionInteropConfig(std::move(dict), config),
+                ErrorIs(HasSubstr(
+                    "[\"aggregation_coordinator_origins\"]: must be a list")));
+  }
+
+  {
+    AttributionInteropConfig config;
+    base::Value::Dict dict;
+    dict.Set("aggregation_coordinator_origins", base::Value::List());
+    EXPECT_THAT(
+        MergeAttributionInteropConfig(std::move(dict), config),
+        ErrorIs(HasSubstr(
+            "[\"aggregation_coordinator_origins\"]: must be non-empty")));
+  }
+
+  {
+    AttributionInteropConfig config;
+    base::Value::Dict dict;
+    dict.Set("aggregation_coordinator_origins",
+             base::Value::List().Append(base::Value()));
+    EXPECT_THAT(MergeAttributionInteropConfig(std::move(dict), config),
+                ErrorIs(HasSubstr("[\"aggregation_coordinator_origins\"][0]: "
+                                  "must be a valid, secure origin")));
+  }
+
+  {
+    AttributionInteropConfig config;
+    base::Value::Dict dict;
+    dict.Set("aggregation_coordinator_origins",
+             base::Value::List().Append("http://c.example"));
+    EXPECT_THAT(MergeAttributionInteropConfig(std::move(dict), config),
+                ErrorIs(HasSubstr("[\"aggregation_coordinator_origins\"][0]: "
+                                  "must be a valid, secure origin")));
   }
 }
 
@@ -750,8 +869,7 @@ TEST(AttributionInteropParserTest, ParseOutput) {
       {
           "top_level_errors",
           R"json({"foo": []})json",
-          ErrorIs(AllOf(HasSubstr(R"(["reports"]: must be present)"),
-                        HasSubstr(R"(["foo"]: unknown field)"))),
+          ErrorIs(HasSubstr(R"(["reports"]: must be present)")),
       },
       {
           "second_level_errors",
@@ -761,8 +879,7 @@ TEST(AttributionInteropParserTest, ParseOutput) {
           ErrorIs(AllOf(
               HasSubstr(R"(["reports"][0]["report_time"]: must be an integer)"),
               HasSubstr(R"(["reports"][0]["report_url"]: must be a valid URL)"),
-              HasSubstr(R"(["reports"][0]["payload"]: required)"),
-              HasSubstr(R"(["reports"][0]["foo"]: unknown field)"))),
+              HasSubstr(R"(["reports"][0]["payload"]: required)"))),
       },
       {
           "unsorted_reports",

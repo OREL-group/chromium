@@ -63,11 +63,7 @@ class IncomingStreamTest : public ::testing::Test {
   }
 
   void WriteToPipe(Vector<uint8_t> data) {
-    size_t num_bytes = data.size();
-    EXPECT_EQ(data_pipe_producer_->WriteData(data.data(), &num_bytes,
-                                             MOJO_WRITE_DATA_FLAG_ALL_OR_NONE),
-              MOJO_RESULT_OK);
-    EXPECT_EQ(num_bytes, data.size());
+    EXPECT_EQ(data_pipe_producer_->WriteAllData(data), MOJO_RESULT_OK);
   }
 
   void ClosePipe() { data_pipe_producer_.reset(); }
@@ -306,9 +302,7 @@ TEST_F(IncomingStreamTest, ClosedWithFinWithoutRead) {
   incoming_stream->OnIncomingStreamClosed(true);
   ClosePipe();
 
-  ScriptPromiseTester tester(
-      script_state,
-      reader->ClosedPromise()->GetScriptPromiseUntyped(script_state));
+  ScriptPromiseTester tester(script_state, reader->closed(script_state));
   tester.WaitUntilSettled();
   EXPECT_TRUE(tester.IsFulfilled());
 }

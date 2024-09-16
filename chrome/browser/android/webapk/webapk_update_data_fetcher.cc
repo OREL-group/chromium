@@ -18,7 +18,6 @@
 #include "base/functional/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/android/chrome_jni_headers/WebApkUpdateDataFetcher_jni.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/webapps/browser/android/webapp_icon.h"
 #include "components/webapps/browser/android/webapps_icon_utils.h"
@@ -36,6 +35,9 @@
 #include "ui/gfx/codec/png_codec.h"
 #include "url/gurl.h"
 #include "url/origin.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "chrome/android/chrome_jni_headers/WebApkUpdateDataFetcher_jni.h"
 
 using base::android::JavaParamRef;
 using base::android::ScopedJavaLocalRef;
@@ -132,8 +134,6 @@ void WebApkUpdateDataFetcher::FetchInstallableData() {
       webapps::InstallableCriteria::kValidManifestWithIcons;
   params.prefer_maskable_icon =
       webapps::WebappsIconUtils::DoesAndroidSupportMaskableIcons();
-  params.has_worker = false;
-  params.wait_for_worker = false;
   params.valid_primary_icon = true;
   webapps::InstallableManager* installable_manager =
       webapps::InstallableManager::FromWebContents(web_contents());
@@ -189,26 +189,25 @@ void WebApkUpdateDataFetcher::OnDidGetInstallableData(
   primary_icon_ = *data.primary_icon;
   info_.UpdateBestSplashIcon(*data.manifest);
 
-  std::vector<webapps::WebappIcon> icons = info_.GetWebApkIcons();
-
   Profile* profile =
       Profile::FromBrowserContext(web_contents()->GetBrowserContext());
 
-  webapps::WebApkIconHasher::DownloadAndComputeMurmur2Hash(
+  icon_hasher_ = std::make_unique<webapps::WebApkIconsHasher>();
+  icon_hasher_->DownloadAndComputeMurmur2Hash(
       profile->GetDefaultStoragePartition()
           ->GetURLLoaderFactoryForBrowserProcess()
           .get(),
       web_contents()->GetWeakPtr(), url::Origin::Create(last_fetched_url_),
-      icons,
+      info_, primary_icon_,
       base::BindOnce(&WebApkUpdateDataFetcher::OnGotIconMurmur2Hashes,
                      weak_ptr_factory_.GetWeakPtr()));
 }
 
 void WebApkUpdateDataFetcher::OnGotIconMurmur2Hashes(
-    std::optional<std::map<std::string, webapps::WebApkIconHasher::Icon>>
-        hashes) {
-  if (!hashes)
+    std::map<GURL, std::unique_ptr<webapps::WebappIcon>> icons) {
+  if (icons.empty()) {
     return;
+  }
 
   JNIEnv* env = base::android::AttachCurrentThread();
 
@@ -230,7 +229,7 @@ void WebApkUpdateDataFetcher::OnGotIconMurmur2Hashes(
           env, info_.best_primary_icon_url.spec());
   ScopedJavaLocalRef<jstring> java_primary_icon_murmur2_hash =
       base::android::ConvertUTF8ToJavaString(
-          env, (*hashes)[info_.best_primary_icon_url.spec()].hash);
+          env, icons[info_.best_primary_icon_url]->hash());
   ScopedJavaLocalRef<jobject> java_primary_icon =
       gfx::ConvertToJavaBitmap(primary_icon_);
   jboolean java_is_primary_icon_maskable = info_.is_primary_icon_maskable;
@@ -238,13 +237,20 @@ void WebApkUpdateDataFetcher::OnGotIconMurmur2Hashes(
   ScopedJavaLocalRef<jstring> java_splash_icon_url =
       base::android::ConvertUTF8ToJavaString(env,
                                              info_.splash_image_url.spec());
-  ScopedJavaLocalRef<jstring> java_splash_icon_murmur2_hash =
-      base::android::ConvertUTF8ToJavaString(
-          env, (*hashes)[info_.splash_image_url.spec()].hash);
   jboolean java_is_splash_icon_maskable = info_.is_splash_image_maskable;
+  std::string splash_icon_hash = "";
+  std::string splash_icon_data = "";
+  {
+    auto it = icons.find(info_.splash_image_url);
+    if (it != icons.end()) {
+      splash_icon_hash = it->second->hash();
+      splash_icon_data = it->second->ExtractData();
+    }
+  }
+  ScopedJavaLocalRef<jstring> java_splash_icon_murmur2_hash =
+      base::android::ConvertUTF8ToJavaString(env, splash_icon_hash);
   base::android::ScopedJavaLocalRef<jbyteArray> java_splash_icon_data =
-      base::android::ToJavaByteArray(
-          env, (*hashes)[info_.splash_image_url.spec()].unsafe_data);
+      base::android::ToJavaByteArray(env, splash_icon_data);
 
   ScopedJavaLocalRef<jobjectArray> java_icon_urls =
       base::android::ToJavaArrayOfStrings(env, info_.icon_urls);
@@ -297,12 +303,12 @@ void WebApkUpdateDataFetcher::OnGotIconMurmur2Hashes(
     const auto& shortcut = info_.shortcut_items[i];
     const GURL& chosen_icon_url = info_.best_shortcut_icon_urls[i];
 
-    auto it = hashes->find(chosen_icon_url.spec());
+    auto it = icons.find(chosen_icon_url);
     std::string chosen_icon_hash;
     std::string chosen_icon_data;
-    if (it != hashes->end()) {
-      chosen_icon_hash = it->second.hash;
-      chosen_icon_data = std::move(it->second.unsafe_data);
+    if (it != icons.end()) {
+      chosen_icon_hash = it->second->hash();
+      chosen_icon_data = it->second->ExtractData();
     }
 
     shortcuts.push_back({shortcut.name,

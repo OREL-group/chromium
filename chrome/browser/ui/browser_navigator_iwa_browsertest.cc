@@ -71,7 +71,7 @@ class ExternalProtocolHandlerDelegate
   void BlockRequest() override { future.SetValue(); }
   scoped_refptr<shell_integration::DefaultSchemeClientWorker> CreateShellWorker(
       const GURL& url) override {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return nullptr;
   }
   void RunExternalProtocolDialog(
@@ -81,14 +81,14 @@ class ExternalProtocolHandlerDelegate
       bool has_user_gesture,
       const std::optional<url::Origin>& initiating_origin,
       const std::u16string& program_name) override {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
   }
   void LaunchUrlWithoutSecurityCheck(
       const GURL& url,
       content::WebContents* web_contents) override {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
   }
-  void FinishedProcessingCheck() override { NOTREACHED(); }
+  void FinishedProcessingCheck() override { NOTREACHED_IN_MIGRATION(); }
 
   base::test::TestFuture<void> future;
 };
@@ -114,14 +114,12 @@ class BrowserNavigatorIwaTest : public BrowserNavigatorTest {
     web_app::TestSignedWebBundle bundle1 =
         web_app::TestSignedWebBundleBuilder::BuildDefault(
             web_app::TestSignedWebBundleBuilder::BuildOptions()
-                .SetKeyPair(web_package::WebBundleSigner::Ed25519KeyPair::
-                                CreateRandom())
+                .AddKeyPair(web_package::test::Ed25519KeyPair::CreateRandom())
                 .SetIndexHTMLContent("Hello BrowserNavigator 1!"));
     web_app::TestSignedWebBundle bundle2 =
         web_app::TestSignedWebBundleBuilder::BuildDefault(
             web_app::TestSignedWebBundleBuilder::BuildOptions()
-                .SetKeyPair(web_package::WebBundleSigner::Ed25519KeyPair::
-                                CreateRandom())
+                .AddKeyPair(web_package::test::Ed25519KeyPair::CreateRandom())
                 .SetIndexHTMLContent("Hello BrowserNavigator 2!"));
 
     base::FilePath bundle1_path =
@@ -393,7 +391,7 @@ INSTANTIATE_TEST_SUITE_P(
         case WindowOpenDisposition::NEW_BACKGROUND_TAB:
           return "NEW_BACKGROUND_TAB";
         default:
-          NOTREACHED_NORETURN();
+          NOTREACHED();
       }
     });
 

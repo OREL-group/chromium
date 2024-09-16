@@ -7,16 +7,17 @@ package org.chromium.chrome.test.transit.testhtmls;
 import android.util.Pair;
 
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
-import org.chromium.chrome.test.transit.PageStation;
-import org.chromium.chrome.test.transit.PopupBlockedMessageFacility;
+import org.chromium.chrome.test.transit.page.PageStation;
+import org.chromium.chrome.test.transit.page.PopupBlockedMessageFacility;
+import org.chromium.chrome.test.transit.page.WebPageStation;
 
 /**
  * PageStation for popup_test.html, which opens two pop-ups (one.html and two.html) upon loading.
  */
-public class PopupOnLoadPageStation extends PageStation {
+public class PopupOnLoadPageStation extends WebPageStation {
     public static final String PATH = "/chrome/test/data/android/popup_test.html";
 
-    protected PopupOnLoadPageStation(Builder<PopupOnLoadPageStation> builder) {
+    protected <T extends PopupOnLoadPageStation> PopupOnLoadPageStation(Builder<T> builder) {
         super(builder);
     }
 
@@ -29,18 +30,15 @@ public class PopupOnLoadPageStation extends PageStation {
     public static Pair<PopupOnLoadPageStation, PopupBlockedMessageFacility>
             loadInCurrentTabExpectBlocked(
                     ChromeTabbedActivityTestRule activityTestRule, PageStation currentPageStation) {
-        PopupOnLoadPageStation newPage =
-                new Builder<>(PopupOnLoadPageStation::new)
-                        .initFrom(currentPageStation)
-                        .withIsOpeningTab(false)
-                        .withIsSelectingTab(false)
-                        .build();
-        PopupBlockedMessageFacility popupBlockedMessage =
-                new PopupBlockedMessageFacility(newPage, 2);
         // TODO(crbug.com/329307093): Add condition that no new tabs were opened.
-
         String url = activityTestRule.getTestServer().getURL(PATH);
-        currentPageStation.loadPageProgramatically(newPage, url);
+        PopupBlockedMessageFacility<PopupOnLoadPageStation> popupBlockedMessage =
+                new PopupBlockedMessageFacility<>(2);
+        PopupOnLoadPageStation newPage =
+                currentPageStation.loadPageProgrammatically(
+                        url,
+                        new Builder<PopupOnLoadPageStation>(PopupOnLoadPageStation::new)
+                                .withFacility(popupBlockedMessage));
 
         return Pair.create(newPage, popupBlockedMessage);
     }
@@ -50,18 +48,16 @@ public class PopupOnLoadPageStation extends PageStation {
      *
      * @return the now active PageStation two.html
      */
-    public static PageStation loadInCurrentTabExpectPopups(
+    public static WebPageStation loadInCurrentTabExpectPopups(
             ChromeTabbedActivityTestRule activityTestRule, PageStation currentPageStation) {
-        // Don't expect popup_test.html to be loaded at the end of the transition, but two.html.
-        PageStation newPage =
-                NavigatePageStations.newNavigateTwoPageBuilder()
-                        .initFrom(currentPageStation)
-                        .withIsOpeningTab(true)
-                        .withIsSelectingTab(true)
-                        .build();
         // TODO(crbug.com/329307093): Add condition that two new tabs were opened.
-
         String url = activityTestRule.getTestServer().getURL(PATH);
-        return currentPageStation.loadPageProgramatically(newPage, url);
+        return currentPageStation.loadPageProgrammatically(
+                url,
+                NavigatePageStations.newNavigateTwoPageBuilder()
+                        .withIsOpeningTabs(2)
+                        .withIsSelectingTabs(2)
+                        // Expect popup_test.html to open two.html in foreground.
+                        .withExpectedUrlSubstring("two.html"));
     }
 }

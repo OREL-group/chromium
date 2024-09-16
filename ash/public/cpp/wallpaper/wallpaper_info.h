@@ -16,6 +16,7 @@
 #include "ash/public/cpp/wallpaper/wallpaper_types.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "base/version.h"
 #include "ui/gfx/image/image_skia.h"
 
 namespace ash {
@@ -27,14 +28,15 @@ struct ASH_PUBLIC_EXPORT WallpaperInfo {
       "collection_id";
   static constexpr std::string_view kNewWallpaperDateNodeName = "date";
   static constexpr std::string_view kNewWallpaperDedupKeyNodeName = "dedup_key";
-  static constexpr std::string_view kNewWallpaperLayoutNodeName = "layout";
   static constexpr std::string_view kNewWallpaperLocationNodeName = "file";
   static constexpr std::string_view kNewWallpaperUserFilePathNodeName =
       "file_path";
+  static constexpr std::string_view kNewWallpaperLayoutNodeName = "layout";
   static constexpr std::string_view kNewWallpaperTypeNodeName = "type";
   static constexpr std::string_view kNewWallpaperUnitIdNodeName = "unit_id";
   static constexpr std::string_view kNewWallpaperVariantListNodeName =
       "variants";
+  static constexpr std::string_view kNewWallpaperVersionNodeName = "version";
 
   // Names of nodes for the online wallpaper variant dictionary.
   static constexpr std::string_view kOnlineWallpaperTypeNodeName =
@@ -72,11 +74,21 @@ struct ASH_PUBLIC_EXPORT WallpaperInfo {
   bool MatchesSelection(const WallpaperInfo& other) const;
   bool MatchesAsset(const WallpaperInfo& other) const;
 
+  // Used to convert from local or remote syncable pref dict to a WallpaperInfo.
+  // Returns nullopt if the |dict| contains any invalid value which may come
+  // from future versions of the remote pref .e.g wallpaper type.
+  static std::optional<WallpaperInfo> FromDict(const base::Value::Dict& dict);
+
   // Returns the dictionary representation of the `WallpaperInfo` to be saved
   // into pref store.
   base::Value::Dict ToDict() const;
 
   ~WallpaperInfo();
+
+  // The version associated with the wallpaper. Expected to be in the form of
+  // "major.minor". Major version indicates breaking change, and incompatible
+  // with the other versions. Check `base::Version::IsValid()` before using.
+  base::Version version;
 
   // Either file name of migrated wallpaper including first directory level
   // (corresponding to user wallpaper_files_id), online wallpaper URL, or

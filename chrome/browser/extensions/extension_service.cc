@@ -158,7 +158,7 @@ const char kBlockLoadCommandline[] = "command_line";
 // ExtensionUnpublishedAvailability policy default value.
 constexpr int kAllowUnpublishedExtensions = 0;
 
-// When uninstalling an extension determine if the extension's directory
+// When uninstalling an extension, determine if the extension's directory
 // should be deleted when uninstalling. Returns `true` iff extension is
 // unpacked and installed outside the unpacked extensions installations dir.
 // Example: packed extensions are always deleted. But unpacked extensions are
@@ -655,7 +655,7 @@ scoped_refptr<CrxInstaller> ExtensionService::CreateUpdateInstaller(
     if (file_ownership_passed &&
         !GetExtensionFileTaskRunner()->PostTask(
             FROM_HERE, base::GetDeleteFileCallback(file.path))) {
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
     }
 
     return nullptr;
@@ -734,10 +734,6 @@ void ExtensionService::LoadExtensionsFromCommandLineFlag(
       UnpackedInstaller::Create(this)->LoadFromCommandLine(
           base::FilePath(t.token_piece()), &extension_id,
           false /*only-allow-apps*/);
-      // Extension id is added to allowlist after its extension is loaded
-      // because code is executed asynchronously. TODO(michaelpg): Remove this
-      // assumption so loading extensions does not have to be asynchronous:
-      // crbug.com/708354.
       if (switch_name == ::switches::kDisableExtensionsExcept)
         disable_flag_exempted_extensions_.insert(extension_id);
     }
@@ -887,22 +883,23 @@ bool ExtensionService::UninstallExtension(
     // Extensions installed from webstore or .crx are versioned in subdirs so we
     // delete the parent dir. Unpacked (installed from .zip rather than folder)
     // are not versioned so we just delete the single installation directory.
-    base::FilePath deletion_dir =
+    base::FilePath extension_dir_to_delete =
         is_unpacked_location ? extension->path() : extension->path().DirName();
 
-    // Tell the backend to start deleting installed extension on the file
+    base::FilePath extensions_install_dir =
+        is_unpacked_location ? unpacked_install_directory_ : install_directory_;
+
+    // Tell the backend to start deleting the installed extension on the file
     // thread.
     if (!GetExtensionFileTaskRunner()->PostTaskAndReply(
             FROM_HERE,
             base::BindOnce(&ExtensionService::UninstallExtensionOnFileThread,
                            extension->id(), profile_->GetProfileUserName(),
-                           /*extensions_install_dir=*/
-                           is_unpacked_location ? unpacked_install_directory_
-                                                : install_directory_,
-                           /*extension_dir_to_delete=*/std::move(deletion_dir),
+                           std::move(extensions_install_dir),
+                           std::move(extension_dir_to_delete),
                            profile_->GetPath()),
             subtask_done_callback)) {
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
     }
   }
 
@@ -1320,9 +1317,7 @@ void ExtensionService::CheckManagementPolicy() {
 
     // If this profile is not supervised, then remove any supervised user
     // related disable reasons.
-    bool is_supervised =
-        profile() &&
-        supervised_user::IsSubjectToParentalControls(*profile()->GetPrefs());
+    bool is_supervised = profile() && profile()->IsChild();
     if (!is_supervised) {
       disable_reasons &= (~disable_reason::DISABLE_CUSTODIAN_APPROVAL_REQUIRED);
     }
@@ -1527,7 +1522,7 @@ void ExtensionService::AddExtension(const Extension* extension) {
     // location, but some bugs (e.g. crbug.com/692069) seem to indicate we do.
     // Track down the cases when this can happen, and remove this
     // DumpWithoutCrashing() (possibly replacing it with a CHECK).
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     DEBUG_ALIAS_FOR_CSTR(extension_id_copy, extension->id().c_str(), 33);
     ManifestLocation location = extension->location();
     int creation_flags = extension->creation_flags();
@@ -1580,11 +1575,11 @@ void ExtensionService::AddComponentExtension(const Extension* extension) {
             << old_version_string << "' to "
             << extension->version().GetString();
 
-    // TODO(crbug.com/696822): If needed, add support for Declarative Net
+    // TODO(crbug.com/40508457): If needed, add support for Declarative Net
     // Request to component extensions and pass the ruleset install prefs here.
     AddNewOrUpdatedExtension(extension, Extension::ENABLED, kInstallFlagNone,
                              syncer::StringOrdinal(), std::string(),
-                             {} /* ruleset_install_prefs */);
+                             /*ruleset_install_prefs=*/{});
     return;
   }
 
@@ -1717,7 +1712,7 @@ void ExtensionService::OnExtensionInstalled(
     const Extension* extension,
     const syncer::StringOrdinal& page_ordinal,
     int install_flags,
-    const declarative_net_request::RulesetInstallPrefs& ruleset_install_prefs) {
+    base::Value::Dict ruleset_install_prefs) {
   CHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
 
   const std::string& id = extension->id();
@@ -1752,7 +1747,7 @@ void ExtensionService::OnExtensionInstalled(
       if (!GetExtensionFileTaskRunner()->PostTask(
               FROM_HERE,
               base::GetDeletePathRecursivelyCallback(extension->path()))) {
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
       }
       return;
     }
@@ -1822,7 +1817,8 @@ void ExtensionService::OnExtensionInstalled(
       UMA_HISTOGRAM_ENUMERATION("Extensions.InstallSource.NonUser",
                                 extension->GetType(), 100);
     }
-    // TODO(crbug.com/1383740): Address Install metrics below in a follow-up CL.
+    // TODO(crbug.com/40878021): Address Install metrics below in a follow-up
+    // CL.
     RecordPermissionMessagesHistogram(extension, "Install", is_user_profile);
   }
 
@@ -1844,17 +1840,17 @@ void ExtensionService::OnExtensionInstalled(
     case InstallGate::INSTALL:
       AddNewOrUpdatedExtension(extension, initial_state, install_flags,
                                page_ordinal, install_parameter,
-                               ruleset_install_prefs);
+                               std::move(ruleset_install_prefs));
       return;
     case InstallGate::DELAY:
       extension_prefs_->SetDelayedInstallInfo(
           extension, initial_state, install_flags, delay_reason, page_ordinal,
-          install_parameter, ruleset_install_prefs);
+          install_parameter, std::move(ruleset_install_prefs));
 
       // Transfer ownership of |extension|.
       delayed_installs_.Insert(extension);
 
-      if (delay_reason == ExtensionPrefs::DELAY_REASON_WAIT_FOR_IDLE) {
+      if (delay_reason == ExtensionPrefs::DelayReason::kWaitForIdle) {
         // Notify observers that app update is available.
         for (auto& observer : update_observers_)
           observer.OnAppUpdateAvailable(extension);
@@ -1867,7 +1863,7 @@ void ExtensionService::OnExtensionInstalled(
       return;
   }
 
-  NOTREACHED() << "Unknown action for delayed install: " << action;
+  NOTREACHED_IN_MIGRATION() << "Unknown action for delayed install: " << action;
 }
 
 void ExtensionService::OnExtensionManagementSettingsChanged() {
@@ -1911,11 +1907,11 @@ void ExtensionService::AddNewOrUpdatedExtension(
     int install_flags,
     const syncer::StringOrdinal& page_ordinal,
     const std::string& install_parameter,
-    const declarative_net_request::RulesetInstallPrefs& ruleset_install_prefs) {
+    base::Value::Dict ruleset_install_prefs) {
   CHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   extension_prefs_->OnExtensionInstalled(extension, initial_state, page_ordinal,
                                          install_flags, install_parameter,
-                                         ruleset_install_prefs);
+                                         std::move(ruleset_install_prefs));
   delayed_installs_.Remove(extension->id());
   if (InstallVerifier::NeedsVerification(*extension, GetBrowserContext()))
     InstallVerifier::Get(GetBrowserContext())->VerifyExtension(extension->id());
@@ -1955,7 +1951,7 @@ bool ExtensionService::FinishDelayedInstallationIfReady(
   delayed_installs_.Remove(extension_id);
 
   if (!extension_prefs_->FinishDelayedInstallInfo(extension_id))
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
 
   FinishInstallation(delayed_install.get());
   return true;
@@ -2143,42 +2139,39 @@ void ExtensionService::RenderProcessHostDestroyed(
     return;
 
   ProcessMap* process_map = ProcessMap::Get(profile_);
-  if (process_map->Contains(host->GetID())) {
-    // An extension process was terminated, this might have resulted in an
-    // app or extension becoming idle.
-    std::set<std::string> extension_ids =
-        process_map->GetExtensionsInProcess(host->GetID());
-    // In addition to the extensions listed in the process map, one of those
-    // extensions could be referencing a shared module which is waiting for
-    // idle to update. Check all imports of these extensions, too.
-    std::set<std::string> import_ids;
-    for (auto& extension_id : extension_ids) {
-      const Extension* extension = registry_->GetExtensionById(
-          extension_id, ExtensionRegistry::EVERYTHING);
-      if (!extension)
-        continue;
+
+  // An extension process was terminated, this might have resulted in an
+  // app or extension becoming idle.
+  if (std::optional<std::string> extension_id =
+          process_map->GetExtensionIdForProcess(host->GetID())) {
+    // The extension running in this process might also be referencing a shared
+    // module which is waiting for idle to update. Check all imports of this
+    // extension too.
+    std::set<std::string> affected_ids;
+    affected_ids.insert(*extension_id);
+
+    if (auto* extension = registry_->GetExtensionById(
+            *extension_id, ExtensionRegistry::EVERYTHING)) {
       const std::vector<SharedModuleInfo::ImportInfo>& imports =
           SharedModuleInfo::GetImports(extension);
       for (const auto& import_info : imports) {
-        import_ids.insert(import_info.extension_id);
+        affected_ids.insert(import_info.extension_id);
       }
     }
-    extension_ids.insert(import_ids.begin(), import_ids.end());
 
-    for (auto& extension_id : extension_ids) {
-      if (delayed_installs_.Contains(extension_id)) {
+    for (const auto& id : affected_ids) {
+      if (delayed_installs_.Contains(id)) {
         base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
             FROM_HERE,
             base::BindOnce(
                 base::IgnoreResult(
                     &ExtensionService::FinishDelayedInstallationIfReady),
-                AsExtensionServiceWeakPtr(), extension_id,
-                false /*install_immediately*/),
+                AsExtensionServiceWeakPtr(), id, false /*install_immediately*/),
             kUpdateIdleDelay);
       }
     }
   }
-  process_map->RemoveAllFromProcess(host->GetID());
+  process_map->Remove(host->GetID());
 }
 
 int ExtensionService::GetDisableReasonsOnInstalled(const Extension* extension) {

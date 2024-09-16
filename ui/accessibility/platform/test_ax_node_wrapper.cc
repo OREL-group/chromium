@@ -353,7 +353,7 @@ bool TestAXNodeWrapper::IsReadOnlyOrDisabled() const {
 // Walk the AXTree and ensure that all wrappers are created
 void TestAXNodeWrapper::BuildAllWrappers(AXTree* tree, AXNode* node) {
   TestAXNodeWrapper::GetOrCreate(tree, node);
-  for (ui::AXNode* child : node->children()) {
+  for (AXNode* child : node->children()) {
     TestAXNodeWrapper::GetOrCreate(tree, child);
     BuildAllWrappers(tree, child);
   }
@@ -375,7 +375,7 @@ AXPlatformNode* TestAXNodeWrapper::GetFromNodeID(int32_t id) {
 }
 
 AXPlatformNode* TestAXNodeWrapper::GetFromTreeIDAndNodeID(
-    const ui::AXTreeID& ax_tree_id,
+    const AXTreeID& ax_tree_id,
     int32_t id) {
   // TestAXNodeWrapper only supports one accessibility tree.
   // Additional work would need to be done to support multiple trees.
@@ -578,8 +578,7 @@ bool TestAXNodeWrapper::IsCellOrHeaderOfAriaGrid() const {
   return node_->IsCellOrHeaderOfAriaGrid();
 }
 
-bool TestAXNodeWrapper::AccessibilityPerformAction(
-    const ui::AXActionData& data) {
+bool TestAXNodeWrapper::AccessibilityPerformAction(const AXActionData& data) {
   switch (data.action) {
     case ax::mojom::Action::kScrollToPoint:
       g_offset = gfx::Vector2d(data.target_point.x(), data.target_point.y());
@@ -617,7 +616,7 @@ bool TestAXNodeWrapper::AccessibilityPerformAction(
 
       switch (GetRole()) {
         case ax::mojom::Role::kListBoxOption:
-        case ax::mojom::Role::kCell: {
+        case ax::mojom::Role::kGridCell: {
           bool current_value =
               GetBoolAttribute(ax::mojom::BoolAttribute::kSelected);
           ReplaceBoolAttribute(ax::mojom::BoolAttribute::kSelected,
@@ -774,11 +773,9 @@ std::u16string TestAXNodeWrapper::GetLocalizedStringForRoleDescription() const {
       return u"figure";
 
     case ax::mojom::Role::kFooter:
-    case ax::mojom::Role::kFooterAsNonLandmark:
       return u"footer";
 
     case ax::mojom::Role::kHeader:
-    case ax::mojom::Role::kHeaderAsNonLandmark:
       return u"header";
 
     case ax::mojom::Role::kMark:
@@ -796,6 +793,12 @@ std::u16string TestAXNodeWrapper::GetLocalizedStringForRoleDescription() const {
 
       return {};
     }
+
+    case ax::mojom::Role::kSectionFooter:
+      return u"sectionfooter";
+
+    case ax::mojom::Role::kSectionHeader:
+      return u"searchheader";
 
     case ax::mojom::Role::kStatus:
       return u"output";
@@ -846,7 +849,7 @@ std::u16string TestAXNodeWrapper::GetLocalizedStringForImageAnnotationStatus(
       return std::u16string();
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return std::u16string();
 }
 
@@ -885,13 +888,14 @@ TestAXNodeWrapper::GetSourceNodesForReverseRelations(
       tree_->GetReverseRelations(attr, GetData().id));
 }
 
-const ui::AXUniqueId& TestAXNodeWrapper::GetUniqueId() const {
+AXPlatformNodeId TestAXNodeWrapper::GetUniqueId() const {
   return unique_id_;
 }
 
 TestAXNodeWrapper::TestAXNodeWrapper(AXTree* tree, AXNode* node)
     : tree_(tree),
       node_(node),
+      unique_id_(AXUniqueId::Create()),
       platform_node_(AXPlatformNode::Create(this)) {
 #if BUILDFLAG(IS_WIN)
   native_event_target_ = gfx::kMockAcceleratedWidget;
@@ -938,9 +942,8 @@ TestAXNodeWrapper* TestAXNodeWrapper::InternalGetChild(size_t index) const {
 }
 
 const std::vector<gfx::NativeViewAccessible>
-TestAXNodeWrapper::GetUIADirectChildrenInRange(
-    ui::AXPlatformNodeDelegate* start,
-    ui::AXPlatformNodeDelegate* end) {
+TestAXNodeWrapper::GetUIADirectChildrenInRange(AXPlatformNodeDelegate* start,
+                                               AXPlatformNodeDelegate* end) {
   return {};
 }
 
@@ -952,8 +955,9 @@ bool TestAXNodeWrapper::ShouldHideChildrenForUIA(const AXNode* node) {
 
   auto role = node->GetRole();
 
-  if (ui::HasPresentationalChildren(role))
+  if (HasPresentationalChildren(role)) {
     return true;
+  }
 
   switch (role) {
     case ax::mojom::Role::kLink:

@@ -23,20 +23,18 @@
 #include "base/time/time.h"
 #include "base/types/strong_alias.h"
 #include "build/build_config.h"
-#include "build/buildflag.h"
 #include "components/password_manager/core/browser/affiliation/affiliated_match_helper.h"
 #include "components/password_manager/core/browser/password_form_digest.h"
 #include "components/password_manager/core/browser/password_manager_metrics_util.h"
 #include "components/password_manager/core/browser/password_store/password_store_backend.h"
 #include "components/password_manager/core/browser/password_store/password_store_change.h"
 #include "components/password_manager/core/browser/password_store/password_store_interface.h"
-#include "components/password_manager/core/browser/password_store/password_store_sync_interface.h"
 #include "components/password_manager/core/browser/password_store/smart_bubble_stats_store.h"
 
 class PrefService;
 
 namespace syncer {
-class ModelTypeControllerDelegate;
+class DataTypeControllerDelegate;
 }  // namespace syncer
 
 namespace password_manager {
@@ -48,19 +46,15 @@ using metrics_util::GaiaPasswordHashChange;
 class PasswordStoreConsumer;
 
 // Used to notify that unsynced credentials are about to be deleted.
-class UnsyncedCredentialsDeletionNotifier {
- public:
-  // Should be called from the UI thread.
-  virtual void Notify(std::vector<PasswordForm>) = 0;
-  virtual ~UnsyncedCredentialsDeletionNotifier() = default;
-  virtual base::WeakPtr<UnsyncedCredentialsDeletionNotifier> GetWeakPtr() = 0;
-};
+using UnsyncedCredentialsDeletionNotifier =
+    base::RepeatingCallback<void(std::vector<PasswordForm>)>;
 
 // Partial, cross-platform implementation for storing form passwords.
 // The login request/manipulation API is not threadsafe and must be used
 // from the UI thread.
-class PasswordStore : public PasswordStoreInterface,
-                      public PasswordStoreSyncInterface {
+// PasswordStoreSync is a hidden base class because only PasswordSyncBridge
+// needs to access these methods.
+class PasswordStore : public PasswordStoreInterface {
  public:
   explicit PasswordStore(std::unique_ptr<PasswordStoreBackend> backend);
 
@@ -89,15 +83,18 @@ class PasswordStore : public PasswordStoreInterface,
       const PasswordForm& new_form,
       const PasswordForm& old_primary_key,
       base::OnceClosure completion = base::DoNothing()) override;
-  void RemoveLogin(const PasswordForm& form) override;
+  void RemoveLogin(const base::Location& location,
+                   const PasswordForm& form) override;
   void RemoveLoginsByURLAndTime(
+      const base::Location& location,
       const base::RepeatingCallback<bool(const GURL&)>& url_filter,
       base::Time delete_begin,
       base::Time delete_end,
       base::OnceClosure completion = base::NullCallback(),
       base::OnceCallback<void(bool)> sync_completion =
           base::NullCallback()) override;
-  void RemoveLoginsCreatedBetween(base::Time delete_begin,
+  void RemoveLoginsCreatedBetween(const base::Location& location,
+                                  base::Time delete_begin,
                                   base::Time delete_end,
                                   base::OnceCallback<void(bool)> completion =
                                       base::NullCallback()) override;
@@ -117,19 +114,12 @@ class PasswordStore : public PasswordStoreInterface,
   void AddObserver(Observer* observer) override;
   void RemoveObserver(Observer* observer) override;
   SmartBubbleStatsStore* GetSmartBubbleStatsStore() override;
-  std::unique_ptr<syncer::ModelTypeControllerDelegate>
+  std::unique_ptr<syncer::DataTypeControllerDelegate>
   CreateSyncControllerDelegate() override;
   void OnSyncServiceInitialized(syncer::SyncService* sync_service) override;
-  PasswordStoreSyncInterface* GetPasswordStoreSyncInterface() override;
-  PasswordStoreBackend* GetBackendForTesting() override;
-
-  // PasswordStoreSyncInterface:
   base::CallbackListSubscription AddSyncEnabledOrDisabledCallback(
       base::RepeatingClosure sync_enabled_or_disabled_cb) override;
-#if !BUILDFLAG(IS_ANDROID)
-  void GetUnsyncedCredentials(
-      base::OnceCallback<void(std::vector<PasswordForm>)> callback) override;
-#endif  // !BUILDFLAG(IS_ANDROID)
+  PasswordStoreBackend* GetBackendForTesting() override;
 
  protected:
   friend class base::RefCountedThreadSafe<PasswordStore>;
@@ -153,7 +143,8 @@ class PasswordStore : public PasswordStoreInterface,
   };
 
   // Called on the main thread after initialization is completed.
-  // |success| is true if initialization was successful.
+  // |success| is true if initialization was successful. Invokes
+  // |post_init_callback_|.
   void OnInitCompleted(bool success);
 
   // Notifies observers that password store data may have been changed. If
@@ -181,7 +172,7 @@ class PasswordStore : public PasswordStoreInterface,
   std::unique_ptr<PasswordStoreBackend> backend_;
 
   // TaskRunner for tasks that run on the main sequence (usually the UI thread).
-  // TODO(crbug.com/1217071): Move into backend_.
+  // TODO(crbug.com/40185050): Move into backend_.
   scoped_refptr<base::SequencedTaskRunner> main_task_runner_;
 
   // See PasswordStoreInterface::AddSyncEnabledOrDisabledCallback(). Wrapped in
@@ -198,6 +189,11 @@ class PasswordStore : public PasswordStoreInterface,
   raw_ptr<PrefService> prefs_ = nullptr;
 
   base::Time construction_time_;
+
+  // Any call to |this| before backend initialization is complete is preserved
+  // here to be executed afterwards by chaining in FIFO order. Callback is
+  // invoked inside OnInitCompleted().
+  base::OnceClosure post_init_callback_ = base::DoNothing();
 };
 
 }  // namespace password_manager

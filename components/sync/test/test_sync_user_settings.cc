@@ -20,21 +20,21 @@ const char kDefaultPassphrase[] = "TestPassphrase";
 
 }  // namespace
 
-ModelTypeSet UserSelectableTypesToModelTypes(
+DataTypeSet UserSelectableTypesToDataTypes(
     UserSelectableTypeSet selected_types) {
-  ModelTypeSet preferred_types;
+  DataTypeSet preferred_types;
   for (UserSelectableType type : selected_types) {
-    preferred_types.PutAll(UserSelectableTypeToAllModelTypes(type));
+    preferred_types.PutAll(UserSelectableTypeToAllDataTypes(type));
   }
   return preferred_types;
 }
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-ModelTypeSet UserSelectableOsTypesToModelTypes(
+DataTypeSet UserSelectableOsTypesToDataTypes(
     UserSelectableOsTypeSet selected_types) {
-  ModelTypeSet preferred_types;
+  DataTypeSet preferred_types;
   for (UserSelectableOsType type : selected_types) {
-    preferred_types.PutAll(UserSelectableOsTypeToAllModelTypes(type));
+    preferred_types.PutAll(UserSelectableOsTypeToAllDataTypes(type));
   }
   return preferred_types;
 }
@@ -86,6 +86,9 @@ void TestSyncUserSettings::KeepAccountSettingsPrefsOnlyForUsers(
     const std::vector<signin::GaiaIdHash>& available_gaia_ids) {}
 
 UserSelectableTypeSet TestSyncUserSettings::GetSelectedTypes() const {
+  if (service_->GetAccountInfo().IsEmpty()) {
+    return {};
+  }
   return selected_types_;
 }
 
@@ -114,12 +117,12 @@ int TestSyncUserSettings::GetNumberOfAccountsWithPasswordsSelected() const {
 }
 #endif
 
-ModelTypeSet TestSyncUserSettings::GetPreferredDataTypes() const {
-  ModelTypeSet types = UserSelectableTypesToModelTypes(GetSelectedTypes());
+DataTypeSet TestSyncUserSettings::GetPreferredDataTypes() const {
+  DataTypeSet types = UserSelectableTypesToDataTypes(GetSelectedTypes());
   types.PutAll(AlwaysPreferredUserTypes());
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
-  types.PutAll(UserSelectableOsTypesToModelTypes(GetSelectedOsTypes()));
+  types.PutAll(UserSelectableOsTypesToDataTypes(GetSelectedOsTypes()));
 #endif
   types.PutAll(ControlTypes());
   return types;
@@ -204,7 +207,7 @@ bool TestSyncUserSettings::IsEncryptEverythingEnabled() const {
   return IsExplicitPassphrase(passphrase_type_);
 }
 
-ModelTypeSet TestSyncUserSettings::GetEncryptedDataTypes() const {
+DataTypeSet TestSyncUserSettings::GetAllEncryptedDataTypes() const {
   return IsUsingExplicitPassphrase() ? EncryptableUserTypes()
                                      : AlwaysEncryptedUserTypes();
 }
@@ -348,7 +351,7 @@ const std::string& TestSyncUserSettings::GetEncryptionPassphrase() const {
 }
 
 bool TestSyncUserSettings::IsEncryptedDatatypePreferred() const {
-  return !Intersection(GetPreferredDataTypes(), GetEncryptedDataTypes())
+  return !Intersection(GetPreferredDataTypes(), GetAllEncryptedDataTypes())
               .empty();
 }
 

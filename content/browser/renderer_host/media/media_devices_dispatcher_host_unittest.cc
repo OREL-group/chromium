@@ -101,8 +101,7 @@ std::u16string MaxLengthCaptureHandle() {
 
 class FakeContentBrowserClient : public ContentBrowserClient {
  public:
-  explicit FakeContentBrowserClient(BrowserContext* expected_browser_context)
-      : expected_browser_context_(expected_browser_context) {}
+  FakeContentBrowserClient() = default;
 
   void PreferenceRankAudioDeviceInfos(
       BrowserContext* browser_context,
@@ -114,6 +113,10 @@ class FakeContentBrowserClient : public ContentBrowserClient {
       BrowserContext* browser_context,
       blink::WebMediaDeviceInfoArray& infos) override {
     PreferenceRankDeviceInfos(browser_context, kDefaultVideoDeviceID, infos);
+  }
+
+  void set_expected_browser_context(BrowserContext* browser_context) {
+    expected_browser_context_ = browser_context;
   }
 
  private:
@@ -184,10 +187,12 @@ class MediaDevicesDispatcherHostTest
   ~MediaDevicesDispatcherHostTest() override {
     audio_manager_->Shutdown();
     EXPECT_FALSE(expected_set_capture_handle_config_);
+    browser_client_.set_expected_browser_context(nullptr);
   }
 
   void SetUp() override {
     SetBrowserClientForTesting(&browser_client_);
+    browser_client_.set_expected_browser_context(&browser_context_);
     std::vector<media::FakeVideoCaptureDeviceSettings> fake_video_devices(
         kNumFakeVideoDevices);
     // A regular video device
@@ -224,7 +229,7 @@ class MediaDevicesDispatcherHostTest
     devices_to_enumerate[static_cast<size_t>(
         MediaDeviceType::kMediaVideoInput)] = true;
     devices_to_enumerate[static_cast<size_t>(
-        MediaDeviceType::kMediaAudioOuput)] = true;
+        MediaDeviceType::kMediaAudioOutput)] = true;
     media_stream_manager_->media_devices_manager()->EnumerateDevices(
         devices_to_enumerate,
         base::BindOnce(&PhysicalDevicesEnumerated, run_loop.QuitClosure(),
@@ -240,7 +245,7 @@ class MediaDevicesDispatcherHostTest
                   .size(),
               0u);
     ASSERT_GT(physical_devices_[static_cast<size_t>(
-                                    MediaDeviceType::kMediaAudioOuput)]
+                                    MediaDeviceType::kMediaAudioOutput)]
                   .size(),
               0u);
   }
@@ -387,7 +392,7 @@ class MediaDevicesDispatcherHostTest
                        .empty());
     if (enumerate_audio_output)
       EXPECT_FALSE(enumerated_devices_[static_cast<size_t>(
-                                           MediaDeviceType::kMediaAudioOuput)]
+                                           MediaDeviceType::kMediaAudioOutput)]
                        .empty());
 
     EXPECT_FALSE(DoesContainRawIds(enumerated_devices_));
@@ -491,7 +496,7 @@ class MediaDevicesDispatcherHostTest
       host_->AddMediaDevicesListener(
           type == MediaDeviceType::kMediaAudioInput,
           type == MediaDeviceType::kMediaVideoInput,
-          type == MediaDeviceType::kMediaAudioOuput,
+          type == MediaDeviceType::kMediaAudioOutput,
           device_change_listener.CreatePendingRemoteAndBind());
       blink::WebMediaDeviceInfoArray changed_devices;
       EXPECT_CALL(device_change_listener, OnDevicesChanged(type, _))
@@ -549,10 +554,10 @@ class MediaDevicesDispatcherHostTest
       expected_set_capture_handle_config_;
   std::vector<media::VideoCaptureFormat> expected_video_capture_formats_;
   RenderViewHostTestEnabler rvh_test_enabler_;
+  FakeContentBrowserClient browser_client_;
   TestBrowserContext browser_context_;
   std::unique_ptr<TestWebContents> web_contents_;
   raw_ptr<TestRenderFrameHost> render_frame_host_;
-  FakeContentBrowserClient browser_client_{&browser_context_};
 };
 
 TEST_P(MediaDevicesDispatcherHostTest, EnumerateAudioInputDevices) {

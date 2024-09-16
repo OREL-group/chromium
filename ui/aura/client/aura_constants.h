@@ -11,6 +11,7 @@
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/aura/aura_export.h"
 #include "ui/aura/window.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/base/ui_base_types.h"
 
 namespace gfx {
@@ -59,12 +60,6 @@ AURA_EXPORT extern const WindowProperty<bool>* const kAnimationsDisabledKey;
 // This is not transported to the window service.
 AURA_EXPORT extern const WindowProperty<gfx::ImageSkia*>* const kAppIconKey;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-// A property key to store the type of window that will be used to record
-// pointer metrics. See AppType in ash/public/cpp/app_types.h for more details.
-AURA_EXPORT extern const WindowProperty<int>* const kAppType;
-#endif
-
 // A property key to store the aspect ratio of the window.
 AURA_EXPORT extern const WindowProperty<gfx::SizeF*>* const kAspectRatio;
 
@@ -106,7 +101,7 @@ AURA_EXPORT extern const WindowProperty<Window*>* const kHostWindowKey;
 AURA_EXPORT extern const WindowProperty<Window*>* const kChildModalParentKey;
 
 // A property key to store the window modality.
-AURA_EXPORT extern const WindowProperty<ui::ModalType>* const kModalKey;
+AURA_EXPORT extern const WindowProperty<ui::mojom::ModalType>* const kModalKey;
 
 // A property key to store the name of the window; mostly used for debugging.
 AURA_EXPORT extern const WindowProperty<std::string*>* const kNameKey;

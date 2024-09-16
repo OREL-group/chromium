@@ -18,6 +18,7 @@
 #include "base/functional/callback.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/not_fatal_until.h"
 #include "base/notreached.h"
 #include "base/rand_util.h"
 #include "base/strings/escape.h"
@@ -247,7 +248,7 @@ void PingManager::OnURLLoaderComplete(
     network::SimpleURLLoader* source,
     std::unique_ptr<std::string> response_body) {
   auto it = safebrowsing_reports_.find(source);
-  DCHECK(it != safebrowsing_reports_.end());
+  CHECK(it != safebrowsing_reports_.end(), base::NotFatalUntil::M130);
   safebrowsing_reports_.erase(it);
 }
 
@@ -262,15 +263,18 @@ void PingManager::OnThreatDetailsReportURLLoaderComplete(
   std::string suffix = (has_access_token ? "YesAccessToken" : "NoAccessToken");
   RecordHttpResponseOrErrorCode((metric + suffix).c_str(), source->NetError(),
                                 response_code);
-
+  if (has_access_token) {
+    MaybeLogCookieReset(*source,
+                        SafeBrowsingAuthenticatedEndpoint::kThreatDetails);
+  }
   OnURLLoaderComplete(source, std::move(response_body));
 }
 
 // Sends a SafeBrowsing "hit" report.
 void PingManager::ReportSafeBrowsingHit(
     std::unique_ptr<safe_browsing::HitReport> hit_report) {
-  base::UmaHistogramBoolean("SafeBrowsing.HitReport.IsSubresource",
-                            hit_report->is_subresource);
+  base::UmaHistogramEnumeration("SafeBrowsing.HitReport.ThreatType",
+                                hit_report->threat_type);
 
   auto resource_request = std::make_unique<network::ResourceRequest>();
   SanitizeHitReport(hit_report.get());
@@ -499,14 +503,11 @@ GURL PingManager::SafeBrowsingHitUrl(
       threat_list = "phishcsdhit";
       break;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 
   std::string threat_source = "none";
   switch (hit_report->threat_source) {
-    case safe_browsing::ThreatSource::REMOTE:
-      threat_source = "rem";
-      break;
     case safe_browsing::ThreatSource::LOCAL_PVER4:
       threat_source = "l4";
       break;
@@ -526,26 +527,11 @@ GURL PingManager::SafeBrowsingHitUrl(
       threat_source = "asb";
       break;
     case safe_browsing::ThreatSource::UNKNOWN:
-      NOTREACHED();
-  }
-
-  // Add user_population component only if it's not empty.
-  std::string user_population_comp;
-  if (!hit_report->population_id.empty()) {
-    // Population_id should be URL-safe, but escape it and size-limit it
-    // anyway since it came from outside Chrome.
-    std::string up_str =
-        base::EscapeQueryParamValue(hit_report->population_id, true);
-    if (up_str.size() > 512) {
-      DCHECK(false) << "population_id is too long: " << up_str;
-      up_str = "UP_STRING_TOO_LONG";
-    }
-
-    user_population_comp = "&up=" + up_str;
+      NOTREACHED_IN_MIGRATION();
   }
 
   return GURL(base::StringPrintf(
-      "%s&evts=%s&evtd=%s&evtr=%s&evhr=%s&evtb=%d&src=%s&m=%d%s", url.c_str(),
+      "%s&evts=%s&evtd=%s&evtr=%s&evhr=%s&evtb=%d&src=%s&m=%d", url.c_str(),
       threat_list.c_str(),
       base::EscapeQueryParamValue(hit_report->malicious_url.spec(), true)
           .c_str(),
@@ -553,7 +539,7 @@ GURL PingManager::SafeBrowsingHitUrl(
       base::EscapeQueryParamValue(hit_report->referrer_url.spec(), true)
           .c_str(),
       hit_report->is_subresource, threat_source.c_str(),
-      hit_report->is_metrics_reporting_active, user_population_comp.c_str()));
+      hit_report->is_metrics_reporting_active));
 }
 
 GURL PingManager::ThreatDetailsUrl() const {

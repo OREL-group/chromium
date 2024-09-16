@@ -2,9 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ash/metrics/wm_feature_metrics_recorder.h"
 
-#include "ash/constants/app_types.h"
 #include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "ash/wm/mru_window_tracker.h"
@@ -12,7 +16,8 @@
 #include "ash/wm/window_util.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/strcat.h"
-#include "ui/aura/client/aura_constants.h"
+#include "chromeos/ui/base/app_types.h"
+#include "chromeos/ui/base/window_properties.h"
 
 namespace ash {
 
@@ -93,9 +98,8 @@ void RecordWindowLayoutAndStatePeriodically() {
       metrics_suffixes.push_back("ActiveWindowAppType");
     }
     for (const std::string& metrics_suffix : metrics_suffixes) {
-      base::UmaHistogramEnumeration(
-          metrics_prefix + metrics_suffix,
-          static_cast<AppType>(window->GetProperty(aura::client::kAppType)));
+      base::UmaHistogramEnumeration(metrics_prefix + metrics_suffix,
+                                    window->GetProperty(chromeos::kAppTypeKey));
     }
 
     // Report the sizes for all windows and the active window.
@@ -127,7 +131,7 @@ std::string WMFeatureMetricsRecorder::GetFeatureMetricsPrefix(
     const WMFeatureType& wm_feature_type) {
   switch (wm_feature_type) {
     case WMFeatureType::kWindowLayoutState:
-      return base::StrCat({kWMFeatureMetricPrefix, "WindowLayoutState"});
+      return base::StrCat({kWMFeatureMetricPrefix, "WindowLayoutState."});
   }
 }
 

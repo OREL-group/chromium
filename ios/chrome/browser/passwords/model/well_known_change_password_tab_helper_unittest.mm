@@ -13,7 +13,7 @@
 #import "components/password_manager/core/common/password_manager_features.h"
 #import "components/ukm/test_ukm_recorder.h"
 #import "ios/chrome/browser/affiliations/model/ios_chrome_affiliation_service_factory.h"
-#import "ios/chrome/browser/shared/model/browser_state/test_chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/web/public/navigation/navigation_manager.h"
 #import "ios/web/public/test/fakes/fake_web_client.h"
 #import "ios/web/public/test/fakes/fake_web_state_delegate.h"
@@ -80,8 +80,7 @@ class WellKnownChangePasswordTabHelperTest : public PlatformTest {
   using UkmBuilder =
       ukm::builders::PasswordManager_WellKnownChangePasswordResult;
   WellKnownChangePasswordTabHelperTest()
-      : web_client_(std::make_unique<web::FakeWebClient>()),
-        task_environment_(web::WebTaskEnvironment::Options::IO_MAINLOOP) {
+      : web_client_(std::make_unique<web::FakeWebClient>()) {
     test_server_->RegisterRequestHandler(base::BindRepeating(
         &WellKnownChangePasswordTabHelperTest::HandleRequest,
         base::Unretained(this)));
@@ -89,7 +88,7 @@ class WellKnownChangePasswordTabHelperTest : public PlatformTest {
     TestChromeBrowserState::Builder builder;
     builder.AddTestingFactory(IOSChromeAffiliationServiceFactory::GetInstance(),
                               base::BindRepeating(&MakeMockAffiliationService));
-    browser_state_ = builder.Build();
+    browser_state_ = std::move(builder).Build();
 
     web::WebState::CreateParams params(browser_state_.get());
     web_state_ = web::WebState::Create(params);
@@ -151,7 +150,8 @@ class WellKnownChangePasswordTabHelperTest : public PlatformTest {
   web::WebState* web_state() const { return web_state_.get(); }
 
   web::ScopedTestingWebClient web_client_;
-  web::WebTaskEnvironment task_environment_;
+  web::WebTaskEnvironment task_environment_{
+      web::WebTaskEnvironment::MainThreadType::IO};
   std::unique_ptr<TestChromeBrowserState> browser_state_;
   std::unique_ptr<web::WebState> web_state_;
 

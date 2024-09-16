@@ -13,8 +13,10 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/no_destructor.h"
 #include "base/strings/strcat.h"
+#include "chrome/browser/ash/input_method/assistive_prefs.h"
 #include "chrome/browser/ash/input_method/autocorrect_enums.h"
 #include "chrome/browser/ash/input_method/autocorrect_prefs.h"
+#include "chrome/browser/ash/input_method/japanese/japanese_settings.h"
 #include "chrome/common/pref_names.h"
 #include "components/prefs/scoped_user_pref_update.h"
 
@@ -24,6 +26,8 @@ namespace input_method {
 namespace {
 
 namespace mojom = ::ash::ime::mojom;
+
+constexpr std::string_view kJapaneseEngineId = "nacl_mozc_jp";
 
 // The values here should be kept in sync with
 // chrome/browser/resources/ash/settings/os_languages_page/input_method_util.js
@@ -192,8 +196,9 @@ mojom::LatinSettingsPtr CreateLatinSettings(
       autocorrect_pref == AutocorrectPreference::kEnabled;
   settings->predictive_writing =
       base::FeatureList::IsEnabled(features::kAssistMultiWord) &&
-      prefs.GetBoolean(prefs::kAssistPredictiveWritingEnabled) &&
-      IsUsEnglishEngine(engine_id);
+      IsUsEnglishEngine(engine_id) &&
+      IsPredictiveWritingPrefEnabled(prefs, engine_id);
+
   return settings;
 }
 
@@ -391,6 +396,10 @@ mojom::InputMethodSettingsPtr CreateSettingsFromPrefs(
   if (IsVietnameseVniEngine(engine_id)) {
     return mojom::InputMethodSettings::NewVietnameseVniSettings(
         CreateVietnameseVniSettings(input_method_specific_pref));
+  }
+  if (engine_id == kJapaneseEngineId) {
+    return mojom::InputMethodSettings::NewJapaneseSettings(
+        ToMojomInputMethodSettings(input_method_specific_pref));
   }
   // TODO(b/232341104): Add the code to send the Japanese settings to
   // the engine if the engine_id is nacl_mozc_jp or nacl_mozc_us.

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/base/clipboard/clipboard_util_win.h"
 
 #include <shellapi.h>
@@ -10,6 +15,7 @@
 
 #include <limits>
 #include <optional>
+#include <string_view>
 #include <utility>
 
 #include "base/files/file_util.h"
@@ -215,7 +221,7 @@ base::FilePath WriteFileContentsToTempFile(const base::FilePath& suggested_name,
     // Don't write to the temp file for empty content--leave it at 0-bytes.
     if (!(data.size() == 1 && data.data()[0] == '\0')) {
       if (!base::WriteFile(temp_path,
-                           base::StringPiece(data.data(), data.size()))) {
+                           std::string_view(data.data(), data.size()))) {
         base::DeleteFile(temp_path);
         return base::FilePath();
       }
@@ -743,7 +749,7 @@ bool GetHtml(IDataObject* data_object,
       base::win::ScopedHGlobal<char*> data(store.hGlobal);
 
       std::string html_utf8;
-      CFHtmlToHtml(base::StringPiece(data.data(), data.size()), &html_utf8,
+      CFHtmlToHtml(std::string_view(data.data(), data.size()), &html_utf8,
                    base_url);
       html->assign(base::UTF8ToUTF16(html_utf8));
     }
@@ -803,16 +809,18 @@ bool GetFileContents(IDataObject* data_object,
   return false;
 }
 
-bool GetWebCustomData(
+bool GetDataTransferCustomData(
     IDataObject* data_object,
     std::unordered_map<std::u16string, std::u16string>* custom_data) {
   DCHECK(data_object && custom_data);
 
-  if (!HasData(data_object, ClipboardFormatType::WebCustomDataType()))
+  if (!HasData(data_object, ClipboardFormatType::DataTransferCustomType())) {
     return false;
+  }
 
   STGMEDIUM store;
-  if (GetData(data_object, ClipboardFormatType::WebCustomDataType(), &store)) {
+  if (GetData(data_object, ClipboardFormatType::DataTransferCustomType(),
+              &store)) {
     {
       base::win::ScopedHGlobal<const uint8_t*> data(store.hGlobal);
       if (std::optional<std::unordered_map<std::u16string, std::u16string>>
@@ -857,7 +865,7 @@ bool GetWebCustomData(
 // Helper method for converting from text/html to MS CF_HTML.
 // Documentation for the CF_HTML format is available at
 // http://msdn.microsoft.com/en-us/library/aa767917(VS.85).aspx
-std::string HtmlToCFHtml(base::StringPiece html, base::StringPiece base_url) {
+std::string HtmlToCFHtml(std::string_view html, std::string_view base_url) {
   if (html.empty()) {
     return std::string();
   }
@@ -977,7 +985,7 @@ std::string HtmlToCFHtml(base::StringPiece html, base::StringPiece base_url) {
 }
 
 // Helper method for converting from MS CF_HTML to text/html.
-void CFHtmlToHtml(base::StringPiece cf_html,
+void CFHtmlToHtml(std::string_view cf_html,
                   std::string* html,
                   std::string* base_url) {
   size_t fragment_start = std::string::npos;
@@ -994,7 +1002,7 @@ void CFHtmlToHtml(base::StringPiece cf_html,
   }
 }
 
-void CFHtmlExtractMetadata(base::StringPiece cf_html,
+void CFHtmlExtractMetadata(std::string_view cf_html,
                            std::string* base_url,
                            size_t* html_start,
                            size_t* fragment_start,

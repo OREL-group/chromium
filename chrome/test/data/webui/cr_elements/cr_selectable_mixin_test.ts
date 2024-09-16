@@ -3,10 +3,10 @@
 // found in the LICENSE file.
 
 // clang-format off
-import {CrSelectableMixin} from 'chrome://resources/cr_elements/cr_menu_selector/cr_selectable_mixin.js';
+import {CrSelectableMixin} from 'chrome://resources/cr_elements/cr_selectable_mixin.js';
 import {html, CrLitElement} from 'chrome://resources/lit/v3_0/lit.rollup.js';
 import {getTrustedHtml} from 'chrome://webui-test/trusted_html.js';
-import {assertEquals} from 'chrome://webui-test/chai_assert.js';
+import {assertEquals, assertTrue, assertNull} from 'chrome://webui-test/chai_assert.js';
 import {eventToPromise} from 'chrome://webui-test/test_util.js';
 // clang-format on
 
@@ -78,10 +78,10 @@ suite('cr-scrollable-mixin', function() {
     elements[0]!.click();
     const events = await Promise.all([activateEvent, selectEvent]);
 
-    assertEquals('chrome://webui-test/a', events[0]!.detail.selected);
+    assertEquals('/a', events[0]!.detail.selected);
     assertEquals(elements[0], events[0]!.detail.item);
     assertEquals(elements[0], events[1]!.detail.item);
-    assertEquals('chrome://webui-test/a', element.selected);
+    assertEquals('/a', element.selected);
 
     selectEvent = eventToPromise('iron-select', element);
     activateEvent = eventToPromise('iron-activate', element);
@@ -90,11 +90,11 @@ suite('cr-scrollable-mixin', function() {
     const newEvents =
         await Promise.all([activateEvent, deselectEvent, selectEvent]);
 
-    assertEquals('chrome://webui-test/b', newEvents[0]!.detail.selected);
+    assertEquals('/b', newEvents[0]!.detail.selected);
     assertEquals(elements[1], newEvents[0]!.detail.item);
     assertEquals(elements[0], newEvents[1]!.detail.item);
     assertEquals(elements[1], newEvents[2]!.detail.item);
-    assertEquals('chrome://webui-test/b', element.selected);
+    assertEquals('/b', element.selected);
   });
 
   test('sets attribute and class', async () => {
@@ -105,16 +105,111 @@ suite('cr-scrollable-mixin', function() {
             index === selectedIndex, elements[index]!.hasAttribute('selected'));
         assertEquals(
             index === selectedIndex,
-            elements[index]!.classList.contains('iron-selected'));
+            elements[index]!.classList.contains('selected'));
       }
     }
 
-    element.selected = 'chrome://webui-test/c';
+    element.selected = '/c';
     await eventToPromise('iron-select', element);
     assertSelected(2);
 
-    element.selected = 'chrome://webui-test/a';
+    element.selected = '/a';
     await eventToPromise('iron-select', element);
     assertSelected(0);
+  });
+});
+
+suite('cr-scrollable-mixin overrides', function() {
+  const TestOverridesElementBase = CrSelectableMixin(CrLitElement);
+
+  class TestOverridesElement extends TestOverridesElementBase {
+    static get is() {
+      return 'test-overrides-element';
+    }
+
+    override render() {
+      return html`
+        <a href="/a">a</a>
+        <a href="/b">b</a>
+        <a href="/c">c</a>
+        <a href="/d">d</a>
+        <div>e</div>
+      `;
+    }
+
+    constructor() {
+      super();
+
+      /** Property for CrSelectableMixin */
+      this.attrForSelected = 'href';
+    }
+
+    // Override `observeItems` from CrSelectableMixin.
+    override observeItems() {
+      // Turn off default observation logic in CrSelectableMixin.
+    }
+
+    // Override `queryItems` from CrSelectableMixin.
+    override queryItems() {
+      return Array.from(this.shadowRoot!.querySelectorAll('a'));
+    }
+
+    // Override `queryMatchingItem` from CrSelectableMixin.
+    override queryMatchingItem(selector: string) {
+      return this.shadowRoot!.querySelector<HTMLElement>(`a${selector}`);
+    }
+
+    override connectedCallback() {
+      super.connectedCallback();
+      this.itemsChanged();
+    }
+  }
+
+  customElements.define(TestOverridesElement.is, TestOverridesElement);
+
+  let element: TestOverridesElement;
+
+  setup(function() {
+    document.body.innerHTML = window.trustedTypes!.emptyHTML;
+    element = document.createElement('test-overrides-element') as
+        TestOverridesElement;
+    document.body.appendChild(element);
+  });
+
+  test('All', async () => {
+    // Assert that selectable items have been detected.
+    assertEquals(4, element.getItemsForTest().length);
+    assertNull(element.selectedItem);
+
+    // Select the 2nd item.
+    element.selected = '/b';
+    await element.updateComplete;
+    let selectedItem = element.shadowRoot!.querySelector('.selected');
+    assertTrue(!!selectedItem);
+    assertEquals(selectedItem, element.selectedItem);
+    assertEquals('b', selectedItem.textContent);
+
+    // Remove the selected item, and manually call itemsChanged().
+    selectedItem.remove();
+    element.itemsChanged();
+    assertEquals(3, element.getItemsForTest().length);
+    assertNull(element.selectedItem);
+
+    // Select the 1st item.
+    element.selected = '/a';
+    await element.updateComplete;
+    selectedItem = element.shadowRoot!.querySelector('.selected');
+    assertTrue(!!selectedItem);
+    assertEquals(selectedItem, element.selectedItem);
+    assertEquals('a', selectedItem.textContent);
+
+    // Select the next item.
+    element.selectNext();
+    await element.updateComplete;
+    assertEquals('/c', element.selected);
+    selectedItem = element.shadowRoot!.querySelector('.selected');
+    assertTrue(!!selectedItem);
+    assertEquals(selectedItem, element.selectedItem);
+    assertEquals('c', selectedItem.textContent);
   });
 });

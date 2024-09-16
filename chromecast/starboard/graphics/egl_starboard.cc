@@ -4,13 +4,17 @@
 
 #include "chromecast/starboard/graphics/egl_starboard.h"
 
+#include <dlfcn.h>
 #include <starboard/egl.h>
 #include <starboard/gles.h>
 #include <stdio.h>
 
 #include <cstdlib>
+#include <string>
 
 extern "C" {
+
+constexpr char kSupportedExtensions[] = "EGL_EXT_client_extensions";
 
 EGLBoolean Sb_eglChooseConfig(EGLDisplay dpy,
                               const EGLint* attrib_list,
@@ -99,7 +103,15 @@ EGLint Sb_eglGetError(void) {
 
 __eglMustCastToProperFunctionPointerType Sb_eglGetProcAddress(
     const char* procname) {
-  auto* addr = SbGetEglInterface()->eglGetProcAddress(procname);
+  // First, look up an "Sb_" prefixed function that has been loaded. If that
+  // fails, perform an un-prefixed lookup via starboard.
+  const std::string prefixed_name = std::string("Sb_") + procname;
+  auto* addr = reinterpret_cast<__eglMustCastToProperFunctionPointerType>(
+      dlsym(RTLD_DEFAULT, prefixed_name.c_str()));
+  if (!addr) {
+    addr = SbGetEglInterface()->eglGetProcAddress(procname);
+  }
+
   return addr;
 }
 
@@ -122,6 +134,16 @@ EGLBoolean Sb_eglQueryContext(EGLDisplay dpy,
 }
 
 const char* Sb_eglQueryString(EGLDisplay dpy, EGLint name) {
+  if (dpy == EGL_NO_DISPLAY && name == EGL_EXTENSIONS) {
+    // Report that we do not support any additional client extensions. See
+    // https://registry.khronos.org/EGL/sdk/docs/man/html/eglQueryString.xhtml
+    // for more details about the eglQueryString API.
+    //
+    // If any ANGLE platforms were returned here, chromium would attempt to use
+    // an ANGLE ozone implementation rather than the EGL implementation
+    // supported by cast.
+    return kSupportedExtensions;
+  }
   return SbGetEglInterface()->eglQueryString(dpy, name);
 }
 

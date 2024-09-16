@@ -132,11 +132,11 @@ class KMeanCluster {
   }
 
  private:
-  uint8_t centroid_[3];
+  std::array<uint8_t, 3> centroid_;
 
   // Holds the sum of all the points that make up this cluster. Used to
   // generate the next centroid as well as to check for convergence.
-  uint32_t aggregate_[3];
+  std::array<uint32_t, 3> aggregate_;
   uint32_t counter_;
 
   // The weight of the cluster, determined by how many points were used
@@ -188,7 +188,7 @@ class ColorBox {
         case BLUE:
           return SkColorGetB(a) < SkColorGetB(b);
       }
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return SkColorGetB(a) < SkColorGetB(b);
     };
     // Just the portion of |color_space_| that's covered by this box should be
@@ -650,12 +650,17 @@ SkColor CalculateKMeanColorOfBitmap(const SkBitmap& bitmap,
   base::HeapArray<uint32_t> image =
       base::HeapArray<uint32_t>::Uninit(pixel_count);
 
-  // Un-premultiplies each pixel in bitmap into the buffer. Requires
-  // approximately 10 microseconds for a 16x16 icon on an Intel Core i5.
-  uint32_t* in = static_cast<uint32_t*>(bitmap.getPixels());
-  auto out = image.begin();
-  for (int i = 0; i < pixel_count; ++i)
-    *out++ = SkUnPreMultiply::PMColorToColor(*in++);
+  // SAFETY: We know that height <= bitmap.height() and pixel_bound ==
+  // bitmap.width() * height, so pixel_count <= the amount of actual pixels in
+  // the buffer here. However, Skia has no span-based API for this.
+  // TODO(https://crbug.com/357905831): switch to SkSpan when possible.
+  UNSAFE_BUFFERS(
+      base::span<uint32_t> in(static_cast<uint32_t*>(bitmap.getPixels()),
+                              base::checked_cast<size_t>(pixel_count)));
+
+  // Un-premultiply into the out buffer.
+  std::transform(in.begin(), in.end(), image.begin(),
+                 SkUnPreMultiply::PMColorToColor);
 
   GridSampler sampler;
   return CalculateKMeanColorOfBuffer(base::as_byte_span(image), bitmap.width(),
@@ -695,15 +700,15 @@ std::vector<Swatch> CalculateColorSwatches(
   // distributed throughout the image). This has a very minor impact on the
   // outcome but improves runtime substantially for large images. 10,007 is a
   // prime number to reduce the chance of picking an unrepresentative sample.
-  const int pixel_increment =
-      std::max(1, pixel_count / kMaxConsideredPixelsForSwatches);
+  const float pixel_increment = std::max(
+      1.0f, static_cast<float>(pixel_count) / kMaxConsideredPixelsForSwatches);
   std::unordered_map<SkColor, int> color_counts(
       kMaxConsideredPixelsForSwatches);
 
   // First extract all colors into counts.
-  for (int i = 0; i < pixel_count; i += pixel_increment) {
-    const int x = region.x() + (i % region.width());
-    const int y = region.y() + (i / region.width());
+  for (float f = 0; f < pixel_count; f += pixel_increment) {
+    const int x = region.x() + static_cast<int>(f) % region.width();
+    const int y = region.y() + static_cast<int>(f) / region.width();
 
     const SkColor pixel = bitmap.getColor(x, y);
     if (SkColorGetA(pixel) == SK_AlphaTRANSPARENT)

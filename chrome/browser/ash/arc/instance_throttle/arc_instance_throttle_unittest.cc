@@ -32,11 +32,11 @@
 #include "chrome/browser/ash/arc/instance_throttle/arc_power_throttle_observer.h"
 #include "chrome/browser/ash/arc/session/arc_session_manager.h"
 #include "chrome/browser/ash/arc/test/test_arc_session_manager.h"
-#include "chrome/browser/ash/throttle_observer.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chromeos/ash/components/dbus/concierge/concierge_client.h"
 #include "chromeos/ash/components/dbus/concierge/fake_concierge_client.h"
 #include "chromeos/ash/components/dbus/session_manager/fake_session_manager_client.h"
+#include "chromeos/ash/components/throttle/throttle_observer.h"
 #include "chromeos/dbus/power/power_manager_client.h"
 #include "components/arc/test/fake_intent_helper_host.h"
 #include "components/arc/test/fake_intent_helper_instance.h"
@@ -174,7 +174,7 @@ class ArcInstanceThrottleTest : public testing::Test {
       else
         return observer.get();
     }
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return nullptr;
   }
 
@@ -185,7 +185,7 @@ class ArcInstanceThrottleTest : public testing::Test {
       if (observer->name() == kArcBootPhaseThrottleObserverName)
         return observer.get();
     }
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return nullptr;
   }
 
@@ -196,7 +196,7 @@ class ArcInstanceThrottleTest : public testing::Test {
       if (observer->name() == kArcPowerThrottleObserverName)
         return observer.get();
     }
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return nullptr;
   }
 
@@ -528,7 +528,7 @@ class ArcInstanceThrottleVMTest : public testing::Test {
       if (observer->name() == kArcPowerThrottleObserverName)
         return observer.get();
     }
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return nullptr;
   }
 

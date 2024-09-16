@@ -442,7 +442,7 @@ void ReadableByteStreamController::EnqueueClonedChunkToQueue(
   // 1. Let cloneResult be CloneArrayBuffer(buffer, byteOffset, byteLength,
   // %ArrayBuffer%).
   DOMArrayBuffer* const clone_result = DOMArrayBuffer::Create(
-      static_cast<char*>(buffer->Data()) + byte_offset, byte_length);
+    buffer->ByteSpan().subspan(byte_offset, byte_length));
   // 2. If cloneResult is an abrupt completion,
   //   a. Perform ! ReadableByteStreamControllerError(controller,
   //   cloneResult.[[Value]]). b. Return cloneResult.
@@ -494,7 +494,8 @@ void ReadableByteStreamController::ProcessPullIntoDescriptorsUsingQueue(
         controller->pending_pull_intos_[0];
     //   c. If ! ReadableByteStreamControllerFillPullIntoDescriptorFromQueue(
     //   controller, pullIntoDescriptor) is true,
-    if (FillPullIntoDescriptorFromQueue(controller, pull_into_descriptor)) {
+    if (FillPullIntoDescriptorFromQueue(controller, pull_into_descriptor,
+                                        exception_state)) {
       //     i. Perform !
       //     ReadableByteStreamControllerShiftPendingPullInto(controller).
       ShiftPendingPullInto(controller);
@@ -504,6 +505,15 @@ void ReadableByteStreamController::ProcessPullIntoDescriptorsUsingQueue(
                                controller->controlled_readable_stream_,
                                pull_into_descriptor, exception_state);
       DCHECK(!exception_state.HadException());
+    }
+    if (exception_state.HadException()) {
+      // Instead of returning a rejection, which is inconvenient here,
+      // call ControllerError(). The only difference this makes is that it
+      // happens synchronously, but that should not be observable.
+      ReadableByteStreamController::Error(script_state, controller,
+                                          exception_state.GetException());
+      exception_state.ClearException();
+      return;
     }
   }
 }
@@ -989,7 +999,12 @@ void ReadableByteStreamController::FillHeadPullIntoDescriptor(
 
 bool ReadableByteStreamController::FillPullIntoDescriptorFromQueue(
     ReadableByteStreamController* controller,
-    PullIntoDescriptor* pull_into_descriptor) {
+    PullIntoDescriptor* pull_into_descriptor,
+    ExceptionState& exception_state) {
+  if (pull_into_descriptor->buffer->IsDetached()) {
+    exception_state.ThrowTypeError("buffer is detached");
+    return false;
+  }
   // https://streams.spec.whatwg.org/#readable-byte-stream-controller-fill-pull-into-descriptor-from-queue
   // 1. Let elementSize be pullIntoDescriptor.[[elementSize]].
   const size_t element_size = pull_into_descriptor->element_size;
@@ -1052,11 +1067,11 @@ bool ReadableByteStreamController::FillPullIntoDescriptorFromQueue(
     // d. Perform ! CopyDataBlockBytes(pullIntoDescriptor’s
     // buffer.[[ArrayBufferData]], destStart, headOfQueue’s
     // buffer.[[ArrayBufferData]], headOfQueue’s byte offset, bytesToCopy).
-    memcpy(
-        static_cast<char*>(pull_into_descriptor->buffer->Data()) + dest_start,
-        static_cast<char*>(head_of_queue->buffer->Data()) +
-            head_of_queue->byte_offset,
-        bytes_to_copy);
+    auto copy_destination = pull_into_descriptor->buffer->ByteSpan().subspan(
+        dest_start, bytes_to_copy);
+    auto copy_source = head_of_queue->buffer->ByteSpan().subspan(
+        head_of_queue->byte_offset, bytes_to_copy);
+    copy_destination.copy_from(copy_source);
     // e. If headOfQueue’s byte length is bytesToCopy,
     if (head_of_queue->byte_length == bytes_to_copy) {
       //   i. Remove queue[0].
@@ -1174,6 +1189,9 @@ void ReadableByteStreamController::PullInto(
       case DOMArrayBufferView::kTypeUint32:
         ctor = &CreateAsArrayBufferView<DOMUint32Array>;
         break;
+      case DOMArrayBufferView::kTypeFloat16:
+        ctor = &CreateAsArrayBufferView<DOMFloat16Array>;
+        break;
       case DOMArrayBufferView::kTypeFloat32:
         ctor = &CreateAsArrayBufferView<DOMFloat32Array>;
         break;
@@ -1187,7 +1205,7 @@ void ReadableByteStreamController::PullInto(
         ctor = &CreateAsArrayBufferView<DOMBigUint64Array>;
         break;
       case DOMArrayBufferView::kTypeDataView:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
     }
   }
   // 5. Let byteOffset be view.[[ByteOffset]].
@@ -1240,7 +1258,8 @@ void ReadableByteStreamController::PullInto(
     //   a. If !
     //   ReadableByteStreamControllerFillPullIntoDescriptorFromQueue(controller,
     //   pullIntoDescriptor) is true,
-    if (FillPullIntoDescriptorFromQueue(controller, pull_into_descriptor)) {
+    if (FillPullIntoDescriptorFromQueue(controller, pull_into_descriptor,
+                                        exception_state)) {
       //     i. Let filledView be !
       //     ReadableByteStreamControllerConvertPullIntoDescriptor(pullIntoDescriptor).
       DOMArrayBufferView* filled_view = ConvertPullIntoDescriptor(
@@ -1252,6 +1271,15 @@ void ReadableByteStreamController::PullInto(
       //     iii. Perform readIntoRequest’s chunk steps, given filledView.
       read_into_request->ChunkSteps(script_state, filled_view, exception_state);
       //     iv. Return.
+      return;
+    }
+    if (exception_state.HadException()) {
+      // Instead of returning a rejection, which is inconvenient here,
+      // call ControllerError(). The only difference this makes is that it
+      // happens synchronously, but that should not be observable.
+      ReadableByteStreamController::Error(script_state, controller,
+                                          exception_state.GetException());
+      exception_state.ClearException();
       return;
     }
     //   b. If controller.[[closeRequested]] is true,

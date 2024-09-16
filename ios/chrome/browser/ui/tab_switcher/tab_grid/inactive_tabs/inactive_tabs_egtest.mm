@@ -9,6 +9,7 @@
 #import "ios/chrome/browser/tabs/model/inactive_tabs/features.h"
 #import "ios/chrome/browser/ui/reading_list/reading_list_app_interface.h"
 #import "ios/chrome/browser/ui/settings/tabs/tabs_settings_constants.h"
+#import "ios/chrome/browser/ui/tab_switcher/tab_grid/grid/grid_constants.h"
 #import "ios/chrome/browser/ui/tab_switcher/tab_grid/inactive_tabs/inactive_tabs_constants.h"
 #import "ios/chrome/browser/ui/tab_switcher/tab_grid/tab_grid_constants.h"
 #import "ios/chrome/browser/ui/tab_switcher/test/query_title_server_util.h"
@@ -778,7 +779,7 @@ id<GREYMatcher> GetMatcherForUserEducationSettingsButton() {
   // label.
   [[EarlGrey selectElementWithMatcher:GetMatcherForInactiveTabsButton()]
       assertWithMatcher:grey_accessibilityLabel(
-                            @"Inactive Tabs, Tabs not used for 0 days, 3")];
+                            @"Inactive tabs, Tabs not used for 0 days, 3")];
 }
 
 // Checks that the User Education panel only appears the first time Inactive

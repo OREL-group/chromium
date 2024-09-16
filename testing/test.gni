@@ -181,7 +181,14 @@ template("mixed_test") {
         deps += [ ":${_rust_target_name}" ]
       }
       if (defined(invoker.fuzztests)) {
-        deps += [ "//third_party/fuzztest" ]
+        deps += [
+          "//third_party/fuzztest",
+
+          # The following target contains a static initializer which
+          # will ensure that the code in base/test:test_support
+          # ends up calling through to fuzztest::InitFuzzTest.
+          "//base/test:confirm_fuzztest_init",
+        ]
       }
     }
   }
@@ -302,7 +309,7 @@ template("mixed_test") {
         } else {
           fuzzer_args = ""
         }
-        fuzzer_args += "--fuzz=$fuzztest_unit"
+        fuzzer_args += "--fuzz=$fuzztest_unit --corpus_database=\"\""
         contents = [ "const char* kFuzzerArgs = \"${fuzzer_args}\"; const char* kFuzzerBinary = \"${_fuzzer_binary_name}\";" ]
       }
 
@@ -314,9 +321,6 @@ template("mixed_test") {
           ":" + _fuzzer_target_name,
         ]
         deps = [
-          # Depend on fuzzing_engine so that our recipes know to build all
-          # these wrapper script targets.
-          "//testing/libfuzzer:fuzzing_engine",
           "//testing/libfuzzer:individual_fuzztest_wrapper",
           ":" + _fuzztest_generate_fuzzer + "_constants",
         ]
@@ -497,7 +501,7 @@ template("test") {
       # Adds the unwind tables from unstripped binary as an asset file in the
       # apk, if |add_unwind_tables_in_apk| is specified by the test.
       if (_add_unwind_tables_in_apk) {
-        # TODO(crbug.com/1315603): Remove generation of v1 unwind asset when
+        # TODO(crbug.com/40833600): Remove generation of v1 unwind asset when
         # `CFIBacktraceAndroid` is replaced with `ChromeUnwinderAndroid`.
         _unwind_table_name = "${_library_target_name}_unwind_v1"
         unwind_table_v1(_unwind_table_name) {
@@ -699,7 +703,7 @@ template("test") {
     }
 
     if (is_asan) {
-      # TODO(crbug.com/1465997): Remove the extra cml segment for asan.
+      # TODO(crbug.com/40276216): Remove the extra cml segment for asan.
       _manifest_fragments +=
           [ "//build/config/fuchsia/test/asan_options.shard.test-cml" ]
     }
@@ -1255,16 +1259,14 @@ template("isolated_script_test") {
 # Test defaults.
 set_defaults("test") {
   if (is_android) {
+    # Should be kept in sync with set_defaults("cronet_test") in
+    # //components/cronet/android/cronet_test_templates.gni
+    # LINT.IfChange
     configs = default_shared_library_configs
     configs -= [ "//build/config/android:hide_all_but_jni_onload" ]
     configs += [ "//build/config/android:hide_all_but_jni" ]
 
-    # Compress sections to stay under 4gb hard limit on 32-bit current_cpu.
-    # https://crbug.com/1354616
-    if (symbol_level == 2 && !use_debug_fission &&
-        (current_cpu == "arm" || current_cpu == "x86")) {
-      configs += [ "//build/config:compress_debug_sections" ]
-    }
+    # LINT.ThenChange(/components/cronet/android/cronet_test_templates.gni)
   } else {
     configs = default_executable_configs
   }

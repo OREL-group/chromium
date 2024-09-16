@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import {html} from '//resources/lit/v3_0/lit.rollup.js';
+
 import type {NuxGoogleAppsElement} from './nux_google_apps.js';
 
 export function getHtml(this: NuxGoogleAppsElement) {
@@ -22,7 +23,7 @@ export function getHtml(this: NuxGoogleAppsElement) {
             <div class="${item.icon} option-icon"></div>
           </div>
           <div class="option-name">${item.name}</div>
-          <iron-icon icon="cr:check"></iron-icon>
+          <cr-icon icon="cr:check"></cr-icon>
         </button>
       `)}
     </div>
@@ -35,7 +36,7 @@ export function getHtml(this: NuxGoogleAppsElement) {
       <cr-button class="action-button" ?disabled="${!this.hasAppsSelected_}"
           @click="${this.onNextClicked_}">
         $i18n{next}
-        <iron-icon icon="cr:chevron-right"></iron-icon>
+        <cr-icon icon="cr:chevron-right"></cr-icon>
       </cr-button>
     </div>
   </div>

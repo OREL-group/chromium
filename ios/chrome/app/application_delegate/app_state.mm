@@ -3,7 +3,6 @@
 // found in the LICENSE file.
 
 #import "ios/chrome/app/application_delegate/app_state.h"
-#import "ios/chrome/app/application_delegate/app_state+Testing.h"
 
 #import <utility>
 
@@ -16,16 +15,20 @@
 #import "base/metrics/histogram_functions.h"
 #import "base/metrics/histogram_macros.h"
 #import "base/notreached.h"
+#import "base/strings/sys_string_conversions.h"
 #import "base/task/bind_post_task.h"
-#import "components/enterprise/idle/idle_features.h"
+#import "base/types/cxx23_to_underlying.h"
 #import "components/feature_engagement/public/event_constants.h"
 #import "components/feature_engagement/public/tracker.h"
 #import "components/metrics/metrics_service.h"
 #import "components/previous_session_info/previous_session_info.h"
+#import "ios/chrome/app/application_delegate/app_state+Testing.h"
 #import "ios/chrome/app/application_delegate/memory_warning_helper.h"
 #import "ios/chrome/app/application_delegate/metrics_mediator.h"
 #import "ios/chrome/app/application_delegate/startup_information.h"
 #import "ios/chrome/app/deferred_initialization_runner.h"
+#import "ios/chrome/app/profile/profile_init_stage.h"
+#import "ios/chrome/app/profile/profile_state.h"
 #import "ios/chrome/browser/browsing_data/model/sessions_storage_util.h"
 #import "ios/chrome/browser/crash_report/model/crash_helper.h"
 #import "ios/chrome/browser/crash_report/model/crash_keys_helper.h"
@@ -40,8 +43,8 @@
 #import "ios/chrome/browser/shared/model/browser/browser.h"
 #import "ios/chrome/browser/shared/model/browser/browser_provider.h"
 #import "ios/chrome/browser/shared/model/browser/browser_provider_interface.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state_manager.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
+#import "ios/chrome/browser/shared/model/profile/profile_manager_ios.h"
 #import "ios/chrome/browser/shared/public/commands/application_commands.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
 #import "ios/chrome/browser/shared/public/commands/help_commands.h"
@@ -73,7 +76,6 @@ void FlushCookieStoreOnIOThread(
   getter->GetURLRequestContext()->cookie_store()->FlushStore(
       std::move(closure));
 }
-
 }  // namespace
 
 #pragma mark - AppStateObserverList
@@ -84,12 +86,25 @@ void FlushCookieStoreOnIOThread(
 @implementation AppStateObserverList
 @end
 
+#pragma mark - AppStateObserverList
+
+@interface UIBlockerManagerObserverList
+    : CRBProtocolObservers <UIBlockerManagerObserver>
+@end
+
+@implementation UIBlockerManagerObserverList
+@end
+
 #pragma mark - AppState
 
 @interface AppState () <AppStateObserver>
 
 // Container for observers.
 @property(nonatomic, strong) AppStateObserverList* observers;
+
+// Container for observers.
+@property(nonatomic, strong)
+    UIBlockerManagerObserverList* uiBlockerManagerObservers;
 
 // YES if cookies are currently being flushed to disk. Declared as a property
 // to allow modifying it in a block via a __weak pointer without checking if
@@ -140,7 +155,7 @@ void FlushCookieStoreOnIOThread(
   // Whether the application is currently in the background.
   // This is a workaround for rdar://22392526 where
   // -applicationDidEnterBackground: can be called twice.
-  // TODO(crbug.com/546196): Remove this once rdar://22392526 is fixed.
+  // TODO(crbug.com/41211311): Remove this once rdar://22392526 is fixed.
   BOOL _applicationInBackground;
   // The counter of the number of views which want to block the screen to
   // portrait mode for iPhone. This counter should always be 0 for iPad.
@@ -155,6 +170,8 @@ void FlushCookieStoreOnIOThread(
   if (self) {
     _observers = [AppStateObserverList
         observersWithProtocol:@protocol(AppStateObserver)];
+    _uiBlockerManagerObservers = [UIBlockerManagerObserverList
+        observersWithProtocol:@protocol(UIBlockerManagerObserver)];
     _agents = [[NSMutableArray alloc] init];
     _startupInformation = startupInformation;
     _appCommandDispatcher = [[CommandDispatcher alloc] init];
@@ -216,6 +233,15 @@ void FlushCookieStoreOnIOThread(
   [self.observers appState:self didTransitionFromInitStage:previousInitStage];
 }
 
+- (void)setMainProfile:(ProfileState*)mainProfile {
+  _mainProfile = mainProfile;
+  for (SceneState* scene in self.connectedScenes) {
+    // TODO(crbug.com/324417250): Select the correct profile state for the
+    // `sceneState` and if not available create it.
+    [_mainProfile sceneStateConnected:scene];
+  }
+}
+
 - (BOOL)portraitOnly {
   if (ui::GetDeviceFormFactor() != ui::DEVICE_FORM_FACTOR_PHONE) {
     return NO;
@@ -262,15 +288,10 @@ void FlushCookieStoreOnIOThread(
     return;
   }
 
-  if (base::FeatureList::IsEnabled(enterprise_idle::kIdleTimeout)) {
-    std::vector<ChromeBrowserState*> loadedBrowserStates =
-        GetApplicationContext()
-            ->GetChromeBrowserStateManager()
-            ->GetLoadedBrowserStates();
-    for (ChromeBrowserState* browserState : loadedBrowserStates) {
-      enterprise_idle::IdleServiceFactory::GetForBrowserState(browserState)
-          ->OnApplicationWillEnterBackground();
-    }
+  for (ChromeBrowserState* browserState :
+       GetApplicationContext()->GetProfileManager()->GetLoadedProfiles()) {
+    enterprise_idle::IdleServiceFactory::GetForBrowserState(browserState)
+        ->OnApplicationWillEnterBackground();
   }
 
   [MetricsMediator
@@ -281,7 +302,7 @@ void FlushCookieStoreOnIOThread(
 
   // TODO(crbug.com/325596562): Update this for multiple browser states and for
   // per-state cookie storage.
-  if (self.mainBrowserState && !_savingCookies) {
+  if (self.mainProfile.browserState && !_savingCookies) {
     // Record that saving the cookies has started to prevent posting multiple
     // tasks if the user quickly background, foreground and background the app
     // again.
@@ -304,10 +325,10 @@ void FlushCookieStoreOnIOThread(
     // Saving the cookies needs to happen on the IO thread.
     web::GetIOThreadTaskRunner({})->PostTask(
         FROM_HERE,
-        base::BindOnce(
-            &FlushCookieStoreOnIOThread,
-            base::WrapRefCounted(self.mainBrowserState->GetRequestContext()),
-            std::move(closure)));
+        base::BindOnce(&FlushCookieStoreOnIOThread,
+                       base::WrapRefCounted(
+                           self.mainProfile.browserState->GetRequestContext()),
+                       std::move(closure)));
   }
 
   // Mark the startup as clean if it hasn't already been.
@@ -331,7 +352,7 @@ void FlushCookieStoreOnIOThread(
   if (self.initStage < InitStageBrowserObjectsForUI) {
     // Invariant: The app has passed InitStageStart.
     CHECK(self.initStage != InitStageStart);
-    // TODO(crbug.com/1197330): This function should only be called once
+    // TODO(crbug.com/40760092): This function should only be called once
     // during a specific stage, but this requires non-trivial refactoring, so
     // for now #initializeUIPreSafeMode will just return early if called more
     // than once.
@@ -342,21 +363,18 @@ void FlushCookieStoreOnIOThread(
   }
   // Don't go further with foregrounding the app when the app has not passed
   // safe mode yet or was initialized from the background.
-  if (self.initStage <= InitStageSafeMode || !_applicationInBackground)
+  if (self.initStage <= InitStageSafeMode || !_applicationInBackground) {
     return;
+  }
 
   _applicationInBackground = NO;
-  // TODO(crbug.com/325596368): Signal this for every browser state, so this
-  // update and the feature_engagement::TrackerFactory() update need to happen
-  // in parallel. Maybe: add per-profile observer methods.
-  if (self.mainBrowserState) {
-    AuthenticationServiceFactory::GetForBrowserState(self.mainBrowserState)
+  for (ChromeBrowserState* chromeBrowserState :
+       GetApplicationContext()->GetProfileManager()->GetLoadedProfiles()) {
+    AuthenticationServiceFactory::GetForBrowserState(chromeBrowserState)
         ->OnApplicationWillEnterForeground();
-    if (base::FeatureList::IsEnabled(enterprise_idle::kIdleTimeout)) {
-      enterprise_idle::IdleServiceFactory::GetForBrowserState(
-          self.mainBrowserState)
-          ->OnApplicationWillEnterForeground();
-    }
+
+    enterprise_idle::IdleServiceFactory::GetForBrowserState(chromeBrowserState)
+        ->OnApplicationWillEnterForeground();
   }
 
   crash_keys::SetCurrentlyInBackground(false);
@@ -366,8 +384,9 @@ void FlushCookieStoreOnIOThread(
   [metricsMediator updateMetricsStateBasedOnPrefsUserTriggered:NO];
 
   // Send any feedback that might be still on temporary storage.
-  if (ios::provider::IsUserFeedbackSupported())
+  if (ios::provider::IsUserFeedbackSupported()) {
     ios::provider::UploadAllPendingUserFeedback();
+  }
 
   GetApplicationContext()->OnAppEnterForeground();
 
@@ -376,11 +395,8 @@ void FlushCookieStoreOnIOThread(
                              connectedScenes:self.connectedScenes];
   [memoryHelper resetForegroundMemoryWarningCount];
 
-  std::vector<ChromeBrowserState*> loadedBrowserStates =
-      GetApplicationContext()
-          ->GetChromeBrowserStateManager()
-          ->GetLoadedBrowserStates();
-  for (ChromeBrowserState* chromeBrowserState : loadedBrowserStates) {
+  for (ChromeBrowserState* chromeBrowserState :
+       GetApplicationContext()->GetProfileManager()->GetLoadedProfiles()) {
     feature_engagement::Tracker* tracker =
         feature_engagement::TrackerFactory::GetForBrowserState(
             chromeBrowserState);
@@ -450,12 +466,11 @@ void FlushCookieStoreOnIOThread(
   // session is garbage collected.
   //
   // Thus it is always correct to use -persistentIdentifier here.
-  NSMutableArray<NSString*>* sessionIDs =
-      [NSMutableArray arrayWithCapacity:sceneSessions.count];
+  std::set<std::string> sessionIDs;
   for (UISceneSession* session in sceneSessions) {
-    [sessionIDs addObject:session.persistentIdentifier];
+    sessionIDs.insert(base::SysNSStringToUTF8(session.persistentIdentifier));
   }
-  sessions_storage_util::MarkSessionsForRemoval(sessionIDs);
+  sessions_storage_util::MarkSessionsForRemoval(std::move(sessionIDs));
   crash_keys::SetConnectedScenesCount([self connectedScenes].count);
 }
 
@@ -475,20 +490,14 @@ void FlushCookieStoreOnIOThread(
   [self.startupInformation setIsColdStart:NO];
 
   // Record session metrics.
-  std::vector<ChromeBrowserState*> loadedBrowserStates =
-      GetApplicationContext()
-          ->GetChromeBrowserStateManager()
-          ->GetLoadedBrowserStates();
-  for (ChromeBrowserState* browserState : loadedBrowserStates) {
-    SessionMetrics::FromBrowserState(browserState)
-        ->RecordAndClearSessionMetrics(
-            MetricsToRecordFlags::kActivatedTabCount);
+  for (ProfileIOS* profile :
+       GetApplicationContext()->GetProfileManager()->GetLoadedProfiles()) {
+    SessionMetrics::FromProfile(profile)->RecordAndClearSessionMetrics(
+        MetricsToRecordFlags::kActivatedTabCount);
 
-    if (browserState->HasOffTheRecordChromeBrowserState()) {
-      ChromeBrowserState* otrChromeBrowserState =
-          browserState->GetOffTheRecordChromeBrowserState();
-
-      SessionMetrics::FromBrowserState(otrChromeBrowserState)
+    if (profile->HasOffTheRecordChromeBrowserState()) {
+      ProfileIOS* otrProifle = profile->GetOffTheRecordChromeBrowserState();
+      SessionMetrics::FromProfile(otrProifle)
           ->RecordAndClearSessionMetrics(MetricsToRecordFlags::kNoMetrics);
     }
   }
@@ -506,7 +515,7 @@ void FlushCookieStoreOnIOThread(
   }
 }
 
-- (void)removeObserver:(id<SceneStateObserver>)observer {
+- (void)removeObserver:(id<AppStateObserver>)observer {
   [self.observers removeObserver:observer];
 }
 
@@ -550,7 +559,7 @@ void FlushCookieStoreOnIOThread(
   for (UIWindowScene* scene in connectedScenes) {
     if (![scene.delegate isKindOfClass:[SceneDelegate class]]) {
       // This might happen in tests.
-      // TODO(crbug.com/1113097): This shouldn't be needed. (It might also
+      // TODO(crbug.com/40710078): This shouldn't be needed. (It might also
       // be the cause of crbug.com/1142782).
       [sceneStates addObject:[[SceneState alloc] initWithAppState:self]];
       continue;
@@ -573,7 +582,7 @@ void FlushCookieStoreOnIOThread(
 }
 
 - (void)initializeUIPreSafeMode {
-  // TODO(crbug.com/1197330): Consider replacing this with a DCHECK once we
+  // TODO(crbug.com/40760092): Consider replacing this with a DCHECK once we
   // make sure that #initializeUIPreSafeMode is only called once. This should
   // be done in a one-line change that is easy to revert.
   // Only perform the pre-safemode initialization once.
@@ -623,6 +632,20 @@ void FlushCookieStoreOnIOThread(
 
   self.isIncrementingInitStage = YES;
   self.initStage = initStage;
+  // TODO(crbug.com/353683675) Improve this logic once ProfileInitStage and
+  // (app) InitStage are fully decoupled.
+  if (initStage >= InitStageBrowserObjectsForBackgroundHandlers) {
+    ProfileInitStage currStage = self.mainProfile.initStage;
+    ProfileInitStage nextStage = ProfileInitStageFromAppInitStage(initStage);
+    while (currStage != nextStage) {
+      // The ProfileInitStage enum has more values than InitStage, so move over
+      // all stage that have no representation in InitStage to avoid failing
+      // CHECK in -[ProfileState setInitStage:].
+      currStage =
+          static_cast<ProfileInitStage>(base::to_underlying(currStage) + 1);
+      self.mainProfile.initStage = currStage;
+    }
+  }
   self.isIncrementingInitStage = NO;
 
   if (self.needsIncrementInitStage) {
@@ -658,11 +681,20 @@ void FlushCookieStoreOnIOThread(
   self.blockingUICounter--;
   if (self.blockingUICounter == 0) {
     self.uiBlockerTarget = nil;
+    [self.uiBlockerManagerObservers currentUIBlockerRemoved];
   }
 }
 
 - (id<UIBlockerTarget>)currentUIBlocker {
   return self.uiBlockerTarget;
+}
+
+- (void)addUIBlockerManagerObserver:(id<UIBlockerManagerObserver>)observer {
+  [self.uiBlockerManagerObservers addObserver:observer];
+}
+
+- (void)removeUIBlockerManagerObserver:(id<UIBlockerManagerObserver>)observer {
+  [self.uiBlockerManagerObservers removeObserver:observer];
 }
 
 #pragma mark - SceneStateObserver
@@ -704,6 +736,10 @@ void FlushCookieStoreOnIOThread(
 
   [self.observers appState:self sceneConnected:sceneState];
   crash_keys::SetConnectedScenesCount([self connectedScenes].count);
+
+  // TODO(crbug.com/324417250): Select the correct profile state for the
+  // `sceneState` and if not available create it.
+  [self.mainProfile sceneStateConnected:sceneState];
 }
 
 #pragma mark - Voice Over lifecycle
@@ -714,7 +750,7 @@ void FlushCookieStoreOnIOThread(
 
 #pragma mark - AppStateObserver
 
-// TODO(crbug.com/1191489): Move this logic to a specific agent.
+// TODO(crbug.com/40756629): Move this logic to a specific agent.
 - (void)appState:(AppState*)appState
     didTransitionFromInitStage:(InitStage)previousInitStage {
   if (previousInitStage != InitStageBrowserObjectsForUI) {

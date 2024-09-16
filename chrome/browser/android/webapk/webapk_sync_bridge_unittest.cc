@@ -16,10 +16,12 @@
 #include "chrome/browser/android/webapk/webapk_database_factory.h"
 #include "chrome/browser/android/webapk/webapk_helpers.h"
 #include "chrome/browser/android/webapk/webapk_registry_update.h"
+#include "chrome/browser/android/webapk/webapk_restore_task.h"
 #include "components/sync/model/data_batch.h"
 #include "components/sync/model/entity_change.h"
 #include "components/sync/protocol/entity_data.h"
-#include "components/sync/test/mock_model_type_change_processor.h"
+#include "components/sync/test/mock_data_type_local_change_processor.h"
+#include "components/webapps/browser/android/shortcut_info.h"
 #include "components/webapps/common/web_app_id.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -105,8 +107,6 @@ class WebApkSyncBridgeTest : public ::testing::Test {
         .WillByDefault(testing::Return(true));
   }
 
-  void TearDown() override { DestroyManagers(); }
-
   void InitSyncBridge() {
     base::RunLoop loop;
 
@@ -128,16 +128,9 @@ class WebApkSyncBridgeTest : public ::testing::Test {
   }
 
  protected:
-  void DestroyManagers() {
-    if (sync_bridge_) {
-      sync_bridge_.reset();
-    }
-    if (database_factory_) {
-      database_factory_.reset();
-    }
+  syncer::MockDataTypeLocalChangeProcessor& processor() {
+    return mock_processor_;
   }
-
-  syncer::MockModelTypeChangeProcessor& processor() { return mock_processor_; }
   FakeWebApkDatabaseFactory& database_factory() { return *database_factory_; }
 
   WebApkSyncBridge& sync_bridge() { return *sync_bridge_; }
@@ -146,16 +139,22 @@ class WebApkSyncBridgeTest : public ::testing::Test {
   }
 
  private:
-  std::unique_ptr<WebApkSyncBridge> sync_bridge_;
   std::unique_ptr<FakeWebApkDatabaseFactory> database_factory_;
+  std::unique_ptr<WebApkSyncBridge> sync_bridge_;
   raw_ptr<FakeWebApkSpecificsFetcher>
       specifics_fetcher_;  // owned by sync_bridge_; should not be accessed
                            // before InitSyncBridge() or after sync_bridge_ is
                            // destroyed
 
-  testing::NiceMock<syncer::MockModelTypeChangeProcessor> mock_processor_;
+  testing::NiceMock<syncer::MockDataTypeLocalChangeProcessor> mock_processor_;
   base::test::SingleThreadTaskEnvironment task_environment_;
 };
+
+TEST_F(WebApkSyncBridgeTest,
+       ManifestIdStrToAppId_DoesNotCrashOnEmptyStringOrInvalidManifestId) {
+  EXPECT_EQ(ManifestIdStrToAppId(""), "");
+  EXPECT_EQ(ManifestIdStrToAppId("%%"), "");
+}
 
 TEST_F(WebApkSyncBridgeTest, AppWasUsedRecently) {
   InitSyncBridge();
@@ -460,7 +459,7 @@ TEST_F(WebApkSyncBridgeTest, MergeFullSyncData) {
   sync_changes.push_back(std::move(sync_change_5));
 
   std::unique_ptr<syncer::MetadataChangeList> metadata_change_list =
-      syncer::ModelTypeStore::WriteBatch::CreateMetadataChangeList();
+      syncer::DataTypeStore::WriteBatch::CreateMetadataChangeList();
 
   EXPECT_CALL(processor(), Put).Times(0);
   EXPECT_CALL(processor(), Delete).Times(0);
@@ -562,7 +561,7 @@ TEST_F(WebApkSyncBridgeTest, MergeFullSyncData_NoChanges) {
   InitSyncBridge();
 
   std::unique_ptr<syncer::MetadataChangeList> metadata_change_list =
-      syncer::ModelTypeStore::WriteBatch::CreateMetadataChangeList();
+      syncer::DataTypeStore::WriteBatch::CreateMetadataChangeList();
   syncer::EntityChangeList sync_changes;
   std::optional<syncer::ModelError> result = sync_bridge().MergeFullSyncData(
       std::move(metadata_change_list), std::move(sync_changes));
@@ -630,7 +629,7 @@ TEST_F(WebApkSyncBridgeTest, ApplyIncrementalSyncChanges) {
   sync_changes.push_back(std::move(sync_change_4));
 
   std::unique_ptr<syncer::MetadataChangeList> metadata_change_list =
-      syncer::ModelTypeStore::WriteBatch::CreateMetadataChangeList();
+      syncer::DataTypeStore::WriteBatch::CreateMetadataChangeList();
   std::optional<syncer::ModelError> result =
       sync_bridge().ApplyIncrementalSyncChanges(std::move(metadata_change_list),
                                                 std::move(sync_changes));
@@ -698,7 +697,7 @@ TEST_F(WebApkSyncBridgeTest, ApplyIncrementalSyncChanges_NoChanges) {
   InitSyncBridge();
 
   std::unique_ptr<syncer::MetadataChangeList> metadata_change_list =
-      syncer::ModelTypeStore::WriteBatch::CreateMetadataChangeList();
+      syncer::DataTypeStore::WriteBatch::CreateMetadataChangeList();
   syncer::EntityChangeList sync_changes;
   std::optional<syncer::ModelError> result =
       sync_bridge().ApplyIncrementalSyncChanges(std::move(metadata_change_list),
@@ -874,6 +873,18 @@ TEST_F(WebApkSyncBridgeTest, OnWebApkUsed_CreateNewSyncEntry) {
                   ->is_locally_installed());
 }
 
+TEST_F(WebApkSyncBridgeTest,
+       OnWebApkUninstalled_DoesNotCrashOnEmptyStringOrInvalidManifestId) {
+  EXPECT_CALL(processor(), ModelReadyToSync).Times(1);
+  EXPECT_CALL(processor(), Put).Times(0);
+  EXPECT_CALL(processor(), Delete).Times(0);
+
+  InitSyncBridge();
+
+  sync_bridge().OnWebApkUninstalled("");
+  sync_bridge().OnWebApkUninstalled("%%");
+}
+
 TEST_F(WebApkSyncBridgeTest, OnWebApkUninstalled_AppTooOld) {
   const std::string manifest_id = "https://example.com/app1";
 
@@ -1013,28 +1024,12 @@ TEST_F(WebApkSyncBridgeTest, GetData) {
       storage_keys.push_back(id_and_web_app.first);
     }
 
-    base::RunLoop run_loop;
-    sync_bridge().GetDataForCommit(
-        std::move(storage_keys),
-        base::BindLambdaForTesting(
-            [&](std::unique_ptr<syncer::DataBatch> data_batch) {
-              EXPECT_TRUE(RegistryContainsSyncDataBatchChanges(
-                  registry, std::move(data_batch)));
-              run_loop.Quit();
-            }));
-    run_loop.Run();
+    EXPECT_TRUE(RegistryContainsSyncDataBatchChanges(
+        registry, sync_bridge().GetDataForCommit(std::move(storage_keys))));
   }
 
-  {
-    base::RunLoop run_loop;
-    sync_bridge().GetAllDataForDebugging(base::BindLambdaForTesting(
-        [&](std::unique_ptr<syncer::DataBatch> data_batch) {
-          EXPECT_TRUE(RegistryContainsSyncDataBatchChanges(
-              registry, std::move(data_batch)));
-          run_loop.Quit();
-        }));
-    run_loop.Run();
-  }
+  EXPECT_TRUE(RegistryContainsSyncDataBatchChanges(
+      registry, sync_bridge().GetAllDataForDebugging()));
 }
 
 // Tests that the client & storage tags are correct for entity data.
@@ -1161,13 +1156,14 @@ TEST_F(WebApkSyncBridgeTest, RemoveOldWebAPKsFromSync) {
 TEST_F(WebApkSyncBridgeTest, GetRestorableAppsInfo) {
   InitSyncBridge();
 
-  const std::string manifest_id_1 = "https://example.com/app1";
-  const std::string manifest_id_2 = "https://example.com/app2";
-  const std::string manifest_id_3 = "https://example.com/app3";
-  const std::string manifest_id_4 = "https://example.com/app4";
+  const GURL manifest_id_1("https://example.com/app1");
+  const GURL manifest_id_2("https://example.com/app2");
+  const GURL manifest_id_3("https://example.com/app3");
+  const GURL manifest_id_4("https://example.com/app4");
+  const GURL icon_url("https://example.com/app2/icon");
 
   std::unique_ptr<WebApkProto> registry_app_1 =
-      CreateWebApkProto(manifest_id_1, "registry_app_1");
+      CreateWebApkProto(manifest_id_1.spec(), "registry_app_1");
   registry_app_1->mutable_sync_data()->set_last_used_time_windows_epoch_micros(
       UnixTsSecToWindowsTsMsec(
           1136145845.0));  // Sun Jan 01 2006 15:04:05 GMT-0500 - slightly
@@ -1175,7 +1171,9 @@ TEST_F(WebApkSyncBridgeTest, GetRestorableAppsInfo) {
   registry_app_1->set_is_locally_installed(true);
 
   std::unique_ptr<WebApkProto> registry_app_2 =
-      CreateWebApkProto(manifest_id_2, "registry_app_2");
+      CreateWebApkProto(manifest_id_2.spec(), "registry_app_2");
+  auto* icon = registry_app_2->mutable_sync_data()->add_icon_infos();
+  icon->set_url(icon_url.spec());
   registry_app_2->mutable_sync_data()->set_last_used_time_windows_epoch_micros(
       UnixTsSecToWindowsTsMsec(
           1136145845.0));  // Sun Jan 01 2006 15:04:05 GMT-0500 - slightly
@@ -1183,7 +1181,7 @@ TEST_F(WebApkSyncBridgeTest, GetRestorableAppsInfo) {
   registry_app_2->set_is_locally_installed(false);
 
   std::unique_ptr<WebApkProto> registry_app_3 =
-      CreateWebApkProto(manifest_id_3, "registry_app_3");
+      CreateWebApkProto(manifest_id_3.spec(), "registry_app_3");
   registry_app_3->mutable_sync_data()->set_last_used_time_windows_epoch_micros(
       UnixTsSecToWindowsTsMsec(
           1133726645.0));  // Sun Dec 04 2005 15:04:05 GMT-0500 - 29 days before
@@ -1191,7 +1189,7 @@ TEST_F(WebApkSyncBridgeTest, GetRestorableAppsInfo) {
   registry_app_3->set_is_locally_installed(false);
 
   std::unique_ptr<WebApkProto> registry_app_4 =
-      CreateWebApkProto(manifest_id_4, "registry_app_4");
+      CreateWebApkProto(manifest_id_4.spec(), "registry_app_4");
   registry_app_4->mutable_sync_data()->set_last_used_time_windows_epoch_micros(
       UnixTsSecToWindowsTsMsec(
           1133640244.0));  // Sat Dec 03 2005 15:04:04 GMT-0500 - 30 days and 1
@@ -1213,12 +1211,20 @@ TEST_F(WebApkSyncBridgeTest, GetRestorableAppsInfo) {
 
   InitSyncBridge();
 
-  EXPECT_THAT(sync_bridge().GetRestorableAppsInfo(),
-              testing::ElementsAre(
-                  std::vector<std::string>{ManifestIdStrToAppId(manifest_id_2),
-                                           "registry_app_2"},
-                  std::vector<std::string>{ManifestIdStrToAppId(manifest_id_3),
-                                           "registry_app_3"}));
+  auto result = sync_bridge().GetRestorableAppsShortcutInfo();
+  EXPECT_EQ(result.size(), 2u);
+
+  EXPECT_EQ(result[0].app_id, ManifestIdStrToAppId(manifest_id_2.spec()));
+  EXPECT_EQ(result[0].shortcut_info->manifest_id, manifest_id_2);
+  EXPECT_EQ(result[0].shortcut_info->name, u"registry_app_2");
+  EXPECT_EQ(result[0].shortcut_info->best_primary_icon_url, icon_url);
+
+  EXPECT_EQ(result[1].app_id, ManifestIdStrToAppId(manifest_id_3.spec()));
+  EXPECT_EQ(result[1].shortcut_info->manifest_id, manifest_id_3);
+  EXPECT_EQ(result[1].shortcut_info->name, u"registry_app_3");
+  // No icon url specified for apps 3, fallback to use start url as place
+  // holder.
+  EXPECT_EQ(result[1].shortcut_info->best_primary_icon_url, manifest_id_3);
 }
 
 }  // namespace webapk

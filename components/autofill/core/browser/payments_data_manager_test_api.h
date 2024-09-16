@@ -17,6 +17,8 @@ class PaymentsDataManagerTestApi {
       PaymentsDataManager& payments_data_manager)
       : payments_data_manager_(payments_data_manager) {}
 
+  void NotifyObservers() { payments_data_manager_->NotifyObservers(); }
+
   // Adds `credit_card` to the web database as a server card.
   //
   // In production code, server cards are set via the Chrome Sync process, and
@@ -39,6 +41,8 @@ class PaymentsDataManagerTestApi {
 
   void OnCardArtImagesFetched(
       std::vector<std::unique_ptr<CreditCardArtImage>> images);
+
+  bool ShouldSuggestServerPaymentMethods();
 
  private:
   const raw_ref<PaymentsDataManager> payments_data_manager_;

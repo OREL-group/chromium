@@ -6,13 +6,16 @@
 
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
+#include "base/test/with_feature_override.h"
 #include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/base/signin_client.h"
+#include "components/signin/public/base/signin_pref_names.h"
 #include "components/signin/public/base/signin_switches.h"
 #include "components/signin/public/identity_manager/accounts_in_cookie_jar_info.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
 #include "components/signin/public/identity_manager/identity_test_utils.h"
+#include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "google_apis/gaia/gaia_constants.h"
 #include "services/network/test/test_url_loader_factory.h"
@@ -34,17 +37,16 @@ gaia::ListedAccount GetListedAccountFromAccountInfo(
   return gaia_account;
 }
 
-class DiceAccountReconcilorDelegateTest : public testing::TestWithParam<bool> {
+class DiceAccountReconcilorDelegateTest
+    : public base::test::WithFeatureOverride,
+      public testing::Test {
  public:
   DiceAccountReconcilorDelegateTest()
-      : delegate_(identity_manager(),
-                  identity_test_environment_.signin_client()) {
-    if (IsExplicitBrowserSigninEnabled()) {
-      scoped_feature_list_.InitAndEnableFeature(switches::kUnoDesktop);
-    } else {
-      scoped_feature_list_.InitAndDisableFeature(switches::kUnoDesktop);
-    }
-  }
+      : base::test::WithFeatureOverride(
+            switches::kExplicitBrowserSigninUIOnDesktop),
+        identity_test_environment_(nullptr, &pref_service_, nullptr),
+        delegate_(identity_manager(),
+                  identity_test_environment_.signin_client()) {}
 
   DiceAccountReconcilorDelegate& delegate() { return delegate_; }
 
@@ -52,24 +54,42 @@ class DiceAccountReconcilorDelegateTest : public testing::TestWithParam<bool> {
     return identity_test_environment_;
   }
 
-  bool IsExplicitBrowserSigninEnabled() { return GetParam(); }
+  bool IsExplicitBrowserSigninEnabled() const {
+    return IsParamFeatureEnabled();
+  }
 
   IdentityManager* identity_manager() {
     return identity_test_environment().identity_manager();
   }
 
+  PrefService* pref_service() { return &pref_service_; }
+
  private:
   base::test::SingleThreadTaskEnvironment task_environment_;
   base::test::ScopedFeatureList scoped_feature_list_;
+  sync_preferences::TestingPrefServiceSyncable pref_service_;
   IdentityTestEnvironment identity_test_environment_;
   DiceAccountReconcilorDelegate delegate_;
 };
 
 TEST_P(DiceAccountReconcilorDelegateTest, GetConsentLevelForPrimaryAccount) {
-  signin::ConsentLevel consent_level = IsExplicitBrowserSigninEnabled()
-                                           ? ConsentLevel::kSignin
-                                           : ConsentLevel::kSync;
+  ConsentLevel consent_level = IsExplicitBrowserSigninEnabled()
+                                   ? ConsentLevel::kSignin
+                                   : ConsentLevel::kSync;
   EXPECT_EQ(delegate().GetConsentLevelForPrimaryAccount(), consent_level);
+
+  if (IsExplicitBrowserSigninEnabled()) {
+    // Sign in.
+    identity_test_environment().MakePrimaryAccountAvailable(
+        "test@gmail.com", ConsentLevel::kSignin);
+    // Simulate Dice User migrating.
+    pref_service()->SetBoolean(prefs::kExplicitBrowserSignin, false);
+
+    // The behavior for Dice users migrating should be the same as if the
+    // feature is disabled.
+    EXPECT_EQ(delegate().GetConsentLevelForPrimaryAccount(),
+              ConsentLevel::kSync);
+  }
 }
 
 TEST_P(DiceAccountReconcilorDelegateTest,
@@ -164,12 +184,7 @@ TEST_P(DiceAccountReconcilorDelegateTest, RevokeSecondaryTokensForReconcile) {
       ::testing::UnorderedElementsAre(valid_account, no_cookie_account));
 }
 
-INSTANTIATE_TEST_SUITE_P(,
-                         DiceAccountReconcilorDelegateTest,
-                         testing::Bool(),
-                         [](const ::testing::TestParamInfo<bool>& info) {
-                           return info.param ? "Explicit" : "Implicit";
-                         });
+INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(DiceAccountReconcilorDelegateTest);
 
 }  // namespace
 }  // namespace signin

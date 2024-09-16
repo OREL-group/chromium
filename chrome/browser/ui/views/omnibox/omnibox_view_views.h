@@ -266,6 +266,8 @@ class OmniboxViewViews
   void ExecuteTextEditCommand(ui::TextEditCommand command) override;
   bool ShouldShowPlaceholderText() const override;
 
+  void UpdateAccessibleValue() override;
+
   // ash::input_method::InputMethodManager::CandidateWindowObserver:
 #if BUILDFLAG(IS_CHROMEOS_ASH)
   void CandidateWindowOpened(
@@ -299,7 +301,9 @@ class OmniboxViewViews
   void OnCompositingDidCommit(ui::Compositor* compositor) override;
   void OnCompositingStarted(ui::Compositor* compositor,
                             base::TimeTicks start_time) override;
-  void OnCompositingEnded(ui::Compositor* compositor) override;
+  void OnDidPresentCompositorFrame(
+      uint32_t frame_token,
+      const gfx::PresentationFeedback& feedback) override;
   void OnCompositingShuttingDown(ui::Compositor* compositor) override;
 
   // TemplateURLServiceObserver:

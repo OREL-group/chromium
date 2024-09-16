@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -16,6 +17,7 @@
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/not_fatal_until.h"
 #include "base/observer_list.h"
 #include "base/power_monitor/power_monitor.h"
 #include "base/strings/string_number_conversions.h"
@@ -36,7 +38,6 @@
 #include "cc/metrics/begin_main_frame_metrics.h"
 #include "cc/metrics/custom_metrics_recorder.h"
 #include "cc/metrics/frame_sequence_tracker.h"
-#include "cc/metrics/web_vital_metrics.h"
 #include "cc/trees/layer_tree_host.h"
 #include "cc/trees/layer_tree_settings.h"
 #include "components/viz/common/features.h"
@@ -135,7 +136,7 @@ Compositor::Compositor(const viz::FrameSinkId& frame_sink_id,
   if (command_line->HasSwitch(cc::switches::kUIShowCompositedLayerBorders)) {
     std::string layer_borders_string = command_line->GetSwitchValueASCII(
         cc::switches::kUIShowCompositedLayerBorders);
-    std::vector<base::StringPiece> entries = base::SplitStringPiece(
+    std::vector<std::string_view> entries = base::SplitStringPiece(
         layer_borders_string, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
     if (entries.empty()) {
       settings.initial_debug_state.show_debug_borders.set();
@@ -193,7 +194,7 @@ Compositor::Compositor(const viz::FrameSinkId& frame_sink_id,
   settings.enable_elastic_overscroll = true;
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_CHROMEOS_LACROS) || BUILDFLAG(IS_WIN)
   // Rasterized tiles must be overlay candidates to be forwarded.
   // This is very similar to the line above for Apple.
   settings.use_gpu_memory_buffer_resources =
@@ -265,8 +266,10 @@ Compositor::Compositor(const viz::FrameSinkId& frame_sink_id,
   // See: http://crbug.com/956264.
   host_->SetVisible(true);
 
-  if (base::PowerMonitor::IsInitialized())
-    base::PowerMonitor::AddPowerSuspendObserver(this);
+  if (auto* power_monitor = base::PowerMonitor::GetInstance();
+      power_monitor->IsInitialized()) {
+    power_monitor->AddPowerSuspendObserver(this);
+  }
 
   if (command_line->HasSwitch(switches::kUISlowAnimations)) {
     slow_animations_ = std::make_unique<ScopedAnimationDurationScaleMode>(
@@ -279,8 +282,10 @@ Compositor::Compositor(const viz::FrameSinkId& frame_sink_id,
 
 Compositor::~Compositor() {
   TRACE_EVENT0("shutdown,viz", "Compositor::destructor");
-  if (base::PowerMonitor::IsInitialized())
-    base::PowerMonitor::RemovePowerSuspendObserver(this);
+  if (auto* power_monitor = base::PowerMonitor::GetInstance();
+      power_monitor->IsInitialized()) {
+    power_monitor->RemovePowerSuspendObserver(this);
+  }
 
   for (auto& observer : observer_list_)
     observer.OnCompositingShuttingDown(this);
@@ -352,9 +357,10 @@ void Compositor::SetLayerTreeFrameSink(
       display_private_->SetDisplayVSyncParameters(vsync_timebase_,
                                                   vsync_interval_);
     }
-    if (max_vrr_interval_.has_value()) {
-      display_private_->SetMaxVrrInterval(max_vrr_interval_);
-    }
+    display_private_->SetMaxVSyncAndVrr(max_vsync_interval_, vrr_state_);
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+    display_private_->SetSupportedRefreshRates(seamless_refresh_rates_);
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
   }
 
   MaybeUpdateObserveBeginFrame();
@@ -534,7 +540,7 @@ void Compositor::SetDisplayTransformHint(gfx::OverlayTransform hint) {
 }
 
 void Compositor::SetBackgroundColor(SkColor color) {
-  // TODO(crbug/1308932): Remove FromColor and make all SkColor4f.
+  // TODO(crbug.com/40219248): Remove FromColor and make all SkColor4f.
   host_->set_background_color(SkColor4f::FromColor(color));
   ScheduleDraw();
 }
@@ -614,12 +620,14 @@ void Compositor::AddVSyncParameterObserver(
     display_private_->AddVSyncParameterObserver(std::move(observer));
 }
 
-void Compositor::SetMaxVrrInterval(
-    const std::optional<base::TimeDelta>& max_vrr_interval) {
-  max_vrr_interval_ = max_vrr_interval;
+void Compositor::SetMaxVSyncAndVrr(
+    const std::optional<base::TimeDelta>& max_vsync_interval,
+    display::VariableRefreshRateState vrr_state) {
+  max_vsync_interval_ = max_vsync_interval;
+  vrr_state_ = vrr_state;
 
   if (display_private_) {
-    display_private_->SetMaxVrrInterval(max_vrr_interval);
+    display_private_->SetMaxVSyncAndVrr(max_vsync_interval, vrr_state);
   }
 }
 
@@ -815,20 +823,15 @@ Compositor::GetBeginMainFrameMetrics() {
 #endif
 }
 
-std::unique_ptr<cc::WebVitalMetrics> Compositor::GetWebVitalMetrics() {
-  return nullptr;
-}
-
 void Compositor::NotifyThroughputTrackerResults(
     cc::CustomTrackerResults results) {
   for (auto& pair : results)
     ReportMetricsForTracker(pair.first, std::move(pair.second));
 }
 
-void Compositor::DidReceiveCompositorFrameAck() {
-  ++activated_frame_count_;
+void Compositor::DidReceiveCompositorFrameAckDeprecatedForCompositor() {
   for (auto& observer : observer_list_)
-    observer.OnCompositingEnded(this);
+    observer.OnCompositingAckDeprecated(this);
 }
 
 void Compositor::DidPresentCompositorFrame(
@@ -862,13 +865,13 @@ void Compositor::FrameSinksToThrottleUpdated(
 
 void Compositor::OnFirstSurfaceActivation(
     const viz::SurfaceInfo& surface_info) {
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 void Compositor::OnFrameTokenChanged(uint32_t frame_token,
                                      base::TimeTicks activation_time) {
   // TODO(yiyix, fsamuel): Implement frame token propagation for Compositor.
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 Compositor::TrackerState::TrackerState() = default;
@@ -890,7 +893,7 @@ void Compositor::StartThroughputTracker(
 
 bool Compositor::StopThroughputTracker(TrackerId tracker_id) {
   auto it = throughput_tracker_map_.find(tracker_id);
-  DCHECK(it != throughput_tracker_map_.end());
+  CHECK(it != throughput_tracker_map_.end(), base::NotFatalUntil::M130);
 
   // Clean up if report has happened since StopThroughputTracking would
   // not trigger report in this case.
@@ -906,7 +909,7 @@ bool Compositor::StopThroughputTracker(TrackerId tracker_id) {
 
 void Compositor::CancelThroughputTracker(TrackerId tracker_id) {
   auto it = throughput_tracker_map_.find(tracker_id);
-  DCHECK(it != throughput_tracker_map_.end());
+  CHECK(it != throughput_tracker_map_.end(), base::NotFatalUntil::M130);
 
   const bool should_stop = !it->second.report_attempted;
 
@@ -1014,5 +1017,22 @@ void Compositor::MaybeUpdateObserveBeginFrame() {
   display_private_->SetStandaloneBeginFrameObserver(
       host_begin_frame_observer_->GetBoundRemote());
 }
+
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+void Compositor::SetSeamlessRefreshRates(
+    const std::vector<float>& seamless_refresh_rates) {
+  seamless_refresh_rates_ = seamless_refresh_rates;
+
+  if (display_private_) {
+    display_private_->SetSupportedRefreshRates(seamless_refresh_rates);
+  }
+}
+
+void Compositor::OnSetPreferredRefreshRate(float refresh_rate) {
+  for (auto& observer : observer_list_) {
+    observer.OnSetPreferredRefreshRate(this, refresh_rate);
+  }
+}
+#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 }  // namespace ui

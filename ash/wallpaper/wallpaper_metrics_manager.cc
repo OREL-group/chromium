@@ -51,7 +51,6 @@ std::string WallpaperMetricsManager::ToResultHistogram(WallpaperType type) {
     case WallpaperType::kOneShot:
     case WallpaperType::kCount:
       NOTREACHED();
-      return "";
   }
 }
 

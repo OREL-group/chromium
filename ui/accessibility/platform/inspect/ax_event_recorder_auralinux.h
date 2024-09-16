@@ -15,7 +15,6 @@
 #include "ui/accessibility/platform/inspect/ax_inspect.h"
 
 namespace ui {
-
 class AXPlatformTreeManager;
 
 // This class has two distinct event recording code paths. When we are

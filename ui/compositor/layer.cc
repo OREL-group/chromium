@@ -19,6 +19,7 @@
 #include "base/json/json_writer.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
+#include "base/not_fatal_until.h"
 #include "base/observer_list.h"
 #include "base/ranges/algorithm.h"
 #include "base/trace_event/trace_event.h"
@@ -54,7 +55,7 @@
 namespace ui {
 namespace {
 
-// TODO(https://crbug.com/1242749): temporary while tracking down crash.
+// TODO(crbug.com/40786876): temporary while tracking down crash.
 // Minimum interval between no mutation debug dumps.
 constexpr base::TimeDelta kMinNoMutationDumpInterval = base::Days(1);
 
@@ -283,7 +284,7 @@ std::unique_ptr<Layer> Layer::Clone() const {
   clone->SetLayerOffset(layer_offset_);
 
   // cc::Layer state.
-  // TODO(crbug/1308932): Remove toSkColor and make all SkColor4f.
+  // TODO(crbug.com/40219248): Remove toSkColor and make all SkColor4f.
   if (surface_layer_) {
     clone->SetShowSurface(surface_layer_->surface_id(), frame_size_in_dip_,
                           surface_layer_->background_color().toSkColor(),
@@ -325,7 +326,7 @@ std::unique_ptr<Layer> Layer::Mirror() {
   auto mirror = Clone();
   mirrors_.emplace_back(std::make_unique<LayerMirror>(this, mirror.get()));
 
-  if (!transfer_resource_.mailbox_holder.mailbox.IsZero()) {
+  if (!transfer_resource_.is_empty()) {
     // Send an empty release callback because we don't want the resource to be
     // freed up until the original layer releases it.
     mirror->SetTransferableResource(
@@ -402,7 +403,7 @@ void Layer::RemoveObserver(LayerObserver* observer) {
 }
 
 void Layer::Add(Layer* child) {
-  // TODO(https://crbug.com/1242749): temporary while tracking down crash.
+  // TODO(crbug.com/40786876): temporary while tracking down crash.
   if (no_mutation_) {
     base::debug::DumpWithoutCrashing(FROM_HERE, kMinNoMutationDumpInterval);
   }
@@ -439,7 +440,7 @@ void Layer::Remove(Layer* child) {
     child->ResetCompositorForAnimatorsInTree(compositor);
 
   auto i = base::ranges::find(children_, child);
-  DCHECK(i != children_.end());
+  CHECK(i != children_.end(), base::NotFatalUntil::M130);
   children_.erase(i);
   child->parent_ = nullptr;
   child->cc_layer_->RemoveFromParent();
@@ -676,8 +677,7 @@ void Layer::SetMaskLayer(Layer* layer_mask) {
     return;
   // The provided mask should not have a layer mask itself.
   DCHECK(!layer_mask ||
-         (!layer_mask->layer_mask_layer() && layer_mask->children().empty() &&
-          !layer_mask->layer_mask_back_link_));
+         (!layer_mask->layer_mask_layer() && layer_mask->children().empty()));
   DCHECK(!layer_mask_back_link_);
   DCHECK(!layer_mask || layer_mask->type_ == LAYER_TEXTURED);
   // Masks must be backed by a PictureLayer.
@@ -699,12 +699,18 @@ void Layer::SetMaskLayer(Layer* layer_mask) {
     // Changing the layer mask while it's in the middle of painting is likely
     // to lead to very unusual behavior, and not supported.
     CHECK(!layer_mask->in_send_damaged_rects_);
-    // TODO(https://crbug.com/1242749): temporary while tracking down crash.
+    // TODO(crbug.com/40786876): temporary while tracking down crash.
     // A `layer_mask` of this would lead to recursion.
     CHECK(layer_mask != this);
     if (no_mutation_) {
       base::debug::DumpWithoutCrashing(FROM_HERE, kMinNoMutationDumpInterval);
     }
+
+    // Clears out other reference to `layer_mask` if there is one.
+    if (layer_mask->layer_mask_back_link_) {
+      layer_mask->layer_mask_back_link_->SetMaskLayer(nullptr);
+    }
+
     layer_mask->layer_mask_back_link_ = this;
     layer_mask->OnDeviceScaleFactorChanged(device_scale_factor_);
   }
@@ -885,8 +891,8 @@ void Layer::ConvertPointToLayer(const Layer* source,
       out << "[";
       out << layer->name();
       while (layer->parent()) {
-        out << "]-[" << layer->name();
         layer = layer->parent();
+        out << "]-[" << layer->name();
       }
       out << "]";
       return out.str();
@@ -1089,7 +1095,7 @@ void Layer::SetTransferableResource(const viz::TransferableResource& resource,
                                     viz::ReleaseCallback release_callback,
                                     gfx::Size texture_size_in_dip) {
   DCHECK(type_ == LAYER_TEXTURED || type_ == LAYER_SOLID_COLOR);
-  DCHECK(!resource.mailbox_holder.mailbox.IsZero());
+  DCHECK(!resource.is_empty());
   DCHECK(release_callback);
   DCHECK(!resource.is_software);
   if (!texture_layer_.get()) {
@@ -1152,7 +1158,7 @@ void Layer::SetShowSurface(const viz::SurfaceId& surface_id,
   CreateSurfaceLayerIfNecessary();
 
   surface_layer_->SetSurfaceId(surface_id, deadline_policy);
-  // TODO(crbug/1308932): Remove FromColor and make all SkColor4f.
+  // TODO(crbug.com/40219248): Remove FromColor and make all SkColor4f.
   surface_layer_->SetBackgroundColor(
       SkColor4f::FromColor(default_background_color));
   surface_layer_->SetSafeOpaqueBackgroundColor(
@@ -1177,7 +1183,7 @@ void Layer::SetShowSurface(const viz::SurfaceId& surface_id,
   DCHECK(surface_layer_.get());
 
   // Assumes `frame_size_in_dip_` is already set.
-  // TODO(crbug.com/1491605): with surface sync, it should use on `bounds_`.
+  // TODO(crbug.com/40285157): with surface sync, it should use on `bounds_`.
   surface_layer_->SetSurfaceId(surface_id, deadline_policy);
   surface_layer_->SetBackgroundColor(
       SkColor4f::FromColor(default_background_color));
@@ -1299,12 +1305,12 @@ SkColor Layer::GetTargetColor() const {
   if (animator_ && animator_->IsAnimatingProperty(
       LayerAnimationElement::COLOR))
     return animator_->GetTargetColor();
-  // TODO(crbug/1308932): Remove toSkColor and make all SkColor4f.
+  // TODO(crbug.com/40219248): Remove toSkColor and make all SkColor4f.
   return cc_layer_->background_color().toSkColor();
 }
 
 SkColor Layer::background_color() const {
-  // TODO(crbug/1308932): Remove toSkColor and make all SkColor4f.
+  // TODO(crbug.com/40219248): Remove toSkColor and make all SkColor4f.
   return cc_layer_->background_color().toSkColor();
 }
 
@@ -1316,8 +1322,9 @@ bool Layer::SchedulePaint(const gfx::Rect& invalid_rect) {
   if (type_ == LAYER_NINE_PATCH) {
     return false;
   }
-  if (!delegate_ && transfer_resource_.mailbox_holder.mailbox.IsZero())
+  if (!delegate_ && transfer_resource_.is_empty()) {
     return false;
+  }
 
   damaged_region_.Union(invalid_rect);
   if (layer_mask_)
@@ -1349,8 +1356,9 @@ void Layer::SendDamagedRects() {
 
   if (damaged_region_.IsEmpty())
     return;
-  if (!delegate_ && transfer_resource_.mailbox_holder.mailbox.IsZero())
+  if (!delegate_ && transfer_resource_.is_empty()) {
     return;
+  }
   if (content_layer_ && deferred_paint_requests_)
     return;
 
@@ -1574,6 +1582,8 @@ void Layer::StackRelativeTo(Layer* child, Layer* other, bool above) {
       base::ranges::find(children_, child) - children_.begin();
   const size_t other_i =
       base::ranges::find(children_, other) - children_.begin();
+  DCHECK_LT(child_i, children_.size()) << " child not in vector";
+  DCHECK_LT(other_i, children_.size()) << " other not in vector";
   if ((above && child_i == other_i + 1) || (!above && child_i + 1 == other_i))
     return;
 
@@ -1713,7 +1723,7 @@ void Layer::SetGrayscaleFromAnimation(float grayscale,
 
 void Layer::SetColorFromAnimation(SkColor color, PropertyChangeReason reason) {
   DCHECK_EQ(type_, LAYER_SOLID_COLOR);
-  // TODO(crbug/1308932): Remove FromColor and make all SkColor4f.
+  // TODO(crbug.com/40219248): Remove FromColor and make all SkColor4f.
   cc_layer_->SetBackgroundColor(SkColor4f::FromColor(color));
   cc_layer_->SetSafeOpaqueBackgroundColor(SkColor4f::FromColor(color));
   SetFillsBoundsOpaquelyWithReason(SkColorGetA(color) == 0xFF, reason);
@@ -1783,7 +1793,7 @@ float Layer::GetGrayscaleForAnimation() const {
 SkColor Layer::GetColorForAnimation() const {
   // The NULL check is here since this is invoked regardless of whether we have
   // been configured as LAYER_SOLID_COLOR.
-  // TODO(crbug/1308932): Remove toSkColor and make all SkColor4f.
+  // TODO(crbug.com/40219248): Remove toSkColor and make all SkColor4f.
   return solid_color_layer_.get()
              ? solid_color_layer_->background_color().toSkColor()
              : SK_ColorBLACK;
@@ -1810,14 +1820,6 @@ float Layer::GetDeviceScaleFactor() const {
 LayerAnimatorCollection* Layer::GetLayerAnimatorCollection() {
   Compositor* compositor = GetCompositor();
   return compositor ? compositor->layer_animator_collection() : nullptr;
-}
-
-std::optional<int> Layer::GetFrameNumber() const {
-  if (const Compositor* compositor = GetCompositor()) {
-    return compositor->activated_frame_count();
-  }
-
-  return std::nullopt;
 }
 
 float Layer::GetRefreshRate() const {
@@ -1869,7 +1871,7 @@ void Layer::RecomputeDrawsContentAndUVRect() {
       static_cast<float>(size.height()) / frame_size_in_dip_.height());
     texture_layer_->SetUV(uv_top_left, uv_bottom_right);
   } else if (surface_layer_.get()) {
-    // TODO(crbug.com/1491605): with surface sync, size shouldn't rely on
+    // TODO(crbug.com/40285157): with surface sync, size shouldn't rely on
     // `frame_size_in_dip_` anymore.
     size.SetToMin(frame_size_in_dip_);
   }
@@ -1913,7 +1915,7 @@ void Layer::OnMirrorDestroyed(LayerMirror* mirror) {
   const auto it =
       base::ranges::find(mirrors_, mirror, &std::unique_ptr<LayerMirror>::get);
 
-  DCHECK(it != mirrors_.end());
+  CHECK(it != mirrors_.end(), base::NotFatalUntil::M130);
   mirrors_.erase(it);
 }
 

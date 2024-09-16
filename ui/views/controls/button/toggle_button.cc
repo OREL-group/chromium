@@ -26,6 +26,7 @@
 #include "ui/gfx/geometry/skia_conversions.h"
 #include "ui/gfx/shadow_value.h"
 #include "ui/gfx/skia_paint_util.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/animation/ink_drop.h"
 #include "ui/views/animation/ink_drop_highlight.h"
 #include "ui/views/animation/ink_drop_impl.h"
@@ -40,11 +41,6 @@ namespace views {
 namespace {
 
 // Constants are measured in dip.
-
-// Margins from edge of track to edge of view.
-constexpr int kTrackHorizontalMargin = 6;
-// Inset from the rounded edge of the thumb to the rounded edge of the track.
-constexpr int kHorizontalThumbInset = 2;
 constexpr gfx::Size kTrackSize = gfx::Size(26, 16);
 constexpr int kThumbInset = -4;
 constexpr int kThumbInsetSelected = -2;
@@ -276,6 +272,8 @@ ToggleButton::ToggleButton(PressedCallback callback, bool has_thumb_shadow)
   SetInstallFocusRingOnFocus(true);
   FocusRing::Get(this)->SetPathGenerator(
       std::make_unique<FocusRingHighlightPathGenerator>());
+
+  GetViewAccessibility().SetRole(ax::mojom::Role::kSwitch);
 }
 
 ToggleButton::~ToggleButton() {
@@ -294,6 +292,9 @@ void ToggleButton::AnimateIsOn(bool is_on) {
   } else {
     slide_animation_.Hide();
   }
+  GetViewAccessibility().SetCheckedState(GetIsOn()
+                                             ? ax::mojom::CheckedState::kTrue
+                                             : ax::mojom::CheckedState::kFalse);
   OnPropertyChanged(&slide_animation_, kPropertyEffectsNone);
 }
 
@@ -302,6 +303,9 @@ void ToggleButton::SetIsOn(bool is_on) {
     return;
   }
   slide_animation_.Reset(is_on ? 1.0 : 0.0);
+  GetViewAccessibility().SetCheckedState(GetIsOn()
+                                             ? ax::mojom::CheckedState::kTrue
+                                             : ax::mojom::CheckedState::kFalse);
   UpdateThumb();
   OnPropertyChanged(&slide_animation_, kPropertyEffectsPaint);
 }
@@ -366,10 +370,6 @@ bool ToggleButton::GetAcceptsEvents() const {
   return accepts_events_;
 }
 
-int ToggleButton::GetVisualHorizontalMargin() const {
-  return kTrackHorizontalMargin - kHorizontalThumbInset;
-}
-
 void ToggleButton::AddLayerToRegion(ui::Layer* layer,
                                     views::LayerRegion region) {
   // Ink-drop layers should go above/below the ThumbView.
@@ -380,7 +380,8 @@ void ToggleButton::RemoveLayerFromRegions(ui::Layer* layer) {
   thumb_view_->RemoveLayerFromRegions(layer);
 }
 
-gfx::Size ToggleButton::CalculatePreferredSize() const {
+gfx::Size ToggleButton::CalculatePreferredSize(
+    const SizeBounds& /*available_size*/) const {
   gfx::Rect rect(GetTrackSize());
   rect.Inset(-GetInsets());
   return rect.size();
@@ -500,14 +501,6 @@ SkPath ToggleButton::GetFocusRingPath() const {
   const float corner_radius = sk_rect.height() / 2;
   path.addRoundRect(sk_rect, corner_radius, corner_radius);
   return path;
-}
-
-void ToggleButton::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  Button::GetAccessibleNodeData(node_data);
-
-  node_data->role = ax::mojom::Role::kSwitch;
-  node_data->SetCheckedState(GetIsOn() ? ax::mojom::CheckedState::kTrue
-                                       : ax::mojom::CheckedState::kFalse);
 }
 
 void ToggleButton::PaintButtonContents(gfx::Canvas* canvas) {

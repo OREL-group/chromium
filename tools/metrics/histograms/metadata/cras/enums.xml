@@ -926,6 +926,12 @@ chromium-metrics-reviews@google.com.
   <int value="1" label="CRAS_METRICS_DLC_STATUS_AVAILABLE"/>
 </enum>
 
+<enum name="CrasEffectStartStatus">
+  <summary/>
+  <int value="0" label="CRAS_EFFECT_REQUESTED_FAILED"/>
+  <int value="1" label="CRAS_EFFECT_REQUESTED_SUCCEEDED"/>
+</enum>
+
 <enum name="CrasHfpBatteryIndicator">
   <summary>
     List of known battery indicator supports in Bluetooth Hands-free profile.
@@ -977,6 +983,18 @@ chromium-metrics-reviews@google.com.
   <int value="2" label="SKT_OPEN_ERROR"/>
   <int value="3" label="SKT_POLL_TIMEOUT"/>
   <int value="4" label="SKT_POLL_ERR_HUP"/>
+</enum>
+
+<enum name="CrasHfpTelephonyEvent">
+  <summary>
+    List of Bluetooth hfp telephony events from Floss sent to CRAS. CRAS side
+    definition in
+    https://chromium.googlesource.com/chromiumos/third_party/adhd/+/main/cras/src/server/cras_server_metrics.h
+  </summary>
+  <int value="0" label="HFP_TELEPHONY_UHID_OPEN">
+    uhid device is opened. This event usually happens when the user enables a
+    Bluetooth telephony HID device from WebHID to start using call control.
+  </int>
 </enum>
 
 <enum name="CrasNoiseCancellationStatus">

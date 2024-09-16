@@ -22,12 +22,10 @@ public class SavedTabGroup {
     public String syncId;
 
     /**
-     * The ID representing the tab group locally in the tab model. Currently, it's the root ID as
-     * returned by {@link Tab#getRootId()}. In near future, it will be replaced by {@link
-     * Tab#getTabGroupId()} instead. This field can be null if the {@link SavedTabGroup} represents
-     * a tab group that isn't present local tab model yet.
+     * The ID representing the tab group locally in the tab model. This field can be null if the
+     * {@link SavedTabGroup} represents a tab group that isn't present local tab model yet.
      */
-    public @Nullable Integer localId;
+    public @Nullable LocalTabGroupId localId;
 
     /** The title of the tab group. */
     public @Nullable String title;
@@ -41,6 +39,41 @@ public class SavedTabGroup {
     /** Timestamp for when the tab was last updated. */
     public long updateTimeMs;
 
+    /* The sync cache guid of the device that created the tab group. */
+    public String creatorCacheGuid;
+
+    /* The sync cache guid of the device that last updated the tab group. */
+    public String lastUpdaterCacheGuid;
+
+    /**
+     * Collaboration group ID for Shared tab groups. This field can be null if the {@link
+     * SavedTabGroup} represents a saved tab group which is not shared.
+     */
+    public @Nullable String collaborationId;
+
     /** The tabs associated with this saved tab group. */
     public List<SavedTabGroupTab> savedTabs = new ArrayList<>();
+
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Saved group: syncId = ");
+        sb.append(syncId);
+        sb.append(", localId = ");
+        sb.append(localId);
+        sb.append(", title = ");
+        sb.append(title);
+        sb.append(", color = ");
+        sb.append(color);
+        sb.append(", # of Tabs = ");
+        sb.append(savedTabs.size());
+
+        for (int i = 0; i < savedTabs.size(); i++) {
+            sb.append("\nTab[");
+            sb.append(i);
+            sb.append("] -> ");
+            sb.append(savedTabs.get(i));
+        }
+        return sb.toString();
+    }
 }

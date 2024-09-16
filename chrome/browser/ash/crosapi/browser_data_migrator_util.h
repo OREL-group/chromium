@@ -14,15 +14,21 @@
 #include "base/files/file_path.h"
 #include "base/synchronization/atomic_flag.h"
 #include "base/values.h"
-#include "chrome/browser/ash/crosapi/migration_progress_tracker.h"
-#include "components/sync/base/model_type.h"
+#include "chromeos/ash/components/standalone_browser/migration_progress_tracker.h"
+#include "components/sync/base/data_type.h"
 #include "third_party/leveldatabase/env_chromium.h"
 
 namespace base {
 class FilePath;
 }
 
-namespace ash::browser_data_migrator_util {
+namespace ash {
+
+namespace standalone_browser {
+class MigrationProgressTracker;
+}  // namespace standalone_browser
+
+namespace browser_data_migrator_util {
 
 // User data directory name for lacros.
 constexpr char kLacrosDir[] = "lacros";
@@ -297,18 +303,15 @@ constexpr const char* kLacrosOnlyPreferencesKeys[] = {
 };
 
 // List of data types in Sync Data that have to stay in Ash and Ash only.
-static_assert(51 == syncer::GetNumModelTypes(),
-              "If adding a new sync data type, update the lists below if"
-              " you want to keep the new data type in Ash only.");
-constexpr syncer::ModelType kAshOnlySyncDataTypes[] = {
-    syncer::ModelType::APP_LIST,
-    syncer::ModelType::ARC_PACKAGE,
-    syncer::ModelType::OS_PREFERENCES,
-    syncer::ModelType::OS_PRIORITY_PREFERENCES,
-    syncer::ModelType::PRINTERS,
-    syncer::ModelType::PRINTERS_AUTHORIZATION_SERVERS,
-    syncer::ModelType::WIFI_CONFIGURATIONS,
-    syncer::ModelType::WORKSPACE_DESK,
+inline constexpr syncer::DataType kAshOnlySyncDataTypesForLacrosMigration[] = {
+    syncer::DataType::APP_LIST,
+    syncer::DataType::ARC_PACKAGE,
+    syncer::DataType::OS_PREFERENCES,
+    syncer::DataType::OS_PRIORITY_PREFERENCES,
+    syncer::DataType::PRINTERS,
+    syncer::DataType::PRINTERS_AUTHORIZATION_SERVERS,
+    syncer::DataType::WIFI_CONFIGURATIONS,
+    syncer::DataType::WORKSPACE_DESK,
 };
 
 constexpr char kTotalSize[] = "Ash.UserDataStatsRecorder.DataSize.TotalSize";
@@ -412,24 +415,27 @@ class ScopedExtraBytesRequiredToBeFreedForTesting {
 };
 
 // Copies `items` to `to_dir`.
-bool CopyTargetItems(const base::FilePath& to_dir,
-                     const TargetItems& items,
-                     CancelFlag* cancel_flag,
-                     MigrationProgressTracker* progress_tracker);
+bool CopyTargetItems(
+    const base::FilePath& to_dir,
+    const TargetItems& items,
+    CancelFlag* cancel_flag,
+    standalone_browser::MigrationProgressTracker* progress_tracker);
 
 // Copies `item` to location pointed by `dest`. Returns true on success and
 // false on failure.
-bool CopyTargetItem(const TargetItem& item,
-                    const base::FilePath& dest,
-                    CancelFlag* cancel_flag,
-                    MigrationProgressTracker* progress_tracker);
+bool CopyTargetItem(
+    const TargetItem& item,
+    const base::FilePath& dest,
+    CancelFlag* cancel_flag,
+    standalone_browser::MigrationProgressTracker* progress_tracker);
 
 // Copies the contents of `from_path` to `to_path` recursively. Unlike
 // `base::CopyDirectory()` it skips symlinks.
-bool CopyDirectory(const base::FilePath& from_path,
-                   const base::FilePath& to_path,
-                   CancelFlag* cancel_flag,
-                   MigrationProgressTracker* progress_tracker);
+bool CopyDirectory(
+    const base::FilePath& from_path,
+    const base::FilePath& to_path,
+    CancelFlag* cancel_flag,
+    standalone_browser::MigrationProgressTracker* progress_tracker);
 
 // Records the sizes of `TargetItem`s.
 void RecordTargetItemSizes(const std::vector<TargetItem>& items);
@@ -516,6 +522,8 @@ bool MigrateAshIndexedDB(const base::FilePath& src_profile_dir,
                          const char* extension_id,
                          bool copy);
 
-}  // namespace ash::browser_data_migrator_util
+}  // namespace browser_data_migrator_util
+
+}  // namespace ash
 
 #endif  // CHROME_BROWSER_ASH_CROSAPI_BROWSER_DATA_MIGRATOR_UTIL_H_

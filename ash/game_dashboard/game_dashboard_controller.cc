@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "ash/capture_mode/capture_mode_controller.h"
+#include "ash/constants/ash_features.h"
 #include "ash/constants/ash_pref_names.h"
 #include "ash/constants/notifier_catalogs.h"
 #include "ash/game_dashboard/game_dashboard_constants.h"
@@ -33,6 +34,7 @@
 #include "ui/aura/window.h"
 #include "ui/aura/window_tracker.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/compositor/property_change_reason.h"
 #include "ui/display/screen.h"
 #include "ui/display/tablet_state.h"
 #include "ui/wm/core/window_util.h"
@@ -50,6 +52,31 @@ static const std::array<std::string, 7> kGameAppIdAllowList{
     "ojjlibnpojmhhabohpkclejfdblglkpj", "hhkmajjdndhdnkbmomodobajdjngeejb",
     "gihmggjjlnjaldngedmnegjmhccccahg", "lbefcdhjbnilmnokeflglbaiaebadckd",
     "bifaabbnnccaenolhjngemgmegdjflkg"};
+
+// List of pending game PWA app IDs that are being merged into
+// `kGameAppIdAllowList`.
+static const std::array<std::string, 12> kPWAGameAppIdAllowList{
+    extension_misc::kAmazonLunaAppIdCA, extension_misc::kAmazonLunaAppIdDE,
+    extension_misc::kAmazonLunaAppIdES, extension_misc::kAmazonLunaAppIdFR,
+    extension_misc::kAmazonLunaAppIdIT, extension_misc::kAmazonLunaAppIdNL,
+    extension_misc::kAmazonLunaAppIdPL, extension_misc::kAmazonLunaAppIdUK,
+    extension_misc::kAmazonLunaAppIdUS, extension_misc::kBoosteroidAppId,
+    extension_misc::kPokiAppId,         extension_misc::kXboxCloudGamingAppId};
+
+// List of additional game app IDs that are being tested.
+static const std::array<std::string, 3> kGamesInTestAppIdAllowList{
+    extension_misc::kCoolMathGamesAppId, extension_misc::kNowGGAppIdUK,
+    extension_misc::kNowGGAppIdUS};
+
+// Checks whether the given `app_id` is allow listed to show the Game
+// Dashboard button.
+bool IsAppIdAllowListed(const std::string& app_id) {
+  return base::Contains(kGameAppIdAllowList, app_id) ||
+         (features::IsGameDashboardGamePWAsEnabled() &&
+          base::Contains(kPWAGameAppIdAllowList, app_id)) ||
+         (features::IsGameDashboardGamesInTestEnabled() &&
+          base::Contains(kGamesInTestAppIdAllowList, app_id));
+}
 }  // namespace
 
 // static
@@ -160,16 +187,16 @@ void GameDashboardController::OnWindowPropertyChanged(aura::Window* window,
   }
 }
 
-void GameDashboardController::OnWindowVisibilityChanged(aura::Window* window,
-                                                        bool visible) {
-  // When this controller determines that the given `window` is a game, the
-  // `window` may not have known `WindowState`, so it will not create
-  // `GameDashboardContext` for the game window. This can happen if the window
-  // is temporarily hidden when launched by window restore. Soon after, the
-  // window will be reparented to a top level container, and
-  // `OnWindowVisibilityChanged` will be called, and it will have a
-  // `WindowState`. This ensures that a `GameDashboardContext` is created.
-  MaybeCreateGameDashboardContext(window);
+void GameDashboardController::OnWindowParentChanged(aura::Window* window,
+                                                    aura::Window* parent) {
+  if (parent) {
+    // When this controller determines that the given `window` is a game, the
+    // `window` may not be parented. The controller will not create a
+    // `GameDashboardContext`. When the window is reparented to a
+    // valid parent, `OnWindowParentChanged` will be called and create a
+    // `GameDashboardContext` for it.
+    MaybeCreateGameDashboardContext(window);
+  }
 }
 
 void GameDashboardController::OnWindowBoundsChanged(
@@ -178,13 +205,28 @@ void GameDashboardController::OnWindowBoundsChanged(
     const gfx::Rect& new_bounds,
     ui::PropertyChangeReason reason) {
   if (auto* context = GetGameDashboardContext(window)) {
-    context->OnWindowBoundsChanged();
+    context->OnWindowBoundsChanged(reason ==
+                                   ui::PropertyChangeReason::FROM_ANIMATION);
   }
 }
 
 void GameDashboardController::OnWindowDestroying(aura::Window* window) {
   window_observations_.RemoveObservation(window);
   game_window_contexts_.erase(window);
+}
+
+void GameDashboardController::OnWindowTransformed(
+    aura::Window* window,
+    ui::PropertyChangeReason reason) {
+  if (auto* context = GetGameDashboardContext(window);
+      context && game_dashboard_utils::ShouldEnableFeatures()) {
+    // Enable the features if the window is not minimized or undergoing an
+    // animation. Otherwise, disable them.
+    const bool enable = (reason == ui::PropertyChangeReason::FROM_ANIMATION) &&
+                        !(WindowState::Get(window)->IsMinimized());
+    context->EnableFeatures(enable,
+                            GameDashboardMainMenuToggleMethod::kAnimation);
+  }
 }
 
 void GameDashboardController::OnRecordingStarted(aura::Window* current_root) {
@@ -301,7 +343,9 @@ void GameDashboardController::OnWindowActivated(
 void GameDashboardController::MaybeCreateGameDashboardContext(
     aura::Window* window) {
   DCHECK(window);
-  if (!IsGameWindow(window) || !WindowState::Get(window) ||
+  // Do not create a GameDashboardContext if the window is not a game, is not
+  // parented, doesn't have a WindowState, or is being destroyed.
+  if (!IsGameWindow(window) || !window->parent() || !WindowState::Get(window) ||
       window->is_destroying()) {
     return;
   }
@@ -317,7 +361,7 @@ void GameDashboardController::MaybeCreateGameDashboardContext(
 void GameDashboardController::GetWindowGameState(aura::Window* window) {
   if (const auto* app_id = window->GetProperty(kAppIDKey); !app_id) {
     RefreshWindowTracking(window, WindowGameState::kNotYetKnown);
-  } else if (base::Contains(kGameAppIdAllowList, *app_id)) {
+  } else if (IsAppIdAllowListed(*app_id)) {
     RefreshWindowTracking(window, WindowGameState::kGame);
   } else if (IsArcWindow(window)) {
     // For ARC apps, the "app_id" is equivalent to its package name.
@@ -390,6 +434,9 @@ void GameDashboardController::MaybeEnableFeatures(
   const bool should_enable =
       enable && game_dashboard_utils::ShouldEnableFeatures();
   for (auto const& [_, context] : game_window_contexts_) {
+    context->OnWindowBoundsChanged(
+        main_menu_toggle_method ==
+        GameDashboardMainMenuToggleMethod::kAnimation);
     context->EnableFeatures(should_enable, main_menu_toggle_method);
   }
 }

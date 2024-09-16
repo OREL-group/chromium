@@ -8,18 +8,12 @@
 
 #include "base/check_is_test.h"
 #include "base/files/file_path.h"
-#include "base/files/file_util.h"
-#include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/ranges/algorithm.h"
-#include "base/task/thread_pool.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "chrome/browser/browser_process.h"
 #include "chrome/browser/screen_ai/pref_names.h"
 #include "components/prefs/pref_service.h"
-#include "content/public/browser/browser_thread.h"
 #include "services/screen_ai/public/cpp/utilities.h"
 #include "ui/accessibility/accessibility_features.h"
 
@@ -30,16 +24,21 @@
 
 namespace {
 const int kScreenAICleanUpDelayInDays = 30;
-const char kMinExpectedVersion[] = "123.1";
+const char kMinExpectedVersion[] = "124.2";
 
 bool IsDeviceCompatible() {
+#if BUILDFLAG(IS_LINUX)
+#if defined(ARCH_CPU_X86_FAMILY)
   // Check if the CPU has the required instruction set to run the Screen AI
   // library.
-#if BUILDFLAG(IS_LINUX)
-  if (!base::CPU().has_sse41()) {
+  static const bool has_sse41 = base::CPU().has_sse41();
+#else
+  static constexpr bool has_sse41 = false;
+#endif  // defined(ARCH_CPU_X86_FAMILY)
+  if (!has_sse41) {
     return false;
   }
-#endif
+#endif  // BUILDFLAG(IS_LINUX)
   return true;
 }
 
@@ -79,19 +78,6 @@ bool ScreenAIInstallState::VerifyLibraryVersion(const base::Version& version) {
   }
 
   return true;
-}
-
-// TODO(b/41489907): Remove this function once it's known why the binary is
-// sometimes not available.
-// static
-bool ScreenAIInstallState::VerifyLibraryAvailablity(
-    const base::FilePath& install_dir) {
-    // TODO(b/41489907): Try adding a browser test for this case.
-    bool binary_available =
-        base::PathExists(install_dir.Append(GetComponentBinaryFileName()));
-    base::UmaHistogramBoolean(
-        "Accessibility.ScreenAI.Component.BinaryAvailable", binary_available);
-    return binary_available;
 }
 
 ScreenAIInstallState::ScreenAIInstallState() {
@@ -197,7 +183,6 @@ void ScreenAIInstallState::SetState(State state) {
 }
 
 void ScreenAIInstallState::SetDownloadProgress(double progress) {
-  DCHECK_EQ(state_, State::kDownloading);
   for (ScreenAIInstallState::Observer& observer : observers_) {
     observer.DownloadProgressChanged(progress);
   }

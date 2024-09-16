@@ -66,7 +66,8 @@
 #include "components/no_state_prefetch/browser/no_state_prefetch_handle.h"
 #include "components/no_state_prefetch/browser/no_state_prefetch_manager.h"
 #include "components/no_state_prefetch/browser/prerender_histograms.h"
-#include "components/no_state_prefetch/common/prerender_origin.h"
+#include "components/no_state_prefetch/common/no_state_prefetch_origin.h"
+#include "components/page_load_metrics/browser/observers/abandoned_page_load_metrics_observer.h"
 #include "components/page_load_metrics/browser/observers/core/uma_page_load_metrics_observer.h"
 #include "components/page_load_metrics/browser/observers/use_counter_page_load_metrics_observer.h"
 #include "components/page_load_metrics/browser/page_load_metrics_test_waiter.h"
@@ -194,7 +195,7 @@ class PageLoadMetricsBrowserTest : public InProcessBrowserTest {
   PageLoadMetricsBrowserTest() {
     scoped_feature_list_.InitWithFeatures(
         {ukm::kUkmFeature},
-        // TODO(crbug.com/1394910): Use HTTPS URLs in tests to avoid having to
+        // TODO(crbug.com/40248833): Use HTTPS URLs in tests to avoid having to
         // disable this feature.
         {features::kHttpsUpgrades});
   }
@@ -256,13 +257,23 @@ class PageLoadMetricsBrowserTest : public InProcessBrowserTest {
 
   bool NoPageLoadMetricsRecorded() {
     // Determine whether any 'public' page load metrics are recorded. We exclude
-    // 'internal' metrics as these may be recorded for debugging purposes.
+    // 'internal' metrics as these may be recorded for debugging purposes, and
+    // abandonment-related metrics, which are expected to be recorded for all
+    // kinds of navigations.
     size_t total_pageload_histograms =
         histogram_tester_->GetTotalCountsForPrefix("PageLoad.").size();
     size_t total_internal_histograms =
         histogram_tester_->GetTotalCountsForPrefix("PageLoad.Internal.").size();
-    DCHECK_GE(total_pageload_histograms, total_internal_histograms);
-    return total_pageload_histograms - total_internal_histograms == 0;
+    size_t total_abandon_histograms =
+        histogram_tester_
+            ->GetTotalCountsForPrefix(
+                internal::kAbandonedPageLoadMetricsHistogramPrefix)
+            .size();
+    DCHECK_GE(total_pageload_histograms,
+              total_internal_histograms + total_abandon_histograms);
+    return total_pageload_histograms - total_internal_histograms -
+               total_abandon_histograms ==
+           0;
   }
 
   std::unique_ptr<PageLoadMetricsTestWaiter> CreatePageLoadMetricsTestWaiter(
@@ -300,8 +311,9 @@ class PageLoadMetricsBrowserTest : public InProcessBrowserTest {
             prerender::FINAL_STATUS_NOSTATE_PREFETCH_FINISHED);
 
     std::unique_ptr<prerender::NoStatePrefetchHandle> no_state_prefetch_handle =
-        no_state_prefetch_manager->StartPrefetchingFromOmnibox(
-            url, storage_namespace, gfx::Size(640, 480), nullptr);
+        no_state_prefetch_manager->AddSameOriginSpeculation(
+            url, storage_namespace, gfx::Size(640, 480),
+            url::Origin::Create(url));
     ASSERT_EQ(no_state_prefetch_handle->contents(), test_prerender->contents());
 
     // The final status may be either  FINAL_STATUS_NOSTATE_PREFETCH_FINISHED or
@@ -1326,7 +1338,14 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest, PaintInMultipleChildFrames) {
   histogram_tester_->ExpectTotalCount(internal::kHistogramFirstPaint, 1);
 }
 
-IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest, PaintInMainAndChildFrame) {
+// TODO(crbug.com/334416161): Re-enable this test on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_PaintInMainAndChildFrame DISABLED_PaintInMainAndChildFrame
+#else
+#define MAYBE_PaintInMainAndChildFrame PaintInMainAndChildFrame
+#endif
+IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest,
+                       MAYBE_PaintInMainAndChildFrame) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
   GURL a_url(embedded_test_server()->GetURL(
@@ -1526,8 +1545,10 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest, MAYBE_DocumentWriteBlock) {
       internal::kHistogramDocWriteBlockParseStartToFirstContentfulPaint, 1);
 }
 
-// TODO(crbug.com/40931345): Re-enable this test on Lacros.
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
+
+// TODO(crbug.com/40931345, crbug.com/334416161): Re-enable this test on Lacros
+// and Windows.
+#if BUILDFLAG(IS_CHROMEOS_LACROS) || BUILDFLAG(IS_WIN)
 #define MAYBE_DocumentWriteReload DISABLED_DocumentWriteReload
 #else
 #define MAYBE_DocumentWriteReload DocumentWriteReload
@@ -2530,7 +2551,7 @@ IN_PROC_BROWSER_TEST_P(PageLoadMetricsResourceLoadBrowserTest,
   main_response->WaitForRequest();
   main_response->Send(kHttpResponseHeader);
   for (int i = 0; i < kNumChunks; i++) {
-    main_response->Send(std::to_string(kChunkSize));
+    main_response->Send(base::NumberToString(kChunkSize));
     main_response->Send("\r\n");
     main_response->Send(std::string(kChunkSize, '*'));
     main_response->Send("\r\n");
@@ -2619,7 +2640,13 @@ IN_PROC_BROWSER_TEST_P(PageLoadMetricsResourceLoadBrowserTest,
   waiter->Wait();
 }
 
-IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest, InputEventsForClick) {
+// TODO(crbug.com/334416161): Re-enable this test on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_InputEventsForClick DISABLED_InputEventsForClick
+#else
+#define MAYBE_InputEventsForClick InputEventsForClick
+#endif
+IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest, MAYBE_InputEventsForClick) {
   embedded_test_server()->ServeFilesFromSourceDirectory("content/test/data");
   content::SetupCrossSiteRedirector(embedded_test_server());
   ASSERT_TRUE(embedded_test_server()->Start());
@@ -2825,11 +2852,12 @@ class SoftNavigationBrowserTestWithSoftNavigationHeuristicsFlag
   base::test::ScopedFeatureList features_list_;
 };
 
-// TODO(crbug.com/40063969): Flaky on many platforms.
-IN_PROC_BROWSER_TEST_F(SoftNavigationBrowserTest, SoftNavigation) {
+// TODO(crbug.com/341578843): Flaky on many platforms.
+IN_PROC_BROWSER_TEST_F(SoftNavigationBrowserTest, DISABLED_SoftNavigation) {
   TestSoftNavigation(/*wait_for_second_lcp=*/false);
 }
 
+// TODO(crbug.com/40946340): Flaky on several platforms.
 IN_PROC_BROWSER_TEST_F(
     SoftNavigationBrowserTestWithSoftNavigationHeuristicsFlag,
     DISABLED_SoftNavigation) {
@@ -2860,8 +2888,14 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest, InputEventsForOmniboxMatch) {
   VerifyNavigationMetrics({url});
 }
 
+// TODO(crbug.com/334416161): Re-enable this test on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_InputEventsForJavaScriptHref DISABLED_InputEventsForJavaScriptHref
+#else
+#define MAYBE_InputEventsForJavaScriptHref InputEventsForJavaScriptHref
+#endif
 IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest,
-                       InputEventsForJavaScriptHref) {
+                       MAYBE_InputEventsForJavaScriptHref) {
   embedded_test_server()->ServeFilesFromSourceDirectory("content/test/data");
   content::SetupCrossSiteRedirector(embedded_test_server());
   ASSERT_TRUE(embedded_test_server()->Start());
@@ -3419,7 +3453,11 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest, PageLCPStopsUponInput) {
   ASSERT_EQ(all_frames_value, main_frame_value);
 }
 
-#if !BUILDFLAG(IS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_MAC)
+// The LinkPreview feature is implemented only on desktops, and window
+// implementation assumes the Aura for now.
+// TODO(crbug.com/305004651): Implement the feature for other platforms and
+// enable the following tests on the remaining platforms.
 class PageLoadMetricsPreviewBrowserTest : public PageLoadMetricsBrowserTest {
  public:
   PageLoadMetricsPreviewBrowserTest() {
@@ -3452,7 +3490,7 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsPreviewBrowserTest,
       1);
 }
 
-#endif  // !BUILDFLAG(IS_ANDROID)
+#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_MAC)
 
 class PageLoadMetricsBrowserTestTerminatedPage
     : public PageLoadMetricsBrowserTest {
@@ -3556,6 +3594,10 @@ class PageLoadMetricsBrowserTestDiscardedPage
 
 IN_PROC_BROWSER_TEST_P(PageLoadMetricsBrowserTestDiscardedPage,
                        UkmIsRecordedForDiscardedTabPage) {
+  if (base::FeatureList::IsEnabled(features::kWebContentsDiscard)) {
+    GTEST_SKIP() << "Page load metrics are reported when the tab is closed.";
+  }
+
   // Open a new foreground tab and navigate.
   content::WebContents* contents = OpenTabAndNavigate();
 
@@ -3789,7 +3831,14 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest, SameOriginNavigation) {
       "PageLoad.Clients.SameOrigin.LargestContentfulPaint", 1);
 }
 
-IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest, CrossOriginNavigation) {
+// TODO(crbug.com/334416161): Re-enable this test on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_CrossOriginNavigation DISABLED_CrossOriginNavigation
+#else
+#define MAYBE_CrossOriginNavigation CrossOriginNavigation
+#endif
+IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest,
+                       MAYBE_CrossOriginNavigation) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
   GURL kUrl1 = embedded_test_server()->GetURL("a.com", "/title1.html");
@@ -3836,8 +3885,16 @@ class PageLoadMetricsBrowserTestWithFencedFrames
   content::test::FencedFrameTestHelper helper_;
 };
 
+// TODO(crbug.com/334416161): Re-enable this test on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_PageLoadPrivacySandboxAdsFencedFramesMetrics \
+  DISABLED_PageLoadPrivacySandboxAdsFencedFramesMetrics
+#else
+#define MAYBE_PageLoadPrivacySandboxAdsFencedFramesMetrics \
+  PageLoadPrivacySandboxAdsFencedFramesMetrics
+#endif
 IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTestWithFencedFrames,
-                       PageLoadPrivacySandboxAdsFencedFramesMetrics) {
+                       MAYBE_PageLoadPrivacySandboxAdsFencedFramesMetrics) {
   ASSERT_TRUE(https_server().Start());
 
   static constexpr char
@@ -3999,7 +4056,7 @@ class NavigationPageLoadMetricsBrowserTest
 
  protected:
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    // TODO(crbug.com/1224780): This test used an experiment param (which no
+    // TODO(crbug.com/40188113): This test used an experiment param (which no
     // longer exists) to suppress the metrics send timer. If and when the test
     // is re-enabled, it should be updated to use a different mechanism.
     PageLoadMetricsBrowserTest::SetUpCommandLine(command_line);
@@ -4077,7 +4134,7 @@ IN_PROC_BROWSER_TEST_P(NavigationPageLoadMetricsBrowserTest, FirstInputDelay) {
     // Note that in some cases the metrics might flakily get updated in time,
     // before the browser changed the current RFH. So, we can neither expect it
     // to be 0 all the time or 1 all the time.
-    // TODO(crbug.com/1150242): Support updating metrics consistently on
+    // TODO(crbug.com/40157795): Support updating metrics consistently on
     // cross-RFH cross-process navigations.
   }
 }
@@ -4157,7 +4214,8 @@ IN_PROC_BROWSER_TEST_F(PrerenderPageLoadMetricsBrowserTest,
 
   // Load a page in the prerender.
   GURL prerender_url = embedded_test_server()->GetURL("/title2.html");
-  int host_id = prerender_helper_.AddPrerender(prerender_url);
+  content::FrameTreeNodeId host_id =
+      prerender_helper_.AddPrerender(prerender_url);
   content::test::PrerenderHostObserver host_observer(*web_contents(), host_id);
   EXPECT_FALSE(host_observer.was_activated());
   auto entries =

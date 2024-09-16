@@ -52,42 +52,6 @@ class PLATFORM_EXPORT ExceptionState {
   STACK_ALLOCATED();
 
  public:
-  // ContextScope represents a stack of ExceptionContext in order to represent
-  // nested exception contexts such like an IDL dictionary in another IDL
-  // dictionary.
-  class ContextScope {
-    STACK_ALLOCATED();
-
-   public:
-    ContextScope(const ExceptionContext& context,
-                 ExceptionState& exception_state)
-        : exception_state_(exception_state), context_(context) {
-      exception_state_.PushContextScope(this);
-    }
-    ContextScope(const ContextScope&) = delete;
-    ContextScope& operator=(const ContextScope&) = delete;
-
-    ~ContextScope() { exception_state_.PopContextScope(); }
-
-    // This is used for a performance hack to reduce the number of construction
-    // and destruction times of ContextScope when iterating over properties.
-    // Only the generated bindings code is allowed to use this hack.
-    void ChangePropertyNameAsOptimizationHack(const char* property_name) {
-      context_.ChangePropertyNameAsOptimizationHack(property_name);
-    }
-
-   private:
-    void SetParent(const ContextScope* parent) { parent_ = parent; }
-    const ContextScope* GetParent() const { return parent_; }
-    const ExceptionContext& GetContext() const { return context_; }
-
-    ExceptionState& exception_state_;
-    const ContextScope* parent_ = nullptr;
-    ExceptionContext context_;
-
-    friend class ExceptionState;
-  };
-
   // A function pointer type that creates a DOMException.
   using CreateDOMExceptionFunction =
       v8::Local<v8::Value> (*)(v8::Isolate*,
@@ -99,13 +63,13 @@ class PLATFORM_EXPORT ExceptionState {
   static void SetCreateDOMExceptionFunction(CreateDOMExceptionFunction);
 
   ExceptionState(v8::Isolate* isolate, const ExceptionContext& context)
-      : main_context_(context), isolate_(isolate) {}
+      : context_(context), isolate_(isolate) {}
 
   ExceptionState(v8::Isolate* isolate, ExceptionContext&& context)
-      : main_context_(std::move(context)), isolate_(isolate) {}
+      : context_(std::move(context)), isolate_(isolate) {}
 
   ExceptionState(v8::Isolate* isolate,
-                 ExceptionContextType context_type,
+                 v8::ExceptionContext context_type,
                  const char* interface_name,
                  const char* property_name)
       : ExceptionState(
@@ -113,7 +77,7 @@ class PLATFORM_EXPORT ExceptionState {
             ExceptionContext(context_type, interface_name, property_name)) {}
 
   ExceptionState(v8::Isolate* isolate,
-                 ExceptionContextType context_type,
+                 v8::ExceptionContext context_type,
                  const char* interface_name)
       : ExceptionState(isolate,
                        ExceptionContext(context_type, interface_name)) {}
@@ -122,7 +86,7 @@ class PLATFORM_EXPORT ExceptionState {
   // which is only needed for named and indexed interceptors.
   enum ForInterceptor { kForInterceptor };
   ExceptionState(v8::Isolate* isolate,
-                 ExceptionContextType context_type,
+                 v8::ExceptionContext context_type,
                  const char* interface_name,
                  const AtomicString& property_name,
                  ExceptionState::ForInterceptor)
@@ -134,7 +98,7 @@ class PLATFORM_EXPORT ExceptionState {
   ExceptionState& operator=(const ExceptionState&) = delete;
 
   ~ExceptionState() {
-    if (UNLIKELY(!exception_.IsEmpty())) {
+    if (!exception_.IsEmpty()) [[unlikely]] {
       PropagateException();
     }
   }
@@ -172,6 +136,11 @@ class PLATFORM_EXPORT ExceptionState {
 
   // Rethrows a v8::Value as an exception.
   NOINLINE void RethrowV8Exception(v8::Local<v8::Value>);
+  // Report the given value as the exception being thrown, but rethrow it
+  // immediately via the v8::TryCatch instead of in the destructor.
+  NOINLINE void RethrowV8Exception(v8::TryCatch&);
+
+  bool DidRethrowViaV8TryCatch() const { return thrown_via_v8_trycatch_; }
 
   // Returns true if there is a pending exception.
   //
@@ -196,10 +165,7 @@ class PLATFORM_EXPORT ExceptionState {
   }
 
   // Returns the context of what Web API is currently being executed.
-  const ExceptionContext& GetContext() const {
-    DCHECK(!context_stack_top_);
-    return main_context_;
-  }
+  const ExceptionContext& GetContext() const { return context_; }
 
  protected:
   // Methods for use by subclasses.
@@ -220,25 +186,14 @@ class PLATFORM_EXPORT ExceptionState {
   virtual void DoRethrowV8Exception(v8::Local<v8::Value>);
 
  private:
-  void PushContextScope(ContextScope* scope);
-  void PopContextScope();
   void PropagateException();
-
-  String AddExceptionContext(const String&) const;
 
   // Since DOMException is defined in core/, we need a dependency injection in
   // order to create a DOMException in platform/.
   static CreateDOMExceptionFunction s_create_dom_exception_func_;
 
   // The main context represents what Web API is currently being executed.
-  // This is embedded without using ContextScope in order to avoid an overhead
-  // of ContextScope.
-  ExceptionContext main_context_;
-
-  // `context_stack_top_` points to the top of the context stack which
-  // represents additional (nested) contexts such as an IDL dictionary in a
-  // member of another IDL dictionary.  nullptr means no additional context.
-  const ContextScope* context_stack_top_ = nullptr;
+  ExceptionContext context_;
 
   v8::Isolate* isolate_;
   ExceptionCode code_ = 0;
@@ -246,8 +201,7 @@ class PLATFORM_EXPORT ExceptionState {
   // The exception is empty when it was thrown through
   // DummyExceptionStateForTesting.
   TraceWrapperV8Reference<v8::Value> exception_;
-
-  friend class ContextScope;
+  bool thrown_via_v8_trycatch_ = false;
 };
 
 // NonThrowableExceptionState never allow call sites to throw an exception.
@@ -275,6 +229,27 @@ class PLATFORM_EXPORT NonThrowableExceptionState final : public ExceptionState {
   const int line_;
 };
 
+class PLATFORM_EXPORT TryRethrowScope {
+  STACK_ALLOCATED();
+
+ public:
+  TryRethrowScope(v8::Isolate* isolate, ExceptionState& exception_state)
+      : try_catch_(isolate), exception_state_(exception_state) {}
+
+  ~TryRethrowScope() {
+    if (try_catch_.HasCaught()) [[unlikely]] {
+      exception_state_.RethrowV8Exception(try_catch_);
+    }
+  }
+
+  bool HasCaught() { return try_catch_.HasCaught(); }
+  void SwallowException() { return try_catch_.Reset(); }
+  v8::Local<v8::Value> GetException() { return try_catch_.Exception(); }
+
+  v8::TryCatch try_catch_;
+  ExceptionState& exception_state_;
+};
+
 // Syntax sugar for NonThrowableExceptionState.
 // This can be used as a default value of an ExceptionState parameter like this:
 //
@@ -296,7 +271,7 @@ class PLATFORM_EXPORT DummyExceptionStateForTesting final
  public:
   DummyExceptionStateForTesting()
       : ExceptionState(nullptr,
-                       ExceptionContextType::kUnknown,
+                       v8::ExceptionContext::kUnknown,
                        nullptr,
                        nullptr) {}
   ~DummyExceptionStateForTesting() {

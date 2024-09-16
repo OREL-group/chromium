@@ -13,7 +13,6 @@
 #include "base/command_line.h"
 #include "base/containers/fixed_flat_map.h"
 #include "base/containers/to_vector.h"
-#include "base/feature_list.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/user_metrics.h"
 #include "base/strings/stringprintf.h"
@@ -51,60 +50,18 @@ namespace {
 
 // Serialization keys for `ChoiceScreenDisplayState`.
 constexpr char kDisplayStateCountryIdKey[] = "country_id";
-constexpr char kDisplayStateListIsModifiedByCurrentDefaultKey[] =
-    "list_is_modified_by_current_default";
 constexpr char kDisplayStateSearchEnginesKey[] = "search_engines";
 constexpr char kDisplayStateSelectedEngineIndexKey[] = "selected_engine_index";
 
 }  // namespace
 
-const char kSearchEngineChoiceScreenNavigationConditionsHistogram[] =
-    "Search.ChoiceScreenNavigationConditions";
-
-const char kSearchEngineChoiceScreenProfileInitConditionsHistogram[] =
-    "Search.ChoiceScreenProfileInitConditions";
-
-const char kSearchEngineChoiceScreenEventsHistogram[] =
-    "Search.ChoiceScreenEvents";
-
-const char kSearchEngineChoiceScreenDefaultSearchEngineTypeHistogram[] =
-    "Search.ChoiceScreenDefaultSearchEngineType";
-
-const char kSearchEngineChoiceScreenSelectedEngineIndexHistogram[] =
-    "Search.ChoiceScreenSelectedEngineIndex";
-
-const char kSearchEngineChoiceScreenShowedEngineAtHistogramPattern[] =
-    "Search.ChoiceScreenShowedEngineAt.Index%d";
-
-const char kSearchEngineChoiceScreenShowedEngineAtCountryMismatchHistogram[] =
-    "Search.ChoiceScreenShowedEngineAt.CountryMismatch";
-
-const char kSearchEngineChoiceWipeReasonHistogram[] = "Search.ChoiceWipeReason";
-
-const char kSearchEngineChoiceRepromptHistogram[] = "Search.ChoiceReprompt";
-
-const char kSearchEngineChoiceRepromptWildcardHistogram[] =
-    "Search.ChoiceReprompt.Wildcard";
-
-const char kSearchEngineChoiceRepromptSpecificCountryHistogram[] =
-    "Search.ChoiceReprompt.SpecificCountry";
-
-const char kSearchEngineChoiceUnexpectedIdHistogram[] =
-    "Search.ChoiceDebug.UnexpectedSearchEngineId";
-
-const char kSearchEngineChoiceIsDefaultProviderAddedToChoicesHistogram[] =
-    "Search.ChoiceDebug.IsDefaultProviderAddedToChoices";
-
 ChoiceScreenDisplayState::ChoiceScreenDisplayState(
     std::vector<SearchEngineType> search_engines,
     int country_id,
-    bool list_is_modified_by_current_default,
     std::optional<int> selected_engine_index)
     : search_engines(std::move(search_engines)),
       selected_engine_index(selected_engine_index),
-      country_id(country_id),
-      list_is_modified_by_current_default(list_is_modified_by_current_default) {
-}
+      country_id(country_id) {}
 
 ChoiceScreenDisplayState::ChoiceScreenDisplayState(
     const ChoiceScreenDisplayState& other) = default;
@@ -115,8 +72,6 @@ base::Value::Dict ChoiceScreenDisplayState::ToDict() const {
   auto dict = base::Value::Dict();
 
   dict.Set(kDisplayStateCountryIdKey, country_id);
-  dict.Set(kDisplayStateListIsModifiedByCurrentDefaultKey,
-           list_is_modified_by_current_default);
 
   base::Value::List* search_engines_array =
       dict.EnsureList(kDisplayStateSearchEnginesKey);
@@ -137,15 +92,22 @@ std::optional<ChoiceScreenDisplayState> ChoiceScreenDisplayState::FromDict(
     const base::Value::Dict& dict) {
   std::optional<int> parsed_country_id =
       dict.FindInt(kDisplayStateCountryIdKey);
-  std::optional<bool> parsed_list_is_modified_by_current_default =
-      dict.FindBool(kDisplayStateListIsModifiedByCurrentDefaultKey);
   const base::Value::List* parsed_search_engines =
       dict.FindList(kDisplayStateSearchEnginesKey);
   std::optional<int> parsed_selected_engine_index =
       dict.FindInt(kDisplayStateSelectedEngineIndexKey);
 
+  if (dict.FindBool("list_is_modified_by_current_default").value_or(false)) {
+    // We stopped writing this field, as we totally stopped including the
+    // current default in the list. If we find old persisted data where
+    // this is `true`, just consider it invalid, as we wouldn't log anything
+    // for it anyway.
+    // TODO(crbug.com/343915066): Entries older than 14 days are considered
+    // expired, we can remove this code branch and the dictionary key in M130+
+    return std::nullopt;
+  }
+
   if (!parsed_country_id.has_value() ||
-      !parsed_list_is_modified_by_current_default.has_value() ||
       !parsed_search_engines) {
     return std::nullopt;
   }
@@ -158,14 +120,12 @@ std::optional<ChoiceScreenDisplayState> ChoiceScreenDisplayState::FromDict(
 
   return ChoiceScreenDisplayState(
       search_engines, parsed_country_id.value(),
-      parsed_list_is_modified_by_current_default.value(),
       parsed_selected_engine_index);
 }
 
 ChoiceScreenData::ChoiceScreenData(
     TemplateURL::OwnedTemplateURLVector owned_template_urls,
     int country_id,
-    bool list_is_modified_by_current_default,
     const SearchTermsData& search_terms_data)
     : search_engines_(std::move(owned_template_urls)),
       display_state_(ChoiceScreenDisplayState(
@@ -174,29 +134,9 @@ ChoiceScreenData::ChoiceScreenData(
               [&search_terms_data](const std::unique_ptr<TemplateURL>& t_url) {
                 return t_url->GetEngineType(search_terms_data);
               }),
-          country_id,
-          list_is_modified_by_current_default)) {}
+          country_id)) {}
 
 ChoiceScreenData::~ChoiceScreenData() = default;
-
-// Returns whether the choice screen flag is generally enabled for the specific
-// user flow.
-bool IsChoiceScreenFlagEnabled(ChoicePromo promo) {
-  if (!base::FeatureList::IsEnabled(switches::kSearchEngineChoiceTrigger)) {
-    return false;
-  }
-
-#if BUILDFLAG(IS_IOS)
-  // Chrome on iOS does not tag profiles, so this param instead determines
-  // whether we show the choice screen outside of the FRE or not.
-  if (switches::kSearchEngineChoiceTriggerForTaggedProfilesOnly.Get() &&
-      promo == ChoicePromo::kDialog) {
-    return false;
-  }
-#endif
-
-  return true;
-}
 
 bool IsEeaChoiceCountry(int country_id) {
   // Consider the search engine list command line country override as an EEA
@@ -210,6 +150,12 @@ void RecordChoiceScreenProfileInitCondition(
     SearchEngineChoiceScreenConditions condition) {
   base::UmaHistogramEnumeration(
       kSearchEngineChoiceScreenProfileInitConditionsHistogram, condition);
+}
+
+void RecordChoiceScreenNavigationCondition(
+    SearchEngineChoiceScreenConditions condition) {
+  base::UmaHistogramEnumeration(
+      kSearchEngineChoiceScreenNavigationConditionsHistogram, condition);
 }
 
 void RecordChoiceScreenEvent(SearchEngineChoiceScreenEvents event) {
@@ -262,29 +208,20 @@ void RecordUnexpectedSearchProvider(const TemplateURLData& data) {
                            data.prepopulate_id);
 }
 
-void RecordIsDefaultProviderAddedToChoices(bool inserted_default) {
-  base::UmaHistogramBoolean(
-      kSearchEngineChoiceIsDefaultProviderAddedToChoicesHistogram,
-      inserted_default);
-}
-
 void WipeSearchEngineChoicePrefs(PrefService& profile_prefs,
                                  WipeSearchEngineChoiceReason reason) {
-  if (IsChoiceScreenFlagEnabled(ChoicePromo::kAny)) {
-    base::UmaHistogramEnumeration(kSearchEngineChoiceWipeReasonHistogram,
-                                  reason);
-    profile_prefs.ClearPref(
-        prefs::kDefaultSearchProviderChoiceScreenCompletionTimestamp);
-    profile_prefs.ClearPref(
-        prefs::kDefaultSearchProviderChoiceScreenCompletionVersion);
-    profile_prefs.ClearPref(
-        prefs::kDefaultSearchProviderPendingChoiceScreenDisplayState);
+  base::UmaHistogramEnumeration(kSearchEngineChoiceWipeReasonHistogram, reason);
+  profile_prefs.ClearPref(
+      prefs::kDefaultSearchProviderChoiceScreenCompletionTimestamp);
+  profile_prefs.ClearPref(
+      prefs::kDefaultSearchProviderChoiceScreenCompletionVersion);
+  profile_prefs.ClearPref(
+      prefs::kDefaultSearchProviderPendingChoiceScreenDisplayState);
 
 #if BUILDFLAG(IS_IOS)
     profile_prefs.ClearPref(
         prefs::kDefaultSearchProviderChoiceScreenSkippedCount);
 #endif
-  }
 }
 
 std::optional<SearchEngineCountryOverride> GetSearchEngineCountryOverride() {

@@ -109,7 +109,7 @@ class SystemTextfield::EventHandler : public ui::EventHandler {
     }
 
     const ui::EventType event_type = event->type();
-    if (event_type != ui::ET_MOUSE_PRESSED) {
+    if (event_type != ui::EventType::kMousePressed) {
       return;
     }
 
@@ -274,7 +274,8 @@ void SystemTextfield::UpdateBackground() {
       corner_radius_));
 }
 
-gfx::Size SystemTextfield::CalculatePreferredSize() const {
+gfx::Size SystemTextfield::CalculatePreferredSize(
+    const views::SizeBounds& available_size) const {
   // The width of container equals to the content width with horizontal padding.
   // The height of the container dependents on the type.
   const std::u16string& text = GetText();

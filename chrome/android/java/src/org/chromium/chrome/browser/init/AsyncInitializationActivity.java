@@ -22,6 +22,7 @@ import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.Log;
+import org.chromium.base.ResettersForTesting;
 import org.chromium.base.SysUtils;
 import org.chromium.base.TraceEvent;
 import org.chromium.base.library_loader.LibraryLoader;
@@ -40,9 +41,8 @@ import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcherProvider
 import org.chromium.chrome.browser.metrics.SimpleStartupForegroundSessionDetector;
 import org.chromium.chrome.browser.multiwindow.MultiWindowModeStateDispatcher;
 import org.chromium.chrome.browser.multiwindow.MultiWindowModeStateDispatcherImpl;
-import org.chromium.chrome.browser.profiles.ProfileManager;
 import org.chromium.chrome.browser.profiles.ProfileProvider;
-import org.chromium.chrome.features.start_surface.StartSurfaceConfiguration;
+import org.chromium.chrome.browser.util.BrowserUiUtils;
 import org.chromium.components.browser_ui.share.ShareHelper;
 import org.chromium.components.browser_ui.util.FirstDrawDetector;
 import org.chromium.ui.base.ActivityIntentRequestTrackerDelegate;
@@ -221,7 +221,7 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
                 firstDrawView,
                 () -> {
                     mFirstDrawComplete = true;
-                    StartSurfaceConfiguration.recordHistogram(
+                    BrowserUiUtils.recordHistogram(
                             FIRST_DRAW_COMPLETED_TIME_MS_UMA,
                             SystemClock.elapsedRealtime() - getOnCreateTimestampMs());
                     if (!mStartupDelayed) {
@@ -247,11 +247,15 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
             String url = IntentHandler.getUrlFromIntent(intent);
             if (url == null) return;
             // Blocking pre-connect for all off-the-record profiles.
-            if (!IntentHandler.hasAnyIncognitoExtra(intent.getExtras())) {
-                WarmupManager.getInstance()
-                        .maybePreconnectUrlAndSubResources(
-                                ProfileManager.getLastUsedRegularProfile(), url);
-            }
+            if (IntentHandler.hasAnyIncognitoExtra(intent.getExtras())) return;
+            assert getProfileProviderSupplier().hasValue();
+            getProfileProviderSupplier()
+                    .runSyncOrOnAvailable(
+                            (profileProvider) -> {
+                                WarmupManager.getInstance()
+                                        .maybePreconnectUrlAndSubResources(
+                                                profileProvider.getOriginalProfile(), url);
+                            });
         } finally {
             TraceEvent.end("maybePreconnect");
         }
@@ -295,11 +299,14 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
         throw new ProcessInitException(LoaderErrors.NATIVE_STARTUP_FAILED, failureCause);
     }
 
+    @Override
+    public void onTopResumedActivityChangedWithNative(boolean isTopResumedActivity) {}
+
     /**
      * Extending classes should override {@link AsyncInitializationActivity#preInflationStartup()},
-     * {@link AsyncInitializationActivity#triggerLayoutInflation()} and
-     * {@link AsyncInitializationActivity#postInflationStartup()} instead of this call which will
-     * be called on that order.
+     * {@link AsyncInitializationActivity#triggerLayoutInflation()} and {@link
+     * AsyncInitializationActivity#postInflationStartup()} instead of this call which will be called
+     * on that order.
      */
     @Override
     @SuppressLint("MissingSuperCall") // Called in onCreateInternal.
@@ -747,7 +754,7 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
 
         mLifecycleDispatcher.dispatchOnRecreate();
 
-        // TODO(https://crbug.com/1252526): Remove stack trace logging once root cause of bug is
+        // TODO(crbug.com/40793204): Remove stack trace logging once root cause of bug is
         // identified & fixed.
         // Piggybacking for multi-instance bug crbug.com/1484026.
         Log.i(TAG_MULTI_INSTANCE, "Tracing recreate().");
@@ -760,6 +767,7 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
         super.onTopResumedActivityChanged(isTopResumedActivity);
 
         mLifecycleDispatcher.dispatchOnTopResumedActivityChanged(isTopResumedActivity);
+        mNativeInitializationController.onTopResumedActivityChanged(isTopResumedActivity);
     }
 
     /**
@@ -880,9 +888,11 @@ public abstract class AsyncInitializationActivity extends ChromeBaseAppCompatAct
     public static void interceptMoveTaskToBackForTesting() {
         sInterceptMoveTaskToBackForTesting = true;
         sBackInterceptedForTesting = false;
+        ResettersForTesting.register(() -> sInterceptMoveTaskToBackForTesting = false);
     }
 
     public static boolean wasMoveTaskToBackInterceptedForTesting() {
+        assert sInterceptMoveTaskToBackForTesting;
         return sBackInterceptedForTesting;
     }
 

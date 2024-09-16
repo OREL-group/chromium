@@ -13,7 +13,7 @@
 #include "third_party/blink/renderer/platform/wtf/hash_functions.h"
 #include "third_party/blink/renderer/platform/wtf/hash_traits.h"
 #include "third_party/blink/renderer/platform/wtf/type_traits.h"
-#include "v8/include/cppgc/member.h"
+#include "v8/include/cppgc/member.h"  // IWYU pragma: export
 
 namespace blink {
 
@@ -226,15 +226,15 @@ class MemberConstructTraits {
     blink::WriteBarrier::DispatchForObject(element);
   }
 
-  static void NotifyNewElements(T* array, size_t len) {
+  static void NotifyNewElements(base::span<T> members) {
     // Checking the first element is sufficient for determining whether a
     // marking or generational barrier is required.
-    if (LIKELY((len == 0) || !blink::WriteBarrier::IsWriteBarrierNeeded(array)))
+    if (members.empty() ||
+               !blink::WriteBarrier::IsWriteBarrierNeeded(&members.front())) [[likely]] {
       return;
-
-    while (len-- > 0) {
-      blink::WriteBarrier::DispatchForObject(array);
-      array++;
+    }
+    for (auto& member : members) {
+      blink::WriteBarrier::DispatchForObject(&member);
     }
   }
 };

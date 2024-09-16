@@ -30,8 +30,9 @@ class BackForwardCachePageLoadMetricsObserverTest
   void RegisterObservers(page_load_metrics::PageLoadTracker* tracker) override {
     auto observer = std::make_unique<BackForwardCachePageLoadMetricsObserver>();
     observer_ = observer.get();
-    // TODO(crbug.com/1265307): Remove this when removing the DCHECK for lack of
-    // page end metric logging from the back forward page load metrics observer.
+    // TODO(crbug.com/40203717): Remove this when removing the DCHECK for lack
+    // of page end metric logging from the back forward page load metrics
+    // observer.
     observer_->logged_page_end_metrics_ = true;
     tracker->AddObserver(std::move(observer));
   }
@@ -52,8 +53,9 @@ class BackForwardCachePageLoadMetricsObserverTest
     observer_with_fake_delegate_->has_ever_entered_back_forward_cache_ = true;
     observer_with_fake_delegate_->back_forward_cache_navigation_ids_.push_back(
         123456);
-    // TODO(crbug.com/1265307): Remove this when removing the DCHECK for lack of
-    // page end metric logging from the back forward page load metrics observer.
+    // TODO(crbug.com/40203717): Remove this when removing the DCHECK for lack
+    // of page end metric logging from the back forward page load metrics
+    // observer.
     observer_with_fake_delegate_->logged_page_end_metrics_ = true;
     test_clock_ = std::make_unique<base::SimpleTestTickClock>();
     test_clock_->SetNowTicks(base::TimeTicks() + base::Milliseconds(25000));
@@ -108,9 +110,13 @@ class BackForwardCachePageLoadMetricsObserverTest
 
   void SetObserverHidden() { observer_with_fake_delegate_->was_hidden_ = true; }
 
-  // TODO(crbug.com/1265307): Remove this when removing the DCHECK for lack of
+  // TODO(crbug.com/40203717): Remove this when removing the DCHECK for lack of
   // page end metric logging from the back forward page load metrics observer.
   void SetPageEndReasonLogged() { observer_->logged_page_end_metrics_ = true; }
+
+  // Should declare first to avoid dangling pointer detection in the following
+  // observers.
+  std::unique_ptr<FakePageLoadMetricsObserverDelegate> fake_delegate_;
 
   page_load_metrics::mojom::PageLoadTiming timing_;
   raw_ptr<BackForwardCachePageLoadMetricsObserver, DanglingUntriaged> observer_;
@@ -122,7 +128,6 @@ class BackForwardCachePageLoadMetricsObserverTest
   // cache, but is not currently in there.
   std::unique_ptr<BackForwardCachePageLoadMetricsObserver>
       observer_with_fake_delegate_;
-  std::unique_ptr<FakePageLoadMetricsObserverDelegate> fake_delegate_;
 
   content::MockNavigationHandle navigation_handle_;
   std::unique_ptr<base::SimpleTestTickClock> test_clock_;

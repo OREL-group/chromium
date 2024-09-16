@@ -14,16 +14,20 @@
 #include "components/attribution_reporting/privacy_math.h"
 #include "content/browser/attribution_reporting/attribution_config.h"
 #include "content/browser/attribution_reporting/attribution_report.h"
-#include "content/browser/attribution_reporting/attribution_storage_delegate.h"
+#include "content/browser/attribution_reporting/attribution_resolver_delegate.h"
+
+namespace attribution_reporting {
+class AttributionScopesData;
+}
 
 namespace content {
 
-class ConfigurableStorageDelegate : public AttributionStorageDelegate {
+class ConfigurableStorageDelegate : public AttributionResolverDelegate {
  public:
   ConfigurableStorageDelegate();
   ~ConfigurableStorageDelegate() override;
 
-  // AttributionStorageDelegate:
+  // AttributionResolverDelegate:
   base::Time GetEventLevelReportTime(
       const attribution_reporting::EventReportWindows& event_report_windows,
       base::Time source_time,
@@ -35,17 +39,15 @@ class ConfigurableStorageDelegate : public AttributionStorageDelegate {
   std::optional<OfflineReportDelayConfig> GetOfflineReportDelayConfig()
       const override;
   void ShuffleReports(std::vector<AttributionReport>&) override;
-  void ShuffleTriggerVerifications(
-      std::vector<network::TriggerVerification>&) override;
-  double GetRandomizedResponseRate(
+  std::optional<double> GetRandomizedResponseRate(
       const attribution_reporting::TriggerSpecs&,
-      attribution_reporting::MaxEventLevelReports,
       attribution_reporting::EventLevelEpsilon) const override;
   GetRandomizedResponseResult GetRandomizedResponse(
       attribution_reporting::mojom::SourceType,
       const attribution_reporting::TriggerSpecs&,
-      attribution_reporting::MaxEventLevelReports,
-      attribution_reporting::EventLevelEpsilon) override;
+      attribution_reporting::EventLevelEpsilon,
+      const std::optional<attribution_reporting::AttributionScopesData>&)
+      override;
   bool GenerateNullAggregatableReportForLookbackDay(
       int lookback_day,
       attribution_reporting::mojom::SourceRegistrationTimeConfig)
@@ -61,6 +63,9 @@ class ConfigurableStorageDelegate : public AttributionStorageDelegate {
 
   void set_destination_rate_limit(AttributionConfig::DestinationRateLimit);
 
+  void set_aggregatable_debug_rate_limit(
+      AttributionConfig::AggregatableDebugRateLimit);
+
   void set_delete_expired_sources_frequency(base::TimeDelta frequency);
 
   void set_delete_expired_rate_limits_frequency(base::TimeDelta frequency);
@@ -70,8 +75,6 @@ class ConfigurableStorageDelegate : public AttributionStorageDelegate {
   void set_offline_report_delay_config(std::optional<OfflineReportDelayConfig>);
 
   void set_reverse_reports_on_shuffle(bool reverse);
-
-  void set_reverse_verifications_on_shuffle(bool reverse);
 
   // Note that this is *not* used to produce a randomized response; that
   // is controlled deterministically by `set_randomized_response()`.
@@ -106,10 +109,6 @@ class ConfigurableStorageDelegate : public AttributionStorageDelegate {
   // If true, `ShuffleReports()` reverses the reports to allow testing the
   // proper call from `AttributionStorage::GetAttributionReports()`.
   bool reverse_reports_on_shuffle_ GUARDED_BY_CONTEXT(sequence_checker_) =
-      false;
-
-  // If true, `ShuffleTriggerVerifications()` reverses the verifications.
-  bool reverse_verifications_on_shuffle_ GUARDED_BY_CONTEXT(sequence_checker_) =
       false;
 
   double randomized_response_rate_ GUARDED_BY_CONTEXT(sequence_checker_) = 0.0;

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -29,7 +34,6 @@
 #include "gpu/command_buffer/service/gpu_switches.h"
 #include "gpu/command_buffer/service/gpu_tracer.h"
 #include "gpu/command_buffer/service/logger.h"
-#include "gpu/command_buffer/service/mailbox_manager_impl.h"
 #include "gpu/command_buffer/service/passthrough_discardable_manager.h"
 #include "gpu/command_buffer/service/raster_decoder.h"
 #include "gpu/command_buffer/service/service_discardable_manager.h"
@@ -282,6 +286,7 @@ struct Config {
     gl_context_attribs.global_texture_share_group = true;
     gl_context_attribs.robust_resource_initialization = true;
     gl_context_attribs.robust_buffer_access = true;
+    gl_context_attribs.allow_client_arrays = false;
     gl_context_attribs.client_major_es_version =
         IsWebGL2OrES3OrHigherContextType(attrib_helper.context_type) ? 3 : 2;
     gl_context_attribs.client_minor_es_version =
@@ -338,9 +343,8 @@ class CommandBufferSetup {
 #endif
 
     CHECK(gl::init::InitializeStaticGLBindingsImplementation(
-        gl::GLImplementationParts(gl::kGLImplementationEGLANGLE), false));
+        gl::GLImplementationParts(gl::kGLImplementationEGLANGLE)));
     display_ = gl::init::InitializeGLOneOffPlatformImplementation(
-        /*fallback_to_software_gl=*/false,
         /*disable_gl_drawing=*/false,
         /*init_extensions=*/true,
         /*gpu_preference=*/gl::GpuPreference::kDefault);
@@ -432,7 +436,8 @@ class CommandBufferSetup {
       shared_image_factory_->CreateSharedImage(
           mailbox, si_format, gfx::Size(256, 256),
           gfx::ColorSpace::CreateSRGB(), kTopLeft_GrSurfaceOrigin,
-          kPremul_SkAlphaType, gfx::kNullAcceleratedWidget, usage, "TestLabel");
+          kPremul_SkAlphaType, gfx::kNullAcceleratedWidget,
+          SharedImageUsageSet(usage), "TestLabel");
     }
 
 #if defined(GPU_FUZZER_USE_RASTER_DECODER)
@@ -449,7 +454,7 @@ class CommandBufferSetup {
     auto decoder_feature_info = base::MakeRefCounted<gles2::FeatureInfo>(
         config_.workarounds, gpu_feature_info);
     scoped_refptr<gles2::ContextGroup> context_group = new gles2::ContextGroup(
-        gpu_preferences_, true, &mailbox_manager_, nullptr /* memory_tracker */,
+        gpu_preferences_, true, nullptr /* memory_tracker */,
         &translator_cache_, &completeness_cache_, decoder_feature_info,
         config_.attrib_helper.bind_generates_resource,
         nullptr /* progress_reporter */, gpu_feature_info,
@@ -638,7 +643,6 @@ class CommandBufferSetup {
 
   Config config_;
 
-  gles2::MailboxManagerImpl mailbox_manager_;
   gles2::TraceOutputter outputter_;
   scoped_refptr<gl::GLShareGroup> share_group_;
   std::unique_ptr<ServiceDiscardableManager> discardable_manager_;

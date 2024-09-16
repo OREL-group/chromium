@@ -806,7 +806,7 @@ void V4L2ImageProcessorBackend::Dequeue() {
     // Jobs are always processed in FIFO order.
     if (running_jobs_.empty() ||
         running_jobs_.front()->output_buffer_id != buffer->BufferId()) {
-      DVLOGF(3) << "previous Reset() abondoned the job, ignore.";
+      DVLOGF(3) << "previous Reset() abandoned the job, ignore.";
       continue;
     }
     std::unique_ptr<JobRecord> job_record = std::move(running_jobs_.front());
@@ -835,7 +835,7 @@ void V4L2ImageProcessorBackend::Dequeue() {
         break;
 
       default:
-        NOTREACHED_NORETURN();
+        NOTREACHED();
     }
 
     const auto timestamp = job_record->input_frame->timestamp();
@@ -906,7 +906,7 @@ bool V4L2ImageProcessorBackend::EnqueueInputRecord(
       break;
     }
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
   DVLOGF(4) << "enqueued frame ts="
             << job_record->input_frame->timestamp().InMilliseconds()
@@ -940,7 +940,7 @@ bool V4L2ImageProcessorBackend::EnqueueOutputRecord(
           output_handle->native_pixmap_handle.planes);
     }
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 

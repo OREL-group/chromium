@@ -31,8 +31,6 @@ namespace WTF {
 class String;
 }  // namespace WTF
 
-using WTF::String;
-
 namespace blink {
 
 class Document;
@@ -44,7 +42,7 @@ class CORE_EXPORT CSSValue : public GarbageCollected<CSSValue> {
   // TODO(sashab): Remove this method and move logic to the caller.
   static CSSValue* Create(const Length& value, float zoom);
 
-  String CssText() const;
+  WTF::String CssText() const;
 
   bool IsNumericLiteralValue() const {
     return class_type_ == kNumericLiteralClass;
@@ -213,6 +211,10 @@ class CORE_EXPORT CSSValue : public GarbageCollected<CSSValue> {
 
   bool IsRepeatStyleValue() const { return class_type_ == kRepeatStyleClass; }
 
+  bool IsRelativeColorValue() const {
+    return class_type_ == kRelativeColorClass;
+  }
+
   bool HasFailedOrCanceledSubresources() const;
   bool MayContainUrl() const;
   void ReResolveUrl(const Document&) const;
@@ -231,7 +233,7 @@ class CORE_EXPORT CSSValue : public GarbageCollected<CSSValue> {
   bool IsScopedValue() const { return !needs_tree_scope_population_; }
 
 #if DCHECK_IS_ON()
-  String ClassTypeToString() const;
+  WTF::String ClassTypeToString() const;
 #endif
 
   void TraceAfterDispatch(blink::Visitor* visitor) const {}
@@ -258,6 +260,7 @@ class CORE_EXPORT CSSValue : public GarbageCollected<CSSValue> {
     kScrollClass,
     kViewClass,
     kRatioClass,
+    kRelativeColorClass,
 
     // Basic shape classes.
     // TODO(sashab): Represent these as a single subclass, BasicShapeClass.

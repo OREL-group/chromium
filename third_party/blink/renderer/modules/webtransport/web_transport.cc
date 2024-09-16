@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/modules/webtransport/web_transport.h"
 
 #include <stdint.h>
@@ -12,8 +17,8 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/time/time.h"
 #include "mojo/public/cpp/bindings/remote.h"
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/mojom/devtools/console_message.mojom-blink.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/bindings/core/v8/native_value_traits_impl.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
@@ -120,7 +125,7 @@ class WebTransport::DatagramUnderlyingSink final : public UnderlyingSinkBase {
       DOMArrayBuffer* data = NativeValueTraits<DOMArrayBuffer>::NativeValue(
           isolate, v8chunk, exception_state);
       if (exception_state.HadException())
-        return ScriptPromise<IDLUndefined>();
+        return EmptyPromise();
       return SendDatagram(
           {static_cast<const uint8_t*>(data->Data()), data->ByteLength()});
     }
@@ -130,7 +135,7 @@ class WebTransport::DatagramUnderlyingSink final : public UnderlyingSinkBase {
           NativeValueTraits<NotShared<DOMArrayBufferView>>::NativeValue(
               isolate, v8chunk, exception_state);
       if (exception_state.HadException())
-        return ScriptPromise<IDLUndefined>();
+        return EmptyPromise();
       return SendDatagram({static_cast<const uint8_t*>(data->buffer()->Data()) +
                                data->byteOffset(),
                            data->byteLength()});
@@ -138,7 +143,7 @@ class WebTransport::DatagramUnderlyingSink final : public UnderlyingSinkBase {
 
     exception_state.ThrowTypeError(
         "Datagram is not an ArrayBuffer or ArrayBufferView type.");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   ScriptPromise<IDLUndefined> close(ScriptState* script_state,
@@ -191,7 +196,7 @@ class WebTransport::DatagramUnderlyingSink final : public UnderlyingSinkBase {
                               WrapWeakPersistent(this)));
     } else {
       Vector<uint8_t> datagram;
-      datagram.Append(data.data(), static_cast<wtf_size_t>(data.size()));
+      datagram.AppendSpan(data);
       pending_datagrams_.push_back(std::move(datagram));
     }
     int high_water_mark = datagrams_->outgoingHighWaterMark();
@@ -234,15 +239,15 @@ class WebTransport::DatagramUnderlyingSource final
                       &DatagramUnderlyingSource::ExpiryTimerFired) {}
 
   // Implementation of UnderlyingByteSourceBase.
-  ScriptPromiseUntyped Pull(ReadableByteStreamController* controller,
-                            ExceptionState& exception_state) override {
+  ScriptPromise<IDLUndefined> Pull(ReadableByteStreamController* controller,
+                                   ExceptionState& exception_state) override {
     DVLOG(1) << "DatagramUnderlyingSource::pull()";
 
     if (waiting_for_datagrams_) {
       // This can happen if a second read is issued while a read is already
       // pending.
       DCHECK(queue_.empty());
-      return ScriptPromiseUntyped::CastUndefined(script_state_.Get());
+      return ToResolvedUndefinedPromise(script_state_.Get());
     }
 
     // If high water mark is reset to 0 and then read() is called, it should
@@ -255,11 +260,11 @@ class WebTransport::DatagramUnderlyingSource final
     if (queue_.empty()) {
       if (close_when_queue_empty_) {
         controller->close(script_state_, exception_state);
-        return ScriptPromiseUntyped::CastUndefined(script_state_.Get());
+        return ToResolvedUndefinedPromise(script_state_.Get());
       }
 
       waiting_for_datagrams_ = true;
-      return ScriptPromiseUntyped::CastUndefined(script_state_.Get());
+      return ToResolvedUndefinedPromise(script_state_.Get());
     }
 
     const QueueEntry* entry = queue_.front();
@@ -275,7 +280,7 @@ class WebTransport::DatagramUnderlyingSource final
                         NotShared<DOMUint8Array>(entry->datagram),
                         exception_state);
     if (exception_state.HadException()) {
-      return ScriptPromiseUntyped::CastUndefined(script_state_.Get());
+      return ToResolvedUndefinedPromise(script_state_.Get());
     }
 
     // JavaScript could have called some other method at this point.
@@ -286,15 +291,15 @@ class WebTransport::DatagramUnderlyingSource final
       controller->close(script_state_, exception_state);
     }
 
-    return ScriptPromiseUntyped::CastUndefined(script_state_.Get());
+    return ToResolvedUndefinedPromise(script_state_.Get());
   }
 
-  ScriptPromiseUntyped Cancel(ExceptionState& exception_state) override {
+  ScriptPromise<IDLUndefined> Cancel(ExceptionState& exception_state) override {
     return Cancel(v8::Undefined(script_state_->GetIsolate()), exception_state);
   }
 
-  ScriptPromiseUntyped Cancel(v8::Local<v8::Value> reason,
-                              ExceptionState&) override {
+  ScriptPromise<IDLUndefined> Cancel(v8::Local<v8::Value> reason,
+                                     ExceptionState&) override {
     uint32_t code = 0;
     WebTransportError* exception =
         V8WebTransportError::ToWrappable(script_state_->GetIsolate(), reason);
@@ -307,7 +312,7 @@ class WebTransport::DatagramUnderlyingSource final
     canceled_ = true;
     DiscardQueue();
 
-    return ScriptPromiseUntyped::CastUndefined(script_state_.Get());
+    return ToResolvedUndefinedPromise(script_state_.Get());
   }
 
   ScriptState* GetScriptState() override { return script_state_.Get(); }
@@ -379,12 +384,12 @@ class WebTransport::DatagramUnderlyingSource final
                               "supplied view is not large enough.")));
           return;
         }
-        view.ByteSpan().first(data.size()).copy_from(data);
+        view.ByteSpan().copy_prefix_from(data);
         request->respond(script_state_, data.size(), exception_state);
         return;
       }
 
-      auto* datagram = DOMUint8Array::Create(data.data(), data.size());
+      auto* datagram = DOMUint8Array::Create(data);
       controller->enqueue(script_state_, NotShared(datagram), exception_state);
       return;
     }
@@ -407,7 +412,7 @@ class WebTransport::DatagramUnderlyingSource final
       ++dropped_datagram_count_;
     }
 
-    auto* datagram = DOMUint8Array::Create(data.data(), data.size());
+    auto* datagram = DOMUint8Array::Create(data);
     auto now = base::TimeTicks::Now();
     queue_.push_back(MakeGarbageCollected<QueueEntry>(datagram, now));
     MaybeExpireDatagrams(now);
@@ -649,9 +654,8 @@ class WebTransport::ReceiveStreamVendor final
     auto* receive_stream = MakeGarbageCollected<ReceiveStream>(
         script_state_, web_transport_, stream_id, std::move(readable));
     auto* isolate = script_state_->GetIsolate();
-    ExceptionState exception_state(
-        isolate, ExceptionContextType::kConstructorOperationInvoke,
-        "ReceiveStream");
+    ExceptionState exception_state(isolate, v8::ExceptionContext::kConstructor,
+                                   "ReceiveStream");
     v8::MicrotasksScope microtasks_scope(
         isolate, ToMicrotaskQueue(script_state_),
         v8::MicrotasksScope::kDoNotRunMicrotasks);
@@ -718,9 +722,8 @@ class WebTransport::BidirectionalStreamVendor final
         std::move(incoming_consumer));
 
     auto* isolate = script_state_->GetIsolate();
-    ExceptionState exception_state(
-        isolate, ExceptionContextType::kConstructorOperationInvoke,
-        "BidirectionalStream");
+    ExceptionState exception_state(isolate, v8::ExceptionContext::kConstructor,
+                                   "BidirectionalStream");
     v8::MicrotasksScope microtasks_scope(
         isolate, ToMicrotaskQueue(script_state_),
         v8::MicrotasksScope::kDoNotRunMicrotasks);
@@ -737,6 +740,19 @@ class WebTransport::BidirectionalStreamVendor final
         stream_id, bidirectional_stream->GetIncomingStream());
     web_transport_->outgoing_stream_map_.insert(
         stream_id, bidirectional_stream->GetOutgoingStream());
+
+    auto it =
+        web_transport_->closed_potentially_pending_streams_.find(stream_id);
+    if (it != web_transport_->closed_potentially_pending_streams_.end()) {
+      // The stream has already been closed in the network service.
+      const bool fin_received = it->value;
+      web_transport_->closed_potentially_pending_streams_.erase(it);
+
+      // This can run JavaScript. This is safe because `receive_stream` hasn't
+      // been exposed yet.
+      bidirectional_stream->GetIncomingStream()->OnIncomingStreamClosed(
+          fin_received);
+    }
 
     std::move(enqueue).Run(bidirectional_stream);
   }
@@ -791,7 +807,7 @@ ScriptPromise<WritableStream> WebTransport::createUnidirectionalStream(
     // TODO(ricea): Should we wait if we're still connecting?
     exception_state.ThrowDOMException(DOMExceptionCode::kNetworkError,
                                       "No connection.");
-    return ScriptPromise<WritableStream>();
+    return EmptyPromise();
   }
 
   mojo::ScopedDataPipeProducerHandle data_pipe_producer;
@@ -799,7 +815,7 @@ ScriptPromise<WritableStream> WebTransport::createUnidirectionalStream(
 
   if (!CreateStreamDataPipe(&data_pipe_producer, &data_pipe_consumer,
                             exception_state)) {
-    return ScriptPromise<WritableStream>();
+    return EmptyPromise();
   }
 
   auto* resolver = MakeGarbageCollected<ScriptPromiseResolver<WritableStream>>(
@@ -831,21 +847,21 @@ ScriptPromise<BidirectionalStream> WebTransport::createBidirectionalStream(
     // TODO(ricea): We should wait if we are still connecting.
     exception_state.ThrowDOMException(DOMExceptionCode::kNetworkError,
                                       "No connection.");
-    return ScriptPromise<BidirectionalStream>();
+    return EmptyPromise();
   }
 
   mojo::ScopedDataPipeProducerHandle outgoing_producer;
   mojo::ScopedDataPipeConsumerHandle outgoing_consumer;
   if (!CreateStreamDataPipe(&outgoing_producer, &outgoing_consumer,
                             exception_state)) {
-    return ScriptPromise<BidirectionalStream>();
+    return EmptyPromise();
   }
 
   mojo::ScopedDataPipeProducerHandle incoming_producer;
   mojo::ScopedDataPipeConsumerHandle incoming_consumer;
   if (!CreateStreamDataPipe(&incoming_producer, &incoming_consumer,
                             exception_state)) {
-    return ScriptPromise<BidirectionalStream>();
+    return EmptyPromise();
   }
 
   auto* resolver =
@@ -1096,17 +1112,17 @@ void WebTransport::OnClosed(
 
   latest_stats_ = ConvertStatsFromMojom(std::move(final_stats));
 
-  WebTransportCloseInfo idl_close_info;
+  auto* idl_close_info = MakeGarbageCollected<WebTransportCloseInfo>();
   if (close_info) {
-    idl_close_info.setCloseCode(close_info->code);
-    idl_close_info.setReason(close_info->reason);
+    idl_close_info->setCloseCode(close_info->code);
+    idl_close_info->setReason(close_info->reason);
   }
 
   v8::Local<v8::Value> error = WebTransportError::Create(
       isolate, /*stream_error_code=*/std::nullopt, "The session is closed.",
       WebTransportError::Source::kSession);
 
-  Cleanup(&idl_close_info, error, /*abruptly=*/false);
+  Cleanup(idl_close_info, error, /*abruptly=*/false);
 }
 
 void WebTransport::OnOutgoingStreamClosed(uint32_t stream_id) {
@@ -1524,8 +1540,8 @@ void WebTransport::OnCreateSendStreamResponse(
       script_state_, this, stream_id, std::move(producer));
 
   auto* isolate = script_state_->GetIsolate();
-  ExceptionState exception_state(
-      isolate, ExceptionContextType::kConstructorOperationInvoke, "SendStream");
+  ExceptionState exception_state(isolate, v8::ExceptionContext::kConstructor,
+                                 "SendStream");
   v8::MicrotasksScope microtasks_scope(
       isolate, ToMicrotaskQueue(script_state_),
       v8::MicrotasksScope::kDoNotRunMicrotasks);
@@ -1573,9 +1589,8 @@ void WebTransport::OnCreateBidirectionalStreamResponse(
       script_state_, this, stream_id, std::move(outgoing_producer),
       std::move(incoming_consumer));
 
-  ExceptionState exception_state(
-      isolate, ExceptionContextType::kConstructorOperationInvoke,
-      "BidirectionalStream");
+  ExceptionState exception_state(isolate, v8::ExceptionContext::kConstructor,
+                                 "BidirectionalStream");
   v8::MicrotasksScope microtasks_scope(
       isolate, ToMicrotaskQueue(script_state_),
       v8::MicrotasksScope::kDoNotRunMicrotasks);

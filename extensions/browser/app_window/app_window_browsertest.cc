@@ -20,7 +20,7 @@ using AppWindowBrowserTest = PlatformAppBrowserTest;
 // This test is disabled on Linux because of the unpredictable nature of native
 // windows. We cannot assume that the window manager will insert any title bar
 // at all, so the test may fail on certain window managers.
-// TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
+// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
 // of lacros-chrome is complete.
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
 #define MAYBE_FrameInsetsForDefaultFrame DISABLED_FrameInsetsForDefaultFrame
@@ -130,8 +130,9 @@ IN_PROC_BROWSER_TEST_F(AppWindowBrowserTest,
   // eviction.
   content::RenderFrameSubmissionObserver submission_observer(
       app_window->web_contents());
-  if (!submission_observer.render_frame_count())
+  if (!submission_observer.render_frame_count()) {
     submission_observer.WaitForAnyFrameSubmission();
+  }
 
   // Helper function as this test requires inspecting a number of content::
   // internal objects.

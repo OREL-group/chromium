@@ -27,14 +27,13 @@ extern const double kJavaScriptFunctionCallDefaultTimeout;
 using ExecuteJavaScriptCallbackWithError =
     base::OnceCallback<void(const base::Value*, NSError* error)>;
 
-class WebFrame : public base::SupportsUserData,
-                 public base::SupportsWeakPtr<WebFrame> {
+class WebFrame : public base::SupportsUserData {
  public:
   // The frame identifier which uniquely identifies this frame across the
   // application's lifetime.
   virtual std::string GetFrameId() const = 0;
   // Whether or not the receiver represents the main frame of the webpage.
-  // TODO(crbug.com/1300655): Rename IsMainFrame to IsAnyMainFrame
+  // TODO(crbug.com/40216361): Rename IsMainFrame to IsAnyMainFrame
   virtual bool IsMainFrame() const = 0;
   // The security origin associated with this frame.
   virtual GURL GetSecurityOrigin() const = 0;
@@ -92,6 +91,9 @@ class WebFrame : public base::SupportsUserData,
 
   // Returns the WebFrameInternal instance for this object.
   virtual WebFrameInternal* GetWebFrameInternal() = 0;
+
+  // Gets a weak pointer to the instance.
+  virtual base::WeakPtr<WebFrame> AsWeakPtr() = 0;
 
   WebFrame(const WebFrame&) = delete;
   WebFrame& operator=(const WebFrame&) = delete;

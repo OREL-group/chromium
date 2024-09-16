@@ -313,6 +313,13 @@ TEST_F(WebStateImplTest, ObserverTest) {
   ASSERT_TRUE(observer->title_was_set_info());
   EXPECT_EQ(web_state.get(), observer->title_was_set_info()->web_state);
 
+  // Test that UnderPageBackgroundColorChanged() is called.
+  ASSERT_FALSE(observer->under_page_background_color_changed_info());
+  web_state->OnUnderPageBackgroundColorChanged();
+  ASSERT_TRUE(observer->under_page_background_color_changed_info());
+  EXPECT_EQ(web_state.get(),
+            observer->under_page_background_color_changed_info()->web_state);
+
   // Test that WebStateDestroyed() is called.
   EXPECT_FALSE(observer->web_state_destroyed_info());
   web_state.reset();
@@ -395,7 +402,8 @@ TEST_F(WebStateImplTest, DelegateTest) {
   ASSERT_TRUE(delegate.last_repost_form_request());
   EXPECT_EQ(delegate.last_repost_form_request()->web_state, &web_state);
 
-  // TODO(crbug.com/1501150): Check web::FormWarningType::kInsecureForm as well.
+  // TODO(crbug.com/40941405): Check web::FormWarningType::kInsecureForm as
+  // well.
 
   // Test that GetJavaScriptDialogPresenter() is called.
   FakeJavaScriptDialogPresenter* presenter =
@@ -805,7 +813,8 @@ TEST_F(WebStateImplTest, UncommittedRestoreSession) {
   session_storage.itemStorages = @[ item_storage ];
 
   WebStateImpl web_state =
-      WebStateImpl(WebState::CreateParams(GetBrowserState()), session_storage);
+      WebStateImpl(WebState::CreateParams(GetBrowserState()), session_storage,
+                   base::ReturnValueOnce<NSData*>(nil));
 
   // After restoring `web_state` change the uncommitted state's user data.
   web::SerializableUserDataManager* user_data_manager =
@@ -830,7 +839,8 @@ TEST_F(WebStateImplTest, UncommittedRestoreSession) {
   EXPECT_EQ(url, web_state.GetVisibleURL());
 
   WebStateImpl restored_web_state(WebState::CreateParams(GetBrowserState()),
-                                  extracted_session_storage);
+                                  extracted_session_storage,
+                                  base::ReturnValueOnce<NSData*>(nil));
   web::SerializableUserDataManager* restored_user_data_manager =
       web::SerializableUserDataManager::FromWebState(&restored_web_state);
   NSNumber* user_data_value = base::apple::ObjCCast<NSNumber>(

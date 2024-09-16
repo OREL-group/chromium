@@ -15,12 +15,14 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import android.app.Activity;
+import android.content.Context;
+
 import androidx.test.filters.SmallTest;
 
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
@@ -28,7 +30,6 @@ import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.Callback;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.JniMocker;
 import org.chromium.chrome.browser.flags.ActivityType;
 import org.chromium.chrome.browser.homepage.HomepageManager;
@@ -37,18 +38,22 @@ import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.MockTab;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabCreationState;
+import org.chromium.chrome.browser.tab.TabDelegateFactory;
 import org.chromium.chrome.browser.tab.TabLaunchType;
 import org.chromium.chrome.browser.tab.TabSelectionType;
 import org.chromium.chrome.browser.tab_ui.TabContentManager;
+import org.chromium.chrome.browser.tasks.tab_groups.TabGroupModelFilter;
+import org.chromium.ui.base.WindowAndroid;
 
+import java.lang.ref.WeakReference;
 import java.util.Arrays;
+import java.util.List;
 
 /** Unit tests for {@link TabModelImpl}. */
 @RunWith(BaseRobolectricTestRunner.class)
 public class TabModelImplUnitTest {
     private static final long FAKE_NATIVE_ADDRESS = 123L;
 
-    @Rule public TestRule mProcessor = new Features.JUnitProcessor();
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
 
     /** Disable native calls from {@link TabModelJniBridge}. */
@@ -74,19 +79,25 @@ public class TabModelImplUnitTest {
     @Mock private TabModelFilter mTabModelFilter;
 
     @Mock private Callback<Tab> mTabSupplierObserver;
+    @Mock private TabGroupModelFilter mTabGroupModelFilter;
+    @Mock private WindowAndroid mWindowAndroid;
+    @Mock private TabDelegateFactory mTabDelegateFactory;
+    @Mock private WeakReference<Context> mWeakReferenceContext;
+    @Mock private WeakReference<Activity> mWeakReferenceActivity;
 
     private int mNextTabId;
 
     @Before
     public void setUp() {
-        // Disable HomepageManager#shouldCloseAppWithZeroTabs() for TabModelImpl#closeAllTabs().
+        // Disable HomepageManager#shouldCloseAppWithZeroTabs() for TabModelImpl#closeTabs().
         HomepageManager.getInstance().setPrefHomepageEnabled(false);
 
         when(mIncognitoProfile.isOffTheRecord()).thenReturn(true);
         PriceTrackingFeatures.setPriceTrackingEnabledForTesting(false);
 
         mJniMocker.mock(TabModelJniBridgeJni.TEST_HOOKS, mTabModelJniBridge);
-        when(mTabModelJniBridge.init(any(), any(), anyInt())).thenReturn(FAKE_NATIVE_ADDRESS);
+        when(mTabModelJniBridge.init(any(), any(), anyInt(), anyBoolean()))
+                .thenReturn(FAKE_NATIVE_ADDRESS);
 
         when(mTabModelDelegate.isReparentingInProgress()).thenReturn(false);
 
@@ -95,6 +106,13 @@ public class TabModelImplUnitTest {
         when(mTabModelFilterProvider.getTabModelFilter(true)).thenReturn(mTabModelFilter);
         when(mTabModelFilter.getValidPosition(any(), anyInt()))
                 .thenAnswer(i -> i.getArguments()[1]);
+
+        when(mWindowAndroid.getActivity()).thenReturn(mWeakReferenceActivity);
+        when(mWindowAndroid.getContext()).thenReturn(mWeakReferenceContext);
+        when(mTabGroupModelFilter.getValidPosition(any(), anyInt()))
+                .thenAnswer(i -> i.getArguments()[1]);
+
+        TabModelSelectorSupplier.setInstanceForTesting(mTabModelSelector);
 
         mNextTabId = 0;
     }
@@ -117,7 +135,7 @@ public class TabModelImplUnitTest {
     }
 
     private void selectTab(final TabModel model, final Tab tab) {
-        model.setIndex(model.indexOf(tab), TabSelectionType.FROM_USER, false);
+        model.setIndex(model.indexOf(tab), TabSelectionType.FROM_USER);
     }
 
     /** Create a {@link TabModel} to use for the test. */
@@ -138,7 +156,8 @@ public class TabModelImplUnitTest {
                         () -> NextTabPolicy.HIERARCHICAL,
                         realAsyncTabParamsManager,
                         mTabModelDelegate,
-                        /* supportsUndo= */ true);
+                        /* supportUndo= */ true,
+                        /* trackInNativeModelList= */ true);
         when(mTabModelSelector.getModel(isIncognito)).thenReturn(tabModel);
         tabModel.setActive(isActive);
         if (isActive) {
@@ -290,8 +309,10 @@ public class TabModelImplUnitTest {
 
         selectTab(activeIncognito, incognitoTab0);
 
-        activeIncognito.closeMultipleTabs(
-                Arrays.asList(new Tab[] {incognitoTab0, incognitoTab1}), false);
+        activeIncognito.closeTabs(
+                TabClosureParams.closeTabs(List.of(incognitoTab0, incognitoTab1))
+                        .allowUndo(false)
+                        .build());
         verify(mTabModelSelector, never()).selectModel(anyBoolean());
         assertEquals(incognitoTab2, activeIncognito.getTabAt(activeIncognito.index()));
     }
@@ -369,7 +390,7 @@ public class TabModelImplUnitTest {
         Tab tab1 = createTab(tabModel);
         assertEquals(tab1, tabModel.getTabById(tab1.getId()));
 
-        tabModel.closeTab(tab1, /* animate= */ false, /* uponExit= */ false, /* canUndo= */ true);
+        tabModel.closeTabs(TabClosureParams.closeTab(tab1).build());
         assertEquals(null, tabModel.getTabById(tab1.getId()));
 
         tabModel.cancelTabClosure(tab1.getId());
@@ -377,5 +398,59 @@ public class TabModelImplUnitTest {
 
         tabModel.destroy();
         assertEquals(null, tabModel.getTabById(tab1.getId()));
+    }
+
+    @Test
+    @SmallTest
+    public void testGetTabsNavigatedInTimeWindow() {
+        TabModelImpl tabModel =
+                (TabModelImpl) createTabModel(/* isActive= */ true, /* isIncognito= */ false);
+        MockTab tab1 = (MockTab) createTab(tabModel, 0, Tab.INVALID_TAB_ID);
+        tab1.setLastNavigationCommittedTimestampMillis(200);
+
+        MockTab tab2 = (MockTab) createTab(tabModel, 0, Tab.INVALID_TAB_ID);
+        tab2.setLastNavigationCommittedTimestampMillis(50);
+
+        MockTab tab3 = (MockTab) createTab(tabModel, 0, Tab.INVALID_TAB_ID);
+        tab3.setLastNavigationCommittedTimestampMillis(100);
+
+        MockTab tab4 = (MockTab) createTab(tabModel, 0, Tab.INVALID_TAB_ID);
+        tab4.setLastNavigationCommittedTimestampMillis(30);
+        tab4.setIsCustomTab(true);
+
+        MockTab tab5 = (MockTab) createTab(tabModel, 0, Tab.INVALID_TAB_ID);
+        tab5.setLastNavigationCommittedTimestampMillis(10);
+
+        assertEquals(Arrays.asList(tab2, tab5), tabModel.getTabsNavigatedInTimeWindow(10, 100));
+    }
+
+    @Test
+    @SmallTest
+    public void testCloseTabsNavigatedInTimeWindow() {
+        when(mTabModelFilterProvider.getTabModelFilter(/* isIncognito= */ false))
+                .thenReturn(mTabGroupModelFilter);
+
+        TabModelImpl tabModel =
+                (TabModelImpl) createTabModel(/* isActive= */ true, /* isIncognito= */ false);
+
+        MockTab tab1 = (MockTab) createTab(tabModel, 0, Tab.INVALID_TAB_ID);
+        tab1.setLastNavigationCommittedTimestampMillis(200);
+        tab1.updateAttachment(mWindowAndroid, mTabDelegateFactory);
+
+        MockTab tab2 = (MockTab) createTab(tabModel, 0, Tab.INVALID_TAB_ID);
+        tab2.setLastNavigationCommittedTimestampMillis(30);
+        tab2.updateAttachment(mWindowAndroid, mTabDelegateFactory);
+
+        MockTab tab3 = (MockTab) createTab(tabModel, 0, Tab.INVALID_TAB_ID);
+        tab3.setLastNavigationCommittedTimestampMillis(20);
+        tab3.updateAttachment(mWindowAndroid, mTabDelegateFactory);
+
+        tabModel.closeTabsNavigatedInTimeWindow(20, 50);
+        verify(mTabGroupModelFilter)
+                .closeTabs(
+                        TabClosureParams.closeTabs(Arrays.asList(tab2, tab3))
+                                .allowUndo(false)
+                                .saveToTabRestoreService(false)
+                                .build());
     }
 }

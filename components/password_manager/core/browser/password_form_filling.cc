@@ -14,6 +14,7 @@
 #include "components/affiliations/core/browser/affiliation_utils.h"
 #include "components/autofill/core/common/autofill_util.h"
 #include "components/autofill/core/common/password_form_fill_data.h"
+#include "components/autofill/core/common/unique_ids.h"
 #include "components/password_manager/core/browser/browser_save_password_progress_logger.h"
 #include "components/password_manager/core/browser/features/password_features.h"
 #include "components/password_manager/core/browser/password_feature_manager.h"
@@ -58,15 +59,14 @@ bool IsFillOnAccountSelectFeatureEnabled() {
 }
 #endif
 
-void Autofill(
-    PasswordManagerClient* client,
-    PasswordManagerDriver* driver,
-    const PasswordForm& form_for_autofill,
-    const base::span<const PasswordForm>& best_matches,
-    const std::vector<raw_ptr<const PasswordForm, VectorExperimental>>&
-        federated_matches,
-    std::optional<PasswordForm> preferred_match,
-    bool wait_for_username) {
+void Autofill(PasswordManagerClient* client,
+              PasswordManagerDriver* driver,
+              const PasswordForm& form_for_autofill,
+              base::span<const PasswordForm> best_matches,
+              base::span<const PasswordForm> federated_matches,
+              std::optional<PasswordForm> preferred_match,
+              bool wait_for_username,
+              base::span<autofill::FieldRendererId> suggestion_banned_fields) {
   std::unique_ptr<BrowserSavePasswordProgressLogger> logger;
   if (password_manager_util::IsLoggingActive(client)) {
     logger = std::make_unique<BrowserSavePasswordProgressLogger>(
@@ -76,9 +76,11 @@ void Autofill(
 
   PasswordFormFillData fill_data = CreatePasswordFormFillData(
       form_for_autofill, best_matches, std::move(preferred_match),
-      client->GetLastCommittedOrigin(), wait_for_username);
-  if (logger)
+      client->GetLastCommittedOrigin(), wait_for_username,
+      suggestion_banned_fields);
+  if (logger) {
     logger->LogBoolean(Logger::STRING_WAIT_FOR_USERNAME, wait_for_username);
+  }
   UMA_HISTOGRAM_BOOLEAN(
       "PasswordManager.FillSuggestionsIncludeAndroidAppCredentials",
       ContainsAndroidCredentials(fill_data));
@@ -94,7 +96,7 @@ void Autofill(
   if (!best_matches.empty() || !federated_matches.empty()) {
     client->PasswordWasAutofilled(best_matches,
                                   Origin::Create(form_for_autofill.url),
-                                  &federated_matches, !wait_for_username);
+                                  federated_matches, !wait_for_username);
   }
 }
 
@@ -114,11 +116,11 @@ LikelyFormFilling SendFillInformationToRenderer(
     PasswordManagerDriver* driver,
     const PasswordForm& observed_form,
     base::span<const PasswordForm> best_matches,
-    const std::vector<raw_ptr<const PasswordForm, VectorExperimental>>&
-        federated_matches,
+    base::span<const PasswordForm> federated_matches,
     const PasswordForm* preferred_match,
     PasswordFormMetricsRecorder* metrics_recorder,
-    bool webauthn_suggestions_available) {
+    bool webauthn_suggestions_available,
+    base::span<autofill::FieldRendererId> suggestion_banned_fields) {
   DCHECK(driver);
   DCHECK_EQ(PasswordForm::Scheme::kHtml, observed_form.scheme);
 
@@ -176,7 +178,7 @@ LikelyFormFilling SendFillInformationToRenderer(
       WaitForUsernameReason::kDontWait;
   if (client->IsOffTheRecord()) {
     wait_for_username_reason = WaitForUsernameReason::kIncognitoMode;
-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS)
   } else if (client->GetPasswordFeatureManager()
                  ->IsBiometricAuthenticationBeforeFillingEnabled()) {
     wait_for_username_reason = WaitForUsernameReason::kBiometricAuthentication;
@@ -245,7 +247,7 @@ LikelyFormFilling SendFillInformationToRenderer(
   Autofill(
       client, driver, observed_form, best_matches, federated_matches,
       preferred_match ? std::make_optional(*preferred_match) : std::nullopt,
-      wait_for_username);
+      wait_for_username, suggestion_banned_fields);
 
   return wait_for_username ? LikelyFormFilling::kFillOnAccountSelect
                            : LikelyFormFilling::kFillOnPageLoad;
@@ -256,10 +258,11 @@ PasswordFormFillData CreatePasswordFormFillData(
     base::span<const PasswordForm> matches,
     std::optional<PasswordForm> preferred_match,
     const Origin& main_frame_origin,
-    bool wait_for_username) {
+    bool wait_for_username,
+    base::span<autofill::FieldRendererId> suggestion_banned_fields) {
   PasswordFormFillData result;
 
-  result.form_renderer_id = form_on_page.form_data.renderer_id;
+  result.form_renderer_id = form_on_page.form_data.renderer_id();
   result.url = form_on_page.url;
   result.wait_for_username = wait_for_username;
 
@@ -317,6 +320,9 @@ PasswordFormFillData CreatePasswordFormFillData(
     }
     result.additional_logins.push_back(std::move(value));
   }
+
+  result.suggestion_banned_fields = std::vector<autofill::FieldRendererId>(
+      suggestion_banned_fields.begin(), suggestion_banned_fields.end());
 
   return result;
 }

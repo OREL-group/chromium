@@ -260,7 +260,7 @@ public class ExpandedPlayerSheetContent implements BottomSheetContent {
     }
 
     @Nullable
-    VoiceMenuSheetContent getVoiceMenu() {
+    VoiceMenu getVoiceMenu() {
         if (mOptionsMenu == null) {
             return null;
         }
@@ -294,7 +294,7 @@ public class ExpandedPlayerSheetContent implements BottomSheetContent {
 
     @Override
     public int getVerticalScrollOffset() {
-        return 0;
+        return mScrollView.getScrollY();
     }
 
     @Override

@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "ash/ash_export.h"
+#include "ash/public/cpp/tab_strip_delegate.h"
 #include "base/files/file_path.h"
 #include "base/memory/raw_ptr.h"
 #include "chromeos/ash/services/multidevice_setup/public/mojom/multidevice_setup.mojom-forward.h"
@@ -42,7 +43,9 @@ class BackGestureContextualNudgeController;
 class BackGestureContextualNudgeDelegate;
 class CaptureModeDelegate;
 class ClipboardHistoryControllerDelegate;
+class CoralDelegate;
 class DeskProfilesDelegate;
+class FocusModeDelegate;
 class GameDashboardDelegate;
 class MediaNotificationProvider;
 class NearbyShareController;
@@ -56,11 +59,8 @@ class WindowState;
 class ASH_EXPORT ShellDelegate {
  public:
   enum class FeedbackSource {
-    kBirch,
-    kFocusMode,
     kGameDashboard,
     kOverview,
-    kSnapGroups,
     kWindowLayoutMenu,
   };
 
@@ -78,6 +78,9 @@ class ASH_EXPORT ShellDelegate {
   // Creates and returns the delegate of the clipboard history feature.
   virtual std::unique_ptr<ClipboardHistoryControllerDelegate>
   CreateClipboardHistoryControllerDelegate() const = 0;
+
+  // Creates and returns the delegate of the Coral feature.
+  virtual std::unique_ptr<CoralDelegate> CreateCoralDelegate() const = 0;
 
   // Creates and returns the delegate of the Game Dashboard feature.
   virtual std::unique_ptr<GameDashboardDelegate> CreateGameDashboardDelegate()
@@ -106,6 +109,12 @@ class ASH_EXPORT ShellDelegate {
 
   virtual std::unique_ptr<api::TasksDelegate> CreateTasksDelegate() const = 0;
 
+  virtual std::unique_ptr<TabStripDelegate> CreateTabStripDelegate() const = 0;
+
+  // Creates and returns the delegate for Focus Mode.
+  virtual std::unique_ptr<FocusModeDelegate> CreateFocusModeDelegate()
+      const = 0;
+
   // Creates and returns the delegate of the System Sounds feature.
   virtual std::unique_ptr<SystemSoundsDelegate> CreateSystemSoundsDelegate()
       const = 0;
@@ -114,10 +123,10 @@ class ASH_EXPORT ShellDelegate {
   virtual std::unique_ptr<UserEducationDelegate> CreateUserEducationDelegate()
       const = 0;
 
-  // Returns the geolocation loader factory used to initialize geolocation
-  // provider.
+  // Returns the `SharedURLLoaderFactory` associated with the browser process.
+  // Do not use for requests related to the user profile.
   virtual scoped_refptr<network::SharedURLLoaderFactory>
-  GetGeolocationUrlLoaderFactory() const = 0;
+  GetBrowserProcessUrlLoaderFactory() const = 0;
 
   // Check whether the current tab of the browser window can go back.
   virtual bool CanGoBack(gfx::NativeWindow window) const = 0;
@@ -221,6 +230,10 @@ class ASH_EXPORT ShellDelegate {
 
   // Opens the Multitasking OS Settings page.
   virtual void OpenMultitaskingSettings() = 0;
+
+  // Checks if the command line contains "no-first-run". Some UI's can interfere
+  // with browser tests, which have "no-first-run" on by default.
+  virtual bool IsNoFirstRunSwitchOn() const;
 };
 
 }  // namespace ash

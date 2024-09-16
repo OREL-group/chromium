@@ -34,9 +34,7 @@ class MEDIA_EXPORT BoxByteStream {
   void StartBox(mp4::FourCC fourcc);
   void StartFullBox(mp4::FourCC fourcc,
                     uint32_t flags = 0,
-                    // Chromium MP4 Muxer supports 64 bits as a default, but the
-                    // individual box can override it as needed.
-                    uint8_t version = 1);
+                    uint8_t version = 0);
 
   // Writes primitives types in big endian format. If `value` can be larger than
   // the the type being written, methods will `CHECK()` that `value` fits in the
@@ -74,7 +72,8 @@ class MEDIA_EXPORT BoxByteStream {
   // is a total size of the top `mfra' box.
   size_t size() const { return position_; }
 
-  // TODO(crbug.com/1072056): Investigate if this is a reasonable starting size.
+  // TODO(crbug.com/40127044): Investigate if this is a reasonable starting
+  // size.
   static constexpr int kDefaultBufferLimit = 4096;
 
   // Test helper method that returns internal size offset vector.

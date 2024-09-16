@@ -11,6 +11,10 @@
 
 namespace ash {
 
+// Metrics entry names which should be kept in sync with the event names in
+// tools/metrics/ukm.xml and metrics histogram names which should be kept in
+// sync with the histogram names in
+// tools/metrics/histograms/metadata/ash/histograms.xml.
 inline constexpr char kGameDashboardToggleMainMenuHistogram[] =
     "ToggleMainMenu";
 inline constexpr char kGameDashboardToolbarToggleStateHistogram[] =
@@ -55,7 +59,8 @@ enum class GameDashboardMainMenuToggleMethod {
   // button, and game window closing unspecified.
   kOthers,
   kTabletMode,
-  kMaxValue = kTabletMode,
+  kAnimation,
+  kMaxValue = kAnimation,
 };
 
 // This enum should be kept in sync with the `GameDashboardMenu` in
@@ -92,6 +97,8 @@ enum class GameDashboardFunction {
 
 ASH_EXPORT std::string BuildGameDashboardHistogramName(const std::string& name);
 
+ASH_EXPORT std::string BuildGameDashboardUkmEventName(const std::string& name);
+
 void RecordGameDashboardToggleMainMenu(
     const std::string& app_id,
     GameDashboardMainMenuToggleMethod toggle_method,
@@ -109,18 +116,25 @@ void RecordGameDashboardScreenshotTakeSource(const std::string& app_id,
 void RecordGameDashboardEditControlsWithEmptyState(const std::string& app_id,
                                                    bool is_setup);
 
-void RecordGameDashboardToolbarClickToExpandState(bool is_expanded);
+void RecordGameDashboardToolbarClickToExpandState(const std::string& app_id,
+                                                  bool is_expanded);
 
 void RecordGameDashboardToolbarNewLocation(
+    const std::string& app_id,
     GameDashboardToolbarSnapLocation location);
 
-void RecordGameDashboardFunctionTriggered(GameDashboardFunction function);
+void RecordGameDashboardFunctionTriggered(const std::string& app_id,
+                                          GameDashboardFunction function);
 
-void RecordGameDashboardWelcomeDialogNotificationToggleState(bool toggled_on);
+void RecordGameDashboardWelcomeDialogNotificationToggleState(
+    const std::string& app_id,
+    bool toggled_on);
 
-void RecordGameDashboardControlsHintToggleSource(GameDashboardMenu menu,
+void RecordGameDashboardControlsHintToggleSource(const std::string& app_id,
+                                                 GameDashboardMenu menu,
                                                  bool toggled_on);
-void RecordGameDashboardControlsFeatureToggleState(bool toggled_on);
+void RecordGameDashboardControlsFeatureToggleState(const std::string& app_id,
+                                                   bool toggled_on);
 }  // namespace ash
 
 #endif  // ASH_GAME_DASHBOARD_GAME_DASHBOARD_METRICS_H_

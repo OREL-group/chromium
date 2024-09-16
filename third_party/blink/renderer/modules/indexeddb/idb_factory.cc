@@ -325,9 +325,24 @@ void IDBFactory::OpenInternalImpl(
     return;
   }
 
+  // Getting the scheduling priority as a one-off is somewhat awkward.
+  int scheduling_priority = -1;
+  std::unique_ptr<FrameOrWorkerScheduler::LifecycleObserverHandle> lifecycle =
+      GetExecutionContext()->GetScheduler()->AddLifecycleObserver(
+          FrameOrWorkerScheduler::ObserverType::kWorkerScheduler,
+          WTF::BindRepeating(
+              [](int* priority,
+                 scheduler::SchedulingLifecycleState lifecycle_state) {
+                *priority = IDBDatabase::GetSchedulingPriority(lifecycle_state);
+              },
+              WTF::Unretained(&scheduling_priority)));
+  DCHECK_GE(scheduling_priority, 0);
+  request->set_connection_priority(scheduling_priority);
+
   GetRemote()->Open(CreatePendingRemote(request->CreateFactoryClient()),
                     std::move(callbacks_remote), name, version,
-                    std::move(transaction_receiver), transaction_id);
+                    std::move(transaction_receiver), transaction_id,
+                    scheduling_priority);
 }
 
 IDBOpenDBRequest* IDBFactory::open(ScriptState* script_state,
@@ -418,9 +433,8 @@ int16_t IDBFactory::cmp(ScriptState* script_state,
                         const ScriptValue& first_value,
                         const ScriptValue& second_value,
                         ExceptionState& exception_state) {
-  const std::unique_ptr<IDBKey> first =
-      ScriptValue::To<std::unique_ptr<IDBKey>>(script_state->GetIsolate(),
-                                               first_value, exception_state);
+  const std::unique_ptr<IDBKey> first = CreateIDBKeyFromValue(
+      script_state->GetIsolate(), first_value.V8Value(), exception_state);
   if (exception_state.HadException())
     return 0;
   DCHECK(first);
@@ -430,9 +444,8 @@ int16_t IDBFactory::cmp(ScriptState* script_state,
     return 0;
   }
 
-  const std::unique_ptr<IDBKey> second =
-      ScriptValue::To<std::unique_ptr<IDBKey>>(script_state->GetIsolate(),
-                                               second_value, exception_state);
+  const std::unique_ptr<IDBKey> second = CreateIDBKeyFromValue(
+      script_state->GetIsolate(), second_value.V8Value(), exception_state);
   if (exception_state.HadException())
     return 0;
   DCHECK(second);
@@ -459,24 +472,25 @@ void IDBFactory::AllowIndexedDB(base::OnceCallback<void()> callback) {
     return;
   }
 
-  WebContentSettingsClient* settings_client = nullptr;
-
   if (auto* window = DynamicTo<LocalDOMWindow>(context)) {
     LocalFrame* frame = window->GetFrame();
     if (!frame) {
       DidAllowIndexedDB(false);
       return;
     }
-    settings_client = frame->GetContentSettingsClient();
-  } else {
-    settings_client = To<WorkerGlobalScope>(context)->ContentSettingsClient();
+    frame->AllowStorageAccessAndNotify(
+        WebContentSettingsClient::StorageType::kIndexedDB,
+        WTF::BindOnce(&IDBFactory::DidAllowIndexedDB,
+                      WrapPersistent(weak_factory_.GetWeakCell())));
+    return;
   }
 
+  WebContentSettingsClient* settings_client =
+      To<WorkerGlobalScope>(context)->ContentSettingsClient();
   if (!settings_client) {
     DidAllowIndexedDB(true);
     return;
   }
-
   settings_client->AllowStorageAccess(
       WebContentSettingsClient::StorageType::kIndexedDB,
       WTF::BindOnce(&IDBFactory::DidAllowIndexedDB,

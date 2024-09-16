@@ -26,6 +26,21 @@ namespace {
 BrowserSupport* g_instance = nullptr;
 std::optional<bool> g_cpu_supported_override_ = std::nullopt;
 
+// Returns true if Lacros is enabled for testing. This is a replacement for
+// `features::kLacrosOnly` during the in-between phase where users should not be
+// able to enable Lacros but developers should for debugging. This function
+// returning true alone does not guarantee that Lacros is actually enabled and
+// other conditions such as whether Lacros is allowed to be enabled i.e.
+// `standalone_browser::BrowserSupport::IsAllowed()` still apply.
+bool IsLacrosEnabledForTesting() {
+  const base::CommandLine* cmdline = base::CommandLine::ForCurrentProcess();
+  if (!cmdline) {
+    return false;
+  }
+
+  return cmdline->HasSwitch(ash::switches::kEnableLacrosForTesting);
+}
+
 // Returns true if `kDisallowLacros` is set by command line.
 bool IsLacrosDisallowedByCommand() {
   const base::CommandLine* cmdline = base::CommandLine::ForCurrentProcess();
@@ -49,8 +64,6 @@ bool IsUserTypeAllowed(const user_manager::User& user) {
       return base::FeatureList::IsEnabled(features::kWebKioskEnableLacros);
     case user_manager::UserType::kKioskApp:
       return base::FeatureList::IsEnabled(features::kChromeKioskEnableLacros);
-    case user_manager::UserType::kArcKioskApp:
-      return false;
   }
 }
 
@@ -71,7 +84,7 @@ bool IsAllowedInternal(const user_manager::User* user,
   if (!user) {
     // User is not available. Practically, this is accidentally happening
     // if related function is called before session, or in testing.
-    // TODO(crbug.com/1408962): We should limit this at least only for
+    // TODO(crbug.com/40253772): We should limit this at least only for
     // testing.
     return false;
   }
@@ -116,13 +129,15 @@ bool IsEnabledInternal(const user_manager::User* user,
     case LacrosAvailability::kUserChoice:
       break;
     case LacrosAvailability::kLacrosDisallowed:
-      NOTREACHED();  // Guarded by IsLacrosAllowedInternal, called before.
+      NOTREACHED_IN_MIGRATION();  // Guarded by IsLacrosAllowedInternal, called
+                                  // before.
       return false;
     case LacrosAvailability::kLacrosOnly:
-      return true;
+      // Lacros can no longer be enabled via policy.
+      break;
   }
 
-  if (base::FeatureList::IsEnabled(features::kLacrosOnly)) {
+  if (IsLacrosEnabledForTesting()) {
     return true;
   }
 
@@ -175,7 +190,7 @@ void BrowserSupport::InitializeForPrimaryUser(
     // services are initialized.
     if (IsEnabledInternal(primary_user, lacros_availability,
                           /*check_migration_status=*/false)) {
-      // TODO(crbug.com/1277848): Once `BrowserDataMigrator` stabilises, remove
+      // TODO(crbug.com/40207942): Once `BrowserDataMigrator` stabilises, remove
       // this log message.
       LOG(WARNING) << "Setting migration as completed since it is a new user.";
       const std::string user_id_hash = primary_user->username_hash();

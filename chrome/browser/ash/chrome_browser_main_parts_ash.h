@@ -11,15 +11,17 @@
 #include "base/functional/callback_helpers.h"
 #include "base/memory/weak_ptr.h"
 #include "base/task/cancelable_task_tracker.h"
-#include "chrome/browser/ash/external_metrics.h"
+#include "chrome/browser/ash/external_metrics/external_metrics.h"
 #include "chrome/browser/ash/pcie_peripheral/ash_usb_detector.h"
 #include "chrome/browser/chrome_browser_main_linux.h"
 #include "chrome/browser/memory/memory_kills_monitor.h"
 
+class AmbientClientImpl;
 class AssistantBrowserDelegateImpl;
 class AssistantStateClient;
 class ChromeKeyboardControllerClient;
 class ImageDownloaderImpl;
+class LobsterClientFactoryImpl;
 
 namespace arc {
 class ArcServiceLauncher;
@@ -65,7 +67,6 @@ class CameraGeneralSurveyHandler;
 class ChromeAuthParts;
 class CrosUsbDetector;
 class DebugdNotificationHandler;
-class DemoModeResourcesRemover;
 class EventRewriterDelegateImpl;
 class FastTransitionObserver;
 class FwupdDownloadClientImpl;
@@ -88,6 +89,7 @@ class SessionTerminationManager;
 class ShortcutMappingPrefService;
 class ShutdownPolicyForwarder;
 class SigninProfileHandler;
+class SuspendPerfReporter;
 class SystemTokenCertDBInitializer;
 class VideoConferenceAppServiceClient;
 class VideoConferenceAshFeatureClient;
@@ -98,6 +100,10 @@ class CarrierLockManager;
 
 namespace cros_healthd::internal {
 class DataCollector;
+}
+
+namespace file_manager {
+class FileIndexServiceRegistry;
 }
 
 namespace internal {
@@ -129,10 +135,6 @@ class QuickPairBrowserDelegateImpl;
 namespace system {
 class DarkResumeController;
 }  // namespace system
-
-namespace traffic_counters {
-class TrafficCountersHandler;
-}  // namespace traffic_counters
 
 // ChromeBrowserMainParts implementation for chromeos specific code.
 // NOTE: Chromeos UI (Ash) support should be added to
@@ -173,12 +175,17 @@ class ChromeBrowserMainPartsAsh : public ChromeBrowserMainPartsLinux {
   std::unique_ptr<IdleActionWarningObserver> idle_action_warning_observer_;
   std::unique_ptr<RendererFreezer> renderer_freezer_;
   std::unique_ptr<PowerMetricsReporter> power_metrics_reporter_;
+  std::unique_ptr<SuspendPerfReporter> suspend_perf_reporter_;
   std::unique_ptr<FastTransitionObserver> fast_transition_observer_;
   std::unique_ptr<NetworkThrottlingObserver> network_throttling_observer_;
   std::unique_ptr<NetworkChangeManagerClient> network_change_manager_client_;
+  std::unique_ptr<LobsterClientFactoryImpl> lobster_client_factory_;
   std::unique_ptr<DebugdNotificationHandler> debugd_notification_handler_;
   std::unique_ptr<HatsBluetoothRevampTriggerImpl>
       hats_bluetooth_revamp_trigger_;
+
+  std::unique_ptr<::ash::file_manager::FileIndexServiceRegistry>
+      file_index_service_registry_;
 
   std::unique_ptr<internal::DBusServices> dbus_services_;
 
@@ -209,6 +216,7 @@ class ChromeBrowserMainPartsAsh : public ChromeBrowserMainPartsLinux {
 
   std::unique_ptr<LowDiskNotification> low_disk_notification_;
   std::unique_ptr<KioskController> kiosk_controller_;
+  std::unique_ptr<AmbientClientImpl> ambient_client_;
   std::unique_ptr<MultiCaptureNotifications> multi_capture_notifications_;
 
   std::unique_ptr<ShortcutMappingPrefService> shortcut_mapping_pref_service_;
@@ -234,8 +242,6 @@ class ChromeBrowserMainPartsAsh : public ChromeBrowserMainPartsLinux {
 
   std::unique_ptr<power::auto_screen_brightness::Controller>
       auto_screen_brightness_controller_;
-
-  std::unique_ptr<DemoModeResourcesRemover> demo_mode_resources_remover_;
 
   std::unique_ptr<AshUsbDetector> ash_usb_detector_;
   std::unique_ptr<CrosUsbDetector> cros_usb_detector_;
@@ -288,8 +294,6 @@ class ChromeBrowserMainPartsAsh : public ChromeBrowserMainPartsLinux {
   // only be used by ChromeFeaturesServiceProvider.
   std::unique_ptr<base::FeatureList::Accessor> feature_list_accessor_;
 
-  std::unique_ptr<traffic_counters::TrafficCountersHandler>
-      traffic_counters_handler_;
   std::unique_ptr<ash::AuthEventsRecorder> auth_events_recorder_;
   std::unique_ptr<ash::ChromeAuthParts> auth_parts_;
 

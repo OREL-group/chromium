@@ -5,7 +5,7 @@
 #ifndef COMPONENTS_SYNC_SERVICE_SYNC_SERVICE_UTILS_H_
 #define COMPONENTS_SYNC_SERVICE_SYNC_SERVICE_UTILS_H_
 
-#include "components/sync/base/model_type.h"
+#include "components/sync/base/data_type.h"
 
 namespace syncer {
 
@@ -21,7 +21,7 @@ enum class UploadState {
   INITIALIZING,
   // We are not syncing to Google, and the caller should assume that we do not
   // have consent to do so. This can have a number of reasons, e.g.: sync as a
-  // whole is disabled, or the given model type is disabled, or we're in
+  // whole is disabled, or the given data type is disabled, or we're in
   // "local sync" mode, or this data type is encrypted with a custom passphrase
   // (in which case we're technically still uploading, but Google can't inspect
   // the data), or we're in a persistent auth error state. As one special case
@@ -40,6 +40,7 @@ enum class UploadState {
 // values should never be reused. Keep in sync w/ TrustedVaultUserActionTrigger
 // in tools/metrics/histograms/metadata/sync/enums.xml.
 // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.components.sync
+// LINT.IfChange(TrustedVaultUserActionTrigger)
 enum class TrustedVaultUserActionTriggerForUMA {
   // Settings pages, used on all platforms except ChromeOS.
   kSettings = 0,
@@ -56,12 +57,13 @@ enum class TrustedVaultUserActionTriggerForUMA {
   kPasswordManagerErrorMessage = 4,
   kMaxValue = kPasswordManagerErrorMessage
 };
+// LINT.ThenChange(/tools/metrics/histograms/metadata/sync/enums.xml:TrustedVaultUserActionTrigger)
 
 // Returns whether |type| is being uploaded to Google. This is useful for
 // features that depend on user consent for uploading data (e.g. history) to
 // Google.
 UploadState GetUploadToGoogleState(const SyncService* sync_service,
-                                   ModelType type);
+                                   DataType type);
 
 void RecordKeyRetrievalTrigger(TrustedVaultUserActionTriggerForUMA trigger);
 

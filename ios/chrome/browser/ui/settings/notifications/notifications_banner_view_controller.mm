@@ -5,10 +5,13 @@
 #import "ios/chrome/browser/ui/settings/notifications/notifications_banner_view_controller.h"
 
 #import "base/apple/foundation_util.h"
+#import "base/feature_list.h"
 #import "base/metrics/user_metrics.h"
 #import "base/metrics/user_metrics_action.h"
 #import "base/notreached.h"
+#import "components/send_tab_to_self/features.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
+#import "ios/chrome/browser/shared/ui/symbols/symbols.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_header_footer_item.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_multi_detail_text_item.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_switch_cell.h"
@@ -37,12 +40,20 @@ CGFloat const kTitleHorizontalMargin = 25.0;
 CGFloat const kContentWidthConstant = 23.0;
 //  Radius size of the table view.
 CGFloat const kTableViewCornerRadius = 10;
-// Name of the banner image above the title.
-NSString* const kBanner = @"notifications_opt_in_banner";
-// Name of the banner image above the title in landscape.
-NSString* const kBannerLandscape = @"notifications_opt_in_banner_landscape";
 // Space above the title.
 CGFloat const kSpaceAboveTitle = 20.0;
+
+// Returns the name of the banner image above the title.
+NSString* BannerImageName(bool landscape) {
+#if BUILDFLAG(IOS_USE_BRANDED_SYMBOLS)
+  return landscape ? kChromeNotificationsOptInBannerLandscapeImage
+                   : kChromeNotificationsOptInBannerImage;
+#else
+  return landscape ? kChromiumNotificationsOptInBannerLandscapeImage
+                   : kChromiumNotificationsOptInBannerImage;
+#endif
+}
+
 }  // namespace
 
 @interface NotificationsBannerViewController () <UITableViewDelegate>
@@ -52,8 +63,13 @@ CGFloat const kSpaceAboveTitle = 20.0;
 @property(nonatomic, strong) TableViewItem* contentNotificationsItem;
 // All the items for the tips notifications section received by mediator.
 @property(nonatomic, strong) TableViewSwitchItem* tipsNotificationsItem;
+// All the items for the Safety Check notifications section received by
+// mediator.
+@property(nonatomic, strong) TableViewSwitchItem* safetyCheckItem;
 @property(nonatomic, strong)
     TableViewHeaderFooterItem* tipsNotificationsFooterItem;
+// All the items for the send tab notifications section received by mediator.
+@property(nonatomic, strong) TableViewSwitchItem* sendTabNotificationsItem;
 
 @end
 
@@ -71,7 +87,7 @@ CGFloat const kSpaceAboveTitle = 20.0;
   self.actionButtonsVisibility = ActionButtonsVisibility::kHidden;
   self.titleHorizontalMargin = kTitleHorizontalMargin;
   self.titleTopMarginWhenNoHeaderImage = kSpaceAboveTitle;
-  self.bannerName = IsLandscape(self.view.window) ? kBannerLandscape : kBanner;
+  self.bannerName = BannerImageName(IsLandscape(self.view.window));
   self.bannerSize = ui::GetDeviceFormFactor() == ui::DEVICE_FORM_FACTOR_TABLET
                         ? BannerImageSizeType::kStandard
                         : BannerImageSizeType::kShort;
@@ -119,15 +135,19 @@ CGFloat const kSpaceAboveTitle = 20.0;
 - (void)viewWillLayoutSubviews {
   [super viewWillLayoutSubviews];
   [self updateTableViewHeightConstraint];
-  self.bannerName = IsLandscape(self.view.window) ? kBannerLandscape : kBanner;
-  // Make the navigation bar buttons white when the banner is visible.
-  self.navigationController.navigationBar.tintColor =
-      self.shouldHideBanner ? nil : UIColor.whiteColor;
+  self.bannerName = BannerImageName(IsLandscape(self.view.window));
 }
 
 - (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection {
   [super traitCollectionDidChange:previousTraitCollection];
   self.shouldHideBanner = IsCompactHeight(self.traitCollection);
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+  [super viewWillAppear:animated];
+  // Make the navigation bar buttons white when the banner is visible.
+  self.navigationController.navigationBar.tintColor =
+      self.shouldHideBanner ? nil : UIColor.whiteColor;
 }
 
 - (void)viewWillDisappear:(BOOL)animated {
@@ -211,9 +231,15 @@ CGFloat const kSpaceAboveTitle = 20.0;
     [_snapshot appendSectionsWithIdentifiers:@[
       @(SectionIdentifier::kNotificationOptions)
     ]];
-    if (IsContentPushNotificationsEnabled()) {
+    if ([self isContentNotificationEnabled]) {
       [_snapshot appendItemsWithIdentifiers:@[
         @(NotificationsItemIdentifier::ItemIdentifierContent)
+      ]];
+    }
+    if (base::FeatureList::IsEnabled(
+            send_tab_to_self::kSendTabToSelfIOSPushNotifications)) {
+      [_snapshot appendItemsWithIdentifiers:@[
+        @(NotificationsItemIdentifier::ItemIdentifierSendTab)
       ]];
     }
     if (IsIOSTipsNotificationsEnabled()) {
@@ -224,6 +250,11 @@ CGFloat const kSpaceAboveTitle = 20.0;
     [_snapshot appendItemsWithIdentifiers:@[
       @(NotificationsItemIdentifier::ItemIdentifierPriceTracking)
     ]];
+    if (IsSafetyCheckNotificationsEnabled()) {
+      [_snapshot appendItemsWithIdentifiers:@[
+        @(NotificationsItemIdentifier::ItemIdentifierSafetyCheck)
+      ]];
+    }
   }
   return _snapshot;
 }
@@ -292,8 +323,12 @@ CGFloat const kSpaceAboveTitle = 20.0;
       return self.tipsNotificationsItem;
     case ItemIdentifierPriceTracking:
       return self.priceTrackingItem;
+    case ItemIdentifierSafetyCheck:
+      return self.safetyCheckItem;
+    case ItemIdentifierSendTab:
+      return self.sendTabNotificationsItem;
     case ItemIdentifierTipsNotificationsFooter:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 

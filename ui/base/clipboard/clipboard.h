@@ -12,6 +12,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/component_export.h"
@@ -20,7 +21,6 @@
 #include "base/functional/callback.h"
 #include "base/observer_list.h"
 #include "base/process/process.h"
-#include "base/strings/string_piece.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread_checker.h"
@@ -62,7 +62,7 @@ class COMPONENT_EXPORT(UI_BASE_CLIPBOARD) Clipboard
   using ReadRTFCallback = base::OnceCallback<void(std::string result)>;
   using ReadPngCallback =
       base::OnceCallback<void(const std::vector<uint8_t>& result)>;
-  using ReadCustomDataCallback =
+  using ReadDataTransferCustomDataCallback =
       base::OnceCallback<void(std::u16string result)>;
   using ReadFilenamesCallback =
       base::OnceCallback<void(std::vector<ui::FileInfo> result)>;
@@ -222,10 +222,11 @@ class COMPONENT_EXPORT(UI_BASE_CLIPBOARD) Clipboard
                        const DataTransferEndpoint* data_dst,
                        ReadPngCallback callback) const = 0;
 
-  virtual void ReadCustomData(ClipboardBuffer buffer,
-                              const std::u16string& type,
-                              const DataTransferEndpoint* data_dst,
-                              ReadCustomDataCallback callback) const;
+  virtual void ReadDataTransferCustomData(
+      ClipboardBuffer buffer,
+      const std::u16string& type,
+      const DataTransferEndpoint* data_dst,
+      ReadDataTransferCustomDataCallback callback) const;
 
   // Reads filenames from the clipboard, if available.
   virtual void ReadFilenames(ClipboardBuffer buffer,
@@ -266,10 +267,10 @@ class COMPONENT_EXPORT(UI_BASE_CLIPBOARD) Clipboard
   virtual void ReadRTF(ClipboardBuffer buffer,
                        const DataTransferEndpoint* data_dst,
                        std::string* result) const = 0;
-  virtual void ReadCustomData(ClipboardBuffer buffer,
-                              const std::u16string& type,
-                              const DataTransferEndpoint* data_dst,
-                              std::u16string* result) const = 0;
+  virtual void ReadDataTransferCustomData(ClipboardBuffer buffer,
+                                          const std::u16string& type,
+                                          const DataTransferEndpoint* data_dst,
+                                          std::u16string* result) const = 0;
   virtual void ReadFilenames(ClipboardBuffer buffer,
                              const DataTransferEndpoint* data_dst,
                              std::vector<ui::FileInfo>* result) const = 0;
@@ -308,7 +309,7 @@ class COMPONENT_EXPORT(UI_BASE_CLIPBOARD) Clipboard
 
   // Notify all subscribers of new text pasted to the clipboard when there is a
   // source URL.
-  void NotifyCopyWithUrl(const base::StringPiece text,
+  void NotifyCopyWithUrl(const std::string_view text,
                          const GURL& frame,
                          const GURL& main_frame);
 
@@ -447,19 +448,18 @@ class COMPONENT_EXPORT(UI_BASE_CLIPBOARD) Clipboard
       std::unique_ptr<DataTransferEndpoint> data_src,
       uint32_t privacy_types) = 0;
 
-  virtual void WriteText(base::StringPiece text) = 0;
+  virtual void WriteText(std::string_view text) = 0;
 
-  virtual void WriteHTML(base::StringPiece markup,
-                         std::optional<base::StringPiece> source_url) = 0;
+  virtual void WriteHTML(std::string_view markup,
+                         std::optional<std::string_view> source_url) = 0;
 
-  virtual void WriteSvg(base::StringPiece markup) = 0;
+  virtual void WriteSvg(std::string_view markup) = 0;
 
-  virtual void WriteRTF(base::StringPiece rtf) = 0;
+  virtual void WriteRTF(std::string_view rtf) = 0;
 
   virtual void WriteFilenames(std::vector<ui::FileInfo> filenames) = 0;
 
-  virtual void WriteBookmark(base::StringPiece title,
-                             base::StringPiece url) = 0;
+  virtual void WriteBookmark(std::string_view title, std::string_view url) = 0;
 
   virtual void WriteWebSmartPaste() = 0;
 

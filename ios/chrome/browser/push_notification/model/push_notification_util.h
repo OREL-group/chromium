@@ -35,8 +35,11 @@ enum class SettingsAuthorizationStatus {
 // didRegisterForNotificationsWithDeviceToken function is called if the device
 // was successfully registered with APNS. If the device's registration was
 // unsuccessful, then AppDelegate's didRegisterForNotificationsWithError
-// function is called.
-+ (void)registerDeviceWithAPNS;
+// function is called. `provisionalNotificationsAvailable` is YES when a
+// notification type that can deliver provisional notifications (Content or
+// SendTab) notification is enabled or need to be registered.
++ (void)registerDeviceWithAPNSWithProvisionalNotificationsAvailable:
+    (BOOL)provisionalNotificationsAvailable;
 
 // The function registers the set of `UNNotificationCategory` objects with iOS'
 // UNNotificationCenter.
@@ -75,6 +78,11 @@ enum class SettingsAuthorizationStatus {
 // executed on the application's main thread.
 + (void)getPermissionSettings:
     (void (^)(UNNotificationSettings* settings))completionHandler;
+
+// This functions retrieves the currently saved authorization settings for
+// push notifications. This is used for features that require knowledge of
+// status changes on notification permissions.
++ (UNAuthorizationStatus)getSavedPermissionSettings;
 
 // This function updates the value stored in the prefService that represents the
 // user's iOS settings permission status for push notifications. If there is a

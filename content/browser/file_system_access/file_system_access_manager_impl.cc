@@ -120,7 +120,8 @@ void ShowFilePickerOnUIThread(const url::Origin& requesting_origin,
 
   // Drop fullscreen mode so that the user sees the URL bar.
   base::ScopedClosureRunner fullscreen_block =
-      web_contents->ForSecurityDropFullscreen();
+      web_contents->ForSecurityDropFullscreen(
+          /*display_id=*/display::kInvalidDisplayId);
 
   FileSystemChooser::CreateAndShow(web_contents, options, std::move(callback),
                                    std::move(fullscreen_block));
@@ -251,7 +252,7 @@ ui::SelectFileDialog::Type GetSelectFileDialogType(
         kDirectoryPickerOptions:
       return ui::SelectFileDialog::SELECT_FOLDER;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return ui::SelectFileDialog::SELECT_NONE;
 }
 
@@ -319,7 +320,8 @@ FileSystemAccessManagerImpl::FileSystemAccessManagerImpl(
     : context_(std::move(context)),
       blob_context_(std::move(blob_context)),
       permission_context_(permission_context),
-      lock_manager_(std::make_unique<FileSystemAccessLockManager>(PassKey())),
+      lock_manager_(
+          base::MakeRefCounted<FileSystemAccessLockManager>(PassKey())),
       watcher_manager_(this, PassKey()),
       off_the_record_(off_the_record) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -356,12 +358,23 @@ void FileSystemAccessManagerImpl::GetSandboxedFileSystem(
     GetSandboxedFileSystemCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   GetSandboxedFileSystem(receivers_.current_context(),
-                         /*bucket=*/std::nullopt, std::move(callback));
+                         /*bucket=*/std::nullopt,
+                         /*directory_path_components=*/{}, std::move(callback));
+}
+
+void FileSystemAccessManagerImpl::GetSandboxedFileSystemForDevtools(
+    const std::vector<std::string>& directory_path_components,
+    GetSandboxedFileSystemCallback callback) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  GetSandboxedFileSystem(receivers_.current_context(),
+                         /*bucket=*/std::nullopt, directory_path_components,
+                         std::move(callback));
 }
 
 void FileSystemAccessManagerImpl::GetSandboxedFileSystem(
     const BindingContext& binding_context,
     const std::optional<storage::BucketLocator>& bucket,
+    const std::vector<std::string>& directory_path_components,
     GetSandboxedFileSystemCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
@@ -370,6 +383,7 @@ void FileSystemAccessManagerImpl::GetSandboxedFileSystem(
          const BindingContext& callback_binding_context,
          GetSandboxedFileSystemCallback callback,
          scoped_refptr<base::SequencedTaskRunner> task_runner,
+         const std::vector<std::string>& directory_path_components,
          const storage::FileSystemURL& root, const std::string& fs_name,
          base::File::Error result) {
         task_runner->PostTask(
@@ -377,10 +391,12 @@ void FileSystemAccessManagerImpl::GetSandboxedFileSystem(
             base::BindOnce(
                 &FileSystemAccessManagerImpl::DidOpenSandboxedFileSystem,
                 std::move(manager), callback_binding_context,
-                std::move(callback), root, fs_name, result));
+                std::move(callback), root, fs_name, result,
+                directory_path_components));
       },
       weak_factory_.GetWeakPtr(), binding_context, std::move(callback),
-      base::SequencedTaskRunner::GetCurrentDefault());
+      base::SequencedTaskRunner::GetCurrentDefault(),
+      directory_path_components);
 
   GetIOThreadTaskRunner({})->PostTask(
       FROM_HERE, base::BindOnce(&FileSystemContext::OpenFileSystem, context(),
@@ -715,7 +731,8 @@ void FileSystemAccessManagerImpl::ResolveDataTransferTokenWithFileType(
     HandleType file_type) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  if (!permission_context_ ||
+  // Don't perform sensitive entry access checks on D&D files.
+  if (!permission_context_ || file_type == HandleType::kFile ||
       !base::FeatureList::IsEnabled(
           features::kFileSystemAccessDragAndDropCheckBlocklist)) {
     DidVerifySensitiveDirectoryAccessForDataTransfer(
@@ -731,7 +748,7 @@ void FileSystemAccessManagerImpl::ResolveDataTransferTokenWithFileType(
       url.type() == storage::FileSystemType::kFileSystemTypeLocal
           ? PathType::kLocal
           : PathType::kExternal;
-  // TODO(https://crbug.com/1370433): Add a prompt specific to D&D. For now, run
+  // TODO(crbug.com/40061211): Add a prompt specific to D&D. For now, run
   // the same security checks and show the same prompt for D&D as for the file
   // picker.
   permission_context_->ConfirmSensitiveEntryAccess(
@@ -892,7 +909,7 @@ std::string SerializeURLImpl(const storage::FileSystemURL& url,
       data.mutable_sandboxed()->set_bucket_id(url.bucket()->id.value());
     }
   } else {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
   }
 
   std::string value;
@@ -1036,7 +1053,7 @@ void FileSystemAccessManagerImpl::DeserializeHandle(
       break;
     }
     case FileSystemAccessHandleData::DATA_NOT_SET:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 }
 
@@ -1161,6 +1178,12 @@ FileSystemAccessLockManager::LockType
 FileSystemAccessManagerImpl::GetAncestorLockTypeForTesting() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return lock_manager_->GetAncestorLockTypeForTesting();  // IN-TEST
+}
+
+base::WeakPtr<FileSystemAccessLockManager>
+FileSystemAccessManagerImpl::GetLockManagerWeakPtrForTesting() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return lock_manager_->GetWeakPtrForTesting();  // IN-TEST
 }
 
 mojo::PendingRemote<blink::mojom::FileSystemAccessFileWriter>
@@ -1335,6 +1358,48 @@ void FileSystemAccessManagerImpl::DidOpenSandboxedFileSystem(
     GetSandboxedFileSystemCallback callback,
     const storage::FileSystemURL& root,
     const std::string& filesystem_name,
+    base::File::Error result,
+    const std::vector<std::string>& directory_path_components) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  if (result != base::File::FILE_OK) {
+    std::move(callback).Run(file_system_access_error::FromFileError(result),
+                            mojo::NullRemote());
+    return;
+  }
+
+  if (directory_path_components.size() == 0) {
+    std::move(callback).Run(
+        file_system_access_error::Ok(),
+        CreateDirectoryHandle(binding_context, root,
+                              GetSharedHandleStateForSandboxedPath()));
+    return;
+  }
+
+  base::FilePath file_path = base::FilePath(root.path());
+  for (const auto& component : directory_path_components) {
+    file_path = file_path.AppendASCII(component);
+  }
+
+  auto url = context()->CreateCrackedFileSystemURL(
+      root.storage_key(), root.mount_type(), file_path);
+  if (root.bucket().has_value()) {
+    url.SetBucket(root.bucket().value());
+  }
+
+  DoFileSystemOperation(
+      FROM_HERE, &storage::FileSystemOperationRunner::DirectoryExists,
+      base::BindOnce(&FileSystemAccessManagerImpl::
+                         DidResolveUrlAfterOpeningSandboxedFileSystem,
+                     weak_factory_.GetWeakPtr(), binding_context,
+                     std::move(callback), url),
+      url);
+}
+
+void FileSystemAccessManagerImpl::DidResolveUrlAfterOpeningSandboxedFileSystem(
+    const BindingContext& binding_context,
+    GetSandboxedFileSystemCallback callback,
+    const storage::FileSystemURL& url,
     base::File::Error result) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
@@ -1346,7 +1411,7 @@ void FileSystemAccessManagerImpl::DidOpenSandboxedFileSystem(
 
   std::move(callback).Run(
       file_system_access_error::Ok(),
-      CreateDirectoryHandle(binding_context, root,
+      CreateDirectoryHandle(binding_context, url,
                             GetSharedHandleStateForSandboxedPath()));
 }
 
@@ -1422,8 +1487,8 @@ void FileSystemAccessManagerImpl::DidVerifySensitiveDirectoryAccess(
   }
 
   // Move `entries` to `pathinfos_to_check` to minimize memory copies.
-  // `ResultEntry` and `PathInfo` are actually equivalent structures with a 1:1
-  // mapping of fields.
+  // `ResultEntry` and `PathInfo` are actually equivalent structures with a
+  // 1:1 mapping of fields.
   // TODO: crbug.com/326462071 - ResultEntry and PathInfo may become aliases,
   // in which case this transform is not required.
   std::vector<FileSystemAccessPermissionContext::PathInfo> pathinfos_to_check;
@@ -1436,7 +1501,11 @@ void FileSystemAccessManagerImpl::DidVerifySensitiveDirectoryAccess(
                                    .path = std::move(entry.path)};
                  });
 
-  if (permission_context_) {
+  // There is no need to scan the file in case of saving, since it's
+  // data is truncated at this point, so it won't be available for
+  // the web page.
+  if (permission_context_ &&
+      options.type() != ui::SelectFileDialog::SELECT_SAVEAS_FILE) {
     permission_context_->CheckPathsAgainstEnterprisePolicy(
         std::move(pathinfos_to_check), binding_context.frame_id,
         base::BindOnce(
@@ -1509,7 +1578,8 @@ void FileSystemAccessManagerImpl::OnCheckPathsAgainstEnterprisePolicy(
 
   if (options.type() == ui::SelectFileDialog::SELECT_SAVEAS_FILE) {
     DCHECK_EQ(entries.size(), 1u);
-    // Create file if it doesn't yet exist, and truncate file if it does exist.
+    // Create file if it doesn't yet exist, and truncate file if it does
+    // exist.
     auto fs_url =
         CreateFileSystemURLFromPath(entries.front().type, entries.front().path);
 
@@ -1542,7 +1612,7 @@ void FileSystemAccessManagerImpl::DidCreateAndTruncateSaveFile(
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   std::vector<blink::mojom::FileSystemAccessEntryPtr> result_entries;
   if (!success) {
-    // TODO(https://crbug.com/1124871): Failure to create or truncate the file
+    // TODO(crbug.com/40717501): Failure to create or truncate the file
     // should probably not just result in a generic error, but instead inform
     // the user of the problem?
     std::move(callback).Run(
@@ -1732,15 +1802,16 @@ FileSystemAccessManagerImpl::GetSharedHandleStateForSandboxedPath() {
 
   // TODO(crbug.com/40198034): This is a hack which is only viable since
   // permission grants always return GRANTED in sandboxed file systems.
-  //  - Ideally we would not need to special-case the permission logic for files
+  //  - Ideally we would not need to special-case the permission logic for
+  //  files
   //    in the sandboxed file system. It should be the same as for local and
   //    external file systems.
   //  - At minimum, should not be creating new grants every time a
   //    SharedHandleState is needed for a handle in a sandboxed file system.
-  //    Once a permission grant for the root of a bucket file system is created,
-  //    that permission grant should be used for all handles in the file system.
-  //    That this is not the case currently breaks any logic relying on a
-  //    FileSystemAccessPermissionGrant::Observer.
+  //    Once a permission grant for the root of a bucket file system is
+  //    created, that permission grant should be used for all handles in the
+  //    file system. That this is not the case currently breaks any logic
+  //    relying on a FileSystemAccessPermissionGrant::Observer.
   auto permission_grant =
       base::MakeRefCounted<FixedFileSystemAccessPermissionGrant>(
           PermissionStatus::GRANTED, base::FilePath());
@@ -1750,7 +1821,7 @@ FileSystemAccessManagerImpl::GetSharedHandleStateForSandboxedPath() {
 base::Uuid FileSystemAccessManagerImpl::GetUniqueId(
     const FileSystemAccessFileHandleImpl& file) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  // TODO(https://crbug.com/1342961): This is a temporary hack to put something
+  // TODO(crbug.com/40852050): This is a temporary hack to put something
   // that works behind a flag. Persist handle IDs such that they're stable
   // across browsing sessions.
 
@@ -1768,7 +1839,7 @@ base::Uuid FileSystemAccessManagerImpl::GetUniqueId(
 base::Uuid FileSystemAccessManagerImpl::GetUniqueId(
     const FileSystemAccessDirectoryHandleImpl& directory) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  // TODO(https://crbug.com/1342961): This is a temporary hack to put something
+  // TODO(crbug.com/40852050): This is a temporary hack to put something
   // that works behind a flag. Persist handle IDs such that they're stable
   // across browsing sessions.
 
@@ -1840,12 +1911,12 @@ void FileSystemAccessManagerImpl::DidCleanupAccessHandleCapacityAllocation(
   // We cannot destroy `access_handle_host` by erasing it from the
   // `access_handle_host_receivers_` set.
   //
-  // The destruction of a `FileSystemAccessAccessHandleHostImpl` can trigger the
-  // creation of another. This means that if we directly erase
-  // `access_handle_host` from the set, `access_handle_host_receivers_` `erase`
-  // could call into `access_handle_host_receivers_` `insert` (in
-  // `CreateAccessHandleHost`) which is undefined behavior. Instead, we'll move
-  // it out of the set before erasing and then destroying.
+  // The destruction of a `FileSystemAccessAccessHandleHostImpl` can trigger
+  // the creation of another. This means that if we directly erase
+  // `access_handle_host` from the set, `access_handle_host_receivers_`
+  // `erase` could call into `access_handle_host_receivers_` `insert` (in
+  // `CreateAccessHandleHost`) which is undefined behavior. Instead, we'll
+  // move it out of the set before erasing and then destroying.
   size_t initial_size = access_handle_host_receivers_.size();
 
   auto iter = access_handle_host_receivers_.find(access_handle_host);

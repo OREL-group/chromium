@@ -23,7 +23,6 @@
 #include "base/metrics/user_metrics.h"
 #include "base/notreached.h"
 #include "base/ranges/algorithm.h"
-#include "components/browser_ui/site_settings/android/site_settings_jni_headers/WebsitePreferenceBridge_jni.h"
 #include "components/browser_ui/site_settings/android/storage_info_fetcher.h"
 #include "components/browser_ui/site_settings/android/website_preference_bridge_util.h"
 #include "components/browsing_data/content/cookie_helper.h"
@@ -49,8 +48,8 @@
 #include "content/public/browser/permission_result.h"
 #include "content/public/browser/storage_partition.h"
 #include "net/cookies/cookie_util.h"
-#include "net/extras/shared_dictionary/shared_dictionary_isolation_key.h"
 #include "net/extras/shared_dictionary/shared_dictionary_usage_info.h"
+#include "net/shared_dictionary/shared_dictionary_isolation_key.h"
 #include "services/network/public/mojom/cookie_manager.mojom.h"
 #include "services/network/public/mojom/network_context.mojom.h"
 #include "storage/browser/quota/quota_manager.h"
@@ -60,6 +59,9 @@
 #include "url/origin.h"
 #include "url/url_constants.h"
 #include "url/url_util.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "components/browser_ui/site_settings/android/site_settings_jni_headers/WebsitePreferenceBridge_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::ConvertJavaStringToUTF8;
@@ -161,8 +163,7 @@ void GetOrigins(JNIEnv* env,
     if (settings_it.GetContentSetting() == default_content_setting)
       continue;
     if (managedOnly &&
-        HostContentSettingsMap::GetProviderTypeFromSource(settings_it.source) !=
-            HostContentSettingsMap::ProviderType::POLICY_PROVIDER) {
+        settings_it.source != content_settings::ProviderType::kPolicyProvider) {
       continue;
     }
     const std::string origin = settings_it.primary_pattern.ToString();
@@ -302,37 +303,31 @@ bool GetBooleanForContentSetting(
 bool IsContentSettingManaged(
     const JavaParamRef<jobject>& jbrowser_context_handle,
     ContentSettingsType content_settings_type) {
-  std::string source;
   HostContentSettingsMap* content_settings =
       GetHostContentSettingsMap(jbrowser_context_handle);
-  content_settings->GetDefaultContentSetting(content_settings_type, &source);
-  HostContentSettingsMap::ProviderType provider =
-      content_settings->GetProviderTypeFromSource(source);
-  return provider == HostContentSettingsMap::POLICY_PROVIDER;
+  content_settings::ProviderType provider;
+  content_settings->GetDefaultContentSetting(content_settings_type, &provider);
+  return provider == content_settings::ProviderType::kPolicyProvider;
 }
 
 bool IsContentSettingManagedByCustodian(
     const JavaParamRef<jobject>& jbrowser_context_handle,
     ContentSettingsType content_settings_type) {
-  std::string source;
   HostContentSettingsMap* content_settings =
       GetHostContentSettingsMap(jbrowser_context_handle);
-  content_settings->GetDefaultContentSetting(content_settings_type, &source);
-  HostContentSettingsMap::ProviderType provider =
-      content_settings->GetProviderTypeFromSource(source);
-  return provider == HostContentSettingsMap::SUPERVISED_PROVIDER;
+  content_settings::ProviderType provider;
+  content_settings->GetDefaultContentSetting(content_settings_type, &provider);
+  return provider == content_settings::ProviderType::kSupervisedProvider;
 }
 
 bool IsContentSettingUserModifiable(
     const JavaParamRef<jobject>& jbrowser_context_handle,
     ContentSettingsType content_settings_type) {
-  std::string source;
   HostContentSettingsMap* content_settings =
       GetHostContentSettingsMap(jbrowser_context_handle);
-  content_settings->GetDefaultContentSetting(content_settings_type, &source);
-  HostContentSettingsMap::ProviderType provider =
-      content_settings->GetProviderTypeFromSource(source);
-  return provider >= HostContentSettingsMap::PREF_PROVIDER;
+  content_settings::ProviderType provider;
+  content_settings->GetDefaultContentSetting(content_settings_type, &provider);
+  return provider >= content_settings::ProviderType::kPrefProvider;
 }
 
 }  // anonymous namespace
@@ -516,7 +511,7 @@ static void JNI_WebsitePreferenceBridge_GetChosenObjects(
         ConvertUTF8ToJavaString(env, serialized);
 
     jboolean jis_managed =
-        object->source == content_settings::SETTING_SOURCE_POLICY;
+        object->source == content_settings::SettingSource::kPolicy;
 
     Java_WebsitePreferenceBridge_insertChosenObjectInfoIntoList(
         env, list, content_settings_type, jorigin, jname, jserialized,
@@ -889,6 +884,7 @@ static void JNI_WebsitePreferenceBridge_SetContentSettingEnabled(
       case ContentSettingsType::BLUETOOTH_SCANNING:
       case ContentSettingsType::CLIPBOARD_READ_WRITE:
       case ContentSettingsType::GEOLOCATION:
+      case ContentSettingsType::HAND_TRACKING:
       case ContentSettingsType::IDLE_DETECTION:
       case ContentSettingsType::MEDIASTREAM_CAMERA:
       case ContentSettingsType::MEDIASTREAM_MIC:
@@ -913,7 +909,8 @@ static void JNI_WebsitePreferenceBridge_SetContentSettingEnabled(
         value = CONTENT_SETTING_ALLOW;
         break;
       default:
-        NOTREACHED() << static_cast<int>(type);  // Not supported on Android.
+        NOTREACHED_IN_MIGRATION()
+            << static_cast<int>(type);  // Not supported on Android.
     }
   }
 
@@ -1022,7 +1019,7 @@ static void JNI_WebsitePreferenceBridge_GetContentSettingsExceptions(
     Java_WebsitePreferenceBridge_addContentSettingExceptionToList(
         env, list, content_settings_type, ConvertUTF8ToJavaString(env, origin),
         ConvertUTF8ToJavaString(env, entry.secondary_pattern.ToString()),
-        entry.GetContentSetting(), ConvertUTF8ToJavaString(env, entry.source),
+        entry.GetContentSetting(), static_cast<int>(entry.source),
         hasExpiration, expirationInDays,
         /*is_embargoed=*/false);
   }
@@ -1042,7 +1039,8 @@ static void JNI_WebsitePreferenceBridge_GetContentSettingsExceptions(
     Java_WebsitePreferenceBridge_addContentSettingExceptionToList(
         env, list, content_settings_type,
         ConvertUTF8ToJavaString(env, embargoed_origin_pattern), jembedder,
-        CONTENT_SETTING_BLOCK, /*source=*/ScopedJavaLocalRef<jstring>(),
+        CONTENT_SETTING_BLOCK,
+        static_cast<int>(content_settings::ProviderType::kNone),
         /*isTemporary=*/false,
         /*expiration=*/0, /*is_embargoed=*/true);
   }

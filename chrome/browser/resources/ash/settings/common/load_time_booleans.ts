@@ -70,6 +70,10 @@ export function isDisplayBrightnessControlInSettingsEnabled(): boolean {
   return loadTimeData.getBoolean('enableDisplayBrightnessControlInSettings');
 }
 
+export function isSkyVaultEnabled(): boolean {
+  return loadTimeData.getBoolean('enableSkyVault');
+}
+
 // Kerberos page
 export function isKerberosEnabled(): boolean {
   return loadTimeData.getBoolean('isKerberosEnabled');
@@ -104,8 +108,8 @@ export function isQuickAnswersSupported(): boolean {
   return loadTimeData.getBoolean('isQuickAnswersSupported');
 }
 
-export function isMahiEnabled(): boolean {
-  return loadTimeData.getBoolean('isMahiEnabled');
+export function isMagicBoostFeatureEnabled(): boolean {
+  return loadTimeData.getBoolean('isMagicBoostFeatureEnabled');
 }
 
 // System preferences page

@@ -42,7 +42,10 @@ class MockWebContentsObserver : public WebContentsObserver {
               RenderFrameHostChanged,
               (RenderFrameHost* old_host, RenderFrameHost* new_host),
               (override));
-  MOCK_METHOD(void, FrameDeleted, (int frame_tree_node_id), (override));
+  MOCK_METHOD(void,
+              FrameDeleted,
+              (FrameTreeNodeId frame_tree_node_id),
+              (override));
   MOCK_METHOD(void,
               RenderFrameHostStateChanged,
               (RenderFrameHost* render_frame_host,
@@ -207,12 +210,7 @@ class MockWebContentsObserver : public WebContentsObserver {
   MOCK_METHOD(void,
               InnerWebContentsAttached,
               (WebContents* inner_web_contents,
-               RenderFrameHost* render_frame_host,
-               bool is_full_page),
-              (override));
-  MOCK_METHOD(void,
-              InnerWebContentsDetached,
-              (WebContents* inner_web_contents),
+               RenderFrameHost* render_frame_host),
               (override));
   MOCK_METHOD(void,
               DidCloneToNewWebContents,
@@ -342,6 +340,11 @@ class MockWebContentsObserver : public WebContentsObserver {
                const GURL& scope,
                AllowServiceWorkerResult allowed),
               (override));
+  MOCK_METHOD(void,
+              AboutToBeDiscarded,
+              (WebContents * new_contents),
+              (override));
+  MOCK_METHOD(void, WasDiscarded, (), (override));
 };
 
 }  // namespace content

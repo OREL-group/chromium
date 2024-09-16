@@ -12,13 +12,14 @@
 
 #include "base/dcheck_is_on.h"
 #include "base/memory/ptr_util.h"
-#include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/paint/sparse_vector.h"
 #include "third_party/blink/renderer/platform/graphics/paint/clip_paint_property_node.h"
 #include "third_party/blink/renderer/platform/graphics/paint/effect_paint_property_node.h"
 #include "third_party/blink/renderer/platform/graphics/paint/scroll_paint_property_node.h"
 #include "third_party/blink/renderer/platform/graphics/paint/transform_paint_property_node.h"
+#include "third_party/blink/renderer/platform/sparse_vector.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/heap/member.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
@@ -40,21 +41,15 @@ namespace blink {
 // nodes store parent pointers but not child pointers and these return values
 // are important for catching property tree structure changes which require
 // updating descendant's parent pointers.
-class CORE_EXPORT ObjectPaintProperties {
-  USING_FAST_MALLOC(ObjectPaintProperties);
-
+class CORE_EXPORT ObjectPaintProperties
+    : public GarbageCollected<ObjectPaintProperties> {
  public:
+  ObjectPaintProperties() = default;
 #if DCHECK_IS_ON()
   ~ObjectPaintProperties() { DCHECK(!is_immutable_); }
 #endif
 
-  static std::unique_ptr<ObjectPaintProperties> Create() {
-    return std::unique_ptr<ObjectPaintProperties>(new ObjectPaintProperties);
-  }
-
- private:
-  // Use the public Create() method for instantiation.
-  ObjectPaintProperties() = default;
+  void Trace(Visitor* visitor) const { visitor->Trace(nodes_); }
 
  public:
 // Preprocessor macro declarations.
@@ -65,7 +60,7 @@ class CORE_EXPORT ObjectPaintProperties {
 // - ClearFoo(): a clear function
 // - foo_: the variable itself.
 //
-// Note that clear* functions return true if the property tree structure
+// Note that Clear* functions return true if the property tree structure
 // changes (an existing node was deleted), and false otherwise. See the
 // class-level comment ("update & clear implementation note") for details
 // about why this is needed for efficient updates.
@@ -87,7 +82,7 @@ class CORE_EXPORT ObjectPaintProperties {
         field_id, parent, std::move(state), animation_state);               \
   }                                                                         \
                                                                             \
-  bool Clear##function() { return nodes_.ClearField(field_id); }            \
+  bool Clear##function() { return nodes_.EraseField(field_id); }            \
   // (End of ADD_NODE definition)
 
 #define ADD_ALIAS_NODE(type, function, field_id)                        \
@@ -104,7 +99,7 @@ class CORE_EXPORT ObjectPaintProperties {
     return UpdateAlias<type##PaintPropertyNodeAlias>(field_id, parent); \
   }                                                                     \
                                                                         \
-  bool Clear##function() { return nodes_.ClearField(field_id); }        \
+  bool Clear##function() { return nodes_.EraseField(field_id); }        \
   // (End of ADD_ALIAS_NODE definition)
 
 #define ADD_TRANSFORM(function, field_id) \
@@ -141,28 +136,30 @@ class CORE_EXPORT ObjectPaintProperties {
 
     // Effects
     kElementCaptureEffect = 13,
-    kEffect = 14,
-    kFilter = 15,
-    kMask = 16,
-    kClipPathMask = 17,
-    kVerticalScrollbarEffect = 18,
-    kHorizontalScrollbarEffect = 19,
-    kScrollCorner = 20,
-    kEffectAlias = 21,
+    kViewTransitionSubframeRootEffect = 14,
+    kViewTransitionEffect = 15,
+    kEffect = 16,
+    kFilter = 17,
+    kMask = 18,
+    kClipPathMask = 19,
+    kVerticalScrollbarEffect = 20,
+    kHorizontalScrollbarEffect = 21,
+    kScrollCorner = 22,
+    kEffectAlias = 23,
     kFirstEffect = kElementCaptureEffect,
     kLastEffect = kEffectAlias,
 
     // Clips
-    kClipPathClip = 22,
-    kMaskClip = 23,
-    kCssClip = 24,
-    kOverflowControlsClip = 25,
-    kBackgroundClip = 26,
-    kPixelMovingFilterClipExpander = 27,
-    kInnerBorderRadiusClip = 28,
-    kOverflowClip = 29,
-    kCssClipFixedPosition = 30,
-    kClipAlias = 31,
+    kClipPathClip = 24,
+    kMaskClip = 25,
+    kCssClip = 26,
+    kOverflowControlsClip = 27,
+    kBackgroundClip = 28,
+    kPixelMovingFilterClipExpander = 29,
+    kInnerBorderRadiusClip = 30,
+    kOverflowClip = 31,
+    kCssClipFixedPosition = 32,
+    kClipAlias = 33,
     kFirstClip = kClipPathClip,
     kLastClip = kClipAlias,
 
@@ -269,22 +266,32 @@ class CORE_EXPORT ObjectPaintProperties {
   // follows:
   // [ ElementCaptureEffect ]
   // |     Isolated group to force an element to be painted separately.
+  // +-[ ViewTransitionSubframeRoot ]
+  //   |   Provides the root stacking context for a local subframe with an
+  //   |   active ViewTransition. This is used to implement the view transition
+  //  /    layer stacking context:
+  // |     https://drafts.csswg.org/css-view-transitions-1/#view-transition-layer
+  // +-[ ViewTransitionEffect ]
+  //   |   Provides the stacking context to paint all content for a Document,
+  //   |   including top layer elements, into an image used for ViewTransition.
+  //  /    This implements the capturing the image for the document element at:
+  // |     https://drafts.csswg.org/css-view-transitions-1/#capture-the-image-algorithm
   // +-[ Effect ]
   //   |   Isolated group to apply various CSS effects, including opacity,
   //  /    mix-blend-mode, backdrop-filter, and for isolation if a mask needs
-  // /     to be applied or backdrop-dependent children are present.
+  // |     to be applied or backdrop-dependent children are present.
   // +-[ Mask ]
-  // | |   Isolated group for painting the CSS mask or the mask-based CSS
-  // | |   clip-path. This node will have SkBlendMode::kDstIn and shall paint
-  // | |   last, i.e. after masked contents.
-  // | +-[ ClipPathMask ]
-  // |     Isolated group for painting the mask-based CSS clip-path. This node
-  // |     will have SkBlendMode::kDstIn and shall paint last, i.e. after
-  // |     clipped contents. If there is no Mask node, then this node is a
+  //   |   Isolated group for painting the CSS mask or the mask-based CSS
+  //  /    clip-path. This node will have SkBlendMode::kDstIn and shall paint
+  // |     last, i.e. after masked contents.
+  // +-[ ClipPathMask ]
+  //   |   Isolated group for painting the mask-based CSS clip-path. This node
+  //   |   will have SkBlendMode::kDstIn and shall paint last, i.e. after
+  //  /    clipped contents. If there is no Mask node, then this node is a
   // |     direct child of the Effect node.
   // +-[ Filter ]
-  // |     Isolated group for CSS filter. This is separate from Effect in case
-  // |     there are masks which should be applied to the output of the filter
+  //   |   Isolated group for CSS filter. This is separate from Effect in case
+  //  /    there are masks which should be applied to the output of the filter
   // |     instead of the input.
   // +-[ VerticalScrollbarEffect / HorizontalScrollbarEffect / ScrollCorner ]
   // |     Overlay Scrollbars on Aura and Android need effect node for fade
@@ -300,6 +307,9 @@ class CORE_EXPORT ObjectPaintProperties {
   }
 
   ADD_EFFECT(ElementCaptureEffect, NodeId::kElementCaptureEffect)
+  ADD_EFFECT(ViewTransitionSubframeRootEffect,
+             NodeId::kViewTransitionSubframeRootEffect)
+  ADD_EFFECT(ViewTransitionEffect, NodeId::kViewTransitionEffect)
   ADD_EFFECT(Effect, NodeId::kEffect)
   ADD_EFFECT(Filter, NodeId::kFilter)
   ADD_EFFECT(Mask, NodeId::kMask)
@@ -308,6 +318,7 @@ class CORE_EXPORT ObjectPaintProperties {
   ADD_EFFECT(HorizontalScrollbarEffect, NodeId::kHorizontalScrollbarEffect)
   ADD_EFFECT(ScrollCornerEffect, NodeId::kScrollCorner)
   ADD_ALIAS_NODE(Effect, EffectIsolationNode, NodeId::kEffectAlias)
+
   // Clip node declarations.
   //
   // The hierarchy of the clip subtree created by a LayoutObject is as follows:
@@ -319,7 +330,7 @@ class CORE_EXPORT ObjectPaintProperties {
   // +-[ ClipPathClip ]
   //   |  Clip created by path-based CSS clip-path. Only exists if the
   //  /   clip-path is "simple" that can be applied geometrically. This and
-  // /    the ClipPathMask effect node are mutually exclusive.
+  // |    the ClipPathMask effect node are mutually exclusive.
   // +-[ MaskClip ]
   //   |   Clip created by CSS mask or mask-based CSS clip-path.
   //   |   It serves two purposes:
@@ -343,7 +354,7 @@ class CORE_EXPORT ObjectPaintProperties {
   //       | Clip created by pixel-moving filter. Instead of intersecting with
   //       | the current clip, this clip expands the current clip to include all
   //      /  pixels in the filtered content that may affect the pixels in the
-  //     /   current clip.
+  //     |   current clip.
   //     +-[ InnerBorderRadiusClip ]
   //       |   Clip created by a rounded border with overflow clip. This clip is
   //       |   not inset by scrollbars.
@@ -439,15 +450,14 @@ class CORE_EXPORT ObjectPaintProperties {
   }
 
  private:
-  using NodeList = SparseVector<NodeId, scoped_refptr<PaintPropertyNode>>;
+  using NodeList = SparseVector<NodeId, Member<PaintPropertyNode>, 2>;
 
   template <typename NodeType, typename ParentType>
   PaintPropertyChangeType Update(
       NodeId node_id,
       const ParentType& parent,
       NodeType::State&& state,
-      const NodeType::AnimationState& animation_state =
-          NodeType::AnimationState()) {
+      const NodeType::AnimationState& animation_state) {
     // First, check if we need to add a new node.
     if (!nodes_.HasField(node_id)) {
       nodes_.SetField(node_id, NodeType::Create(parent, std::move(state)));
@@ -493,16 +503,17 @@ class CORE_EXPORT ObjectPaintProperties {
   template <typename NodeType>
   const NodeType* GetNode(NodeId node_id) const {
     if (nodes_.HasField(node_id)) {
-      return static_cast<const NodeType*>(nodes_.GetField(node_id).get());
+      return static_cast<const NodeType*>(nodes_.GetField(node_id).Get());
     }
     return nullptr;
   }
 
   template <typename NodeType>
   NodeType* GetNode(NodeId node_id) {
-    return const_cast<NodeType*>(
-        static_cast<const ObjectPaintProperties&>(*this).GetNode<NodeType>(
-            node_id));
+    if (nodes_.HasField(node_id)) {
+      return static_cast<NodeType*>(nodes_.GetField(node_id).Get());
+    }
+    return nullptr;
   }
 
   bool HasNodeTypeInRange(NodeId first_id, NodeId last_id) const {
@@ -522,7 +533,7 @@ class CORE_EXPORT ObjectPaintProperties {
     for (NodeId i = first_id; i <= last_id;
          i = static_cast<NodeId>(static_cast<int>(i) + 1)) {
       if (nodes_.HasField(i)) {
-        printer.AddNode(nodes_.GetField(i).get());
+        printer.AddNode(nodes_.GetField(i).Get());
       }
     }
   }

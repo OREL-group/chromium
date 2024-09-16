@@ -9,8 +9,9 @@
 
 #include "base/check_is_test.h"
 #include "base/containers/contains.h"
+#include "base/trace_event/process_memory_dump.h"
 #include "components/viz/common/resources/shared_image_format_utils.h"
-#include "gpu/command_buffer/common/gpu_memory_buffer_support.h"
+#include "gpu/command_buffer/client/gles2_interface.h"
 #include "gpu/command_buffer/common/shared_image_capabilities.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
 #include "gpu/ipc/common/gpu_memory_buffer_support.h"
@@ -49,62 +50,35 @@ uint32_t ComputeTextureTargetForSharedImage(
     scoped_refptr<SharedImageInterface> sii) {
   CHECK(sii);
 
-#if !BUILDFLAG(IS_OZONE)
-  // External sampling with GMBs is supported in Chromium only for Ozone.
-  // Android uses a bespoke path for external sampling where the AHB doesn't get
-  // put in a GMB and multiplanar formats aren't used, and Windows doesn't use
-  // external sampling at all. It is not possible to set
-  // PrefersExternalSampler() on a MP SIF outside of Ozone, but legacy MP
-  // formats could theoretically be used on any platform. Such usage would be
-  // incorrect outside of Ozone as legacy MP formats work only with external
-  // sampling. This DUMP_WILL_BE_CHECK() is added in advance of adding the
-  // invariant via a CHECK that legacy MP formats are *actually* used only on
-  // Ozone.
-  DUMP_WILL_BE_CHECK(!metadata.format.IsLegacyMultiplanar());
-#endif
-
 #if !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_OZONE)
   return GL_TEXTURE_2D;
 #elif BUILDFLAG(IS_MAC)
   // Check for IOSurfaces being used.
   // NOTE: WebGPU usage on Mac results in SharedImages being backed by
   // IOSurfaces.
-  uint32_t usages_requiring_native_buffer = SHARED_IMAGE_USAGE_SCANOUT |
-                                            SHARED_IMAGE_USAGE_WEBGPU_READ |
-                                            SHARED_IMAGE_USAGE_WEBGPU_WRITE;
+  gpu::SharedImageUsageSet usages_requiring_native_buffer =
+      SHARED_IMAGE_USAGE_SCANOUT | SHARED_IMAGE_USAGE_WEBGPU_READ |
+      SHARED_IMAGE_USAGE_WEBGPU_WRITE;
 
   bool uses_native_buffer = GMBIsNative(client_gmb_type) ||
                             (metadata.usage & usages_requiring_native_buffer);
 
   return uses_native_buffer
-             ? sii->GetCapabilities().macos_specific_texture_target
+             ? sii->GetCapabilities().texture_target_for_io_surfaces
              : GL_TEXTURE_2D;
 #else  // Ozone
   // Check for external sampling being used.
-  bool uses_external_sampler = metadata.format.PrefersExternalSampler() ||
-                               metadata.format.IsLegacyMultiplanar();
-
-  if (!uses_external_sampler) {
+  if (!metadata.format.PrefersExternalSampler()) {
     return GL_TEXTURE_2D;
   }
 
-  // Software video decode on ChromeOS for single P010 GpuMemoryBuffers with
-  // legacy multiplanar SI codepath, always fallback to VideoResourceUpdater
-  // instead of GMBVideoFramePool; this is due to mismatch in BufferUsage flags
-  // which is not supported and causes this CHECK to surface. Accordingly, just
-  // perform the CHECK for non-legacy multiplanar SI path that avoids preferring
-  // external sampler when shared memory GMB is used and thus does not fallback.
-  // TODO(crbug.com/40239769): Remove condition once multiplanar SI launches
-  // everywhere.
-  if (!metadata.format.IsLegacyMultiplanar()) {
-    // The client should configure an SI to use external sampling only if they
-    // have provided a native buffer to back that SI.
-    // TODO(crbug.com/332069927): Figure out why this is going off on LaCrOS and
-    // turn this into a CHECK.
-    DUMP_WILL_BE_CHECK(
-        GMBIsNative(client_gmb_type) ||
-        allow_external_sampling_without_native_buffers_for_testing);
-  }
+  // The client should configure an SI to use external sampling only if they
+  // have provided a native buffer to back that SI.
+  // TODO(crbug.com/332069927): Figure out why this is going off on LaCrOS and
+  // turn this into a CHECK.
+  DUMP_WILL_BE_CHECK(
+      GMBIsNative(client_gmb_type) ||
+      allow_external_sampling_without_native_buffers_for_testing);
 
   // See the note at the top of this function wrt Fuchsia.
 #if BUILDFLAG(IS_FUCHSIA)
@@ -116,14 +90,6 @@ uint32_t ComputeTextureTargetForSharedImage(
 }
 
 }  // namespace
-
-BASE_FEATURE(kUseUniversalGetTextureTargetFunction,
-             "UseUniversalGetTextureTargetFunction",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
-BASE_FEATURE(kDestroySharedImageAutomatically,
-             "DestroySharedImageAutomatically",
-             base::FEATURE_ENABLED_BY_DEFAULT);
 
 ClientSharedImage::ScopedMapping::ScopedMapping() = default;
 ClientSharedImage::ScopedMapping::~ScopedMapping() {
@@ -266,24 +232,19 @@ ClientSharedImage::ClientSharedImage(
       sii_holder_(std::move(sii_holder)) {
   CHECK(!mailbox.IsZero());
   CHECK(sii_holder_);
+  CHECK(gpu_memory_buffer_);
   texture_target_ = ComputeTextureTargetForSharedImage(
       metadata_, gpu_memory_buffer_->GetType(), sii_holder_->Get());
 }
 
 ClientSharedImage::~ClientSharedImage() {
   if (!HasHolder()) {
-    if (marked_for_destruction_) {
-      CHECK_IS_TEST();
-    }
     return;
   }
 
-  if (base::FeatureList::IsEnabled(kDestroySharedImageAutomatically) ||
-      marked_for_destruction_) {
-    auto sii = sii_holder_->Get();
-    if (sii) {
-      sii->DestroySharedImage(destruction_sync_token_, mailbox_);
-    }
+  auto sii = sii_holder_->Get();
+  if (sii) {
+    sii->DestroySharedImage(destruction_sync_token_, mailbox_);
   }
 }
 
@@ -317,63 +278,6 @@ uint32_t ClientSharedImage::GetTextureTarget() {
   return texture_target_;
 }
 
-uint32_t ClientSharedImage::GetTextureTargetForOverlays() {
-  if (base::FeatureList::IsEnabled(kUseUniversalGetTextureTargetFunction)) {
-    return GetTextureTarget();
-  }
-
-#if BUILDFLAG(IS_MAC)
-  return GetPlatformSpecificTextureTarget();
-#else
-  return GL_TEXTURE_2D;
-#endif
-}
-
-uint32_t ClientSharedImage::GetTextureTarget(gfx::BufferFormat format) {
-  if (base::FeatureList::IsEnabled(kUseUniversalGetTextureTargetFunction)) {
-    return GetTextureTarget();
-  }
-
-  return NativeBufferNeedsPlatformSpecificTextureTarget(format)
-             ? GetPlatformSpecificTextureTarget()
-             : GL_TEXTURE_2D;
-}
-
-uint32_t ClientSharedImage::GetTextureTarget(gfx::BufferUsage usage,
-                                             gfx::BufferFormat format) {
-  if (base::FeatureList::IsEnabled(kUseUniversalGetTextureTargetFunction)) {
-    return GetTextureTarget();
-  }
-
-  CHECK(HasHolder());
-
-  auto capabilities = sii_holder_->Get()->GetCapabilities();
-  bool found = base::Contains(capabilities.texture_target_exception_list,
-                              gfx::BufferUsageAndFormat(usage, format));
-  return found ? gpu::GetPlatformSpecificTextureTarget() : GL_TEXTURE_2D;
-}
-
-uint32_t ClientSharedImage::GetTextureTarget(gfx::BufferUsage usage) {
-  if (base::FeatureList::IsEnabled(kUseUniversalGetTextureTargetFunction)) {
-    return GetTextureTarget();
-  }
-
-  uint32_t usages_forcing_native_buffer = SHARED_IMAGE_USAGE_SCANOUT;
-#if BUILDFLAG(IS_MAC)
-  // On Mac, WebGPU usage results in SharedImages being backed by IOSurfaces.
-  usages_forcing_native_buffer = usages_forcing_native_buffer |
-                                 SHARED_IMAGE_USAGE_WEBGPU_READ |
-                                 SHARED_IMAGE_USAGE_WEBGPU_WRITE;
-#endif
-
-  bool uses_native_buffer = this->usage() & usages_forcing_native_buffer;
-  return uses_native_buffer
-             ? GetTextureTarget(usage,
-                                viz::SinglePlaneSharedImageFormatToBufferFormat(
-                                    metadata_.format))
-             : GL_TEXTURE_2D;
-}
-
 scoped_refptr<ClientSharedImage> ClientSharedImage::MakeUnowned() {
   return ClientSharedImage::ImportUnowned(Export());
 }
@@ -395,17 +299,60 @@ scoped_refptr<ClientSharedImage> ClientSharedImage::ImportUnowned(
       exported_shared_image.texture_target_));
 }
 
+void ClientSharedImage::OnMemoryDump(
+    base::trace_event::ProcessMemoryDump* pmd,
+    const base::trace_event::MemoryAllocatorDumpGuid& buffer_dump_guid,
+    int importance) {
+  auto tracing_guid = GetGUIDForTracing();
+  pmd->CreateSharedGlobalAllocatorDump(tracing_guid);
+  pmd->AddOwnershipEdge(buffer_dump_guid, tracing_guid, importance);
+}
+
+void ClientSharedImage::BeginAccess(bool readonly) {
+  if (readonly) {
+    CHECK(!has_writer_ ||
+          usage().Has(SHARED_IMAGE_USAGE_CONCURRENT_READ_WRITE));
+    num_readers_++;
+  } else {
+    CHECK(!has_writer_);
+    CHECK(num_readers_ == 0 ||
+          usage().Has(SHARED_IMAGE_USAGE_CONCURRENT_READ_WRITE));
+    has_writer_ = true;
+  }
+}
+
+void ClientSharedImage::EndAccess(bool readonly) {
+  if (readonly) {
+    CHECK(num_readers_ > 0);
+    num_readers_--;
+  } else {
+    CHECK(has_writer_);
+    has_writer_ = false;
+  }
+}
+
+std::unique_ptr<SharedImageTexture> ClientSharedImage::CreateGLTexture(
+    gles2::GLES2Interface* gl) {
+  return base::WrapUnique(new SharedImageTexture(gl, this));
+}
+
 // static
 scoped_refptr<ClientSharedImage> ClientSharedImage::CreateForTesting() {
+  return CreateForTesting(GL_TEXTURE_2D);
+}
+
+// static
+scoped_refptr<ClientSharedImage> ClientSharedImage::CreateForTesting(
+    uint32_t texture_target) {
   SharedImageMetadata metadata;
   metadata.format = viz::SinglePlaneFormat::kRGBA_8888;
   metadata.color_space = gfx::ColorSpace::CreateSRGB();
   metadata.surface_origin = kTopLeft_GrSurfaceOrigin;
   metadata.alpha_type = kOpaque_SkAlphaType;
-  metadata.usage = 0;
+  metadata.usage = gpu::SharedImageUsageSet();
 
-  return ImportUnowned(ExportedSharedImage(
-      Mailbox::GenerateForSharedImage(), metadata, SyncToken(), GL_TEXTURE_2D));
+  return ImportUnowned(ExportedSharedImage(Mailbox::Generate(), metadata,
+                                           SyncToken(), texture_target));
 }
 
 ExportedSharedImage::ExportedSharedImage() = default;
@@ -417,5 +364,66 @@ ExportedSharedImage::ExportedSharedImage(const Mailbox& mailbox,
       metadata_(metadata),
       creation_sync_token_(sync_token),
       texture_target_(texture_target) {}
+
+SharedImageTexture::ScopedAccess::ScopedAccess(SharedImageTexture* texture,
+                                               const SyncToken& sync_token,
+                                               bool readonly)
+    : texture_(texture), readonly_(readonly) {
+  texture_->gl_->WaitSyncTokenCHROMIUM(sync_token.GetConstData());
+  texture_->gl_->BeginSharedImageAccessDirectCHROMIUM(
+      texture->id(), (readonly_)
+                         ? GL_SHARED_IMAGE_ACCESS_MODE_READ_CHROMIUM
+                         : GL_SHARED_IMAGE_ACCESS_MODE_READWRITE_CHROMIUM);
+}
+
+SharedImageTexture::ScopedAccess::~ScopedAccess() {
+  CHECK(is_access_ended_);
+}
+
+void SharedImageTexture::ScopedAccess::DidEndAccess() {
+  is_access_ended_ = true;
+  texture_->DidEndAccess(readonly_);
+}
+
+// static
+SyncToken SharedImageTexture::ScopedAccess::EndAccess(
+    std::unique_ptr<SharedImageTexture::ScopedAccess> scoped_shared_image) {
+  gles2::GLES2Interface* gl = scoped_shared_image->texture_->gl_;
+  gl->EndSharedImageAccessDirectCHROMIUM(scoped_shared_image->texture_->id());
+  scoped_shared_image->DidEndAccess();
+  SyncToken sync_token;
+  gl->GenSyncTokenCHROMIUM(sync_token.GetData());
+  return sync_token;
+}
+
+SharedImageTexture::SharedImageTexture(gles2::GLES2Interface* gl,
+                                       ClientSharedImage* shared_image)
+    : gl_(gl), shared_image_(shared_image) {
+  CHECK(gl_);
+  CHECK(shared_image_);
+  gl_->WaitSyncTokenCHROMIUM(
+      shared_image_->creation_sync_token().GetConstData());
+  id_ = gl_->CreateAndTexStorage2DSharedImageCHROMIUM(
+      shared_image_->mailbox().name);
+}
+
+SharedImageTexture::~SharedImageTexture() {
+  CHECK(!has_active_access_);
+  gl_->DeleteTextures(1, &id_);
+}
+
+std::unique_ptr<SharedImageTexture::ScopedAccess>
+SharedImageTexture::BeginAccess(const SyncToken& sync_token, bool readonly) {
+  CHECK(!has_active_access_);
+  has_active_access_ = true;
+  shared_image_->BeginAccess(readonly);
+  return base::WrapUnique(
+      new SharedImageTexture::ScopedAccess(this, sync_token, readonly));
+}
+
+void SharedImageTexture::DidEndAccess(bool readonly) {
+  has_active_access_ = false;
+  shared_image_->EndAccess(readonly);
+}
 
 }  // namespace gpu

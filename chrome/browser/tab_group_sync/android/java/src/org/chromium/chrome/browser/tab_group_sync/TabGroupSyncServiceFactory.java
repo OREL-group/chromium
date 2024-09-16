@@ -10,6 +10,7 @@ import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
 import org.chromium.base.ResettersForTesting;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.components.tab_group_sync.TabGroupSyncService;
 
@@ -26,6 +27,12 @@ public final class TabGroupSyncServiceFactory {
     public static TabGroupSyncService getForProfile(Profile profile) {
         if (sTabGroupSyncServiceForTesting != null) {
             return sTabGroupSyncServiceForTesting;
+        }
+
+        assert !profile.isOffTheRecord();
+
+        if (!ChromeFeatureList.isEnabled(ChromeFeatureList.TAB_GROUP_SYNC_ANDROID)) {
+            return null;
         }
 
         return TabGroupSyncServiceFactoryJni.get().getForProfile(profile);

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "services/network/p2p/socket_udp.h"
 
 #include <tuple>
@@ -82,6 +87,21 @@ std::unique_ptr<net::DatagramServerSocket> DefaultSocketFactory(
 #endif
 
   return base::WrapUnique(socket);
+}
+
+rtc::EcnMarking GetEcnMarking(net::DscpAndEcn tos) {
+  switch (tos.ecn) {
+    case net::ECN_NO_CHANGE:
+      NOTREACHED();
+    case net::ECN_NOT_ECT:
+      return rtc::EcnMarking::kNotEct;
+    case net::ECN_ECT1:
+      return rtc::EcnMarking::kEct1;
+    case net::ECN_ECT0:
+      return rtc::EcnMarking::kEct0;
+    case net::ECN_CE:
+      return rtc::EcnMarking::kCe;
+  }
 }
 
 }  // namespace
@@ -296,7 +316,8 @@ bool P2PSocketUdp::HandleReadResult(int result) {
     delegate_->DumpPacket(data, true);
     auto packet = mojom::P2PReceivedPacket::New(
         data, recv_address_,
-        base::TimeTicks() + base::Nanoseconds(rtc::TimeNanos()));
+        base::TimeTicks() + base::Nanoseconds(rtc::TimeNanos()),
+        GetEcnMarking(socket_->GetLastTos()));
 
     if (interceptor_) {
       interceptor_->EnqueueReceive(std::move(packet), std::move(recv_buffer_),
@@ -388,8 +409,8 @@ bool P2PSocketUdp::DoSend(const P2PPendingPacket& packet) {
       &P2PSocketUdp::OnSend, base::Unretained(this), packet.id,
       packet.packet_options.packet_id, send_time_us / 1000);
 
-  // TODO(crbug.com/656607): Pass traffic annotation after DatagramSocketServer
-  // is updated.
+  // TODO(crbug.com/40489281): Pass traffic annotation after
+  // DatagramSocketServer is updated.
   int result = socket_->SendTo(packet.data.get(), packet.size, packet.to,
                                base::BindOnce(callback_binding));
 
@@ -480,7 +501,7 @@ void P2PSocketUdp::Send(base::span<const uint8_t> data,
 bool P2PSocketUdp::SendPacket(base::span<const uint8_t> data,
                               const P2PPacketInfo& packet_info) {
   if (data.size() > kMaximumPacketSize) {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     OnError();
     return false;
   }
@@ -538,8 +559,11 @@ void P2PSocketUdp::SetOption(P2PSocketOption option, int32_t value) {
       SetSocketDiffServCodePointInternal(
           static_cast<net::DiffServCodePoint>(value));
       break;
+    case P2P_SOCKET_OPT_RECV_ECN:
+      socket_->SetRecvTos();
+      break;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 }
 

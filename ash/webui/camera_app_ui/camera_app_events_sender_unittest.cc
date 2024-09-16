@@ -4,8 +4,6 @@
 
 #include "ash/webui/camera_app_ui/camera_app_events_sender.h"
 
-#include "ash/constants/ash_features.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
 #include "components/metrics/structured/structured_events.h"
@@ -32,10 +30,6 @@ class CameraAppEventsSenderTest : public testing::Test {
   ~CameraAppEventsSenderTest() override = default;
 
   void SetUp() override {
-    scoped_feature_list_.InitWithFeatures(
-        /*enabled_features=*/{features::kCameraAppCrosEvents},
-        /*disabled_features=*/{});
-
     events_sender_ = std::make_unique<CameraAppEventsSender>(kTestLanguage);
 
     metrics_recorder_ =
@@ -53,9 +47,6 @@ class CameraAppEventsSenderTest : public testing::Test {
 
   std::unique_ptr<metrics::structured::TestStructuredMetricsRecorder>
       metrics_recorder_;
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 TEST_F(CameraAppEventsSenderTest, StartSession) {
@@ -94,6 +85,7 @@ TEST_F(CameraAppEventsSenderTest, Capture) {
   params->resolution_height = 1920;
   params->resolution_level = ash::camera_app::mojom::ResolutionLevel::kFullHD;
   params->aspect_ratio_set = ash::camera_app::mojom::AspectRatioSet::k16To9;
+  params->zoom_ratio = 1;
 
   auto video_details = ash::camera_app::mojom::VideoDetails::New();
   video_details->is_muted = true;
@@ -146,7 +138,8 @@ TEST_F(CameraAppEventsSenderTest, Capture) {
       .SetGifResultType(static_cast<cros_events::CameraAppGifResultType>(
           ash::camera_app::mojom::GifResultType::kNotGif))
       .SetTimelapseSpeed(
-          static_cast<int64_t>(timelapse_video_details->timelapse_speed));
+          static_cast<int64_t>(timelapse_video_details->timelapse_speed))
+      .SetZoomRatio(static_cast<double>(params->zoom_ratio));
 
   events_sender_->SendCaptureEvent(std::move(params));
 
@@ -323,11 +316,13 @@ TEST_F(CameraAppEventsSenderTest, BarcodeDetected) {
 TEST_F(CameraAppEventsSenderTest, Perf) {
   auto params = ash::camera_app::mojom::PerfEventParams::New();
   params->event_type =
-      ash::camera_app::mojom::PerfEventType::kVideoCapturePostProcessing;
+      ash::camera_app::mojom::PerfEventType::kVideoCapturePostProcessingSaving;
   params->duration = 10000;
   params->facing = ash::camera_app::mojom::Facing::kUnknown;
   params->resolution_width = 1920;
   params->resolution_height = 1080;
+  params->page_count = 10;
+  params->pressure = ash::camera_app::mojom::Pressure::kFair;
 
   cros_events::CameraApp_Perf expected_event;
   expected_event
@@ -336,7 +331,10 @@ TEST_F(CameraAppEventsSenderTest, Perf) {
       .SetDuration(static_cast<int64_t>(params->duration))
       .SetFacing(static_cast<cros_events::CameraAppFacing>(params->facing))
       .SetResolutionWidth(static_cast<int64_t>(params->resolution_width))
-      .SetResolutionHeight(static_cast<int64_t>(params->resolution_height));
+      .SetResolutionHeight(static_cast<int64_t>(params->resolution_height))
+      .SetPageCount(static_cast<int64_t>(params->page_count))
+      .SetPressure(
+          static_cast<cros_events::CameraAppPressure>(params->pressure));
 
   events_sender_->SendPerfEvent(std::move(params));
 
@@ -369,14 +367,6 @@ TEST_F(CameraAppEventsSenderTest, EndSession) {
       ash::camera_app::mojom::LaunchType::kAssistant;
   events_sender_->SendStartSessionEvent(std::move(start_session_params));
 
-  // Updates the memory usage event to be brought with the end session event.
-  auto params = ash::camera_app::mojom::MemoryUsageEventParams::New();
-  params->behaviors_mask = static_cast<uint32_t>(
-      ash::camera_app::mojom::UserBehavior::kRecordTimelapseVideo);
-  params->memory_usage = 10000;
-
-  events_sender_->UpdateMemoryUsageEventParams(params.Clone());
-
   // The end session event will be sent when the mojo connection dropped.
   events_sender_->OnMojoDisconnected();
 
@@ -388,6 +378,36 @@ TEST_F(CameraAppEventsSenderTest, EndSession) {
   auto& received_event = events[1];
 
   cros_events::CameraApp_EndSession expected_event;
+  EXPECT_EQ(received_event.event_name(), expected_event.event_name());
+}
+
+TEST_F(CameraAppEventsSenderTest, MemoryUsage) {
+  // To send a memory usage event, a start session event should be sent first.
+  auto start_session_params =
+      ash::camera_app::mojom::StartSessionEventParams::New();
+  start_session_params->launch_type =
+      ash::camera_app::mojom::LaunchType::kAssistant;
+  events_sender_->SendStartSessionEvent(std::move(start_session_params));
+
+  // Updates the memory usage event to be brought with the end session event.
+  auto params = ash::camera_app::mojom::MemoryUsageEventParams::New();
+  params->behaviors_mask = static_cast<uint32_t>(
+      ash::camera_app::mojom::UserBehavior::kRecordTimelapseVideo);
+  params->memory_usage = 10000;
+  events_sender_->UpdateMemoryUsageEventParams(params.Clone());
+
+  // The memory usage event will be sent when the mojo connection dropped.
+  events_sender_->OnMojoDisconnected();
+
+  // [0]: Start Session Event.
+  // [1]: End Session Event.
+  // [2]: Memory usage Event.
+  const std::vector<metrics::structured::Event>& events =
+      metrics_recorder_->GetEvents();
+  ASSERT_EQ(events.size(), 3U);
+  auto& received_event = events[2];
+
+  cros_events::CameraApp_MemoryUsage expected_event;
   expected_event.SetBehaviors(static_cast<int64_t>(params->behaviors_mask))
       .SetMemoryUsage(static_cast<int64_t>(params->memory_usage));
 
@@ -395,12 +415,34 @@ TEST_F(CameraAppEventsSenderTest, EndSession) {
   auto& received_metrics = received_event.metric_values();
   auto& expected_metrics = expected_event.metric_values();
   for (auto it = received_metrics.begin(); it != received_metrics.end(); it++) {
-    // Skip the verification of session duration.
-    if (it->first == "Duration") {
-      continue;
-    }
     EXPECT_EQ(it->second, expected_metrics.at(it->first));
   }
+}
+
+TEST_F(CameraAppEventsSenderTest, Ocr) {
+  auto params = ash::camera_app::mojom::OcrEventParams::New();
+  params->event_type = ash::camera_app::mojom::OcrEventType::kCopyText;
+  params->is_primary_language = true;
+  params->line_count = 10;
+  params->word_count = 20;
+
+  cros_events::CameraApp_Ocr expected_event;
+  expected_event
+      .SetEventType(
+          static_cast<cros_events::CameraAppOcrEventType>(params->event_type))
+      .SetIsPrimaryLanguage(static_cast<int64_t>(true))
+      .SetLineCount(static_cast<int64_t>(params->line_count))
+      .SetWordCount(static_cast<int64_t>(params->word_count));
+
+  events_sender_->SendOcrEvent(std::move(params));
+
+  const std::vector<metrics::structured::Event>& events =
+      metrics_recorder_->GetEvents();
+  ASSERT_EQ(events.size(), 1U);
+
+  auto& received_event = events[0];
+  EXPECT_EQ(received_event.event_name(), expected_event.event_name());
+  EXPECT_EQ(received_event.metric_values(), expected_event.metric_values());
 }
 
 }  // namespace ash

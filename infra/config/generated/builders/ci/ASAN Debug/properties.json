@@ -49,12 +49,13 @@
           "builder": "linux-asan-dbg",
           "group": "tryserver.chromium.fuzz"
         }
-      ]
+      ],
+      "retry_failed_shards": true,
+      "targets_spec_directory": "src/infra/config/generated/builders/ci/ASAN Debug/targets"
     }
   },
   "$build/reclient": {
     "instance": "rbe-chromium-trusted",
-    "jobs": 250,
     "metrics_project": "chromium-reclient-metrics",
     "scandeps_server": true
   },
@@ -76,6 +77,9 @@
     ]
   },
   "builder_group": "chromium.fuzz",
+  "gardener_rotations": [
+    "chromium"
+  ],
   "recipe": "chromium",
   "sheriff_rotations": [
     "chromium"

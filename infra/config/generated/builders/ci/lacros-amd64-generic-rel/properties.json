@@ -18,7 +18,8 @@
               "execution_mode": "COMPILE_AND_TEST",
               "legacy_chromium_config": {
                 "apply_configs": [
-                  "mb"
+                  "mb",
+                  "shared_build_dir"
                 ],
                 "build_config": "Release",
                 "config": "chromium",
@@ -34,87 +35,7 @@
                   "checkout_lacros_sdk",
                   "chromeos"
                 ],
-                "config": "chromium_no_telemetry_dependencies"
-              },
-              "skylab_upload_location": {
-                "gs_bucket": "chromium-ci-skylab"
-              }
-            }
-          },
-          {
-            "builder_id": {
-              "bucket": "ci",
-              "builder": "lacros-amd64-generic-rel-gtest",
-              "project": "chromium"
-            },
-            "builder_spec": {
-              "build_gs_bucket": "chromium-chromiumos-archive",
-              "builder_group": "chromium.chromiumos",
-              "execution_mode": "TEST",
-              "legacy_chromium_config": {
-                "apply_configs": [
-                  "mb"
-                ],
-                "build_config": "Release",
-                "config": "chromium",
-                "target_arch": "intel",
-                "target_bits": 64,
-                "target_cros_boards": [
-                  "amd64-generic"
-                ],
-                "target_platform": "chromeos"
-              },
-              "legacy_gclient_config": {
-                "apply_configs": [
-                  "checkout_lacros_sdk",
-                  "chromeos"
-                ],
-                "config": "chromium_no_telemetry_dependencies"
-              },
-              "parent": {
-                "bucket": "ci",
-                "builder": "lacros-amd64-generic-rel",
-                "project": "chromium"
-              },
-              "skylab_upload_location": {
-                "gs_bucket": "chromium-ci-skylab"
-              }
-            }
-          },
-          {
-            "builder_id": {
-              "bucket": "ci",
-              "builder": "lacros-amd64-generic-rel-tast",
-              "project": "chromium"
-            },
-            "builder_spec": {
-              "build_gs_bucket": "chromium-chromiumos-archive",
-              "builder_group": "chromium.chromiumos",
-              "execution_mode": "TEST",
-              "legacy_chromium_config": {
-                "apply_configs": [
-                  "mb"
-                ],
-                "build_config": "Release",
-                "config": "chromium",
-                "target_arch": "intel",
-                "target_bits": 64,
-                "target_cros_boards": [
-                  "amd64-generic"
-                ],
-                "target_platform": "chromeos"
-              },
-              "legacy_gclient_config": {
-                "apply_configs": [
-                  "checkout_lacros_sdk",
-                  "chromeos"
-                ],
-                "config": "chromium_no_telemetry_dependencies"
-              },
-              "parent": {
-                "bucket": "ci",
-                "builder": "lacros-amd64-generic-rel",
-                "project": "chromium"
+                "config": "chromium"
               },
               "skylab_upload_location": {
                 "gs_bucket": "chromium-ci-skylab"
@@ -130,33 +51,17 @@
           "project": "chromium"
         }
       ],
-      "builder_ids_in_scope_for_testing": [
-        {
-          "bucket": "ci",
-          "builder": "lacros-amd64-generic-rel-gtest",
-          "project": "chromium"
-        },
-        {
-          "bucket": "ci",
-          "builder": "lacros-amd64-generic-rel-tast",
-          "project": "chromium"
-        }
-      ],
       "mirroring_builder_group_and_names": [
         {
-          "builder": "lacros-amd64-generic-rel-gtest",
-          "group": "tryserver.chromium.chromiumos"
-        },
-        {
-          "builder": "lacros-amd64-generic-rel-gtest-and-tast",
+          "builder": "lacros-amd64-generic-rel",
           "group": "tryserver.chromium.chromiumos"
         }
-      ]
+      ],
+      "retry_failed_shards": true
     }
   },
   "$build/reclient": {
     "instance": "rbe-chromium-trusted",
-    "jobs": 500,
     "metrics_project": "chromium-reclient-metrics",
     "scandeps_server": true
   },
@@ -168,7 +73,7 @@
     "enable_cloud_trace": true,
     "experiments": [],
     "project": "rbe-chromium-trusted",
-    "remote_jobs": 250
+    "remote_jobs": 500
   },
   "$recipe_engine/resultdb/test_presentation": {
     "column_keys": [],
@@ -178,6 +83,9 @@
     ]
   },
   "builder_group": "chromium.chromiumos",
+  "gardener_rotations": [
+    "chromium"
+  ],
   "recipe": "chromium",
   "sheriff_rotations": [
     "chromium"

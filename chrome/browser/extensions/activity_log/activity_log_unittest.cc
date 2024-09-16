@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/extensions/activity_log/activity_log.h"
 
 #include <stddef.h>
@@ -169,8 +174,9 @@ class ActivityLogTest : public ChromeRenderViewHostTestHarness {
   }
 
   TestingProfile::TestingFactories GetTestingFactories() const override {
-    return {{RendererStartupHelperFactory::GetInstance(),
-             base::BindRepeating(&BuildFakeRendererStartupHelper)}};
+    return {TestingProfile::TestingFactory{
+        RendererStartupHelperFactory::GetInstance(),
+        base::BindRepeating(&BuildFakeRendererStartupHelper)}};
   }
 
   void TearDown() override {
@@ -335,10 +341,10 @@ TEST_F(ActivityLogTest, LogPrerender) {
 
   const gfx::Size kSize(640, 480);
   std::unique_ptr<prerender::NoStatePrefetchHandle> no_state_prefetch_handle(
-      no_state_prefetch_manager->StartPrefetchingFromOmnibox(
+      no_state_prefetch_manager->AddSameOriginSpeculation(
           url,
           web_contents()->GetController().GetDefaultSessionStorageNamespace(),
-          kSize, nullptr));
+          kSize, url::Origin::Create(url)));
 
   const std::vector<content::WebContents*> contentses =
       no_state_prefetch_manager->GetAllNoStatePrefetchingContentsForTesting();

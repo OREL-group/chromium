@@ -15,6 +15,7 @@
 #import "ios/chrome/browser/ui/toolbar/buttons/toolbar_button_visibility_configuration.h"
 #import "ios/chrome/browser/ui/toolbar/buttons/toolbar_configuration.h"
 #import "ios/chrome/browser/ui/toolbar/buttons/toolbar_tab_grid_button.h"
+#import "ios/chrome/browser/ui/toolbar/buttons/toolbar_tab_grid_button_style.h"
 #import "ios/chrome/browser/ui/toolbar/public/toolbar_constants.h"
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
 #import "ios/chrome/common/ui/util/constraints_ui_util.h"
@@ -50,12 +51,8 @@ const CGFloat kSymbolToolbarPointSize = 24;
     return [backImage imageFlippedForRightToLeftLayoutDirection];
   };
 
-  ToolbarButton* backButton = nil;
-  if (base::FeatureList::IsEnabled(kEnableStartupImprovements)) {
-    backButton = [[ToolbarButton alloc] initWithImageLoader:loadImageBlock];
-  } else {
-    backButton = [[ToolbarButton alloc] initWithImage:loadImageBlock()];
-  }
+  ToolbarButton* backButton =
+      [[ToolbarButton alloc] initWithImageLoader:loadImageBlock];
 
   [self configureButton:backButton width:kAdaptiveToolbarButtonWidth];
   backButton.accessibilityLabel = l10n_util::GetNSString(IDS_ACCNAME_BACK);
@@ -74,12 +71,8 @@ const CGFloat kSymbolToolbarPointSize = 24;
     return [forwardImage imageFlippedForRightToLeftLayoutDirection];
   };
 
-  ToolbarButton* forwardButton = nil;
-  if (base::FeatureList::IsEnabled(kEnableStartupImprovements)) {
-    forwardButton = [[ToolbarButton alloc] initWithImageLoader:loadImageBlock];
-  } else {
-    forwardButton = [[ToolbarButton alloc] initWithImage:loadImageBlock()];
-  }
+  ToolbarButton* forwardButton =
+      [[ToolbarButton alloc] initWithImageLoader:loadImageBlock];
 
   [self configureButton:forwardButton width:kAdaptiveToolbarButtonWidth];
   forwardButton.visibilityMask =
@@ -93,23 +86,21 @@ const CGFloat kSymbolToolbarPointSize = 24;
 }
 
 - (ToolbarTabGridButton*)tabGridButton {
-  auto loadImageBlock = ^UIImage* {
-    return CustomSymbolWithPointSize(kSquareNumberSymbol,
-                                     kSymbolToolbarPointSize);
+  auto styledImageBlock = ^UIImage*(ToolbarTabGridButtonStyle style) {
+    switch (style) {
+      case ToolbarTabGridButtonStyle::kNormal:
+        return CustomSymbolWithPointSize(kSquareNumberSymbol,
+                                         kSymbolToolbarPointSize);
+      case ToolbarTabGridButtonStyle::kTabGroup:
+        return DefaultSymbolWithPointSize(kSquareFilledOnSquareSymbol,
+                                          kSymbolToolbarPointSize);
+    }
   };
 
-  ToolbarTabGridButton* tabGridButton = nil;
-  if (base::FeatureList::IsEnabled(kEnableStartupImprovements)) {
-    tabGridButton =
-        [[ToolbarTabGridButton alloc] initWithImageLoader:loadImageBlock];
-  } else {
-    tabGridButton =
-        [[ToolbarTabGridButton alloc] initWithImage:loadImageBlock()];
-  }
+  ToolbarTabGridButton* tabGridButton =
+      [[ToolbarTabGridButton alloc] initWithStyledImageLoader:styledImageBlock];
 
   [self configureButton:tabGridButton width:kAdaptiveToolbarButtonWidth];
-  SetA11yLabelAndUiAutomationName(tabGridButton, IDS_IOS_TOOLBAR_SHOW_TABS,
-                                  kToolbarStackButtonIdentifier);
   [tabGridButton addTarget:self.actionHandler
                     action:@selector(tabGridTouchDown)
           forControlEvents:UIControlEventTouchDown];
@@ -125,14 +116,18 @@ const CGFloat kSymbolToolbarPointSize = 24;
   auto loadImageBlock = ^UIImage* {
     return DefaultSymbolWithPointSize(kMenuSymbol, kSymbolToolbarPointSize);
   };
+  UIColor* locationBarBackgroundColor =
+      [self.toolbarConfiguration locationBarBackgroundColorWithVisibility:1];
 
-  ToolbarButton* toolsMenuButton = nil;
-  if (base::FeatureList::IsEnabled(kEnableStartupImprovements)) {
-    toolsMenuButton =
-        [[ToolbarButton alloc] initWithImageLoader:loadImageBlock];
-  } else {
-    toolsMenuButton = [[ToolbarButton alloc] initWithImage:loadImageBlock()];
-  }
+  auto loadIPHHighlightedImageBlock = ^UIImage* {
+    return SymbolWithPalette(
+        CustomSymbolWithPointSize(kEllipsisSquareFillSymbol,
+                                  kSymbolToolbarPointSize),
+        @[ [UIColor colorNamed:kGrey600Color], locationBarBackgroundColor ]);
+  };
+  ToolbarButton* toolsMenuButton =
+      [[ToolbarButton alloc] initWithImageLoader:loadImageBlock
+                       IPHHighlightedImageLoader:loadIPHHighlightedImageBlock];
 
   SetA11yLabelAndUiAutomationName(toolsMenuButton, IDS_IOS_TOOLBAR_SETTINGS,
                                   kToolbarToolsMenuButtonIdentifier);
@@ -153,12 +148,8 @@ const CGFloat kSymbolToolbarPointSize = 24;
     return DefaultSymbolWithPointSize(kShareSymbol, kSymbolToolbarPointSize);
   };
 
-  ToolbarButton* shareButton = nil;
-  if (base::FeatureList::IsEnabled(kEnableStartupImprovements)) {
-    shareButton = [[ToolbarButton alloc] initWithImageLoader:loadImageBlock];
-  } else {
-    shareButton = [[ToolbarButton alloc] initWithImage:loadImageBlock()];
-  }
+  ToolbarButton* shareButton =
+      [[ToolbarButton alloc] initWithImageLoader:loadImageBlock];
 
   [self configureButton:shareButton width:kAdaptiveToolbarButtonWidth];
   SetA11yLabelAndUiAutomationName(shareButton, IDS_IOS_TOOLS_MENU_SHARE,
@@ -178,12 +169,8 @@ const CGFloat kSymbolToolbarPointSize = 24;
                                      kSymbolToolbarPointSize);
   };
 
-  ToolbarButton* reloadButton = nil;
-  if (base::FeatureList::IsEnabled(kEnableStartupImprovements)) {
-    reloadButton = [[ToolbarButton alloc] initWithImageLoader:loadImageBlock];
-  } else {
-    reloadButton = [[ToolbarButton alloc] initWithImage:loadImageBlock()];
-  }
+  ToolbarButton* reloadButton =
+      [[ToolbarButton alloc] initWithImageLoader:loadImageBlock];
 
   [self configureButton:reloadButton width:kAdaptiveToolbarButtonWidth];
   reloadButton.accessibilityLabel =
@@ -201,12 +188,8 @@ const CGFloat kSymbolToolbarPointSize = 24;
     return DefaultSymbolWithPointSize(kXMarkSymbol, kSymbolToolbarPointSize);
   };
 
-  ToolbarButton* stopButton = nil;
-  if (base::FeatureList::IsEnabled(kEnableStartupImprovements)) {
-    stopButton = [[ToolbarButton alloc] initWithImageLoader:loadImageBlock];
-  } else {
-    stopButton = [[ToolbarButton alloc] initWithImage:loadImageBlock()];
-  }
+  ToolbarButton* stopButton =
+      [[ToolbarButton alloc] initWithImageLoader:loadImageBlock];
 
   [self configureButton:stopButton width:kAdaptiveToolbarButtonWidth];
   stopButton.accessibilityLabel = l10n_util::GetNSString(IDS_IOS_ACCNAME_STOP);
@@ -243,16 +226,9 @@ const CGFloat kSymbolToolbarPointSize = 24;
                              ]);
   };
 
-  ToolbarButton* newTabButton = nil;
-  if (base::FeatureList::IsEnabled(kEnableStartupImprovements)) {
-    newTabButton = [[ToolbarButton alloc]
-              initWithImageLoader:loadImageBlock
-        IPHHighlightedImageLoader:loadIPHHighlightedImageBlock];
-  } else {
-    newTabButton =
-        [[ToolbarButton alloc] initWithImage:loadImageBlock()
-                         IPHHighlightedImage:loadIPHHighlightedImageBlock()];
-  }
+  ToolbarButton* newTabButton =
+      [[ToolbarButton alloc] initWithImageLoader:loadImageBlock
+                       IPHHighlightedImageLoader:loadIPHHighlightedImageBlock];
 
   [newTabButton addTarget:self.actionHandler
                    action:@selector(newTabAction:)

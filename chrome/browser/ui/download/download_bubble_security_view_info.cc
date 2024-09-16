@@ -129,7 +129,7 @@ void DownloadBubbleSecurityViewInfo::PopulateForDownload(
     case download::DownloadItem::CANCELLED:
       break;
     case download::DownloadItem::MAX_DOWNLOAD_STATE:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 }
 
@@ -183,7 +183,8 @@ void DownloadBubbleSecurityViewInfo::PopulateForInterrupted(
       return;
     }
     case download::DOWNLOAD_DANGER_TYPE_BLOCKED_SCAN_FAILED: {
-      // TODO(b/327392327): Implement UX for this danger type.
+      warning_summary_ = l10n_util::GetStringUTF16(
+          IDS_DOWNLOAD_BUBBLE_SUBPAGE_SUMMARY_SCAN_FAILED);
       return;
     }
     case download::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE:
@@ -264,7 +265,7 @@ void DownloadBubbleSecurityViewInfo::PopulateForInterrupted(
     // Deprecated
     case FailState::NETWORK_INSTABILITY:
     case FailState::CANNOT_DOWNLOAD:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return;
     case FailState::NO_FAILURE:
       return;
@@ -387,7 +388,7 @@ void DownloadBubbleSecurityViewInfo::PopulateForInProgressOrComplete(
       return;
     case download::DOWNLOAD_DANGER_TYPE_PROMPT_FOR_SCANNING: {
       warning_summary_ = l10n_util::GetStringFUTF16(
-          model.IsEncryptedArchive()
+          model.IsTopLevelEncryptedArchive()
               ? IDS_DOWNLOAD_BUBBLE_SUBPAGE_SUMMARY_DEEP_SCANNING_PROMPT_ENCRYPTED_ARCHIVE
               : IDS_DOWNLOAD_BUBBLE_SUBPAGE_SUMMARY_DEEP_SCANNING_PROMPT_UPDATED,
           u"\n\n");
@@ -413,7 +414,7 @@ void DownloadBubbleSecurityViewInfo::PopulateForInProgressOrComplete(
           // to the DownloadItem. Instead they are handled specially in
           // DownloadBubbleSecurityView::ProcessButtonClick. That makes it
           // okay that the we aren't really prompting for a deep scan.
-          // TODO(crbug/1482901): Remove this by creating a dedicated View
+          // TODO(crbug.com/40931768): Remove this by creating a dedicated View
           // for the local decryption prompt which directly handles the
           // button presses.
           DownloadCommands::Command::DEEP_SCAN);
@@ -485,7 +486,7 @@ void DownloadBubbleSecurityViewInfo::PopulateForInProgressOrComplete(
       // in DownloadBubbleSecurityView::ProcessButtonClick. That
       // means the semantics don't have to line up with the actual
       // behavior of the download command.
-      // TODO(crbug/1482901): Remove this by creating a dedicated
+      // TODO(crbug.com/40931768): Remove this by creating a dedicated
       // View for the local decryption prompt which directly
       // handles the button presses.
       PopulatePrimarySubpageButton(
@@ -551,7 +552,7 @@ void DownloadBubbleSecurityViewInfo::PopulateForTailoredWarning(
       return;
     }
     case TailoredWarningType::kNoTailoredWarning: {
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
     }
   }
 }

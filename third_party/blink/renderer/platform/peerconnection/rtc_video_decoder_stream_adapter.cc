@@ -167,7 +167,7 @@ class RTCVideoDecoderStreamAdapter::InternalDemuxerStream
   }
 
   media::AudioDecoderConfig audio_decoder_config() override {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return media::AudioDecoderConfig();
   }
 
@@ -549,8 +549,7 @@ int32_t RTCVideoDecoderStreamAdapter::Decode(
   // Convert to media::DecoderBuffer.
   // TODO(sandersd): What is |render_time_ms|?
   auto pending_buffer = std::make_unique<PendingBuffer>();
-  pending_buffer->buffer =
-      media::DecoderBuffer::CopyFrom(input_image.data(), input_image.size());
+  pending_buffer->buffer = media::DecoderBuffer::CopyFrom(input_image);
   if (spatial_layer_frame_size.size() > 1) {
     pending_buffer->buffer->WritableSideData().spatial_layers =
         spatial_layer_frame_size;

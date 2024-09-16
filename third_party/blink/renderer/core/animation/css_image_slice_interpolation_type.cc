@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/core/animation/css_image_slice_interpolation_type.h"
 
 #include <memory>
@@ -150,8 +155,11 @@ InterpolationValue ConvertImageSlice(const ImageSlice& slice, double zoom) {
 
   for (wtf_size_t i = 0; i < kSideIndexCount; i++) {
     const Length& side = *sides[i];
-    list->Set(i, MakeGarbageCollected<InterpolableNumber>(
-                     side.IsFixed() ? side.Pixels() / zoom : side.Percent()));
+    list->Set(i,
+              MakeGarbageCollected<InterpolableNumber>(
+                  side.IsFixed() ? side.Pixels() / zoom : side.Percent(),
+                  side.IsFixed() ? CSSPrimitiveValue::UnitType::kNumber
+                                 : CSSPrimitiveValue::UnitType::kPercentage));
   }
 
   return InterpolationValue(

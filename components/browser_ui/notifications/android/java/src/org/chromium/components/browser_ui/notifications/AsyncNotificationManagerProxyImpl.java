@@ -18,6 +18,7 @@ import org.chromium.base.task.AsyncTask;
 
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
@@ -103,6 +104,21 @@ public class AsyncNotificationManagerProxyImpl implements AsyncNotificationManag
     }
 
     @Override
+    public void deleteAllNotificationChannels(Function<String, Boolean> func) {
+        runAsync(
+                TraceEvent.scoped(
+                        "AsyncNotificationManagerProxyImpl.deleteAllNotificationChannels"),
+                () -> {
+                    for (NotificationChannel channel :
+                            mNotificationManager.getNotificationChannels()) {
+                        if (func.apply(channel.getId())) {
+                            mNotificationManager.deleteNotificationChannel(channel.getId());
+                        }
+                    }
+                });
+    }
+
+    @Override
     public void notify(NotificationWrapper notification) {
         if (notification == null
                 || notification.getNotification() == null
@@ -154,6 +170,8 @@ public class AsyncNotificationManagerProxyImpl implements AsyncNotificationManag
                 () -> {
                     try (scopedEvent) {
                         runnable.run();
+                    } catch (Exception e) {
+                        Log.e(TAG, "unable to run a runnable.", e);
                     }
                 });
     }

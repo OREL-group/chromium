@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <stddef.h>
 
 #include <string_view>
@@ -200,7 +205,7 @@ gfx::Size ParseWindowPolicyResponse(const std::string& response) {
   for (std::string_view line : base::SplitStringPiece(
            response, "\r", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
     size_t pos = line.find(kScreenSizePrefix);
-    if (pos != base::StringPiece::npos) {
+    if (pos != std::string_view::npos) {
       return ParseScreenSize(
           line.substr(pos + strlen(kScreenSizePrefix)));
     }

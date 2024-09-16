@@ -14,6 +14,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/not_fatal_until.h"
 #include "base/ranges/algorithm.h"
 #include "base/types/cxx23_to_underlying.h"
 #include "build/build_config.h"
@@ -84,7 +85,7 @@ media::AudioParameters GetMixerOutputParams(
     case media::AudioLatency::Type::kExactMS:
     // TODO(olka): add support when WebAudio requires it.
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 
   DCHECK_NE(output_buffer_size, 0);
@@ -102,7 +103,7 @@ media::AudioParameters GetMixerOutputParams(
 #if BUILDFLAG(IS_WIN)
   if (base::FeatureList::IsEnabled(media::kAudioOffload)) {
     if (params.latency_tag() == media::AudioLatency::Type::kPlayback) {
-      media::AudioParameters::HardwareCapabilities hardware_caps(0, 0, true);
+      media::AudioParameters::HardwareCapabilities hardware_caps(0, 0, 0, true);
       params.set_hardware_capabilities(hardware_caps);
     }
   }
@@ -213,7 +214,7 @@ void AudioRendererMixerManager::ReturnMixer(AudioRendererMixer* mixer) {
     dead_it = base::ranges::find(
         dead_mixers_, mixer,
         [](const AudioRendererMixerReference& val) { return val.mixer.get(); });
-    DCHECK(dead_it != dead_mixers_.end());
+    CHECK(dead_it != dead_mixers_.end(), base::NotFatalUntil::M130);
   }
 
   auto& mixer_ref = it == mixers_.end() ? *dead_it : it->second;

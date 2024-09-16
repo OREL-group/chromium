@@ -5,8 +5,6 @@
 #include <stdint.h>
 
 #include "base/command_line.h"
-#include "base/containers/contains.h"
-#include "base/files/file_path.h"
 #include "base/functional/callback_helpers.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
@@ -15,7 +13,6 @@
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/history/history_test_utils.h"
-#include "chrome/browser/policy/profile_policy_connector_builder.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/ui/browser.h"
@@ -24,14 +21,10 @@
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/location_bar/location_bar.h"
-#include "chrome/browser/ui/login/login_handler.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/browser/ui/view_ids.h"
 #include "chrome/browser/ui/web_applications/test/web_app_browsertest_util.h"
 #include "chrome/browser/web_applications/os_integration/os_integration_manager.h"
-#include "chrome/common/chrome_paths.h"
-#include "chrome/common/pref_names.h"
-#include "chrome/common/url_constants.h"
+#include "chrome/browser/web_applications/test/os_integration_test_override_impl.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/search_test_utils.h"
@@ -50,10 +43,6 @@
 #include "components/omnibox/browser/autocomplete_result.h"
 #include "components/omnibox/browser/omnibox_edit_model.h"
 #include "components/omnibox/browser/omnibox_view.h"
-#include "components/policy/core/browser/browser_policy_connector.h"
-#include "components/policy/core/common/mock_configuration_policy_provider.h"
-#include "components/policy/core/common/policy_map.h"
-#include "components/policy/policy_constants.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
@@ -62,7 +51,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/content_features.h"
-#include "content/public/common/input/native_web_keyboard_event.h"
+#include "content/public/common/isolated_world_ids.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/test/back_forward_cache_util.h"
 #include "content/public/test/browser_test.h"
@@ -70,7 +59,6 @@
 #include "content/public/test/fenced_frame_test_util.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "content/public/test/test_utils.h"
-#include "extensions/buildflags/buildflags.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "printing/buildflags/buildflags.h"
@@ -88,7 +76,6 @@
 #include "chrome/browser/printing/print_preview_dialog_controller.h"
 #endif
 
-using content::NativeWebKeyboardEvent;
 using content::WebContents;
 using testing::_;
 using testing::Return;
@@ -512,13 +499,15 @@ IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, ClosableAfterNavigation) {
   // Navigate it elsewhere.
   content::TestNavigationObserver nav_observer(popup);
   popup->GetPrimaryMainFrame()->ExecuteJavaScriptForTests(
-      u"location.href = '/empty.html'", base::NullCallback());
+      u"location.href = '/empty.html'", base::NullCallback(),
+      content::ISOLATED_WORLD_ID_GLOBAL);
   nav_observer.Wait();
 
   // Have it close itself.
   CloseObserver close_observer(popup);
-  popup->GetPrimaryMainFrame()->ExecuteJavaScriptForTests(u"window.close()",
-                                                          base::NullCallback());
+  popup->GetPrimaryMainFrame()->ExecuteJavaScriptForTests(
+      u"window.close()", base::NullCallback(),
+      content::ISOLATED_WORLD_ID_GLOBAL);
   close_observer.Wait();
 }
 
@@ -677,12 +666,23 @@ IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, MAYBE_PrintPreviewPopUnder) {
 }
 #endif  // BUILDFLAG(ENABLE_PRINT_PREVIEW)
 
+class PopupBlockerBrowserTestWithWebApps : public PopupBlockerBrowserTest {
+ private:
+  web_app::OsIntegrationTestOverrideBlockingRegistration faked_os_integration_;
+};
+
 // Reentrancy regression test for PopunderPreventer attempting to activate a
 // fullscreen web app window that is being closed; see crbug.com/331095620.
-IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest,
-                       CloseFullscreenStandaloneWebApp) {
+// TODO(crbug.com/335493696): Mac shims don't work with faked fullscreen.
+#if BUILDFLAG(IS_MAC)
+#define MAYBE_CloseFullscreenStandaloneWebApp \
+  DISABLED_CloseFullscreenStandaloneWebApp
+#else
+#define MAYBE_CloseFullscreenStandaloneWebApp CloseFullscreenStandaloneWebApp
+#endif
+IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTestWithWebApps,
+                       MAYBE_CloseFullscreenStandaloneWebApp) {
   GURL url = embedded_test_server()->GetURL("/web_apps/basic.html");
-  web_app::OsIntegrationManager::ScopedSuppressForTesting suppress;
   webapps::AppId id = web_app::InstallWebAppFromPage(browser(), url);
   Browser* app = web_app::LaunchWebAppBrowserAndWait(browser()->profile(), id);
   WebContents* tab = app->tab_strip_model()->GetActiveWebContents();
@@ -817,8 +817,8 @@ IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, PopupsDisableBackForwardCache) {
 // Make sure the poput is attributed to the right WebContents when it is
 // triggered from a different WebContents. Regression test for
 // https://crbug.com/1128495
-// Flaky on windows: crbug.com/1422005.
-#if BUILDFLAG(IS_WIN)
+// Flaky on windows and mac: b/40896665.
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
 #define MAYBE_PopupTriggeredFromDifferentWebContents \
   DISABLED_PopupTriggeredFromDifferentWebContents
 #else

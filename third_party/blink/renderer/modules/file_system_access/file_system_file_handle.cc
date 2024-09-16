@@ -10,13 +10,16 @@
 #include "third_party/blink/public/mojom/file_system_access/file_system_access_file_writer.mojom-blink.h"
 #include "third_party/blink/public/mojom/file_system_access/file_system_access_transfer_token.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_throw_dom_exception.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_file_system_create_sync_access_handle_options.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_file_system_create_writable_options.h"
 #include "third_party/blink/renderer/core/fileapi/file.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/modules/file_system_access/file_system_access_error.h"
 #include "third_party/blink/renderer/modules/file_system_access/file_system_access_file_delegate.h"
 #include "third_party/blink/renderer/modules/file_system_access/file_system_sync_access_handle.h"
 #include "third_party/blink/renderer/modules/file_system_access/file_system_writable_file_stream.h"
+#include "third_party/blink/renderer/modules/file_system_access/storage_manager_file_system_access.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/file_metadata.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
@@ -44,7 +47,7 @@ FileSystemFileHandle::createWritable(
     ExceptionState& exception_state) {
   if (!mojo_ptr_.is_bound()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError, "");
-    return ScriptPromise<FileSystemWritableFileStream>();
+    return EmptyPromise();
   }
 
   auto* resolver =
@@ -98,7 +101,7 @@ ScriptPromise<File> FileSystemFileHandle::getFile(
     ExceptionState& exception_state) {
   if (!mojo_ptr_.is_bound()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError, "");
-    return ScriptPromise<File>();
+    return EmptyPromise();
   }
 
   auto* resolver = MakeGarbageCollected<ScriptPromiseResolver<File>>(
@@ -137,16 +140,43 @@ FileSystemFileHandle::createSyncAccessHandle(
     ScriptState* script_state,
     const FileSystemCreateSyncAccessHandleOptions* options,
     ExceptionState& exception_state) {
-  // TODO(fivedots): Check if storage access is allowed.
-  if (!mojo_ptr_.is_bound()) {
-    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError, "");
-    return ScriptPromise<FileSystemSyncAccessHandle>();
-  }
-
   auto* resolver =
       MakeGarbageCollected<ScriptPromiseResolver<FileSystemSyncAccessHandle>>(
           script_state, exception_state.GetContext());
-  auto result = resolver->Promise();
+  auto promise = resolver->Promise();
+
+  auto on_allowed_callback =
+      WTF::BindOnce(&FileSystemFileHandle::CreateSyncAccessHandleImpl,
+                    WrapWeakPersistent(this), WrapPersistent(options),
+                    WrapPersistent(resolver));
+
+  auto on_got_storage_access_status_cb =
+      WTF::BindOnce(&FileSystemFileHandle::OnGotFileSystemStorageAccessStatus,
+                    WrapWeakPersistent(this), WrapPersistent(resolver),
+                    std::move(on_allowed_callback));
+
+  if (storage_access_status_.has_value()) {
+    std::move(on_got_storage_access_status_cb)
+        .Run(mojom::blink::FileSystemAccessError::New(
+            /*status=*/get<0>(storage_access_status_.value()),
+            /*file_error=*/get<1>(storage_access_status_.value()),
+            /*message=*/get<2>(storage_access_status_.value())));
+  } else {
+    StorageManagerFileSystemAccess::CheckStorageAccessIsAllowed(
+        ExecutionContext::From(script_state),
+        std::move(on_got_storage_access_status_cb));
+  }
+
+  return promise;
+}
+
+void FileSystemFileHandle::CreateSyncAccessHandleImpl(
+    const FileSystemCreateSyncAccessHandleOptions* options,
+    ScriptPromiseResolver<FileSystemSyncAccessHandle>* resolver) {
+  if (!mojo_ptr_.is_bound()) {
+    resolver->RejectWithDOMException(DOMExceptionCode::kInvalidStateError, "");
+    return;
+  }
 
   mojom::blink::FileSystemAccessAccessHandleLockMode lock_mode;
 
@@ -232,8 +262,6 @@ FileSystemFileHandle::createSyncAccessHandle(
                 std::move(access_handle_remote), std::move(lock_mode)));
           },
           WrapPersistent(this), WrapPersistent(resolver), options->mode()));
-
-  return result;
 }
 
 mojo::PendingRemote<mojom::blink::FileSystemAccessTransferToken>
@@ -350,6 +378,38 @@ void FileSystemFileHandle::GetCloudIdentifiersImpl(
     return;
   }
   mojo_ptr_->GetCloudIdentifiers(std::move(callback));
+}
+
+void FileSystemFileHandle::OnGotFileSystemStorageAccessStatus(
+    ScriptPromiseResolver<FileSystemSyncAccessHandle>* resolver,
+    base::OnceClosure on_allowed_callback,
+    mojom::blink::FileSystemAccessErrorPtr result) {
+  if (!resolver->GetExecutionContext() ||
+      !resolver->GetScriptState()->ContextIsValid()) {
+    return;
+  }
+
+  CHECK(result);
+  if (storage_access_status_.has_value()) {
+    CHECK_EQ(/*status=*/get<0>(storage_access_status_.value()), result->status);
+    CHECK_EQ(/*file_error=*/get<1>(storage_access_status_.value()),
+             result->file_error);
+    CHECK_EQ(/*message=*/get<2>(storage_access_status_.value()),
+             result->message);
+  } else {
+    storage_access_status_ =
+        std::make_tuple(result->status, result->file_error, result->message);
+  }
+
+  if (result->status != mojom::blink::FileSystemAccessStatus::kOk) {
+    auto* const isolate = resolver->GetScriptState()->GetIsolate();
+    ScriptState::Scope scope(resolver->GetScriptState());
+    resolver->Reject(V8ThrowDOMException::CreateOrEmpty(
+        isolate, DOMExceptionCode::kSecurityError, result->message));
+    return;
+  }
+
+  std::move(on_allowed_callback).Run();
 }
 
 }  // namespace blink

@@ -23,6 +23,7 @@
 #include "chrome/browser/web_applications/web_app_helpers.h"
 #include "chrome/browser/web_applications/web_app_id_constants.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
+#include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/chrome_test_utils.h"
 #include "chrome/test/base/interactive_test_utils.h"
@@ -40,10 +41,9 @@ const char kTestWebUIManifestId[] = "chrome://password-manager/";
 const char kTestWebUIAppURL[] = "chrome://password-manager/?source=pwa";
 
 std::unique_ptr<web_app::WebAppInstallInfo> GetTestWebAppInstallInfo() {
-  auto web_app_info = std::make_unique<web_app::WebAppInstallInfo>();
-  web_app_info->start_url = GURL(kTestWebUIAppURL);
+  auto web_app_info = std::make_unique<web_app::WebAppInstallInfo>(
+      GURL(kTestWebUIManifestId), GURL(kTestWebUIAppURL));
   web_app_info->title = u"Test app";
-  web_app_info->manifest_id = GURL(kTestWebUIManifestId);
   return web_app_info;
 }
 
@@ -68,7 +68,7 @@ Profile* CreateAdditionalProfile() {
 void InstallAppForProfile(
     Profile* profile,
     std::unique_ptr<web_app::WebAppInstallInfo> app_info) {
-  GURL app_url(app_info->start_url);
+  GURL app_url(app_info->start_url());
   web_app::test::InstallWebApp(profile, std::move(app_info));
   ASSERT_TRUE(web_app::FindInstalledAppWithUrlInScope(profile, app_url));
 }

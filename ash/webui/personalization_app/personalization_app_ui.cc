@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ash/webui/personalization_app/personalization_app_ui.h"
 
 #include <memory>
@@ -121,6 +126,7 @@ void AddStrings(content::WebUIDataSource* source) {
       {"zeroImages", IDS_PERSONALIZATION_APP_NO_IMAGES},
       {"oneImage", IDS_PERSONALIZATION_APP_ONE_IMAGE},
       {"multipleImages", IDS_PERSONALIZATION_APP_MULTIPLE_IMAGES},
+      {"managedFeature", IDS_PERSONALIZATION_APP_MANAGED_FEATURE},
       {"managedSetting", IDS_PERSONALIZATION_APP_MANAGED_SETTING},
       {"ariaLabelChangeWallpaper",
        IDS_PERSONALIZATION_APP_ARIA_LABEL_CHANGE_WALLPAPER},
@@ -157,14 +163,24 @@ void AddStrings(content::WebUIDataSource* source) {
       {"ariaLabelEnableAutoColorMode",
        IDS_PERSONALIZATION_APP_ARIA_LABEL_ENABLE_AUTO_COLOR_MODE},
       {"tooltipAutoColorMode", IDS_PERSONALIZATION_APP_TOOLTIP_AUTO_COLOR_MODE},
-      {"geolocationWarningTextForWallpaper",
-       IDS_PERSONALIZATION_APP_THEME_GEOLOCATION_WARNING_TEXT_FOR_WALLPAPER},
+      {"errorTooltipAutoColorMode",
+       IDS_PERSONALIZATION_APP_ERROR_TOOLTIP_AUTO_COLOR_MODE},
       {"geolocationWarningTextForWeather",
        IDS_PERSONALIZATION_APP_THEME_GEOLOCATION_WARNING_TEXT_FOR_WEATHER},
+      {"geolocationWarningManagedTextForWeather",
+       IDS_PERSONALIZATION_APP_THEME_GEOLOCATION_WARNING_MANAGED_TEXT_FOR_WEATHER},
+      {"autoModeGeolocationDialogText",
+       IDS_PERSONALIZATION_APP_THEME_GEOLOCATION_DIALOG_BODY},
+      {"autoModeGeolocationDialogConfirmButton",
+       IDS_PERSONALIZATION_APP_THEME_GEOLOCATION_DIALOG_CONFIRM_BUTTON},
+      {"autoModeGeolocationDialogCancelButton",
+       IDS_PERSONALIZATION_APP_THEME_GEOLOCATION_DIALOG_CANCEL_BUTTON},
       {"systemGeolocationDialogTitle",
        IDS_PERSONALIZATION_APP_GEOLOCATION_DIALOG_TITLE},
-      {"systemGeolocationDialogBody",
-       IDS_PERSONALIZATION_APP_GEOLOCATION_DIALOG_BODY},
+      {"systemGeolocationDialogBodyParagraph1",
+       IDS_PERSONALIZATION_APP_GEOLOCATION_DIALOG_BODY_PARAGRAPH1},
+      {"systemGeolocationDialogBodyParagraph2",
+       IDS_PERSONALIZATION_APP_GEOLOCATION_DIALOG_BODY_PARAGRAPH2},
       {"systemGeolocationDialogConfirmButton",
        IDS_PERSONALIZATION_APP_GEOLOCATION_DIALOG_CONFIRM_BUTTON},
       {"systemGeolocationDialogCancelButton",
@@ -375,8 +391,8 @@ void AddStrings(content::WebUIDataSource* source) {
   source->AddString("timeOfDayBannerImageUrl",
                     GetAmbientBackendController()->GetPromoBannerUrl());
 
-  source->AddString("systemGeolocationDialogLearnMoreUrl",
-                    kPrivacyHubGeolocationLearnMoreUrl);
+  source->AddString("geolocationAccuracyLearnMoreUrl",
+                    kPrivacyHubGeolocationAccuracyLearnMoreURL);
 
   // Product name does not need to be translated.
   auto product_name =
@@ -505,7 +521,6 @@ void PersonalizationAppUI::BindInterface(
 
 void PersonalizationAppUI::BindInterface(
     mojo::PendingReceiver<color_change_listener::mojom::PageHandler> receiver) {
-  DCHECK(chromeos::features::IsJellyEnabled());
   color_provider_handler_ = std::make_unique<ui::ColorChangeHandler>(
       web_ui()->GetWebContents(), std::move(receiver));
 }
@@ -523,9 +538,6 @@ void PersonalizationAppUI::AddBooleans(content::WebUIDataSource* source) {
       "isRgbKeyboardSupported",
       Shell::Get()->rgb_keyboard_manager()->IsRgbKeyboardSupported());
 
-  source->AddBoolean("isPersonalizationJellyEnabled",
-                     features::IsPersonalizationJellyEnabled());
-
   source->AddBoolean("isUserAvatarCustomizationSelectorsEnabled",
                      user_provider_->IsCustomizationSelectorsPrefEnabled());
 
@@ -535,24 +547,30 @@ void PersonalizationAppUI::AddBooleans(content::WebUIDataSource* source) {
   source->AddBoolean("isTimeOfDayWallpaperEnabled",
                      features::IsTimeOfDayWallpaperEnabled());
 
-  source->AddBoolean("isTimeOfDayWallpaperForcedAutoScheduleEnabled",
-                     features::IsTimeOfDayWallpaperForcedAutoScheduleEnabled());
-
   source->AddBoolean("isCrosPrivacyHubLocationEnabled",
                      features::IsCrosPrivacyHubLocationEnabled());
 
   const bool common_sea_pen_requirements =
-      sea_pen_provider_->IsEligibleForSeaPen();
+      sea_pen_provider_->IsEligibleForSeaPen() &&
+      manta::features::IsMantaServiceEnabled();
   source->AddBoolean("isSeaPenEnabled",
                      ::ash::features::IsSeaPenEnabled() &&
-                         manta::features::IsMantaServiceEnabled() &&
                          common_sea_pen_requirements);
   source->AddBoolean("isSeaPenTextInputEnabled",
-                     ::ash::features::IsSeaPenTextInputEnabled() &&
-                         manta::features::IsMantaServiceEnabled() &&
-                         common_sea_pen_requirements);
+                     common_sea_pen_requirements &&
+                         ::ash::features::IsSeaPenTextInputEnabled() &&
+                         sea_pen_provider_->IsEligibleForSeaPenTextInput());
+  source->AddBoolean("isSeaPenUseExptTemplateEnabled",
+                     common_sea_pen_requirements &&
+                         ::ash::features::IsSeaPenUseExptTemplateEnabled());
+  source->AddBoolean("isManagedSeaPenEnabled",
+                     common_sea_pen_requirements &&
+                         sea_pen_provider_->IsManagedSeaPenEnabled());
+  source->AddBoolean("isManagedSeaPenFeedbackEnabled",
+                     sea_pen_provider_->IsManagedSeaPenFeedbackEnabled());
   source->AddBoolean("isLacrosEnabled",
                      ::crosapi::lacros_startup_state::IsLacrosEnabled());
+  source->AddBoolean("isVcResizeThumbnailEnabled", false);
 }
 
 void PersonalizationAppUI::AddIntegers(content::WebUIDataSource* source) {

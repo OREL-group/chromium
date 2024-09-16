@@ -1,107 +1,70 @@
-<style include="cr-icons">
-  cr-icon {
-    --icon-size: 20px;
-    height: var(--icon-size);
-    width: var(--icon-size);
-    margin: 0px 8px 0px 4px;
-  }
-  cr-icon-button {
-    --cr-icon-button-icon-size: 16px;
-    --cr-icon-button-size: 24px;
-    margin: 0 4px;
-    color: var(--color-sys-on-surface-subtle);
-  }
-  cr-icon-button.active {
-    background-color: var(--cr-active-background-color);
-  }
-  #voiceSelectionMenu::part(dialog) {
-    min-width: 304px;
-    width: fit-content;
-    margin-left: var(--sp-body-padding);
-    max-height: 95%;
-  }
-  .dropdown-voice-selection-button {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    background-color: transparent;
-    border: none;
-    width: 100%;
-    padding: 0px 24px 0px 20px;
-    color: var(--color-sys-on-surface-subtle);
-  }
-  .dropdown-voice-selection-button:active {
-    background-color: var(--cr-active-background-color);
-  }
-  .dropdown-voice-selection-button:hover {
-    background-color: var(--cr-hover-background-color);
-    cursor:pointer;
-  }
-  .dropdown-voice-selection-button:focus-visible {
-    background-color: var(--cr-hover-background-color);
-    outline: none;
-  }
-  .dropdown-voice-selection-button cr-icon-button {
-    margin: 0;
-  }
-  .dropdown-line {
-    height: 32px;
-    align-items: center;
-  }
-  .check-mark {
-    margin: 0;
-  }
-  .lang-group-title {
-    display: grid;
-    font-size: 12px;
-    font-weight: 400;
-    padding-left: 20px;
-    color: var(--color-sys-on-surface-subtle);
-  }
-  .voice-name {
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    font-size: 13px;
-    font-weight: 500;
-    padding-inline-end: 16px;
-  }
-  .item-invisible-true {
-    visibility: hidden;
-  }
-</style>
+<cr-lazy-render-lit
+  id="voiceSelectionMenu"
+  .template='${() => html`
+    <cr-action-menu
+        @close="${this.onClose_}"
+        @keydown="${this.onVoiceMenuKeyDown_}"
+        accessibility-label="$i18n{voiceSelectionLabel}"
+        role-description="$i18n{menu}"
+    >
+      ${this.downloadingMessages_.map((item) => html`
+        <span class="dropdown-line download-message">${item}</span>
+      `)}
 
-<!-- TODO(b/333785012): Add initial-counts to the dom-repeats here. -->
-<cr-lazy-render id="voiceSelectionMenu">
-  <template>
-    <cr-action-menu on-close="onClose_" on-keydown="onVoiceMenuKeyDown_">
-      <template is="dom-repeat" items="[[voiceSelectionOptions_]]">
-        <div data-test-id$="group-[[stringToHtmlTestId_(item.language)]]">
-          <span class="dropdown-line lang-group-title">
-            [[item.language]]
-          </span>
+      ${this.voiceGroups_.map((voiceGroup, groupIndex) => html`
+        <span class="dropdown-line lang-group-title">
+          ${voiceGroup.language}
+        </span>
 
-          <template is="dom-repeat" items="[[item.voices]]">
-            <button data-test-id$="[[item.id]]"
-              class="dropdown-item dropdown-voice-selection-button"
-              on-click="onVoiceSelectClick_">
+        ${voiceGroup.voices.map((voice, voiceIndex) => html`
+            <button data-test-id="${voice.id}"
+                class="dropdown-item dropdown-voice-selection-button"
+                data-group-index="${groupIndex}"
+                data-voice-index="${voiceIndex}"
+                @click="${this.onVoiceSelectClick_}">
               <span class="voice-name">
                 <cr-icon id="check-mark"
-                  class$="item-invisible-[[!item.selected]] check-mark"
-                  icon="read-anything-20:check-mark"></cr-icon>
-                [[item.title]]
+                    class="item-invisible-${!voice.selected} check-mark"
+                    icon="read-anything-20:check-mark"
+                    aria-label="$i18n{selected}">
+                </cr-icon>
+                ${voice.title}
               </span>
-              <!-- TODO(b/333958820): Ensure keyboard focus is handled correctly
-                   when the play button is pressed. -->
-              <cr-icon-button id="play-icon" on-click="onVoicePreviewClick_"
-                title="$i18n{playLabel}"
-                disabled$="[[item.previewPlaying]]"
-                aria-label="$i18n{playLabel} [[item.title]]"
-                iron-icon="read-anything-20:play-circle"></cr-icon-button>
+
+              <cr-icon-button id="preview-icon"
+                  @click="${this.onVoicePreviewClick_}"
+                  data-group-index="${groupIndex}"
+                  data-voice-index="${voiceIndex}"
+                  title="${this.previewLabel_(voice.previewPlaying)}"
+                  aria-label="${this.previewAriaLabel_(voice.previewPlaying,voice.title)}"
+                  iron-icon="${this.previewIcon_(voice.previewPlaying)}">
+              </cr-icon-button>
             </button>
-          </template>
-        </div>
-      </template>
+        `)}
+      `)}
+
+      <hr class="menu-divider">
+      <button
+          class="dropdown-item dropdown-voice-selection-button language-menu-button"
+          @click="${this.openLanguageMenu_}">
+        $i18n{readingModeLanguageMenu}
+      </button>
+
     </cr-action-menu>
-  </template>
-</cr-lazy-render>
+  `}'>
+</cr-lazy-render-lit>
+
+${this.showLanguageMenuDialog_
+  ?  html`
+  <language-menu id="languageMenu"
+      .enabledLangs="${this.enabledLangs}"
+      .voicePackInstallStatus="${this.voicePackInstallStatus}"
+      .localeToDisplayName="${this.localeToDisplayName}"
+      .lastDownloadedLang="${this.lastDownloadedLang}"
+      .selectedLang="${this.selectedVoice?.lang}"
+      .availableVoices="${this.availableVoices}"
+      @close="${this.onLanguageMenuClose_}">
+  </language-menu>
+  `
+  : ''
+}

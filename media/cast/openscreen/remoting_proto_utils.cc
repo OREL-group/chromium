@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/cast/openscreen/remoting_proto_utils.h"
 
 #include <algorithm>
@@ -123,8 +128,7 @@ scoped_refptr<media::DecoderBuffer> ByteArrayToDecoderBuffer(
     // it may be EOS buffer.
     scoped_refptr<media::DecoderBuffer> decoder_buffer =
         ConvertProtoToDecoderBuffer(
-            segment, media::DecoderBuffer::CopyFrom(buffer_span.data(),
-                                                    buffer_span.size()));
+            segment, media::DecoderBuffer::CopyFrom(buffer_span));
     return decoder_buffer;
   }
 
@@ -191,7 +195,7 @@ void ConvertAudioDecoderConfigToProto(
   // protobuf, because it is due to an internal Chrome bug. Instead, use the
   // "extra_data" field as receivers should expect.
   //
-  // TODO(crbug.com/1250841): Remove all references to "aac_extra_data" when it
+  // TODO(crbug.com/40198159): Remove all references to "aac_extra_data" when it
   // is removed as part of a media/ cleanup.
 #if DCHECK_IS_ON()
   if (!audio_config.extra_data().empty() &&
@@ -230,7 +234,7 @@ bool ConvertProtoToAudioDecoderConfig(
       base::Microseconds(audio_message.seek_preroll_usec()),
       audio_message.codec_delay());
 
-  // TODO(crbug.com/1250841): Remove all references to "aac_extra_data" when it
+  // TODO(crbug.com/40198159): Remove all references to "aac_extra_data" when it
   // is removed as part of a media/ cleanup.
   if (isAac) {
     audio_config->set_aac_extra_data(

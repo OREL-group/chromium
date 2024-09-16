@@ -19,70 +19,81 @@ class TimeDelta;
 
 namespace content {
 
+using IdentityProviderDataPtr = scoped_refptr<IdentityProviderData>;
 using MediationRequirement = ::password_manager::CredentialMediationRequirement;
 using RpMode = blink::mojom::RpMode;
 
 // This enum describes the status of a request id token call to the FedCM API.
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
 enum class FedCmRequestIdTokenStatus {
   // Don't change the meaning or the order of these values because they are
   // being recorded in metrics and in sync with the counterpart in enums.xml.
-  kSuccess,
-  kTooManyRequests,
-  kAborted,
-  kUnhandledRequest,
-  kIdpNotPotentiallyTrustworthy,
-  kNotSelectAccount,
-  kConfigHttpNotFound,
-  kConfigNoResponse,
-  kConfigInvalidResponse,
-  kClientMetadataHttpNotFound,     // obsolete
-  kClientMetadataNoResponse,       // obsolete
-  kClientMetadataInvalidResponse,  // obsolete
-  kAccountsHttpNotFound,
-  kAccountsNoResponse,
-  kAccountsInvalidResponse,
-  kIdTokenHttpNotFound,
-  kIdTokenNoResponse,
-  kIdTokenInvalidResponse,
-  kIdTokenInvalidRequest,                  // obsolete
-  kClientMetadataMissingPrivacyPolicyUrl,  // obsolete
-  kThirdPartyCookiesBlocked,               // obsolete
-  kDisabledInSettings,
-  kDisabledInFlags,
-  kWellKnownHttpNotFound,
-  kWellKnownNoResponse,
-  kWellKnownInvalidResponse,
-  kConfigNotInWellKnown,
-  kWellKnownTooBig,
-  kDisabledEmbargo,
-  kUserInterfaceTimedOut,  // obsolete
-  kRpPageNotVisible,
-  kShouldEmbargo,
-  kNotSignedInWithIdp,
-  kAccountsListEmpty,
-  kWellKnownListEmpty,
-  kWellKnownInvalidContentType,
-  kConfigInvalidContentType,
-  kAccountsInvalidContentType,
-  kIdTokenInvalidContentType,
-  kSilentMediationFailure,
-  kIdTokenIdpErrorResponse,
-  kIdTokenCrossSiteIdpErrorResponse,
-  kOtherIdpChosen,
-  kMissingTransientUserActivation,
-  kReplacedByButtonMode,
+  kSuccessUsingTokenInHttpResponse = 0,
+  kTooManyRequests = 1,
+  kAborted = 2,
+  kUnhandledRequest = 3,
+  kIdpNotPotentiallyTrustworthy = 4,
+  kNotSelectAccount = 5,
+  kConfigHttpNotFound = 6,
+  kConfigNoResponse = 7,
+  kConfigInvalidResponse = 8,
+  kClientMetadataHttpNotFound = 9,      // obsolete
+  kClientMetadataNoResponse = 10,       // obsolete
+  kClientMetadataInvalidResponse = 11,  // obsolete
+  kAccountsHttpNotFound = 12,
+  kAccountsNoResponse = 13,
+  kAccountsInvalidResponse = 14,
+  kIdTokenHttpNotFound = 15,
+  kIdTokenNoResponse = 16,
+  kIdTokenInvalidResponse = 17,
+  kIdTokenInvalidRequest = 18,                  // obsolete
+  kClientMetadataMissingPrivacyPolicyUrl = 19,  // obsolete
+  kThirdPartyCookiesBlocked = 20,               // obsolete
+  kDisabledInSettings = 21,
+  kDisabledInFlags = 22,
+  kWellKnownHttpNotFound = 23,
+  kWellKnownNoResponse = 24,
+  kWellKnownInvalidResponse = 25,
+  kConfigNotInWellKnown = 26,
+  kWellKnownTooBig = 27,
+  kDisabledEmbargo = 28,
+  kUserInterfaceTimedOut = 29,  // obsolete
+  kRpPageNotVisible = 30,
+  kShouldEmbargo = 31,
+  kNotSignedInWithIdp = 32,
+  kAccountsListEmpty = 33,
+  kWellKnownListEmpty = 34,
+  kWellKnownInvalidContentType = 35,
+  kConfigInvalidContentType = 36,
+  kAccountsInvalidContentType = 37,
+  kIdTokenInvalidContentType = 38,
+  kSilentMediationFailure = 39,
+  kIdTokenIdpErrorResponse = 40,
+  kIdTokenCrossSiteIdpErrorResponse = 41,
+  kOtherIdpChosen = 42,
+  kMissingTransientUserActivation = 43,
+  kReplacedByButtonMode = 44,
+  kContinuationPopupClosedByUser = 45,
+  kSuccessUsingIdentityProviderResolve = 46,
+  kContinuationPopupClosedByIdentityProviderClose = 47,
+  kInvalidFieldsSpecified = 48,
+  kRpOriginIsOpaque = 49,
+  kConfigNotMatchingType = 50,
 
-  kMaxValue = kReplacedByButtonMode
+  kMaxValue = kConfigNotMatchingType
 };
 
 // This enum describes whether user sign-in states between IDP and browser
 // match.
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
 enum class FedCmSignInStateMatchStatus {
   // Don't change the meaning or the order of these values because they are
   // being recorded in metrics and in sync with the counterpart in enums.xml.
-  kMatch,
-  kIdpClaimedSignIn,
-  kBrowserObservedSignIn,
+  kMatch = 0,
+  kIdpClaimedSignIn = 1,
+  kBrowserObservedSignIn = 2,
 
   kMaxValue = kBrowserObservedSignIn
 };
@@ -90,56 +101,62 @@ enum class FedCmSignInStateMatchStatus {
 // This enum describes whether the browser's knowledge of whether the user is
 // signed into the IDP based on observing signin/signout HTTP headers matches
 // the information returned by the accounts endpoint.
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
 enum class FedCmIdpSigninMatchStatus {
   // Don't change the meaning or the order of these values because they are
   // being recorded in metrics and in sync with the counterpart in enums.xml.
-  kMatchWithAccounts,
-  kMatchWithoutAccounts,
-  kUnknownStatusWithAccounts,
-  kUnknownStatusWithoutAccounts,
-  kMismatchWithNetworkError,
-  kMismatchWithNoContent,
-  kMismatchWithInvalidResponse,
-  kMismatchWithUnexpectedAccounts,
+  kMatchWithAccounts = 0,
+  kMatchWithoutAccounts = 1,
+  kUnknownStatusWithAccounts = 2,
+  kUnknownStatusWithoutAccounts = 3,
+  kMismatchWithNetworkError = 4,
+  kMismatchWithNoContent = 5,
+  kMismatchWithInvalidResponse = 6,
+  kMismatchWithUnexpectedAccounts = 7,
 
   kMaxValue = kMismatchWithUnexpectedAccounts
 };
 
 // This enum describes the type of frame that invokes a FedCM API.
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
 enum class FedCmRequesterFrameType {
   // Do not change the meaning or order of these values since they are being
   // recorded in metrics and in sync with the counterpart in enums.xml.
-  kMainFrame,
-  kSameSiteIframe,
-  kCrossSiteIframe,
+  kMainFrame = 0,
+  kSameSiteIframe = 1,
+  kCrossSiteIframe = 2,
 
   kMaxValue = kCrossSiteIframe
 };
 
 // This enum describes the status of a disconnect call to the FedCM API.
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
 enum class FedCmDisconnectStatus {
   // Don't change the meaning or the order of these values because they are
   // being recorded in metrics and in sync with the counterpart in enums.xml.
-  kSuccess,
-  kTooManyRequests,
-  kUnhandledRequest,
-  kNoAccountToDisconnect,
-  kDisconnectUrlIsCrossOrigin,
-  kDisconnectFailedOnServer,
-  kConfigHttpNotFound,
-  kConfigNoResponse,
-  kConfigInvalidResponse,
-  kDisabledInSettings,
-  kDisabledInFlags,
-  kWellKnownHttpNotFound,
-  kWellKnownNoResponse,
-  kWellKnownInvalidResponse,
-  kWellKnownListEmpty,
-  kConfigNotInWellKnown,
-  kWellKnownTooBig,
-  kWellKnownInvalidContentType,
-  kConfigInvalidContentType,
-  kIdpNotPotentiallyTrustworthy,
+  kSuccess = 0,
+  kTooManyRequests = 1,
+  kUnhandledRequest = 2,
+  kNoAccountToDisconnect = 3,
+  kDisconnectUrlIsCrossOrigin = 4,
+  kDisconnectFailedOnServer = 5,
+  kConfigHttpNotFound = 6,
+  kConfigNoResponse = 7,
+  kConfigInvalidResponse = 8,
+  kDisabledInSettings = 9,
+  kDisabledInFlags = 10,
+  kWellKnownHttpNotFound = 11,
+  kWellKnownNoResponse = 12,
+  kWellKnownInvalidResponse = 13,
+  kWellKnownListEmpty = 14,
+  kConfigNotInWellKnown = 15,
+  kWellKnownTooBig = 16,
+  kWellKnownInvalidContentType = 17,
+  kConfigInvalidContentType = 18,
+  kIdpNotPotentiallyTrustworthy = 19,
 
   kMaxValue = kIdpNotPotentiallyTrustworthy
 };
@@ -171,6 +188,29 @@ enum class FedCmErrorDialogResult {
   kMaxValue = kOtherWithMoreDetails
 };
 
+// Whether we were able to open the continue_on popup and the reason if not.
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+enum class FedCmContinueOnPopupStatus {
+  kPopupOpened = 0,
+  kUrlNotSameOrigin = 1,
+  kPopupNotAllowed = 2,
+  kUrlNotSameOriginAndPopupNotAllowed = 3,
+
+  kMaxValue = kUrlNotSameOriginAndPopupNotAllowed
+};
+
+// The result of the continue_on popup.
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+enum class FedCmContinueOnPopupResult {
+  kTokenReceived = 0,
+  kWindowClosed = 1,
+  kClosedByIdentityProviderClose = 2,
+
+  kMaxValue = kClosedByIdentityProviderClose
+};
+
 // This enum is used when we fail a FedCM request due to a bad
 // lifecycle state.
 // These values are persisted to logs. Entries should not be renumbered and
@@ -199,11 +239,20 @@ enum class FedCmMultipleRequestsRpMode {
   kMaxValue = kButtonThenButton
 };
 
+// This enum tracks whether the RP requested additional scopes and/or
+// parameters. These values are persisted to logs. Entries should not be
+// renumbered and numeric values should never be reused.
+enum class FedCmRpParameters {
+  kHasParameters = 0,
+  kHasNonDefaultScope = 1,
+  kHasParametersAndNonDefaultScope = 2,
+
+  kMaxValue = kHasParametersAndNonDefaultScope
+};
+
 class CONTENT_EXPORT FedCmMetrics {
  public:
-  FedCmMetrics(const GURL& provider,
-               const ukm::SourceId page_source_id,
-               int session_id);
+  explicit FedCmMetrics(const ukm::SourceId page_source_id);
 
   ~FedCmMetrics();
 
@@ -213,11 +262,20 @@ class CONTENT_EXPORT FedCmMetrics {
   static void RecordNumRequestsPerDocument(ukm::SourceId page_source_id,
                                            const int num_requests);
 
+  // Records whether the browser's knowledge of whether the user is signed into
+  // the IDP based on observing signin/signout HTTP headers matches the
+  // information returned by the accounts endpoint.
+  static void RecordIdpSigninMatchStatus(
+      std::optional<bool> idp_signin_status,
+      IdpNetworkRequestManager::ParseStatus accounts_endpoint_status);
+
+  void SetSessionID(int session_id);
+
   // Records the time from when a call to the API was made to when the accounts
   // dialog is shown. This does not include flows that involve LoginToIdP. e.g.
   // mismatch flow or button flow with users whose login status is "logged-out".
   void RecordShowAccountsDialogTime(
-      const std::vector<IdentityProviderData>& providers,
+      const std::vector<IdentityProviderDataPtr>& providers,
       base::TimeDelta duration);
 
   // Records the time from when a call to the API was made to when the accounts
@@ -236,26 +294,26 @@ class CONTENT_EXPORT FedCmMetrics {
 
   // Records the time from when the accounts dialog is shown to when the user
   // presses the Continue button of an account of the given provider.
-  void RecordContinueOnDialogTime(const GURL& provider,
-                                  base::TimeDelta duration);
+  void RecordContinueOnPopupTime(const GURL& provider,
+                                 base::TimeDelta duration);
 
   // Records metrics when the user explicitly closes the accounts dialog without
   // selecting any accounts. `duration` is the time from when the accounts
   // dialog was shown to when the user closed the dialog.
   void RecordCancelOnDialogTime(
-      const std::vector<IdentityProviderData>& providers,
+      const std::vector<IdentityProviderDataPtr>& providers,
       base::TimeDelta duration);
 
   // Records the duration from when an accounts dialog is shown to when it is
   // destroyed.
   void RecordAccountsDialogShownDuration(
-      const std::vector<IdentityProviderData>& providers,
+      const std::vector<IdentityProviderDataPtr>& providers,
       base::TimeDelta duration);
 
   // Records the duration from when a mismatch dialog is shown to when it is
   // destroyed or user triggers IDP sign-in pop-up window.
   void RecordMismatchDialogShownDuration(
-      const std::vector<IdentityProviderData>& providers,
+      const std::vector<IdentityProviderDataPtr>& providers,
       base::TimeDelta duration);
 
   // Records the reason that closed accounts dialog without selecting any
@@ -270,6 +328,14 @@ class CONTENT_EXPORT FedCmMetrics {
   void RecordTokenResponseAndTurnaroundTime(const GURL& provider,
                                             base::TimeDelta token_response_time,
                                             base::TimeDelta turnaround_time);
+
+  // Records the time from when the user presses the Continue button to when
+  // the continue_on response is received. Also records the overall time from
+  // when the API is called to when the IdentityProvider.resolve token is
+  // received.
+  void RecordContinueOnResponseAndTurnaroundTime(
+      base::TimeDelta token_response_time,
+      base::TimeDelta turnaround_time);
 
   // Records the status of the |RequestToken| call. Also records the number of
   // IDPs requested and the number of IDPs for which a mismatch was found.
@@ -286,13 +352,6 @@ class CONTENT_EXPORT FedCmMetrics {
   // Records whether user sign-in states between IDP and browser match.
   void RecordSignInStateMatchStatus(const GURL& provider,
                                     FedCmSignInStateMatchStatus status);
-
-  // Records whether the browser's knowledge of whether the user is signed into
-  // the IDP based on observing signin/signout HTTP headers matches the
-  // information returned by the accounts endpoint.
-  void RecordIdpSigninMatchStatus(
-      std::optional<bool> idp_signin_status,
-      IdpNetworkRequestManager::ParseStatus accounts_endpoint_status);
 
   // Records whether the user selected account is for sign-in or not.
   void RecordIsSignInUser(bool is_sign_in);
@@ -325,7 +384,7 @@ class CONTENT_EXPORT FedCmMetrics {
 
   // Records a sample when an accounts dialog is shown.
   void RecordAccountsDialogShown(
-      const std::vector<IdentityProviderData>& providers);
+      const std::vector<IdentityProviderDataPtr>& providers);
 
   // This enum is used in histograms. Do not remove or modify existing entries.
   // You may add entries at the end, and update |kMaxValue|.
@@ -351,13 +410,24 @@ class CONTENT_EXPORT FedCmMetrics {
 
   // Records metrics for a disconnect call. `duration` is nullopt if the
   // disconnect fetch request was not sent, in which case we do not log the
-  // metric.
+  // metric. Because this is a separate API from a token request, a different
+  // session ID is passed to this metric.
   void RecordDisconnectMetrics(FedCmDisconnectStatus status,
                                std::optional<base::TimeDelta> duration,
                                const RenderFrameHost& rfh,
-                               url::Origin requester,
-                               url::Origin embedder,
-                               const GURL& provider_url);
+                               const url::Origin& requester,
+                               const url::Origin& embedder,
+                               const GURL& provider_url,
+                               int disconnect_session_id);
+
+  // Records the status of opening the continue_on dialog.
+  void RecordContinueOnPopupStatus(FedCmContinueOnPopupStatus status);
+
+  // Records the outcome of the continue_on dialog.
+  void RecordContinueOnPopupResult(FedCmContinueOnPopupResult result);
+
+  // Records whether parameters or scopes were specified.
+  void RecordRpParameters(FedCmRpParameters parameters);
 
   // Records the outcome of the error dialog.
   void RecordErrorDialogResult(FedCmErrorDialogResult result,
@@ -381,36 +451,30 @@ class CONTENT_EXPORT FedCmMetrics {
   // page load, to when the first Button Mode API is called afterwards, if any.
   void RecordTimeBetweenUserInfoAndButtonModeAPI(base::TimeDelta duration);
 
+  int session_id() { return session_id_; }
+
  private:
   ukm::SourceId GetOrCreateProviderSourceId(const GURL& provider);
 
   // The page's SourceId. Used to log the UKM event Blink.FedCm.
   ukm::SourceId page_source_id_;
 
-  // The SourceId to be used to log the UKM event Blink.FedCmIdp.
-  // TODO(crbug.com/326397737): remove this in favor of provider_source_ids_.
-  // In case of multiple IDPs, this will be set to the first IDP's source id.
-  ukm::SourceId provider_source_id_ = ukm::kInvalidSourceId;
-
   // The SourceId to be used to log the UKM event Blink.FedCmIdp. Maps a
   // provider's config URL to its UKM SourceId.
   std::map<GURL, ukm::SourceId> provider_source_ids_;
 
-  // Whether a RequestTokenStatus has been recorded.
-  bool request_token_status_recorded_{false};
-
-  // The session ID associated to the FedCM call for which this object is
-  // recording metrics. Each FedCM call gets a random integer session id, which
-  // helps group UKM events by the session id.
-  int session_id_;
+  // The session ID associated to the FedCM token request for which this object
+  // is recording metrics. Each FedCM call gets a random integer session id,
+  // which helps group UKM events by the session id.
+  int session_id_ = -1;
 };
 
 // The following metric is recorded for UMA and UKM, but does not require an
 // existing FedCM call. Records metrics associated with a preventSilentAccess()
 // call from the given RenderFrameHost.
 void RecordPreventSilentAccess(RenderFrameHost& rfh,
-                               url::Origin requester,
-                               url::Origin embedder);
+                               const url::Origin& requester,
+                               const url::Origin& embedder);
 
 // The following are UMA-only recordings, hence do not need to be in the
 // FedCmMetrics class.

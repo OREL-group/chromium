@@ -8,6 +8,8 @@
 #include "base/base64url.h"
 #include "build/branding_buildflags.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
+#include "chrome/browser/browser_process.h"
+#include "chrome/browser/new_tab_page/new_tab_page_util.h"
 #include "chrome/browser/preloading/prefetch/search_prefetch/search_prefetch_service.h"
 #include "chrome/browser/preloading/prefetch/search_prefetch/search_prefetch_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -23,6 +25,7 @@
 #include "components/vector_icons/vector_icons.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "third_party/omnibox_proto/answer_data.pb.h"
+#include "third_party/omnibox_proto/answer_type.pb.h"
 #include "third_party/omnibox_proto/rich_answer_template.pb.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -90,6 +93,10 @@ const char* kPageIconResourceName =
     "//resources/cr_components/searchbox/icons/page.svg";
 const char* kPedalsIconResourceName = "//theme/current-channel-logo";
 const char* kSearchIconResourceName = "//resources/images/icon_search.svg";
+const char* kSparkIconResourceName =
+    "//resources/cr_components/searchbox/icons/spark.svg";
+const char* kStarActiveIconResourceName =
+    "//resources/cr_components/searchbox/icons/star_active.svg";
 const char* kTabIconResourceName =
     "//resources/cr_components/searchbox/icons/tab.svg";
 const char* kTrendingUpIconResourceName =
@@ -192,7 +199,7 @@ std::u16string GetAdditionalA11yMessage(
       return l10n_util::GetStringUTF16(
           IDS_ACC_REMOVE_SUGGESTION_FOCUSED_PREFIX);
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
   }
   return std::u16string();
@@ -238,7 +245,7 @@ bool MatchHasSideTypeAndRenderType(
 
 std::vector<searchbox::mojom::AutocompleteMatchPtr> CreateAutocompleteMatches(
     const AutocompleteResult& result,
-    bookmarks::CoreBookmarkModel* bookmark_model,
+    bookmarks::BookmarkModel* bookmark_model,
     const omnibox::GroupConfigMap& suggestion_groups_map) {
   std::vector<searchbox::mojom::AutocompleteMatchPtr> matches;
   int line = 0;
@@ -304,14 +311,16 @@ std::vector<searchbox::mojom::AutocompleteMatchPtr> CreateAutocompleteMatches(
       const omnibox::AnswerData& answer_data =
           match.answer_template->answers(0);
       const omnibox::FormattedString& headline = answer_data.headline();
-      const std::string& headline_text = headline.text();
-      // Grab the substring of headline starting after the first fragment text
-      // ends. Not making use of the first fragment because it contains the same
-      // data as `match.contents` but with HTML tags.
-      const std::u16string headline_substr =
-          base::UTF8ToUTF16(headline_text.substr(
-              headline.fragments(0).text().size(),
-              headline_text.size() - headline.fragments(0).text().size()));
+      std::u16string headline_substr;
+      if (headline.fragments_size() > 0) {
+        const std::string& headline_text = headline.text();
+        // Grab the substring of headline starting after the first fragment text
+        // ends. Not making use of the first fragment because it contains the
+        // same data as `match.contents` but with HTML tags.
+        headline_substr = base::UTF8ToUTF16(headline_text.substr(
+            headline.fragments(0).text().size(),
+            headline_text.size() - headline.fragments(0).text().size()));
+      }
 
       const auto& subhead_text =
           base::UTF8ToUTF16(answer_data.subhead().text());
@@ -323,13 +332,8 @@ std::vector<searchbox::mojom::AutocompleteMatchPtr> CreateAutocompleteMatches(
               : base::JoinString({match.contents, headline_substr}, u" "),
           subhead_text);
       mojom_match->image_url = answer_data.image().url();
-      if (base::FeatureList::IsEnabled(
-              ntp_features::kRealboxCr23ExpandedStateIcons) ||
-          base::FeatureList::IsEnabled(ntp_features::kRealboxCr23All)) {
-        mojom_match->is_weather_answer_suggestion =
-            match.answer_template->answer_type() ==
-            omnibox::RichAnswerTemplate::WEATHER;
-      }
+      mojom_match->is_weather_answer_suggestion =
+          match.answer_type == omnibox::ANSWER_TYPE_WEATHER;
     } else if (match.answer.has_value()) {
       const auto& additional_text =
           GetAdditionalText(match.answer->first_line());
@@ -339,17 +343,13 @@ std::vector<searchbox::mojom::AutocompleteMatchPtr> CreateAutocompleteMatches(
                           : match.contents,
           ImageLineToString16(match.answer->second_line()));
       mojom_match->image_url = match.ImageUrl().spec();
-      if (base::FeatureList::IsEnabled(
-              ntp_features::kRealboxCr23ExpandedStateIcons) ||
-          base::FeatureList::IsEnabled(ntp_features::kRealboxCr23All)) {
-        mojom_match->is_weather_answer_suggestion =
-            match.answer->type() == SuggestionAnswer::ANSWER_TYPE_WEATHER;
-      }
+      mojom_match->is_weather_answer_suggestion =
+          match.answer_type == omnibox::ANSWER_TYPE_WEATHER;
     }
     mojom_match->is_rich_suggestion =
         !mojom_match->image_url.empty() ||
         match.type == AutocompleteMatchType::CALCULATOR ||
-        (match.answer_template.has_value()) || (match.answer.has_value());
+        match.answer_type != omnibox::ANSWER_TYPE_UNSPECIFIED;
     if (base::FeatureList::IsEnabled(omnibox::kNtpRealboxPedals)) {
       for (const auto& action : match.actions) {
         const OmniboxAction::LabelStrings& label_strings =
@@ -435,7 +435,7 @@ CreateSuggestionGroupsMap(
 searchbox::mojom::AutocompleteResultPtr CreateAutocompleteResult(
     const std::u16string& input,
     const AutocompleteResult& result,
-    bookmarks::CoreBookmarkModel* bookmark_model,
+    bookmarks::BookmarkModel* bookmark_model,
     PrefService* prefs) {
   return searchbox::mojom::AutocompleteResult::New(
       input,
@@ -458,39 +458,35 @@ void SearchboxHandler::SetupWebUIDataSource(content::WebUIDataSource* source,
   // http://g/chrome-webui/haW6I9yt-uA/38ckX-aGAgAJ for details.
   source->AddBoolean("reportMetrics", true);
 
+  // The lens searchboxes overrides this to true to adjust various color and
+  // layout options.
+  source->AddBoolean("isLensSearchbox", false);
+
   static constexpr webui::LocalizedString kStrings[] = {
       {"hideSuggestions", IDS_TOOLTIP_HEADER_HIDE_SUGGESTIONS_BUTTON},
       {"lensSearchButtonLabel", IDS_TOOLTIP_LENS_SEARCH},
-      {"realboxSeparator", IDS_AUTOCOMPLETE_MATCH_DESCRIPTION_SEPARATOR},
+      {"searchboxSeparator", IDS_AUTOCOMPLETE_MATCH_DESCRIPTION_SEPARATOR},
       {"removeSuggestion", IDS_OMNIBOX_REMOVE_SUGGESTION},
       {"searchBoxHint", IDS_GOOGLE_SEARCH_BOX_EMPTY_HINT_MD},
+      {"searchBoxHintMultimodal", IDS_GOOGLE_SEARCH_BOX_EMPTY_HINT_MULTIMODAL},
+      {"searchboxThumbnailLabel",
+       IDS_GOOGLE_SEARCH_BOX_MULTIMODAL_IMAGE_THUMBNAIL},
       {"showSuggestions", IDS_TOOLTIP_HEADER_SHOW_SUGGESTIONS_BUTTON},
       {"voiceSearchButtonLabel", IDS_TOOLTIP_MIC_SEARCH}};
   source->AddLocalizedStrings(kStrings);
 
   source->AddBoolean(
-      "realboxCr23ExpandedStateIcons",
-      base::FeatureList::IsEnabled(
-          ntp_features::kRealboxCr23ExpandedStateIcons) ||
-          base::FeatureList::IsEnabled(ntp_features::kRealboxCr23All));
-
-  source->AddBoolean(
-      "realboxMatchSearchboxTheme",
+      "searchboxMatchSearchboxTheme",
       base::FeatureList::IsEnabled(ntp_features::kRealboxMatchSearchboxTheme));
 
-  source->AddString("realboxWidthBehavior",
-                    base::GetFieldTrialParamValueByFeature(
-                        ntp_features::kRealboxWidthBehavior,
-                        ntp_features::kNtpRealboxWidthBehaviorParam));
-  source->AddBoolean("realboxIsTall", base::FeatureList::IsEnabled(
-                                          ntp_features::kRealboxIsTall));
-  if ((base::FeatureList::IsEnabled(
-           ntp_features::kRealboxCr23ExpandedStateIcons) ||
-       base::FeatureList::IsEnabled(ntp_features::kRealboxCr23All))) {
-    DefineChromeRefreshRealboxIcons();
-  }
+  bool redesigned_modules_enabled =
+      base::FeatureList::IsEnabled(ntp_features::kNtpModulesRedesigned);
+  source->AddString("searchboxWidthBehavior",
+                    redesigned_modules_enabled ? "wide" : "");
+  source->AddBoolean("realboxIsTall", redesigned_modules_enabled);
+  DefineChromeRefreshRealboxIcons();
   source->AddString(
-      "realboxDefaultIcon",
+      "searchboxDefaultIcon",
       base::FeatureList::IsEnabled(ntp_features::kRealboxUseGoogleGIcon)
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
           ? kGoogleGIconResourceName
@@ -499,29 +495,16 @@ void SearchboxHandler::SetupWebUIDataSource(content::WebUIDataSource* source,
 #endif
           : kSearchIconResourceName);
 
-  source->AddBoolean("realboxVoiceSearch", enable_voice_search);
-  source->AddBoolean("realboxLensSearch", enable_lens_search);
-  source->AddString("realboxLensVariations", GetBase64UrlVariations(profile));
+  source->AddBoolean("searchboxVoiceSearch", enable_voice_search);
+  source->AddBoolean("searchboxLensSearch", enable_lens_search);
+  source->AddString("searchboxLensVariations", GetBase64UrlVariations(profile));
   source->AddBoolean(
-      "realboxLensDirectUpload",
+      "searchboxLensDirectUpload",
       base::FeatureList::IsEnabled(ntp_features::kNtpLensDirectUpload));
   source->AddBoolean(
-      "realboxCr23ExpandedStateLayout",
-      base::FeatureList::IsEnabled(
-          ntp_features::kRealboxCr23ExpandedStateLayout) ||
-          base::FeatureList::IsEnabled(ntp_features::kRealboxCr23All));
-  source->AddBoolean("realboxCr23ConsistentRowHeight",
-                     base::FeatureList::IsEnabled(
-                         ntp_features::kRealboxCr23ConsistentRowHeight));
-  source->AddBoolean(
-      "realboxCr23HoverFillShape",
-      base::FeatureList::IsEnabled(ntp_features::kRealboxCr23HoverFillShape) ||
-          base::FeatureList::IsEnabled(ntp_features::kRealboxCr23All));
-  source->AddBoolean(
-      "realboxCr23Theming",
-      base::FeatureList::IsEnabled(ntp_features::kRealboxCr23Theming) ||
-          base::FeatureList::IsEnabled(ntp_features::kRealboxCr23All));
-  source->AddBoolean("realboxCr23SteadyStateShadow",
+      "searchboxCr23Theming",
+      base::FeatureList::IsEnabled(ntp_features::kRealboxCr23Theming));
+  source->AddBoolean("searchboxCr23SteadyStateShadow",
                      ntp_features::kNtpRealboxCr23SteadyStateShadow.Get());
 }
 
@@ -673,10 +656,18 @@ std::string SearchboxHandler::ActionVectorIconToResourceName(
     return kShareIconResourceName;
   }
 #endif
-  NOTREACHED() << "Every vector icon returned by OmniboxAction::GetVectorIcon "
-                  "must have an equivalent SVG resource for the NTP Realbox. "
-                  "icon.name: '"
-               << icon.name << "'";
+  if (icon.name == omnibox::kSparkIcon.name) {
+    return kSparkIconResourceName;
+  }
+  if (icon.name == omnibox::kStarActiveIcon.name ||
+      icon.name == omnibox::kStarActiveChromeRefreshIcon.name) {
+    return kStarActiveIconResourceName;
+  }
+  NOTREACHED_IN_MIGRATION()
+      << "Every vector icon returned by OmniboxAction::GetVectorIcon "
+         "must have an equivalent SVG resource for the NTP Realbox. "
+         "icon.name: '"
+      << icon.name << "'";
   return "";
 }
 
@@ -710,7 +701,7 @@ void SearchboxHandler::OnResultChanged(AutocompleteController* controller,
 
   // The owned OmniboxController does not observe the AutocompleteController.
   // Notify the prerender here to start preloading if the results are ready.
-  // TODO(crbug.com/1396174): Make the owned OmniboxController observe the
+  // TODO(crbug.com/40062053): Make the owned OmniboxController observe the
   //  AutocompleteController and move this logic to the RealboxOmniboxClient.
   if (owned_controller_) {
     if (autocomplete_controller()->done()) {

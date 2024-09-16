@@ -13,12 +13,7 @@
 #include "chrome/browser/accessibility/media_app/ax_media_app.h"
 #include "chrome/browser/accessibility/media_app/ax_media_app_untrusted_handler.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
-#include "services/screen_ai/buildflags/buildflags.h"
 #include "ui/accessibility/ax_tree_manager.h"
-
-#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
-#include "services/screen_ai/public/mojom/screen_ai_service.mojom.h"
-#endif  // BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
 
 namespace content {
 
@@ -29,6 +24,7 @@ class BrowserContext;
 namespace ui {
 
 class AXTreeID;
+class AXNode;
 
 }  // namespace ui
 
@@ -38,6 +34,7 @@ class TestAXMediaAppUntrustedHandler : public AXMediaAppUntrustedHandler {
  public:
   TestAXMediaAppUntrustedHandler(
       content::BrowserContext& context,
+      gfx::NativeWindow native_window,
       mojo::PendingRemote<media_app_ui::mojom::OcrUntrustedPage> page);
   TestAXMediaAppUntrustedHandler(const TestAXMediaAppUntrustedHandler&) =
       delete;
@@ -48,6 +45,10 @@ class TestAXMediaAppUntrustedHandler : public AXMediaAppUntrustedHandler {
   void SetMediaAppForTesting(AXMediaApp* media_app) { media_app_ = media_app; }
   std::string GetDocumentTreeToStringForTesting() const;
   void EnablePendingSerializedUpdatesForTesting();
+
+  const ui::AXNode* GetDocumentRootNodeForTesting() const {
+    return document_.GetRoot();
+  }
 
   const ui::AXTreeID& GetDocumentTreeIDForTesting() const {
     return document_.GetTreeID();
@@ -63,8 +64,8 @@ class TestAXMediaAppUntrustedHandler : public AXMediaAppUntrustedHandler {
     return pages_;
   }
 
-  const std::vector<const ui::AXTreeUpdate>&
-  GetPendingSerializedUpdatesForTesting() const {
+  const std::vector<ui::AXTreeUpdate>& GetPendingSerializedUpdatesForTesting()
+      const {
     return *pending_serialized_updates_for_testing_;
   }
 
@@ -78,12 +79,16 @@ class TestAXMediaAppUntrustedHandler : public AXMediaAppUntrustedHandler {
     delay_calling_ocr_next_dirty_page_ = enabled;
   }
 
-#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
-  void SetScreenAIAnnotatorForTesting(
-      mojo::PendingRemote<screen_ai::mojom::ScreenAIAnnotator>
-          screen_ai_annotator);
+  void SetMinPagesPerBatchForTesting(size_t min_pages) {
+    min_pages_per_batch_ = min_pages;
+  }
+
+  void DisableStatusNodesForTesting() { has_landmark_node_ = false; }
+
+  void DisablePostamblePageForTesting() { has_postamble_page_ = false; }
+
+  void CreateFakeOpticalCharacterRecognizerForTesting(bool return_empty);
   void FlushForTesting();
-#endif  // BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
 
   void PushDirtyPageForTesting(const std::string& dirty_page_id);
   std::string PopDirtyPageForTesting();

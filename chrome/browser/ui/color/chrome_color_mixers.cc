@@ -5,11 +5,11 @@
 #include "chrome/browser/ui/color/chrome_color_mixers.h"
 
 #include <memory>
+#include <string_view>
 
 #include "base/containers/fixed_flat_map.h"
 #include "base/functional/bind.h"
 #include "base/no_destructor.h"
-#include "base/strings/string_piece.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/color/chrome_color_mixer.h"
 #include "chrome/browser/ui/color/material_chrome_color_mixer.h"
@@ -22,7 +22,6 @@
 #include "chrome/browser/ui/color/omnibox_color_mixer.h"
 #include "chrome/browser/ui/color/product_specifications_color_mixer.h"
 #include "chrome/browser/ui/color/tab_strip_color_mixer.h"
-#include "ui/base/ui_base_features.h"
 #include "ui/color/color_provider_utils.h"
 
 namespace {
@@ -30,15 +29,14 @@ namespace {
 class ChromeColorProviderUtilsCallbacks
     : public ui::ColorProviderUtilsCallbacks {
  public:
-  bool ColorIdName(ui::ColorId color_id,
-                   base::StringPiece* color_name) override;
+  bool ColorIdName(ui::ColorId color_id, std::string_view* color_name) override;
 };
 
 #include "ui/color/color_id_map_macros.inc"
 
 bool ChromeColorProviderUtilsCallbacks::ColorIdName(
     ui::ColorId color_id,
-    base::StringPiece* color_name) {
+    std::string_view* color_name) {
   static constexpr const auto chrome_color_id_map =
       base::MakeFixedFlatMap<ui::ColorId, const char*>({CHROME_COLOR_IDS});
   auto i = chrome_color_id_map.find(color_id);
@@ -67,13 +65,11 @@ void AddChromeColorMixers(ui::ColorProvider* provider,
   AddProductSpecificationsColorMixer(provider, key);
   AddTabStripColorMixer(provider, key);
 
-  if (features::IsChromeRefresh2023()) {
-    AddMaterialChromeColorMixer(provider, key);
-    AddMaterialNewTabPageColorMixer(provider, key);
-    AddMaterialOmniboxColorMixer(provider, key);
-    AddMaterialSidePanelColorMixer(provider, key);
-    AddMaterialTabStripColorMixer(provider, key);
-  }
+  AddMaterialChromeColorMixer(provider, key);
+  AddMaterialNewTabPageColorMixer(provider, key);
+  AddMaterialOmniboxColorMixer(provider, key);
+  AddMaterialSidePanelColorMixer(provider, key);
+  AddMaterialTabStripColorMixer(provider, key);
 
   // Must be the last one in order to override other mixer colors.
   AddNativeChromeColorMixer(provider, key);

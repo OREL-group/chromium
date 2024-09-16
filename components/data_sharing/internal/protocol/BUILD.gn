@@ -5,14 +5,8 @@
 import("//third_party/protobuf/proto_library.gni")
 
 proto_library("protocol") {
-  sources = [ "data_sharing_sdk.proto" ]
-}
+  proto_in_dir = "//"
+  sources = [ "group_data_db.proto" ]
 
-if (is_android) {
-  import("//build/config/android/rules.gni")
-
-  proto_java_library("proto_java") {
-    proto_path = "//"
-    sources = [ "data_sharing_sdk.proto" ]
-  }
+  link_deps = [ "//components/data_sharing/public/protocol" ]
 }

@@ -11,7 +11,6 @@
 
 #include "ash/components/arc/arc_util.h"
 #include "ash/components/arc/session/arc_bridge_service.h"
-#include "ash/constants/app_types.h"
 #include "ash/public/cpp/app_types_util.h"
 #include "ash/public/cpp/external_arc/message_center/arc_notification_content_view.h"
 #include "ash/public/cpp/external_arc/message_center/arc_notification_surface.h"
@@ -453,7 +452,8 @@ TEST_F(ArcAccessibilityHelperBridgeTest,
       CreateArcNotificationView(item.get(), *notification.get());
 
   // Prepare widget to hold it.
-  std::unique_ptr<views::Widget> widget = CreateTestWidget();
+  std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   widget->widget_delegate()->SetCanActivate(false);
   widget->Deactivate();
   widget->SetContentsView(std::move(notification_view));
@@ -517,7 +517,8 @@ TEST_F(ArcAccessibilityHelperBridgeTest, TextSelectionChangedFocusContentView) {
       std::make_unique<views::View>();
 
   // Prepare a widget to hold them.
-  std::unique_ptr<views::Widget> widget = CreateTestWidget();
+  std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   ArcNotificationView* notification_view =
       widget->GetRootView()->AddChildView(std::move(owning_notification_view));
   views::View* focus_stealer =

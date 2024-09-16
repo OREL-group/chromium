@@ -8,7 +8,7 @@
 #include <utility>
 
 #include "ash/picker/views/picker_focus_indicator.h"
-#include "ash/picker/views/picker_preview_bubble_controller.h"
+#include "ash/picker/views/picker_submenu_controller.h"
 #include "ash/style/style_util.h"
 #include "base/check.h"
 #include "base/functional/bind.h"
@@ -21,9 +21,9 @@
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/geometry/rounded_corners_f.h"
+#include "ui/gfx/geometry/skia_conversions.h"
 #include "ui/views/animation/ink_drop.h"
 #include "ui/views/animation/ink_drop_host.h"
-#include "ui/gfx/geometry/skia_conversions.h"
 #include "ui/views/background.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/controls/focus_ring.h"
@@ -41,18 +41,6 @@ constexpr float kPseudoFocusClipInset =
 
 constexpr auto kPickerItemFocusIndicatorMargins = gfx::Insets::VH(6, 0);
 
-std::unique_ptr<views::Background> GetPickerItemBackground(
-    PickerItemView::ItemState item_state,
-    int corner_radius) {
-  switch (item_state) {
-    case PickerItemView::ItemState::kNormal:
-      return nullptr;
-    case PickerItemView::ItemState::kPseudoFocused:
-      return views::CreateThemedRoundedRectBackground(
-          cros_tokens::kCrosSysHoverOnSubtle, corner_radius);
-  }
-}
-
 }  // namespace
 
 PickerItemView::PickerItemView(SelectItemCallback select_item_callback,
@@ -60,16 +48,11 @@ PickerItemView::PickerItemView(SelectItemCallback select_item_callback,
     : views::Button(select_item_callback),
       select_item_callback_(select_item_callback),
       focus_indicator_style_(focus_indicator_style) {
-  StyleUtil::SetUpInkDropForButton(this, gfx::Insets(),
-                                   /*highlight_on_hover=*/true,
-                                   /*highlight_on_focus=*/true);
-  views::InkDrop::Get(this)->GetInkDrop()->SetHoverHighlightFadeDuration(
-      base::TimeDelta());
-
   switch (focus_indicator_style_) {
     case FocusIndicatorStyle::kFocusRingWithInsetGap:
       [[fallthrough]];
     case FocusIndicatorStyle::kFocusRing:
+      StyleUtil::SetUpFocusRingForView(this);
       views::FocusRing::Get(this)->SetHasFocusPredicate(
           base::BindRepeating([](const View* view) {
             const auto* v = views::AsViewClass<PickerItemView>(view);
@@ -86,19 +69,10 @@ PickerItemView::PickerItemView(SelectItemCallback select_item_callback,
   }
 }
 
-PickerItemView::~PickerItemView() {
-  if (preview_bubble_controller_ != nullptr) {
-    preview_bubble_controller_->CloseBubble();
-  }
-}
+PickerItemView::~PickerItemView() = default;
 
-void PickerItemView::SetPreview(
-    PickerPreviewBubbleController* preview_bubble_controller) {
-  if (preview_bubble_controller_ != nullptr) {
-    preview_bubble_controller_->CloseBubble();
-  }
-
-  preview_bubble_controller_ = preview_bubble_controller;
+void PickerItemView::StateChanged(ButtonState old_state) {
+  UpdateBackground();
 }
 
 void PickerItemView::PaintButtonContents(gfx::Canvas* canvas) {
@@ -117,20 +91,14 @@ void PickerItemView::SelectItem() {
   select_item_callback_.Run();
 }
 
-void PickerItemView::OnMouseEntered(const ui::MouseEvent&) {
-  if (preview_bubble_controller_ != nullptr) {
-    preview_bubble_controller_->ShowBubble(this);
-  }
-}
-
-void PickerItemView::OnMouseExited(const ui::MouseEvent&) {
-  if (preview_bubble_controller_ != nullptr) {
-    preview_bubble_controller_->CloseBubble();
-  }
-}
-
 void PickerItemView::OnBoundsChanged(const gfx::Rect& previous_bounds) {
   UpdateClipPathForFocusRingWithInsetGap();
+}
+
+void PickerItemView::OnMouseEntered(const ui::MouseEvent& event) {
+  if (submenu_controller_ != nullptr) {
+    submenu_controller_->Close();
+  }
 }
 
 void PickerItemView::SetCornerRadius(int corner_radius) {
@@ -141,7 +109,16 @@ void PickerItemView::SetCornerRadius(int corner_radius) {
   corner_radius_ = corner_radius;
   StyleUtil::InstallRoundedCornerHighlightPathGenerator(
       this, gfx::RoundedCornersF(corner_radius_));
-  SetBackground(GetPickerItemBackground(item_state_, corner_radius_));
+  UpdateBackground();
+}
+
+PickerSubmenuController* PickerItemView::GetSubmenuController() {
+  return submenu_controller_;
+}
+
+void PickerItemView::SetSubmenuController(
+    PickerSubmenuController* submenu_controller) {
+  submenu_controller_ = submenu_controller;
 }
 
 PickerItemView::ItemState PickerItemView::GetItemState() const {
@@ -154,7 +131,8 @@ void PickerItemView::SetItemState(ItemState item_state) {
   }
 
   item_state_ = item_state;
-  SetBackground(GetPickerItemBackground(item_state_, corner_radius_));
+  UpdateBackground();
+
   switch (focus_indicator_style_) {
     case FocusIndicatorStyle::kFocusRingWithInsetGap:
       UpdateClipPathForFocusRingWithInsetGap();
@@ -182,6 +160,16 @@ void PickerItemView::UpdateClipPathForFocusRingWithInsetGap() {
     clip_path.addRoundRect(gfx::RectFToSkRect(inset_bounds), radius, radius);
   }
   SetClipPath(clip_path);
+}
+
+void PickerItemView::UpdateBackground() {
+  if (GetState() == views::Button::ButtonState::STATE_HOVERED ||
+      item_state_ == PickerItemView::ItemState::kPseudoFocused) {
+    SetBackground(views::CreateThemedRoundedRectBackground(
+        cros_tokens::kCrosSysHoverOnSubtle, corner_radius_));
+  } else {
+    SetBackground(nullptr);
+  }
 }
 
 BEGIN_METADATA(PickerItemView)

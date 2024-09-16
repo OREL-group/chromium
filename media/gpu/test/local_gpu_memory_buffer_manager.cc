@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/gpu/test/local_gpu_memory_buffer_manager.h"
 
 #include <drm_fourcc.h>
@@ -30,7 +35,7 @@ namespace {
 const int32_t kDrmNumNodes = 64;
 const int32_t kMinNodeNumber = 128;
 
-// TODO(https://crbug.com/1043007): use ui/gfx/linux/gbm_device.h instead.
+// TODO(crbug.com/40115082): use ui/gfx/linux/gbm_device.h instead.
 gbm_device* CreateGbmDevice() {
   int fd;
   int32_t min_node = kMinNodeNumber;

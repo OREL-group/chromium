@@ -15,8 +15,9 @@ export interface ProfileState {
   needsSignin: boolean;
   gaiaName: string;
   userName: string;
-  isManaged: boolean;
   avatarIcon: string;
+  // Empty if no badge should be set.
+  avatarBadge: string;
   // <if expr="chromeos_lacros">
   isPrimaryLacrosProfile: boolean;
   // </if>
@@ -135,7 +136,7 @@ export interface ManageProfilesBrowserProxy {
   /**
    * Creates local profile and opens a profile customization modal dialog on a
    * browser window.
-   * TODO(https://crbug.com/1282157): Add createShortcut parameter.
+   * TODO(crbug.com/40209493): Add createShortcut parameter.
    */
   continueWithoutAccount(profileColor: number): void;
 

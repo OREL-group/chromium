@@ -16,6 +16,7 @@
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/font_list.h"
 #include "ui/gfx/geometry/insets.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/border.h"
 #include "ui/views/bubble/bubble_border.h"
 #include "ui/views/controls/label.h"
@@ -200,6 +201,8 @@ SubtleNotificationView::SubtleNotificationView() : instruction_view_(nullptr) {
       views::BoxLayout::Orientation::kHorizontal,
       gfx::Insets::VH(outer_padding_vert, outer_padding_horiz),
       kMiddlePaddingPx));
+
+  GetViewAccessibility().SetRole(ax::mojom::Role::kAlert);
 }
 
 SubtleNotificationView::~SubtleNotificationView() {}
@@ -225,7 +228,9 @@ views::Widget* SubtleNotificationView::CreatePopupWidget(
     std::unique_ptr<SubtleNotificationView> view) {
   // Initialize the popup.
   views::Widget* popup = new views::Widget;
-  views::Widget::InitParams params(views::Widget::InitParams::TYPE_POPUP);
+  views::Widget::InitParams params(
+      views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET,
+      views::Widget::InitParams::TYPE_POPUP);
 #if BUILDFLAG(IS_WIN)
   // On Windows, this widget isn't parented on purpose to avoid it being
   // obscured by other topmost widgets. See crbug.com/1431043. Setting
@@ -239,7 +244,6 @@ views::Widget* SubtleNotificationView::CreatePopupWidget(
 #endif
 
   params.opacity = views::Widget::InitParams::WindowOpacity::kTranslucent;
-  params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.z_order = ui::ZOrderLevel::kSecuritySurface;
   params.accept_events = false;
   popup->Init(std::move(params));
@@ -256,7 +260,6 @@ views::Widget* SubtleNotificationView::CreatePopupWidget(
 }
 
 void SubtleNotificationView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  node_data->role = ax::mojom::Role::kAlert;
   std::u16string accessible_name;
   base::RemoveChars(instruction_view_->GetText(), kKeyNameDelimiter,
                     &accessible_name);

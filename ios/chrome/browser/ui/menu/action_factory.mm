@@ -15,8 +15,10 @@
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
 #import "ios/chrome/browser/shared/ui/util/pasteboard_util.h"
+#import "ios/chrome/browser/signin/model/system_identity.h"
 #import "ios/chrome/browser/ui/menu/menu_action_type.h"
 #import "ios/chrome/grit/ios_strings.h"
+#import "ios/public/provider/chrome/browser/context_menu/context_menu_api.h"
 #import "ui/base/l10n/l10n_util_mac.h"
 #import "url/gurl.h"
 
@@ -30,7 +32,7 @@
 @implementation ActionFactory
 
 - (instancetype)initWithScenario:(MenuScenarioHistogram)scenario {
-  if (self = [super init]) {
+  if ((self = [super init])) {
     _histogram = GetActionsHistogramName(scenario);
   }
   return self;
@@ -63,6 +65,19 @@
                 block:^{
                   StoreURLInPasteboard(URL.gurl);
                 }];
+}
+
+- (UIAction*)actionToShowFullURL:(NSString*)URLString
+                           block:(ProceduralBlock)block {
+  UIAction* action = [self actionWithTitle:nil
+                                     image:nil
+                                      type:MenuActionType::ShowFullURL
+                                     block:block];
+  action.accessibilityLabel =
+      l10n_util::GetNSString(IDS_IOS_SHOW_FULL_URL_BUTTON_ACCESSIBILITY_LABEL);
+  action.attributes = UIMenuElementAttributesKeepsMenuPresented;
+  action.subtitle = ios::provider::StyledContextMenuStringForString(URLString);
+  return action;
 }
 
 - (UIAction*)actionToShareWithBlock:(ProceduralBlock)block {
@@ -298,12 +313,13 @@
 - (UIAction*)actionToCloseAllTabsWithBlock:(ProceduralBlock)block {
   UIImage* image =
       DefaultSymbolWithPointSize(kXMarkSymbol, kSymbolActionPointSize);
-  UIAction* action =
-      [self actionWithTitle:l10n_util::GetNSString(
-                                IDS_IOS_CONTENT_CONTEXT_CLOSEALLTABS)
-                      image:image
-                       type:MenuActionType::CloseAllTabs
-                      block:block];
+  int titleID = IsTabGroupSyncEnabled()
+                    ? IDS_IOS_CONTENT_CONTEXT_CLOSEALLTABSANDGROUPS
+                    : IDS_IOS_CONTENT_CONTEXT_CLOSEALLTABS;
+  UIAction* action = [self actionWithTitle:l10n_util::GetNSString(titleID)
+                                     image:image
+                                      type:MenuActionType::CloseAllTabs
+                                     block:block];
   action.attributes = UIMenuElementAttributesDestructive;
   return action;
 }
@@ -360,11 +376,16 @@
                                      block:block];
   return action;
 }
-- (UIAction*)actionToOpenLinkInNewGroupWithBlock:(ProceduralBlock)block {
+
+- (UIAction*)actionToOpenLinkInNewGroupWithBlock:(ProceduralBlock)block
+                                       inSubmenu:(BOOL)inSubmenu {
   UIImage* image = DefaultSymbolWithPointSize(kNewTabGroupActionSymbol,
                                               kSymbolActionPointSize);
   NSString* title =
-      l10n_util::GetNSString(IDS_IOS_CONTENT_CONTEXT_OPENLINKINTABGROUP);
+      inSubmenu ? l10n_util::GetNSString(
+                      IDS_IOS_CONTENT_CONTEXT_ADDTABTONEWTABGROUP_SUBMENU)
+                : l10n_util::GetNSString(
+                      IDS_IOS_CONTENT_CONTEXT_OPENLINKINNEWTABGROUP);
   UIAction* action = [self actionWithTitle:title
                                      image:image
                                       type:MenuActionType::OpenLinkInNewGroup
@@ -433,7 +454,7 @@
          "outside the Tab Groups experiment.";
 
   if (groups.size() == 0) {
-    NOTREACHED_NORETURN() << "Groups cannot be empty.";
+    NOTREACHED() << "Groups cannot be empty.";
   }
 
   NSArray<UIMenuElement*>* groupsMenu = [self groupsMenuForGroups:groups
@@ -470,7 +491,8 @@
         block(nil);
       }
     };
-    return [self actionToOpenLinkInNewGroupWithBlock:openInNewGroupBlock];
+    return [self actionToOpenLinkInNewGroupWithBlock:openInNewGroupBlock
+                                           inSubmenu:NO];
   }
 
   NSArray<UIMenuElement*>* groupsMenu = [self groupsMenuForGroups:groups
@@ -486,8 +508,11 @@
       block(nil);
     }
   };
-  NSArray<UIMenuElement*>* openInGroupMenuElements =
-      @[ [self actionToOpenLinkInNewGroupWithBlock:openInNewGroupBlock], menu ];
+  NSArray<UIMenuElement*>* openInGroupMenuElements = @[
+    [self actionToOpenLinkInNewGroupWithBlock:openInNewGroupBlock
+                                    inSubmenu:YES],
+    menu
+  ];
 
   UIImage* image = DefaultSymbolWithPointSize(kMoveTabToGroupActionSymbol,
                                               kSymbolActionPointSize);
@@ -552,6 +577,21 @@
   return action;
 }
 
+- (UIAction*)actionToCloseTabGroupWithBlock:(ProceduralBlock)block {
+  CHECK(IsTabGroupInGridEnabled());
+  CHECK(IsTabGroupSyncEnabled());
+
+  UIImage* image =
+      DefaultSymbolWithPointSize(kXMarkSymbol, kSymbolActionPointSize);
+  UIAction* action = [self
+      actionWithTitle:l10n_util::GetNSString(IDS_IOS_CONTENT_CONTEXT_CLOSEGROUP)
+                image:image
+                 type:MenuActionType::CloseTabGroup
+                block:block];
+  action.attributes = UIMenuElementAttributesDestructive;
+  return action;
+}
+
 #pragma mark - Private
 
 // Creates a UIAction instance for closing a tab with a provided `title`.
@@ -583,6 +623,16 @@
   return action;
 }
 
+- (UIAction*)actionToShowDetailsWithBlock:(ProceduralBlock)block {
+  UIImage* image =
+      DefaultSymbolWithPointSize(kInfoCircleSymbol, kSymbolActionPointSize);
+  return [self
+      actionWithTitle:l10n_util::GetNSString(IDS_IOS_SHOW_DETAILS_ACTION_TITLE)
+                image:image
+                 type:MenuActionType::ShowDetails
+                block:block];
+}
+
 // Returns an array of group actions for a given set of groups. If
 // `currentGroup` is specified and is present in the set, it is selected.
 - (NSArray<UIMenuElement*>*)
@@ -597,9 +647,10 @@
       [circleImage imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
   for (const TabGroup* group : groups) {
     NSString* title = group->GetTitle();
+    base::WeakPtr<const TabGroup> weakGroup = group->GetWeakPtr();
     ProceduralBlock actionBlock = ^{
       if (block) {
-        block(group);
+        block(weakGroup.get());
       }
     };
 
@@ -616,4 +667,83 @@
   }
   return groupsMenu;
 }
+
+- (UIAction*)actionToSortDriveItemsByNameWithBlock:(ProceduralBlock)block {
+  return
+      [self actionWithTitle:l10n_util::GetNSString(IDS_IOS_DRIVE_SORT_BY_NAME)
+                      image:nil
+                       type:MenuActionType::SortDriveItemsByName
+                      block:block];
+}
+
+- (UIAction*)actionToSortDriveItemsByModificationTimeWithBlock:
+    (ProceduralBlock)block {
+  return [self
+      actionWithTitle:l10n_util::GetNSString(IDS_IOS_DRIVE_SORT_BY_MODIFICATION)
+                image:nil
+                 type:MenuActionType::SortDriveItemsByModificationTime
+                block:block];
+}
+
+- (UIAction*)actionToSortDriveItemsByOpeningTimeWithBlock:
+    (ProceduralBlock)block {
+  return [self
+      actionWithTitle:l10n_util::GetNSString(IDS_IOS_DRIVE_SORT_BY_OPENING)
+                image:nil
+                 type:MenuActionType::SortDriveItemsByOpeningTime
+                block:block];
+}
+
+- (UIMenuElement*)
+    menuToSelectDriveIdentityWithIdentities:
+        (NSArray<id<SystemIdentity>>*)identities
+                            currentIdentity:(id<SystemIdentity>)currentIdentity
+                                      block:(void (^)(const id<SystemIdentity>))
+                                                block {
+  NSMutableArray<UIMenuElement*>* identitiesMenuElements =
+      [[NSMutableArray alloc] init];
+  for (id<SystemIdentity> identity in identities) {
+    NSString* email = identity.userEmail;
+    ProceduralBlock actionBlock = ^{
+      if (block) {
+        block(identity);
+      }
+    };
+
+    UIAction* identityAction =
+        [self actionWithTitle:email
+                        image:nil
+                         type:MenuActionType::SelectDriveIdentity
+                        block:actionBlock];
+    if (identity == currentIdentity) {
+      identityAction.state = UIMenuElementStateOn;
+    }
+    [identitiesMenuElements addObject:identityAction];
+  }
+
+  return [UIMenu menuWithTitle:@""
+                         image:nil
+                    identifier:nil
+                       options:UIMenuOptionsDisplayInline
+                      children:identitiesMenuElements];
+}
+
+- (UIAction*)actionToAddAccountForDriveWithBlock:(ProceduralBlock)block {
+  return [self actionWithTitle:l10n_util::GetNSString(IDS_IOS_DRIVE_ADD_ACCOUNT)
+                         image:nil
+                          type:MenuActionType::AddDriveAccount
+                         block:block];
+}
+
+- (UIAction*)actionToManageLinkInNewTabWithBlock:(ProceduralBlock)block {
+  UIImage* image =
+      DefaultSymbolWithPointSize(kExternalLinkSymbol, kSymbolActionPointSize);
+
+  return [self actionWithTitle:l10n_util::GetNSString(
+                                   IDS_IOS_CONTENT_CONTEXT_OPENMANAGEINNEWTAB)
+                         image:image
+                          type:MenuActionType::ManageInNewTab
+                         block:block];
+}
+
 @end

@@ -7,9 +7,11 @@
 #include <cstddef>
 #include <utility>
 
-#include "base/barrier_closure.h"
+#include "base/barrier_callback.h"
 #include "base/check_is_test.h"
 #include "base/command_line.h"
+#include "base/containers/flat_set.h"
+#include "base/containers/to_vector.h"
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
@@ -22,16 +24,18 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
+#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "components/signin/public/base/gaia_id_hash.h"
 #include "components/signin/public/base/signin_metrics.h"
 #include "components/signin/public/identity_manager/account_info.h"
 #include "components/signin/public/identity_manager/accounts_in_cookie_jar_info.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
+#include "components/signin/public/identity_manager/identity_utils.h"
 #include "components/signin/public/identity_manager/primary_account_mutator.h"
 #include "components/sync/base/command_line_switches.h"
+#include "components/sync/base/data_type.h"
 #include "components/sync/base/features.h"
-#include "components/sync/base/model_type.h"
 #include "components/sync/base/stop_source.h"
 #include "components/sync/base/sync_util.h"
 #include "components/sync/engine/configure_reason.h"
@@ -45,14 +49,17 @@
 #include "components/sync/model/type_entities_count.h"
 #include "components/sync/service/backend_migrator.h"
 #include "components/sync/service/configure_context.h"
+#include "components/sync/service/data_type_manager_impl.h"
+#include "components/sync/service/get_types_with_unsynced_data_request_barrier.h"
 #include "components/sync/service/local_data_description.h"
-#include "components/sync/service/sync_api_component_factory.h"
 #include "components/sync/service/sync_auth_manager.h"
+#include "components/sync/service/sync_engine_factory.h"
 #include "components/sync/service/sync_feature_status_for_migrations_recorder.h"
 #include "components/sync/service/sync_prefs.h"
 #include "components/sync/service/sync_prefs_policy_handler.h"
 #include "components/sync/service/sync_service_utils.h"
 #include "components/sync/service/trusted_vault_histograms.h"
+#include "components/sync/service/trusted_vault_synthetic_field_trial.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 
@@ -84,18 +91,13 @@ constexpr char kIgnoreMinGmsVersionWithPassphraseSupportForTest[] =
     "ignore-min-gms-version-with-passphrase-support-for-test";
 #endif  // BUILDFLAG(IS_ANDROID)
 
-// The time after browser startup to report sync configuration metrics.
-constexpr base::TimeDelta kRecordDownloadStatusTimeout = base::Seconds(30);
-
-constexpr char kModelTypeReachedUpToDateHistogramPrefix[] =
-    "Sync.ModelTypeUpToDateTime";
-
 // The initial state of sync, for the Sync.InitialState2 histogram. Even if
 // this value indicates that sync (the feature or the transport) can start, the
 // startup might fail for reasons such as network issues, or the version of
 // Chrome being too old.
 // These values are persisted to logs. Entries should not be renumbered and
 // numeric values should never be reused.
+// LINT.IfChange(SyncInitialState)
 enum SyncInitialState {
   // Sync-the-feature can attempt to start up.
   kFeatureCanStart = 0,
@@ -117,6 +119,7 @@ enum SyncInitialState {
   kObsoleteNotAllowedByPlatform = 6,
   kMaxValue = kObsoleteNotAllowedByPlatform
 };
+// LINT.ThenChange(/tools/metrics/histograms/metadata/sync/enums.xml:SyncInitialState)
 
 // These values are persisted to logs. Entries should not be renumbered and
 // numeric values should never be reused.
@@ -168,18 +171,6 @@ EngineComponentsFactory::Switches EngineSwitchesFromCommandLine() {
   return factory_switches;
 }
 
-ModelTypeController::TypeMap BuildModelTypeControllerMap(
-    ModelTypeController::TypeVector controllers) {
-  ModelTypeController::TypeMap type_map;
-  for (std::unique_ptr<ModelTypeController>& controller : controllers) {
-    DCHECK(controller);
-    ModelType type = controller->type();
-    DCHECK_EQ(0U, type_map.count(type));
-    type_map[type] = std::move(controller);
-  }
-  return type_map;
-}
-
 std::unique_ptr<HttpPostProviderFactory> CreateHttpBridgeFactory(
     const std::string& user_agent,
     std::unique_ptr<network::PendingSharedURLLoaderFactory>
@@ -206,13 +197,36 @@ base::TimeDelta GetDeferredInitDelay() {
   return base::Seconds(10);
 }
 
-void LogWaitingForUpdatesReasonIfNeeded(
-    DownloadStatusWaitingForUpdatesReason reason,
-    ModelType type,
-    const std::string& waiting_for_updates_histogram_name) {
-  if (!waiting_for_updates_histogram_name.empty()) {
-    base::UmaHistogramEnumeration(waiting_for_updates_histogram_name, reason);
+void MaybeClearAccountKeyedPreferences(
+    signin::IdentityManager* identity_manager,
+    const signin::AccountsInCookieJarInfo& accounts_in_cookie_jar_info,
+    SyncUserSettingsImpl& user_settings) {
+#if !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
+  if (accounts_in_cookie_jar_info.accounts_are_fresh) {
+    // Clear settings for accounts no longer in the cookie jar. On Android
+    // and iOS this is done when the account is removed from the OS instead.
+    std::vector<signin::GaiaIdHash> hashes =
+        base::ToVector(signin::GetAllGaiaIdsForKeyedPreferences(
+                           identity_manager, accounts_in_cookie_jar_info),
+                       &signin::GaiaIdHash::FromGaiaId);
+    user_settings.KeepAccountSettingsPrefsOnlyForUsers(hashes);
   }
+#endif  // !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
+}
+
+std::map<DataType, LocalDataDescription> JoinAllTypesAndLocalDataDescriptions(
+    const std::vector<std::pair<DataType, LocalDataDescription>>& pairs) {
+  std::map<DataType, LocalDataDescription> map;
+  for (const std::pair<DataType, LocalDataDescription>& pair : pairs) {
+    map.emplace(pair);
+  }
+  return map;
+}
+
+std::pair<DataType, LocalDataDescription> JoinTypeAndLocalDataDescription(
+    DataType type,
+    LocalDataDescription description) {
+  return {type, description};
 }
 
 }  // namespace
@@ -224,7 +238,9 @@ SyncServiceImpl::InitParams::~InitParams() = default;
 SyncServiceImpl::SyncServiceImpl(InitParams init_params)
     : sync_client_(std::move(init_params.sync_client)),
       sync_prefs_(sync_client_->GetPrefService()),
-      identity_manager_(std::move(init_params.identity_manager)),
+      identity_manager_(sync_prefs_.IsLocalSyncEnabled()
+                            ? nullptr
+                            : sync_client_->GetIdentityManager()),
       auth_manager_(std::make_unique<SyncAuthManager>(
           identity_manager_,
           base::BindRepeating(&SyncServiceImpl::AccountStateChanged,
@@ -240,9 +256,7 @@ SyncServiceImpl::SyncServiceImpl(InitParams init_params)
       network_connection_tracker_(
           std::move(init_params.network_connection_tracker)),
       create_http_post_provider_factory_cb_(
-          base::BindRepeating(&CreateHttpBridgeFactory)),
-      sync_poll_immediately_on_every_startup_(
-          init_params.sync_poll_immediately_on_every_startup) {
+          base::BindRepeating(&CreateHttpBridgeFactory)) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(sync_client_);
   DCHECK(IsLocalSyncEnabled() || identity_manager_ != nullptr);
@@ -262,6 +276,47 @@ SyncServiceImpl::SyncServiceImpl(InitParams init_params)
   if (identity_manager_) {
     identity_manager_->AddObserver(this);
   }
+
+  observers_.emplace();
+
+  // Based on the information cached in preferences, it might be required to
+  // register a synthetic field trial group. This should be done as early as
+  // possible to avoid untagged metrics if they get logged before other events
+  // like sync engine initialization, which could take arbitrarily long (e.g.
+  // persistent auth error). Task-posting is involved to avoid infinite
+  // recursions if the implementation in SyncClient leads to
+  // accessing/constructing SyncService.
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE,
+      base::BindOnce(
+          &SyncServiceImpl::RegisterTrustedVaultSyntheticFieldTrialsIfNecessary,
+          weak_factory_.GetWeakPtr()));
+}
+
+void SyncServiceImpl::RegisterTrustedVaultSyntheticFieldTrialsIfNecessary() {
+  if (registered_trusted_vault_auto_upgrade_synthetic_field_trial_group_
+          .has_value()) {
+    // Registration function already invoked. It cannot be invoked twice, as
+    // runtime changes to the group assignment is not supported (e.g. signout).
+    return;
+  }
+
+  const sync_pb::TrustedVaultAutoUpgradeExperimentGroup proto =
+      sync_prefs_.GetCachedTrustedVaultAutoUpgradeExperimentGroup().value_or(
+          sync_pb::TrustedVaultAutoUpgradeExperimentGroup());
+
+  const TrustedVaultAutoUpgradeSyntheticFieldTrialGroup group =
+      TrustedVaultAutoUpgradeSyntheticFieldTrialGroup::FromProto(proto);
+
+  if (!group.is_valid()) {
+    // Broadcasting an invalid group isn't allowed, as it would otherwise use
+    // the only chance to invoke the registration function below, which may only
+    // be invoked once.
+    return;
+  }
+
+  registered_trusted_vault_auto_upgrade_synthetic_field_trial_group_ = group;
+  sync_client_->RegisterTrustedVaultAutoUpgradeSyntheticFieldTrial(group);
 }
 
 SyncServiceImpl::~SyncServiceImpl() {
@@ -273,27 +328,19 @@ SyncServiceImpl::~SyncServiceImpl() {
   DCHECK(!engine_);
 }
 
-void SyncServiceImpl::Initialize() {
+void SyncServiceImpl::Initialize(DataTypeController::TypeVector controllers) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  observers_.emplace();
-
-  // TODO(mastiz): The controllers map should be provided as argument.
-  model_type_controllers_ = BuildModelTypeControllerMap(
-      sync_client_->CreateModelTypeControllers(this));
+  data_type_manager_ = std::make_unique<DataTypeManagerImpl>(
+      std::move(controllers), &crypto_, this);
 
   // It's safe to pass a raw ptr, since SyncServiceImpl outlives
   // SyncUserSettingsImpl.
   user_settings_ = std::make_unique<SyncUserSettingsImpl>(
-      /*delegate=*/this, &crypto_, &sync_prefs_, GetRegisteredDataTypes());
+      /*delegate=*/this, &crypto_, &sync_prefs_,
+      data_type_manager_->GetRegisteredDataTypes());
 
   sync_prefs_observation_.Observe(&sync_prefs_);
-
-  // TODO(crbug.com/40901755): Ideally the DataTypeManager would get injected,
-  // instead of being constructed via the factory.
-  data_type_manager_ =
-      sync_client_->GetSyncApiComponentFactory()->CreateDataTypeManager(
-          &model_type_controllers_, &crypto_, this);
 
   if (!IsLocalSyncEnabled()) {
     auth_manager_->RegisterForAuthNotifications();
@@ -318,11 +365,6 @@ void SyncServiceImpl::Initialize() {
 
   // *After* setting up `auth_manager_`, run pref migrations that depend on
   // the account state.
-#if BUILDFLAG(IS_IOS)
-  sync_prefs_.MaybeMigratePasswordsToPerAccountPref(
-      GetSyncAccountStateForPrefs(),
-      signin::GaiaIdHash::FromGaiaId(GetAccountInfo().gaia));
-#endif  // BUILDFLAG(IS_IOS)
   sync_prefs_.MaybeMigratePrefsForSyncToSigninPart1(
       GetSyncAccountStateForPrefs(),
       signin::GaiaIdHash::FromGaiaId(GetAccountInfo().gaia));
@@ -346,7 +388,7 @@ void SyncServiceImpl::Initialize() {
   // If sync is disabled permanently, clean up old data that may be around (e.g.
   // crash during signout).
   if (HasDisableReason(DISABLE_REASON_ENTERPRISE_POLICY)) {
-    StopAndClear();
+    StopAndClear(ResetEngineReason::kEnterprisePolicy);
 #if BUILDFLAG(IS_CHROMEOS_ASH)
     // On ChromeOS Ash, sync-the-feature stays disabled even after the policy is
     // removed, for historic reasons. It is unclear if this behavior is
@@ -363,7 +405,7 @@ void SyncServiceImpl::Initialize() {
     // first startup of a fresh profile, the signed-in account isn't known yet
     // at this point (see also https://crbug.com/1458701#c7).
 #if !BUILDFLAG(IS_CHROMEOS_ASH)
-    StopAndClear();
+    StopAndClear(ResetEngineReason::kNotSignedIn);
 #endif
   }
 
@@ -382,29 +424,26 @@ void SyncServiceImpl::Initialize() {
                          is_sync_feature_requested_for_metrics,
                          user_settings_->IsInitialSyncFeatureSetupComplete());
 
-  ModelTypeSet data_types_to_track =
-      Intersection(GetRegisteredDataTypes(), ProtocolTypes());
-  if (!data_types_to_track.empty()) {
-    download_status_recorder_ = std::make_unique<DownloadStatusRecorder>(
-        this,
-        base::BindOnce(&SyncServiceImpl::OnDownloadStatusRecorderFinished,
-                       weak_factory_.GetWeakPtr()),
-        data_types_to_track);
+  if (registered_trusted_vault_auto_upgrade_synthetic_field_trial_group_
+          .has_value() &&
+      base::FeatureList::IsEnabled(
+          syncer::kTrustedVaultAutoUpgradeSyntheticFieldTrial)) {
+    CHECK(registered_trusted_vault_auto_upgrade_synthetic_field_trial_group_
+              ->is_valid());
+    registered_trusted_vault_auto_upgrade_synthetic_field_trial_group_
+        ->LogValidationMetricsUponOnProfileLoad(GetAccountInfo().gaia);
   }
 
   // Call Stop() on controllers for non-preferred types to clear metadata.
   // This allows clearing metadata for types disabled in previous run early-on
   // during initialization.
-  ModelTypeSet preferred_types = GetPreferredDataTypes();
-  for (auto& [type, controller] : model_type_controllers_) {
-    if (!preferred_types.Has(type)) {
-      controller->Stop(CLEAR_METADATA, base::DoNothing());
-    }
-  }
+  data_type_manager_->ClearMetadataWhileStoppedExceptFor(
+      GetPreferredDataTypes());
 
   if (IsEngineAllowedToRun()) {
-    if (!sync_client_->GetSyncApiComponentFactory()
-             ->HasTransportDataIncludingFirstSync()) {
+    if (!sync_client_->GetSyncEngineFactory()
+             ->HasTransportDataIncludingFirstSync(
+                 signin::GaiaIdHash::FromGaiaId(GetAccountInfo().gaia))) {
       // Sync never initialized before on this profile, so let's try immediately
       // the very first time. This is particularly useful for Chrome Ash (where
       // the user is signed in to begin with) and local sync (where sign-in
@@ -432,15 +471,15 @@ void SyncServiceImpl::StartSyncingWithServer() {
     engine_->StartSyncingWithServer();
   }
   if (IsLocalSyncEnabled()) {
-    TriggerRefresh(ModelTypeSet::All());
+    TriggerRefresh(DataTypeSet::All());
   }
 }
 
-ModelTypeSet SyncServiceImpl::GetRegisteredDataTypesForTest() const {
-  return GetRegisteredDataTypes();
+DataTypeSet SyncServiceImpl::GetRegisteredDataTypesForTest() const {
+  return data_type_manager_->GetRegisteredDataTypes();
 }
 
-bool SyncServiceImpl::HasAnyDatatypeErrorForTest(ModelTypeSet types) const {
+bool SyncServiceImpl::HasAnyDatatypeErrorForTest(DataTypeSet types) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   for (auto type : types) {
     auto it = data_type_error_map_.find(type);
@@ -453,14 +492,53 @@ bool SyncServiceImpl::HasAnyDatatypeErrorForTest(ModelTypeSet types) const {
 }
 
 void SyncServiceImpl::GetThrottledDataTypesForTest(
-    base::OnceCallback<void(ModelTypeSet)> cb) const {
+    base::OnceCallback<void(DataTypeSet)> cb) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!engine_ || !engine_->IsInitialized()) {
-    std::move(cb).Run(ModelTypeSet());
+    std::move(cb).Run(DataTypeSet());
     return;
   }
 
   engine_->GetThrottledDataTypesForTest(std::move(cb));
+}
+
+// static
+ShutdownReason SyncServiceImpl::ShutdownReasonForResetEngineReason(
+    ResetEngineReason reset_reason) {
+  switch (reset_reason) {
+    case ResetEngineReason::kShutdown:
+      return ShutdownReason::BROWSER_SHUTDOWN_AND_KEEP_DATA;
+    case ResetEngineReason::kCredentialsChanged:
+      return ShutdownReason::STOP_SYNC_AND_KEEP_DATA;
+    case ResetEngineReason::kUnrecoverableError:
+    case ResetEngineReason::kDisabledAccount:
+    case ResetEngineReason::kResetLocalData:
+    case ResetEngineReason::kUpgradeClientError:
+    case ResetEngineReason::kNotSignedIn:
+    case ResetEngineReason::kEnterprisePolicy:
+    case ResetEngineReason::kDisableSyncOnClient:
+      return ShutdownReason::DISABLE_SYNC_AND_CLEAR_DATA;
+  }
+}
+
+bool SyncServiceImpl::ShouldClearTransportDataForAccount(
+    ResetEngineReason reset_reason) {
+  switch (reset_reason) {
+    case ResetEngineReason::kShutdown:
+    case ResetEngineReason::kDisabledAccount:
+    case ResetEngineReason::kUpgradeClientError:
+    case ResetEngineReason::kCredentialsChanged:
+    case ResetEngineReason::kNotSignedIn:
+    case ResetEngineReason::kEnterprisePolicy:
+      // Regular/benign cases; no need to clear.
+      return false;
+    case ResetEngineReason::kUnrecoverableError:
+    case ResetEngineReason::kResetLocalData:
+    case ResetEngineReason::kDisableSyncOnClient:
+      // Weird error, or explicit request to reset. Clear transport data to
+      // start over fresh.
+      return true;
+  }
 }
 
 void SyncServiceImpl::AccountStateChanged() {
@@ -469,7 +547,7 @@ void SyncServiceImpl::AccountStateChanged() {
   if (!IsSignedIn()) {
     // The account was signed out, so shut down.
     sync_disabled_by_admin_ = false;
-    StopAndClear();
+    StopAndClear(ResetEngineReason::kNotSignedIn);
     DCHECK(!engine_);
   } else {
     // Either a new account was signed in, or the existing account's
@@ -498,8 +576,7 @@ void SyncServiceImpl::CredentialsChanged() {
       DVLOG(2) << "Notify observers on credentials changed";
       NotifyObservers();
     }
-    ResetEngine(ShutdownReason::STOP_SYNC_AND_KEEP_DATA,
-                ResetEngineReason::kCredentialsChanged);
+    ResetEngine(ResetEngineReason::kCredentialsChanged);
     return;
   }
 
@@ -530,7 +607,7 @@ void SyncServiceImpl::OnProtocolEvent(const ProtocolEvent& event) {
   }
 }
 
-void SyncServiceImpl::OnDataTypeRequestsSyncStartup(ModelType type) {
+void SyncServiceImpl::OnDataTypeRequestsSyncStartup(DataType type) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(UserTypes().Has(type));
 
@@ -538,7 +615,7 @@ void SyncServiceImpl::OnDataTypeRequestsSyncStartup(ModelType type) {
     // We can get here as datatype SyncableServices are typically wired up
     // to the native datatype even if sync isn't enabled.
     DVLOG(1) << "Dropping sync startup request because type "
-             << ModelTypeToDebugString(type) << "not enabled.";
+             << DataTypeToDebugString(type) << "not enabled.";
     return;
   }
 
@@ -586,8 +663,10 @@ void SyncServiceImpl::TryStartImpl() {
     DCHECK(!authenticated_account_info.account_id.empty());
   }
 
-  engine_ = sync_client_->GetSyncApiComponentFactory()->CreateSyncEngine(
-      debug_identifier_, sync_client_->GetSyncInvalidationsService());
+  engine_ = sync_client_->GetSyncEngineFactory()->CreateSyncEngine(
+      debug_identifier_,
+      signin::GaiaIdHash::FromGaiaId(authenticated_account_info.gaia),
+      sync_client_->GetSyncInvalidationsService());
   DCHECK(engine_);
 
   // Clear any old errors the first time sync starts.
@@ -616,8 +695,6 @@ void SyncServiceImpl::TryStartImpl() {
   params.engine_components_factory =
       std::make_unique<EngineComponentsFactoryImpl>(
           EngineSwitchesFromCommandLine());
-  params.sync_poll_immediately_on_every_startup =
-      sync_poll_immediately_on_every_startup_;
 
   if (!IsLocalSyncEnabled()) {
     auth_manager_->ConnectionOpened();
@@ -633,18 +710,16 @@ void SyncServiceImpl::TryStartImpl() {
 
 void SyncServiceImpl::Shutdown() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  TRACE_EVENT0("sync", "SyncServiceImpl::Shutdown");
 
   NotifyShutdown();
 
   // Ensure the DataTypeManager is destroyed before the engine, since it has a
   // pointer to the engine.
   std::unique_ptr<SyncEngine> engine =
-      ResetEngine(ShutdownReason::BROWSER_SHUTDOWN_AND_KEEP_DATA,
-                  ResetEngineReason::kShutdown);
+      ResetEngine(ResetEngineReason::kShutdown);
   data_type_manager_.reset();
   engine.reset();
-
-  model_type_controllers_.clear();
 
   crypto_.StopObservingTrustedVaultClient();
 
@@ -657,34 +732,35 @@ void SyncServiceImpl::Shutdown() {
   auth_manager_.reset();
 }
 
-void SyncServiceImpl::RecordReasonIfWaitingForUpdates(
-    ModelType type,
-    const std::string& histogram_name) const {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  // Ignore the actual returned status.
-  GetDownloadStatusForImpl(type, histogram_name);
-}
-
 std::unique_ptr<SyncEngine> SyncServiceImpl::ResetEngine(
-    ShutdownReason shutdown_reason,
     ResetEngineReason reset_reason) {
+  TRACE_EVENT0("sync", "SyncServiceImpl::ResetEngine");
   CHECK(data_type_manager_);
+
+  const ShutdownReason shutdown_reason =
+      ShutdownReasonForResetEngineReason(reset_reason);
+
+  // Stop all data type controllers, if needed. Note that until Stop completes,
+  // it is possible in theory to have a ChangeProcessor apply a change from a
+  // native model. In that case, it will get applied to the local storage as an
+  // unsynced change. That will be persisted, and committed on restart.
+  if (shutdown_reason != ShutdownReason::BROWSER_SHUTDOWN_AND_KEEP_DATA) {
+    data_type_manager_->Stop(
+        ShutdownReasonToSyncStopMetadataFate(shutdown_reason));
+    data_type_manager_->SetConfigurer(nullptr);
+  }
 
   if (!engine_) {
     // If the engine hasn't started or is already shut down when a DISABLE_SYNC
     // happens, the Directory needs to be cleaned up here.
     if (shutdown_reason == ShutdownReason::DISABLE_SYNC_AND_CLEAR_DATA) {
-      sync_client_->GetSyncApiComponentFactory()->ClearAllTransportData();
+      sync_client_->GetSyncEngineFactory()->CleanupOnDisableSync();
     }
-    if (shutdown_reason != ShutdownReason::BROWSER_SHUTDOWN_AND_KEEP_DATA) {
-      // Call controller's Stop() to inform them to clear the metadata.
-      // TODO(crbug.com/40901755): Plumb this through DataTypeManager instead of
-      // calling the controllers directly.
-      SyncStopMetadataFate fate =
-          ShutdownReasonToSyncStopMetadataFate(shutdown_reason);
-      for (auto& [type, controller] : model_type_controllers_) {
-        controller->Stop(fate, base::DoNothing());
-      }
+    // Depending on the `reset_reason`, maybe clear account-keyed transport
+    // data.
+    if (ShouldClearTransportDataForAccount(reset_reason)) {
+      sync_client_->GetSyncEngineFactory()->ClearTransportDataForAccount(
+          signin::GaiaIdHash::FromGaiaId(GetAccountInfo().gaia));
     }
     return nullptr;
   }
@@ -710,16 +786,6 @@ std::unique_ptr<SyncEngine> SyncServiceImpl::ResetEngine(
   // possible.
   engine_->StopSyncingForShutdown();
 
-  // Stop all data type controllers, if needed. Note that until Stop completes,
-  // it is possible in theory to have a ChangeProcessor apply a change from a
-  // native model. In that case, it will get applied to the local storage as an
-  // unsynced change. That will be persisted, and committed on restart.
-  if (shutdown_reason != ShutdownReason::BROWSER_SHUTDOWN_AND_KEEP_DATA) {
-    data_type_manager_->Stop(
-        ShutdownReasonToSyncStopMetadataFate(shutdown_reason));
-    data_type_manager_->SetConfigurer(nullptr);
-  }
-
   // Shutdown the migrator before the engine to ensure it doesn't pull a null
   // snapshot.
   migrator_.reset();
@@ -730,6 +796,12 @@ std::unique_ptr<SyncEngine> SyncServiceImpl::ResetEngine(
   // Clear various state.
   crypto_.Reset();
   last_snapshot_ = SyncCycleSnapshot();
+
+  // Depending on the `reset_reason`, maybe clear account-keyed transport data.
+  if (ShouldClearTransportDataForAccount(reset_reason)) {
+    sync_client_->GetSyncEngineFactory()->ClearTransportDataForAccount(
+        signin::GaiaIdHash::FromGaiaId(GetAccountInfo().gaia));
+  }
 
   if (!IsLocalSyncEnabled()) {
     auth_manager_->ConnectionClosed();
@@ -826,18 +898,34 @@ SyncService::DisableReasonSet SyncServiceImpl::GetDisableReasons() const {
 SyncService::TransportState SyncServiceImpl::GetTransportState() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  if (!IsEngineAllowedToRun()) {
-    // We generally shouldn't have an engine while in a disabled state, but it
-    // can happen if this method gets called during ResetEngine().
-    return auth_manager_->IsSyncPaused() ? TransportState::PAUSED
-                                         : TransportState::DISABLED;
+  if (!GetDisableReasons().empty()) {
+    // Note: we generally shouldn't have an engine while in a disabled state,
+    // but it can happen if this method gets called during ResetEngine().
+    return TransportState::DISABLED;
   }
 
+  if (auth_manager_->IsSyncPaused()) {
+    return TransportState::PAUSED;
+  }
+
+  CHECK(IsEngineAllowedToRun());
+
   if (!engine_) {
-    // Starting the engine is allowed but didn't happen. Either this was
-    // deferred, or the service is shutting down and there's no sense in
-    // restarting. For the second case, doesn't matter much what to return.
-    return TransportState::START_DEFERRED;
+    // Starting the engine is allowed but didn't happen. There are three
+    // possible scenarios:
+    // 1) Startup was deferred, in which case it can take noticeably long until
+    //  . the engine initializes. This case can be distinguished by checking if
+    //  . `deferring_first_start_since_` is set.
+    // 2) Startup is about to happen because SyncServiceImpl::TryStart() was
+    //  . invoked, but the posted task to run SyncServiceImpl::TryStartImpl()
+    //  . hasn't been processed yet.
+    // 3) The service is shutting down.
+    //
+    // This function reports TransportState::START_DEFERRED only for the first,
+    // which is the only real deferred case.
+    return deferring_first_start_since_.is_null()
+               ? TransportState::INITIALIZING
+               : TransportState::START_DEFERRED;
   }
 
   if (!engine_->IsInitialized() || !data_type_manager_) {
@@ -872,7 +960,7 @@ SyncService::UserActionableError SyncServiceImpl::GetUserActionableError()
     case GoogleServiceAuthError::REQUEST_CANCELED:
     case GoogleServiceAuthError::CHALLENGE_RESPONSE_REQUIRED:
       // Transient errors aren't reachable.
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
     case GoogleServiceAuthError::SERVICE_ERROR:
     case GoogleServiceAuthError::SCOPE_LIMITED_UNRECOVERABLE_ERROR:
@@ -881,18 +969,15 @@ SyncService::UserActionableError SyncServiceImpl::GetUserActionableError()
     case GoogleServiceAuthError::USER_NOT_SIGNED_UP:
     case GoogleServiceAuthError::UNEXPECTED_SERVICE_RESPONSE:
       // Not shown to the user.
-      // TODO(crbug.com/1412320): It looks like desktop code in
+      // TODO(crbug.com/40890809): It looks like desktop code in
       // chrome/browser/sync/sync_ui_util.cc does display this to the user.
       break;
     // Conventional value for counting the states, never used.
     case GoogleServiceAuthError::NUM_STATES:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
   }
 
-  if (HasUnrecoverableError()) {
-    return UserActionableError::kGenericUnrecoverableError;
-  }
   if (user_settings_->IsPassphraseRequiredForPreferredDataTypes()) {
     return UserActionableError::kNeedsPassphrase;
   }
@@ -953,11 +1038,10 @@ void SyncServiceImpl::OnUnrecoverableErrorImpl(
   // Shut the Sync machinery down. The existence of
   // |unrecoverable_error_reason_| and thus |DISABLE_REASON_UNRECOVERABLE_ERROR|
   // will prevent Sync from starting up again (even in transport-only mode).
-  ResetEngine(ShutdownReason::DISABLE_SYNC_AND_CLEAR_DATA,
-              ResetEngineReason::kUnrecoverableError);
+  ResetEngine(ResetEngineReason::kUnrecoverableError);
 }
 
-void SyncServiceImpl::DataTypePreconditionChanged(ModelType type) {
+void SyncServiceImpl::DataTypePreconditionChanged(DataType type) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!engine_ || !engine_->IsInitialized() || !data_type_manager_) {
     return;
@@ -969,9 +1053,6 @@ void SyncServiceImpl::OnEngineInitialized(bool success,
                                           bool is_first_time_sync_configure) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  // TODO(treib): Based on some crash reports, it seems like the user could have
-  // signed out already at this point, so many of the steps below, including
-  // datatype reconfiguration, should not be triggered.
   DCHECK(IsEngineAllowedToRun());
 
   // The very first time the backend initializes is effectively the first time
@@ -998,6 +1079,10 @@ void SyncServiceImpl::OnEngineInitialized(bool success,
       signin::GaiaIdHash::FromGaiaId(GetAccountInfo().gaia),
       user_settings_->IsUsingExplicitPassphrase());
 
+  // Cache trusted vault debug info into prefs, to make it synchronously
+  // available upon future profile startups.
+  CacheTrustedVaultDebugInfoToPrefsFromEngine();
+
   if (CanConfigureDataTypes(/*bypass_setup_in_progress_check=*/false)) {
     // Datatype downloads on restart are generally due to newly supported
     // datatypes (although it's also possible we're picking up where a failed
@@ -1023,8 +1108,17 @@ void SyncServiceImpl::OnEngineInitialized(bool success,
 
 void SyncServiceImpl::OnSyncCycleCompleted(const SyncCycleSnapshot& snapshot) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  CHECK(engine_);
+  CHECK(engine_->IsInitialized());
 
   last_snapshot_ = snapshot;
+
+  // Cache trusted vault debug info into prefs, to make it synchronously
+  // available upon future profile startups. In most cases this will happen in
+  // OnEngineInitialized(), but it may also happen that the information was just
+  // populated server-side and downloaded, after (or long after) the engine is
+  // initialized.
+  CacheTrustedVaultDebugInfoToPrefsFromEngine();
 
   DVLOG(2) << "Notifying observers sync cycle completed";
   NotifySyncCycleCompleted();
@@ -1039,7 +1133,7 @@ void SyncServiceImpl::OnConnectionStatusChange(ConnectionStatus status) {
   NotifyObservers();
 }
 
-void SyncServiceImpl::OnMigrationNeededForTypes(ModelTypeSet types) {
+void SyncServiceImpl::OnMigrationNeededForTypes(DataTypeSet types) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(engine_);
   DCHECK(engine_->IsInitialized());
@@ -1057,7 +1151,7 @@ void SyncServiceImpl::OnActionableProtocolError(
   switch (error.action) {
     case UPGRADE_CLIENT:
       if (IsSetupInProgress()) {
-        StopAndClear();
+        StopAndClear(ResetEngineReason::kUpgradeClientError);
       }
       // Trigger an unrecoverable error to stop syncing.
       OnUnrecoverableErrorImpl(FROM_HERE,
@@ -1065,11 +1159,6 @@ void SyncServiceImpl::OnActionableProtocolError(
                                ERROR_REASON_ACTIONABLE_ERROR);
       break;
     case DISABLE_SYNC_ON_CLIENT:
-      if (error.error_type == NOT_MY_BIRTHDAY) {
-        base::UmaHistogramEnumeration("Sync.StopSource", BIRTHDAY_ERROR,
-                                      STOP_SOURCE_LIMIT);
-      }
-
       if (error.error_type == NOT_MY_BIRTHDAY ||
           error.error_type == ENCRYPTION_OBSOLETE) {
         // Note: For legacy reasons, `kImplicitPassphrase` is used to represent
@@ -1092,7 +1181,7 @@ void SyncServiceImpl::OnActionableProtocolError(
       // Note: This method might get called again in the following code when
       // clearing the primary account. But due to rarity of the event, this
       // should be okay.
-      StopAndClear();
+      StopAndClear(ResetEngineReason::kDisableSyncOnClient);
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
       // On Ash, the primary account is always set and sync the feature
@@ -1119,8 +1208,10 @@ void SyncServiceImpl::OnActionableProtocolError(
         // in and enables sync should clear the primary account here for
         // symmetry.
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
-        // On mobile, fully sign out the user.
-        account_mutator->ClearPrimaryAccount(
+        // On mobile, fully sign out the user (clear the primary account) but
+        // do not remove the list of known accounts, as the user may sign in
+        // again.
+        account_mutator->RemovePrimaryAccountButKeepTokens(
             signin_metrics::ProfileSignout::kServerForcedDisable);
 #else
         // Note: On some platforms, revoking the sync consent will also clear
@@ -1135,15 +1226,13 @@ void SyncServiceImpl::OnActionableProtocolError(
     case STOP_SYNC_FOR_DISABLED_ACCOUNT:
       // Sync disabled by domain admin. Stop syncing until next restart.
       sync_disabled_by_admin_ = true;
-      ResetEngine(ShutdownReason::DISABLE_SYNC_AND_CLEAR_DATA,
-                  ResetEngineReason::kDisabledAccount);
+      ResetEngine(ResetEngineReason::kDisabledAccount);
       break;
     case RESET_LOCAL_SYNC_DATA:
-      ResetEngine(ShutdownReason::DISABLE_SYNC_AND_CLEAR_DATA,
-                  ResetEngineReason::kResetLocalData);
+      ResetEngine(ResetEngineReason::kResetLocalData);
       break;
     case UNKNOWN_ACTION:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
   DVLOG(2) << "Notify observers OnActionableProtocolError";
   NotifyObservers();
@@ -1311,17 +1400,17 @@ bool SyncServiceImpl::IsCustomPassphraseAllowed() const {
 SyncPrefs::SyncAccountState SyncServiceImpl::GetSyncAccountStateForPrefs()
     const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  // Local sync does not require an actual signed in account to be running.
-  if (!IsSignedIn() && !IsLocalSyncEnabled()) {
+  if (IsLocalSyncEnabled()) {
+    // Local sync should behave like a syncing user.
+    return SyncPrefs::SyncAccountState::kSyncing;
+  }
+  if (!IsSignedIn()) {
     return SyncPrefs::SyncAccountState::kNotSignedIn;
   }
-  if (!IsSetupInProgress() && UseTransportOnlyMode()) {
-    // While the setup for Sync-the-feature is in progress, the account state
-    // should be syncing so that the user can properly select the types they
-    // want to sync.
-    return SyncPrefs::SyncAccountState::kSignedInNotSyncing;
-  }
-  return SyncPrefs::SyncAccountState::kSyncing;
+  // This doesn't check IsSyncFeatureEnabled() so it covers the case of advanced
+  // sync setup, where IsInitialSyncFeatureSetupComplete() is not true yet.
+  return HasSyncConsent() ? SyncPrefs::SyncAccountState::kSyncing
+                          : SyncPrefs::SyncAccountState::kSignedInNotSyncing;
 }
 
 CoreAccountInfo SyncServiceImpl::GetSyncAccountInfoForPrefs() const {
@@ -1388,7 +1477,7 @@ bool SyncServiceImpl::IsLocalSyncEnabled() const {
   return sync_prefs_.IsLocalSyncEnabled();
 }
 
-void SyncServiceImpl::TriggerRefresh(const ModelTypeSet& types) {
+void SyncServiceImpl::TriggerRefresh(const DataTypeSet& types) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (engine_ && engine_->IsInitialized()) {
     engine_->TriggerRefresh(types);
@@ -1423,11 +1512,14 @@ SyncClient* SyncServiceImpl::GetSyncClientForTest() {
   return sync_client_.get();
 }
 
-void SyncServiceImpl::ReportDataTypeErrorForTest(ModelType type) {
+void SyncServiceImpl::ReportDataTypeErrorForTest(DataType type) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   CHECK_IS_TEST();
-  CHECK(model_type_controllers_.find(type) != model_type_controllers_.end());
-  model_type_controllers_[type]->ReportBridgeErrorForTest();  // IN-TEST
+  CHECK(data_type_manager_->GetControllerMap().find(type) !=
+        data_type_manager_->GetControllerMap().end());
+  data_type_manager_->GetControllerMap()
+      .find(type)
+      ->second->ReportBridgeErrorForTest();  // IN-TEST
 }
 
 void SyncServiceImpl::AddObserver(SyncServiceObserver* observer) {
@@ -1448,27 +1540,34 @@ bool SyncServiceImpl::HasObserver(const SyncServiceObserver* observer) const {
   return observers_->HasObserver(observer);
 }
 
-ModelTypeSet SyncServiceImpl::GetPreferredDataTypes() const {
+DataTypeSet SyncServiceImpl::GetPreferredDataTypes() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  ModelTypeSet types = user_settings_->GetPreferredDataTypes();
+  // Some questionable callers exercise this function after Shutdown(). The
+  // semantics aren't clear, but for cases like GetUploadToGoogleState() a
+  // sensible behavior is to return an empty set.
+  if (!data_type_manager_) {
+    return DataTypeSet();
+  }
+  DataTypeSet types = user_settings_->GetPreferredDataTypes();
   // SyncUserSettings already filters out UserSelectableTypes that aren't
   // supported in transport mode. However, there are two reasons why the
-  // ModelTypes still need to be filtered here:
-  // 1) For some UserSelectableTypes, some of their ModelTypes are supported
+  // DataTypes still need to be filtered here:
+  // 1) For some UserSelectableTypes, some of their DataTypes are supported
   //    while others aren't.
-  // 2) Some ModelTypes implement additional preconditions in
+  // 2) Some DataTypes implement additional preconditions in
   //    ShouldRunInTransportOnlyMode() (e.g. related to passphrase type).
   if (UseTransportOnlyMode()) {
-    types = Intersection(types, GetModelTypesForTransportOnlyMode());
+    types = Intersection(
+        types, data_type_manager_->GetDataTypesForTransportOnlyMode());
   }
   return types;
 }
 
-ModelTypeSet SyncServiceImpl::GetActiveDataTypes() const {
+DataTypeSet SyncServiceImpl::GetActiveDataTypes() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (!engine_ || !engine_->IsInitialized() || !data_type_manager_) {
-    return ModelTypeSet();
+    return DataTypeSet();
   }
 
   // Persistent auth errors lead to PAUSED, which implies
@@ -1478,25 +1577,18 @@ ModelTypeSet SyncServiceImpl::GetActiveDataTypes() const {
   return data_type_manager_->GetActiveDataTypes();
 }
 
-ModelTypeSet SyncServiceImpl::GetTypesWithPendingDownloadForInitialSync()
-    const {
+DataTypeSet SyncServiceImpl::GetTypesWithPendingDownloadForInitialSync() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  CHECK(data_type_manager_);
 
   if (GetTransportState() == TransportState::INITIALIZING &&
-      engine_->GetBirthday().empty()) {
+      !sync_client_->GetSyncEngineFactory()->HasTransportDataIncludingFirstSync(
+          signin::GaiaIdHash::FromGaiaId(GetAccountInfo().gaia))) {
     // The engine is initializing for the very first sync (usually after
     // sign-in). In this case all types are reported as pending download,
     // optimistically assuming datatype preconditions will be met.
     return GetPreferredDataTypes();
   }
-
-  if (!data_type_manager_) {
-    return ModelTypeSet();
-  }
-
-  // Persistent auth errors lead to PAUSED, which implies
-  // data_type_manager_==null above.
-  CHECK(!GetAuthError().IsPersistentError());
 
   return data_type_manager_->GetTypesWithPendingDownloadForInitialSync();
 }
@@ -1548,11 +1640,13 @@ void SyncServiceImpl::ConfigureDataTypeManager(ConfigureReason reason) {
   // transport. These values are persisted to logs. Entries should not be
   // renumbered and numeric values should never be reused. Keep in sync with
   // SyncFeatureOrTransport in tools/metrics/histograms/metadata/sync/enums.xml.
+  // LINT.IfChange(SyncFeatureOrTransport)
   enum class ConfigureDataTypeManagerOption {
     kFeature = 0,
     kTransport = 1,
     kMaxValue = kTransport
   };
+  // LINT.ThenChange(/tools/metrics/histograms/metadata/sync/enums.xml:SyncFeatureOrTransport)
   base::UmaHistogramEnumeration("Sync.ConfigureDataTypeManagerOption",
                                 use_transport_only_mode
                                     ? ConfigureDataTypeManagerOption::kTransport
@@ -1563,10 +1657,10 @@ void SyncServiceImpl::ConfigureDataTypeManager(ConfigureReason reason) {
   // (which doesn't).
   if (use_transport_only_mode) {
     for (UserSelectableType type : user_settings_->GetSelectedTypes()) {
-      ModelTypeForHistograms canonical_model_type =
-          ModelTypeHistogramValue(UserSelectableTypeToCanonicalModelType(type));
+      DataTypeForHistograms canonical_data_type =
+          DataTypeHistogramValue(UserSelectableTypeToCanonicalDataType(type));
       base::UmaHistogramEnumeration("Sync.SelectedTypesInTransportMode",
-                                    canonical_model_type);
+                                    canonical_data_type);
     }
   } else {
     bool sync_everything = sync_prefs_.HasKeepEverythingSynced();
@@ -1574,9 +1668,9 @@ void SyncServiceImpl::ConfigureDataTypeManager(ConfigureReason reason) {
 
     if (!sync_everything) {
       for (UserSelectableType type : user_settings_->GetSelectedTypes()) {
-        ModelTypeForHistograms canonical_model_type = ModelTypeHistogramValue(
-            UserSelectableTypeToCanonicalModelType(type));
-        base::UmaHistogramEnumeration("Sync.CustomSync3", canonical_model_type);
+        DataTypeForHistograms canonical_data_type =
+            DataTypeHistogramValue(UserSelectableTypeToCanonicalDataType(type));
+        base::UmaHistogramEnumeration("Sync.CustomSync3", canonical_data_type);
       }
     }
 
@@ -1585,10 +1679,9 @@ void SyncServiceImpl::ConfigureDataTypeManager(ConfigureReason reason) {
     base::UmaHistogramBoolean("Sync.SyncEverythingOS", sync_everything_os);
     if (!sync_everything_os) {
       for (UserSelectableOsType type : user_settings_->GetSelectedOsTypes()) {
-        ModelTypeForHistograms canonical_model_type = ModelTypeHistogramValue(
-            UserSelectableOsTypeToCanonicalModelType(type));
-        base::UmaHistogramEnumeration("Sync.CustomOSSync",
-                                      canonical_model_type);
+        DataTypeForHistograms canonical_data_type = DataTypeHistogramValue(
+            UserSelectableOsTypeToCanonicalDataType(type));
+        base::UmaHistogramEnumeration("Sync.CustomOSSync", canonical_data_type);
       }
     }
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
@@ -1601,31 +1694,6 @@ bool SyncServiceImpl::UseTransportOnlyMode() const {
   return !IsSyncFeatureEnabled() && !IsLocalSyncEnabled();
 }
 
-ModelTypeSet SyncServiceImpl::GetRegisteredDataTypes() const {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  ModelTypeSet registered_types;
-  // The |model_type_controllers_| are determined by command-line flags;
-  // that's effectively what controls the values returned here.
-  for (const auto& [type, controller] : model_type_controllers_) {
-    registered_types.Put(type);
-  }
-  return registered_types;
-}
-
-ModelTypeSet SyncServiceImpl::GetModelTypesForTransportOnlyMode() const {
-  // Control types (in practice, NIGORI) are always supported. This special case
-  // is necessary because the NIGORI controller isn't in
-  // `model_type_controllers_`.
-  ModelTypeSet allowed_types = ControlTypes();
-  // Collect the types from all controllers that support transport-only mode.
-  for (const auto& [type, controller] : model_type_controllers_) {
-    if (controller->ShouldRunInTransportOnlyMode()) {
-      allowed_types.Put(type);
-    }
-  }
-  return allowed_types;
-}
-
 void SyncServiceImpl::UpdateDataTypesForInvalidations() {
   // Wait for configuring data types. This is needed to consider proxy types
   // which become known during configuration.
@@ -1635,7 +1703,7 @@ void SyncServiceImpl::UpdateDataTypesForInvalidations() {
   }
 
   // No need to register invalidations for non-protocol or commit-only types.
-  ModelTypeSet types = Intersection(GetPreferredDataTypes(), ProtocolTypes());
+  DataTypeSet types = Intersection(GetPreferredDataTypes(), ProtocolTypes());
   types.RemoveAll(CommitOnlyTypes());
   if (!sessions_invalidations_enabled_) {
     types.Remove(SESSIONS);
@@ -1687,21 +1755,22 @@ base::Value::List SyncServiceImpl::GetTypeStatusMapForDebugging() const {
   }
 
   const SyncStatus& detailed_status = engine_->GetDetailedStatus();
-  const ModelTypeSet& throttled_types(detailed_status.throttled_types);
-  const ModelTypeSet& backed_off_types(detailed_status.backed_off_types);
+  const DataTypeSet& throttled_types(detailed_status.throttled_types);
+  const DataTypeSet& backed_off_types(detailed_status.backed_off_types);
 
   auto type_status_header = base::Value::Dict()
                                 .Set("status", "header")
-                                .Set("name", "Model Type")
+                                .Set("name", "Data Type")
                                 .Set("num_entries", "Total Entries")
                                 .Set("num_live", "Live Entries")
                                 .Set("message", "Message")
                                 .Set("state", "State");
   result.Append(std::move(type_status_header));
 
-  for (const auto& [type, controller] : model_type_controllers_) {
+  for (const auto& [type, controller] :
+       data_type_manager_->GetControllerMap()) {
     base::Value::Dict type_status;
-    type_status.Set("name", ModelTypeToDebugString(type));
+    type_status.Set("name", DataTypeToDebugString(type));
 
     if (data_type_error_map_.find(type) != data_type_error_map_.end()) {
       const SyncError& error = data_type_error_map_.find(type)->second;
@@ -1729,23 +1798,23 @@ base::Value::List SyncServiceImpl::GetTypeStatusMapForDebugging() const {
 
       // Determine the row color based on the controller's state.
       switch (controller->state()) {
-        case ModelTypeController::NOT_RUNNING:
+        case DataTypeController::NOT_RUNNING:
           // One common case is that the sync was just disabled by the user,
           // which is not very different to certain SYNC_ERROR_SEVERITY_INFO
           // cases like preconditions not having been met due to user
           // configuration.
           type_status.Set("status", "severity_info");
           break;
-        case ModelTypeController::MODEL_STARTING:
-        case ModelTypeController::MODEL_LOADED:
-        case ModelTypeController::STOPPING:
+        case DataTypeController::MODEL_STARTING:
+        case DataTypeController::MODEL_LOADED:
+        case DataTypeController::STOPPING:
           // These are all transitional states that should be rare to observe.
           type_status.Set("status", "transitioning");
           break;
-        case ModelTypeController::RUNNING:
+        case DataTypeController::RUNNING:
           type_status.Set("status", "ok");
           break;
-        case ModelTypeController::FAILED:
+        case DataTypeController::FAILED:
           // Note that most of the errors (possibly all) should have been
           // handled earlier via |data_type_error_map_|.
           type_status.Set("status", "severity_error");
@@ -1754,7 +1823,7 @@ base::Value::List SyncServiceImpl::GetTypeStatusMapForDebugging() const {
     }
 
     type_status.Set("state",
-                    ModelTypeController::StateToString(controller->state()));
+                    DataTypeController::StateToString(controller->state()));
 
     result.Append(std::move(type_status));
   }
@@ -1763,7 +1832,8 @@ base::Value::List SyncServiceImpl::GetTypeStatusMapForDebugging() const {
 
 void SyncServiceImpl::GetEntityCountsForDebugging(
     base::RepeatingCallback<void(const TypeEntitiesCount&)> callback) const {
-  for (const auto& [type, controller] : model_type_controllers_) {
+  for (const auto& [type, controller] :
+       data_type_manager_->GetControllerMap()) {
     controller->GetTypeEntitiesCount(callback);
   }
 }
@@ -1778,7 +1848,7 @@ void SyncServiceImpl::OnSyncManagedPrefChange(bool is_sync_managed) {
   }
 
   if (is_sync_managed) {
-    StopAndClear();
+    StopAndClear(ResetEngineReason::kEnterprisePolicy);
 #if BUILDFLAG(IS_CHROMEOS_ASH)
     // On ChromeOS Ash, sync-the-feature stays disabled even after the policy is
     // removed, for historic reasons. It is unclear if this behavior is
@@ -1809,11 +1879,9 @@ void SyncServiceImpl::OnFirstSetupCompletePrefChange(
 #endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
 
 void SyncServiceImpl::OnAccountsCookieDeletedByUserAction() {
-#if !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
-  // Clear account settings. On Android and iOS this is done when accounts are
-  // removed from the OS instead.
-  user_settings_->KeepAccountSettingsPrefsOnlyForUsers({});
-#endif
+  // Pass an empty `signin::AccountsInCookieJarInfo` to simulate empty cookies.
+  MaybeClearAccountKeyedPreferences(
+      identity_manager_, signin::AccountsInCookieJarInfo(), *user_settings_);
 }
 
 void SyncServiceImpl::OnAccountsInCookieUpdated(
@@ -1823,27 +1891,24 @@ void SyncServiceImpl::OnAccountsInCookieUpdated(
                                         base::NullCallback());
 }
 
+void SyncServiceImpl::OnPrimaryAccountChanged(
+    const signin::PrimaryAccountChangeEvent& event_details) {
+  if (event_details.GetEventTypeFor(signin::ConsentLevel::kSignin) !=
+      signin::PrimaryAccountChangeEvent::Type::kCleared) {
+    return;
+  }
+
+  MaybeClearAccountKeyedPreferences(identity_manager_,
+                                    identity_manager_->GetAccountsInCookieJar(),
+                                    *user_settings_);
+}
+
 void SyncServiceImpl::OnAccountsInCookieUpdatedWithCallback(
     const signin::AccountsInCookieJarInfo& accounts_in_cookie_jar_info,
     base::OnceClosure callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-
-#if !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
-  if (accounts_in_cookie_jar_info.accounts_are_fresh) {
-    // Clear settings for accounts no longer in the cookie jar. On Android
-    // and iOS this is done when the account is removed from the OS instead.
-    std::vector<signin::GaiaIdHash> hashes;
-    for (const gaia::ListedAccount& account :
-         accounts_in_cookie_jar_info.signed_in_accounts) {
-      hashes.push_back(signin::GaiaIdHash::FromGaiaId(account.gaia_id));
-    }
-    for (const gaia::ListedAccount& account :
-         accounts_in_cookie_jar_info.signed_out_accounts) {
-      hashes.push_back(signin::GaiaIdHash::FromGaiaId(account.gaia_id));
-    }
-    user_settings_->KeepAccountSettingsPrefsOnlyForUsers(hashes);
-  }
-#endif  // !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
+  MaybeClearAccountKeyedPreferences(
+      identity_manager_, accounts_in_cookie_jar_info, *user_settings_);
 
   if (!engine_ || !engine_->IsInitialized()) {
     return;
@@ -1895,27 +1960,26 @@ class GetAllNodesRequestHelper
     : public base::RefCountedThreadSafe<GetAllNodesRequestHelper> {
  public:
   GetAllNodesRequestHelper(
-      ModelTypeSet requested_types,
+      DataTypeSet requested_types,
       base::OnceCallback<void(base::Value::List)> callback);
 
   GetAllNodesRequestHelper(const GetAllNodesRequestHelper&) = delete;
   GetAllNodesRequestHelper& operator=(const GetAllNodesRequestHelper&) = delete;
 
-  void OnReceivedNodesForType(const ModelType type,
-                              base::Value::List node_list);
+  void OnReceivedNodesForType(const DataType type, base::Value::List node_list);
 
  private:
   friend class base::RefCountedThreadSafe<GetAllNodesRequestHelper>;
   virtual ~GetAllNodesRequestHelper();
 
   base::Value::List result_accumulator_;
-  ModelTypeSet awaiting_types_;
+  DataTypeSet awaiting_types_;
   base::OnceCallback<void(base::Value::List)> callback_;
   SEQUENCE_CHECKER(sequence_checker_);
 };
 
 GetAllNodesRequestHelper::GetAllNodesRequestHelper(
-    ModelTypeSet requested_types,
+    DataTypeSet requested_types,
     base::OnceCallback<void(base::Value::List)> callback)
     : awaiting_types_(requested_types), callback_(std::move(callback)) {}
 
@@ -1923,20 +1987,20 @@ GetAllNodesRequestHelper::~GetAllNodesRequestHelper() {
   if (!awaiting_types_.empty()) {
     DLOG(WARNING)
         << "GetAllNodesRequest deleted before request was fulfilled.  "
-        << "Missing types are: " << ModelTypeSetToDebugString(awaiting_types_);
+        << "Missing types are: " << DataTypeSetToDebugString(awaiting_types_);
   }
 }
 
 // Called when the set of nodes for a type has been returned.
 // Only return one type of nodes each time.
 void GetAllNodesRequestHelper::OnReceivedNodesForType(
-    const ModelType type,
+    const DataType type,
     base::Value::List node_list) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   // Add these results to our list.
   auto type_dict = base::Value::Dict()
-                       .Set("type", ModelTypeToDebugString(type))
+                       .Set("type", DataTypeToDebugString(type))
                        .Set("nodes", std::move(node_list));
   result_accumulator_.Append(std::move(type_dict));
 
@@ -1960,14 +2024,14 @@ void SyncServiceImpl::GetAllNodesForDebugging(
     return;
   }
 
-  ModelTypeSet all_types = GetActiveDataTypes();
+  DataTypeSet all_types = GetActiveDataTypes();
   all_types.PutAll(ControlTypes());
   scoped_refptr<GetAllNodesRequestHelper> helper =
       new GetAllNodesRequestHelper(all_types, std::move(callback));
 
-  for (ModelType type : all_types) {
-    const auto dtc_iter = model_type_controllers_.find(type);
-    if (dtc_iter == model_type_controllers_.end()) {
+  for (DataType type : all_types) {
+    const auto dtc_iter = data_type_manager_->GetControllerMap().find(type);
+    if (dtc_iter == data_type_manager_->GetControllerMap().end()) {
       // We should have no data type controller only for Nigori.
       DCHECK_EQ(type, NIGORI);
       engine_->GetNigoriNodeForDebugging(base::BindOnce(
@@ -1975,101 +2039,78 @@ void SyncServiceImpl::GetAllNodesForDebugging(
       continue;
     }
 
-    ModelTypeController* controller = dtc_iter->second.get();
-    if (controller->state() == ModelTypeController::NOT_RUNNING) {
+    DataTypeController* controller = dtc_iter->second.get();
+    if (controller->state() == DataTypeController::NOT_RUNNING) {
       // In the NOT_RUNNING state it's not allowed to call GetAllNodes on the
-      // ModelTypeController, so just return an empty result.
+      // DataTypeController, so just return an empty result.
       // This can happen e.g. if we're waiting for a custom passphrase to be
       // entered - the data types are already considered active in this case,
-      // but their ModelTypeControllers are still NOT_RUNNING.
+      // but their DataTypeControllers are still NOT_RUNNING.
       helper->OnReceivedNodesForType(type, base::Value::List());
     } else {
-      controller->GetAllNodes(base::BindRepeating(
+      controller->GetAllNodes(base::BindOnce(
           &GetAllNodesRequestHelper::OnReceivedNodesForType, helper));
     }
   }
 }
 
-SyncService::ModelTypeDownloadStatus SyncServiceImpl::GetDownloadStatusFor(
-    ModelType type) const {
+SyncService::DataTypeDownloadStatus SyncServiceImpl::GetDownloadStatusFor(
+    DataType type) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return GetDownloadStatusForImpl(
-      type,
-      /*waiting_for_updates_histogram_name=*/std::string());
-}
-
-SyncService::ModelTypeDownloadStatus SyncServiceImpl::GetDownloadStatusForImpl(
-    ModelType type,
-    const std::string& waiting_for_updates_histogram_name) const {
   // Download status doesn't make sense for non-real data types.
   CHECK(IsRealDataType(type));
 
   if (!IsLocalSyncEnabled()) {
-    // TODO(crbug.com/1425026): Verify whether it's actually necessary to check
+    // TODO(crbug.com/40260679): Verify whether it's actually necessary to check
     // IsActiveAccountInfoFullyLoaded() - can the engine actually start, and
     // data types become active, if that isn't true?
     if (!auth_manager_->IsActiveAccountInfoFullyLoaded()) {
       DVLOG(1) << "Waiting for refresh tokens to be loaded from the disk";
       // GetDisableReasons() won't be empty until then.
-      LogWaitingForUpdatesReasonIfNeeded(
-          DownloadStatusWaitingForUpdatesReason::kRefreshTokensNotLoaded, type,
-          waiting_for_updates_histogram_name);
-      return ModelTypeDownloadStatus::kWaitingForUpdates;
+      return DataTypeDownloadStatus::kWaitingForUpdates;
     }
 
     if (auth_manager_->IsSyncPaused()) {
       DVLOG(1) << "Error download status because sync is paused";
-      return ModelTypeDownloadStatus::kError;
+      return DataTypeDownloadStatus::kError;
     }
   }
 
-  // TODO(crbug.com/1425026): check whether this works when local sync is
+  // TODO(crbug.com/40260679): check whether this works when local sync is
   // enabled.
   if (!GetDisableReasons().empty() || !GetPreferredDataTypes().Has(type)) {
     DVLOG(1)
-        << "Sync or " << ModelTypeToDebugString(type)
+        << "Sync or " << DataTypeToDebugString(type)
         << " is disabled hence updates won't be downloaded from the server";
-    return ModelTypeDownloadStatus::kError;
+    return DataTypeDownloadStatus::kError;
   }
 
   if (!engine_ || !engine_->IsInitialized()) {
     DVLOG(1) << "Waiting for the sync engine to be fully initialized";
-    LogWaitingForUpdatesReasonIfNeeded(
-        DownloadStatusWaitingForUpdatesReason::kSyncEngineNotInitialized, type,
-        waiting_for_updates_histogram_name);
-    return ModelTypeDownloadStatus::kWaitingForUpdates;
+    return DataTypeDownloadStatus::kWaitingForUpdates;
   }
 
   if (data_type_manager_->GetDataTypesWithPermanentErrors().Has(type)) {
-    DVLOG(1) << "Permanent error for " << ModelTypeToDebugString(type);
-    return ModelTypeDownloadStatus::kError;
+    DVLOG(1) << "Permanent error for " << DataTypeToDebugString(type);
+    return DataTypeDownloadStatus::kError;
   }
 
   if (!GetActiveDataTypes().Has(type)) {
     DVLOG(1) << "Data type is not active yet";
-    LogWaitingForUpdatesReasonIfNeeded(
-        DownloadStatusWaitingForUpdatesReason::kDataTypeNotActive, type,
-        waiting_for_updates_histogram_name);
-    return ModelTypeDownloadStatus::kWaitingForUpdates;
+    return DataTypeDownloadStatus::kWaitingForUpdates;
   }
 
   if (!engine_->GetDetailedStatus().notifications_enabled) {
     DVLOG(1) << "Waiting for invalidations to be initialized";
-    LogWaitingForUpdatesReasonIfNeeded(
-        DownloadStatusWaitingForUpdatesReason::kInvalidationsNotInitialized,
-        type, waiting_for_updates_histogram_name);
-    return ModelTypeDownloadStatus::kWaitingForUpdates;
+    return DataTypeDownloadStatus::kWaitingForUpdates;
   }
 
   // If there are any incoming invalidations or poll time elapsed, there can be
   // new updates to download from the server.
   if (engine_->GetDetailedStatus().invalidated_data_types.Has(type)) {
     DVLOG(1) << "There are incoming invalidations for: "
-             << ModelTypeToDebugString(type);
-    LogWaitingForUpdatesReasonIfNeeded(
-        DownloadStatusWaitingForUpdatesReason::kIncomingInvalidation, type,
-        waiting_for_updates_histogram_name);
-    return ModelTypeDownloadStatus::kWaitingForUpdates;
+             << DataTypeToDebugString(type);
+    return DataTypeDownloadStatus::kWaitingForUpdates;
   }
 
   // Wait for the poll request only during browser startup (i.e. when there were
@@ -2080,17 +2121,27 @@ SyncService::ModelTypeDownloadStatus SyncServiceImpl::GetDownloadStatusForImpl(
   // `kWaitingForUpdates` status.
   if (!HasCompletedSyncCycle() && engine_->IsNextPollTimeInThePast()) {
     DVLOG(1) << "Waiting for updates due an upcoming poll request";
-    LogWaitingForUpdatesReasonIfNeeded(
-        DownloadStatusWaitingForUpdatesReason::kPollRequestScheduled, type,
-        waiting_for_updates_histogram_name);
-    return ModelTypeDownloadStatus::kWaitingForUpdates;
+    return DataTypeDownloadStatus::kWaitingForUpdates;
   }
 
-  return ModelTypeDownloadStatus::kUpToDate;
+  return DataTypeDownloadStatus::kUpToDate;
 }
 
 void SyncServiceImpl::OnPasswordSyncAllowedChanged() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   sync_prefs_.SetPasswordSyncAllowed(sync_client_->IsPasswordSyncAllowed());
+}
+
+void SyncServiceImpl::CacheTrustedVaultDebugInfoToPrefsFromEngine() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  CHECK(engine_);
+  CHECK(engine_->IsInitialized());
+
+  sync_prefs_.SetCachedTrustedVaultAutoUpgradeExperimentGroup(
+      engine_->GetDetailedStatus()
+          .trusted_vault_debug_info.auto_upgrade_experiment_group());
+
+  RegisterTrustedVaultSyntheticFieldTrialsIfNecessary();
 }
 
 CoreAccountInfo SyncServiceImpl::GetAccountInfo() const {
@@ -2122,26 +2173,17 @@ void SyncServiceImpl::SetInvalidationsForSessionsEnabled(bool enabled) {
   UpdateDataTypesForInvalidations();
 }
 
-bool SyncServiceImpl::SupportsExplicitPassphrasePlatformClient() {
-#if BUILDFLAG(IS_ANDROID)
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          kIgnoreMinGmsVersionWithPassphraseSupportForTest)) {
-    return true;
-  }
-
-  int version_code = 0;
-  return base::StringToInt(
-             base::android::BuildInfo::GetInstance()->gms_version_code(),
-             &version_code) &&
-         version_code >= kMinGmsVersionCodeWithCustomPassphraseApi;
-#else
-  return false;
-#endif  // BUILDFLAG(IS_ANDROID)
-}
-
 void SyncServiceImpl::SendExplicitPassphraseToPlatformClient() {
 #if BUILDFLAG(IS_ANDROID)
-  if (!SupportsExplicitPassphrasePlatformClient()) {
+  int version_code = 0;
+  bool has_min_gms_version =
+      base::StringToInt(
+          base::android::BuildInfo::GetInstance()->gms_version_code(),
+          &version_code) &&
+      version_code >= kMinGmsVersionCodeWithCustomPassphraseApi;
+  has_min_gms_version |= base::CommandLine::ForCurrentProcess()->HasSwitch(
+      kIgnoreMinGmsVersionWithPassphraseSupportForTest);
+  if (!has_min_gms_version) {
     return;
   }
 
@@ -2166,28 +2208,28 @@ void SyncServiceImpl::SendExplicitPassphraseToPlatformClient() {
 #endif  // BUILDFLAG(IS_ANDROID)
 }
 
-void SyncServiceImpl::StopAndClear() {
+void SyncServiceImpl::StopAndClear(ResetEngineReason reset_engine_reason) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   ClearUnrecoverableError();
-  ResetEngine(ShutdownReason::DISABLE_SYNC_AND_CLEAR_DATA,
-              ResetEngineReason::kStopAndClear);
-  // Note: ResetEngine(DISABLE_SYNC_AND_CLEAR_DATA) does *not* clear prefs which
-  // are directly user-controlled such as the set of selected types here, so
-  // that if the user ever chooses to enable Sync again, they start off with
-  // their previous settings by default. We do however require going through
-  // first-time setup again and set SyncRequested to false.
+  ResetEngine(reset_engine_reason);
+
   // For explicit passphrase users, clear the encryption key, such that they
   // will need to reenter it if sync gets re-enabled. Note: the gaia-keyed
   // passphrase pref should be cleared before clearing
   // InitialSyncFeatureSetupComplete().
   sync_prefs_.ClearAllEncryptionBootstrapTokens();
 #if !BUILDFLAG(IS_CHROMEOS_ASH)
+  // Note: ResetEngine() does *not* clear directly user-controlled prefs (such
+  // as the set of selected types), so that if the user ever chooses to enable
+  // Sync again, they start off with their previous settings by default.
+  // However, they do have to go through the initial setup again.
   sync_prefs_.ClearInitialSyncFeatureSetupComplete();
 #endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
   sync_prefs_.ClearPassphrasePromptMutedProductVersion();
-  // The passphrase type is now undefined again.
+  // Cached information provided by SyncEngine must be cleared.
   sync_prefs_.ClearCachedPassphraseType();
+  sync_prefs_.ClearCachedTrustedVaultAutoUpgradeExperimentGroup();
   // If the migration didn't finish before StopAndClear() was called, mark it as
   // done so it doesn't trigger again if the user signs in later.
   sync_prefs_.MarkPartialSyncToSigninMigrationFullyDone();
@@ -2254,7 +2296,7 @@ void SyncServiceImpl::OverrideNetworkForTest(
   // callback in the ctor instead of adding it retroactively.
   // Note that ResetEngine() can't be used here, because it would caues the
   // engine to immediately restart.
-  // TODO(crbug.com/949504): Clean this up and inject required upon
+  // TODO(crbug.com/41451146): Clean this up and inject required upon
   // construction.
   bool restart = false;
   if (engine_) {
@@ -2264,6 +2306,8 @@ void SyncServiceImpl::OverrideNetworkForTest(
     data_type_manager_->SetConfigurer(nullptr);
 
     migrator_.reset();
+
+    crypto_.Reset();
 
     engine_->Shutdown(ShutdownReason::STOP_SYNC_AND_KEEP_DATA);
     engine_.reset();
@@ -2314,10 +2358,10 @@ void SyncServiceImpl::RemoveClientFromServer() const {
 
 void SyncServiceImpl::RecordMemoryUsageAndCountsHistograms() {
   CHECK(engine_);
-  ModelTypeSet active_types = GetActiveDataTypes();
-  for (ModelType type : active_types) {
-    auto dtc_it = model_type_controllers_.find(type);
-    if (dtc_it != model_type_controllers_.end()) {
+  DataTypeSet active_types = GetActiveDataTypes();
+  for (DataType type : active_types) {
+    auto dtc_it = data_type_manager_->GetControllerMap().find(type);
+    if (dtc_it != data_type_manager_->GetControllerMap().end()) {
       dtc_it->second->RecordMemoryUsageAndCountsHistograms();
     } else if (type == NIGORI) {
       // DTC for NIGORI is stored in the engine on sync thread.
@@ -2358,120 +2402,55 @@ void SyncServiceImpl::OnSetupInProgressHandleDestroyed() {
   NotifyObservers();
 }
 
-void SyncServiceImpl::OnDownloadStatusRecorderFinished() {
-  download_status_recorder_.reset();
-}
+void SyncServiceImpl::GetTypesWithUnsyncedData(
+    DataTypeSet requested_types,
+    base::OnceCallback<void(DataTypeSet)> callback) const {
+  // NIGORI currently isn't supported, because its controller isn't managed by
+  // DataTypeManager. If needed, support could be added via SyncEngine.
+  CHECK(!requested_types.Has(NIGORI));
 
-SyncServiceImpl::DownloadStatusRecorder::DownloadStatusRecorder(
-    SyncServiceImpl* sync_service,
-    base::OnceClosure on_finished_callback,
-    ModelTypeSet data_types_to_track)
-    : sync_service_(sync_service),
-      on_finished_callback_(std::move(on_finished_callback)),
-      data_types_to_track_(data_types_to_track) {
-  CHECK(sync_service_);
-  CHECK(on_finished_callback_);
-  CHECK(!data_types_to_track_.empty());
-  sync_service_->AddObserver(this);
-  startup_metrics_timer_.Start(
-      FROM_HERE, kRecordDownloadStatusTimeout, this,
-      &SyncServiceImpl::DownloadStatusRecorder::OnTimeout);
-}
-
-SyncServiceImpl::DownloadStatusRecorder::~DownloadStatusRecorder() {
-  sync_service_->RemoveObserver(this);
-}
-
-void SyncServiceImpl::DownloadStatusRecorder::OnStateChanged(
-    SyncService* service) {
-  // Report download status metrics only during browser startup.
-  if (!startup_metrics_timer_.IsRunning()) {
+  if (requested_types.empty()) {
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, base::BindOnce(std::move(callback), DataTypeSet()));
     return;
   }
 
-  // |data_types_to_track_| must not be empty if |on_finished_callback_| deletes
-  // the current object.
-  CHECK(!data_types_to_track_.empty());
+  auto helper = base::MakeRefCounted<GetTypesWithUnsyncedDataRequestBarrier>(
+      requested_types, std::move(callback));
 
-  // Types which reached kUpToDate or kError download status. These types will
-  // be removed from tracked data types.
-  ModelTypeSet types_to_remove_from_tracking;
-
-  base::TimeTicks timer_start_time = startup_metrics_timer_.desired_run_time() -
-                                     startup_metrics_timer_.GetCurrentDelay();
-  base::TimeDelta time_since_startup =
-      base::TimeTicks::Now() - timer_start_time;
-  for (ModelType type : data_types_to_track_) {
-    ModelTypeDownloadStatus status = sync_service_->GetDownloadStatusFor(type);
-    if (status == ModelTypeDownloadStatus::kWaitingForUpdates) {
+  for (DataType type : requested_types) {
+    auto it = data_type_manager_->GetControllerMap().find(type);
+    if (it == data_type_manager_->GetControllerMap().end()) {
+      // This should be rare, but can happen e.g. if a requested type is
+      // disabled via feature flag.
+      helper->OnReceivedResultForType(type, /*has_unsynced_data=*/false);
       continue;
     }
-
-    // Remove |type| from tracking if it has reached kUpToDate or kError state.
-    // Histograms are reported for only kUpToDate status.
-    types_to_remove_from_tracking.Put(type);
-    if (status == ModelTypeDownloadStatus::kUpToDate) {
-      std::string histogram_prefix =
-          kModelTypeReachedUpToDateHistogramPrefix + std::string(".");
-      base::UmaHistogramMediumTimes(
-          histogram_prefix + ModelTypeToHistogramSuffix(type),
-          time_since_startup);
-    }
+    DataTypeController* controller = it->second.get();
+    controller->HasUnsyncedData(base::BindOnce(
+        &GetTypesWithUnsyncedDataRequestBarrier::OnReceivedResultForType,
+        helper, type));
   }
-  data_types_to_track_.RemoveAll(types_to_remove_from_tracking);
-
-  if (data_types_to_track_.empty()) {
-    if (!sync_service_->GetActiveDataTypes().empty()) {
-      // This histogram will be reported at most once per browser session only
-      // if there is at least one active data type (to exclude cases when sync
-      // is disabled).
-      base::UmaHistogramMediumTimes(kModelTypeReachedUpToDateHistogramPrefix,
-                                    time_since_startup);
-    }
-    std::move(on_finished_callback_).Run();
-  }
-}
-
-void SyncServiceImpl::DownloadStatusRecorder::OnSyncShutdown(
-    SyncService* service) {
-  startup_metrics_timer_.Reset();
-  std::move(on_finished_callback_).Run();
-}
-
-void SyncServiceImpl::DownloadStatusRecorder::OnTimeout() {
-  // Log if some data types are still waiting for updates.
-  for (ModelType type : data_types_to_track_) {
-    // Ignore kError state for the purpose of the histogram. This is required to
-    // filter out cases when data types are not running, e.g. due to transport
-    // mode or because there is no signed-in user.
-    sync_service_->RecordReasonIfWaitingForUpdates(
-        type, std::string("Sync.ModelTypeWaitingForUpdatesTimeoutReason.") +
-                  ModelTypeToHistogramSuffix(type));
-  }
-
-  // Delete current object after all the histograms are recorded.
-  std::move(on_finished_callback_).Run();
-}
-
-void SyncServiceImpl::GetTypesWithUnsyncedData(
-    ModelTypeSet requested_types,
-    base::OnceCallback<void(ModelTypeSet)> callback) const {
-  if (!engine_ || !engine_->IsInitialized()) {
-    // TODO(crbug.com/40071018): Wait for the sync engine to be initialized.
-    std::move(callback).Run(ModelTypeSet());
-    return;
-  }
-  engine_->GetTypesWithUnsyncedData(base::BindOnce(
-      [](ModelTypeSet requested_types,
-         base::OnceCallback<void(ModelTypeSet)> callback, ModelTypeSet types) {
-        std::move(callback).Run(base::Intersection(types, requested_types));
-      },
-      requested_types, std::move(callback)));
 }
 
 void SyncServiceImpl::GetLocalDataDescriptions(
-    ModelTypeSet types,
-    base::OnceCallback<void(std::map<ModelType, LocalDataDescription>)>
+    DataTypeSet types,
+    base::OnceCallback<void(std::map<DataType, LocalDataDescription>)>
+        callback) {
+  // Some code paths in GetLocalDataDescriptionsImpl() are synchronous, e.g.
+  // if `types` have synchronous DataTypeLocalDataBatchUploader implementations.
+  // Having an API that is sometime sync and sometimes async can be unexpected
+  // to the caller and lead to bugs such as crbug.com/361088051. To avoid those,
+  // post a task here to ensure the call is always async.
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE,
+      base::BindOnce(&SyncServiceImpl::GetLocalDataDescriptionsImpl,
+                     weak_factory_.GetWeakPtr(), types, std::move(callback)));
+}
+
+void SyncServiceImpl::GetLocalDataDescriptionsImpl(
+    DataTypeSet types,
+    base::OnceCallback<void(std::map<DataType, LocalDataDescription>)>
         callback) {
   // Syncing users do not use separate local and account storages. Thus, there's
   // no local-only data.
@@ -2484,10 +2463,36 @@ void SyncServiceImpl::GetLocalDataDescriptions(
   // those which are configured and have not encountered any error.
   types.RetainAll(GetActiveDataTypes());
 
-  sync_client_->GetLocalDataDescriptions(types, std::move(callback));
+  if (!base::FeatureList::IsEnabled(
+          syncer::kSyncEnableModelTypeLocalDataBatchUploaders)) {
+    sync_client_->GetLocalDataDescriptions(types, std::move(callback));
+    return;
+  }
+
+  types.RetainAll(GetDataTypesWithLocalDataBatchUploader());
+  auto barrier_callback =
+      base::BarrierCallback<std::pair<DataType, LocalDataDescription>>(
+          types.size(), base::BindOnce(&JoinAllTypesAndLocalDataDescriptions)
+                            .Then(std::move(callback)));
+  for (DataType type : types) {
+    data_type_manager_->GetControllerMap()
+        .at(type)
+        ->GetLocalDataBatchUploader()
+        ->GetLocalDataDescription(
+            base::BindOnce(&JoinTypeAndLocalDataDescription, type)
+                .Then(barrier_callback));
+  }
 }
 
-void SyncServiceImpl::TriggerLocalDataMigration(ModelTypeSet types) {
+void SyncServiceImpl::TriggerLocalDataMigration(DataTypeSet types) {
+  if (base::FeatureList::IsEnabled(
+          syncer::kSyncEnableModelTypeLocalDataBatchUploaders)) {
+    for (DataType type : types) {
+      base::UmaHistogramEnumeration("Sync.BatchUpload.Requests3",
+                                    syncer::DataTypeHistogramValue(type));
+    }
+  }
+
   // Syncing users do not use separate local and account storages. Thus, there's
   // no local-only data to migrate.
   if (HasSyncConsent()) {
@@ -2498,7 +2503,30 @@ void SyncServiceImpl::TriggerLocalDataMigration(ModelTypeSet types) {
   // those which are configured and have not encountered any error.
   types.RetainAll(GetActiveDataTypes());
 
-  sync_client_->TriggerLocalDataMigration(types);
+  if (!base::FeatureList::IsEnabled(
+          syncer::kSyncEnableModelTypeLocalDataBatchUploaders)) {
+    sync_client_->TriggerLocalDataMigration(types);
+    return;
+  }
+
+  types.RetainAll(GetDataTypesWithLocalDataBatchUploader());
+  for (DataType type : types) {
+    data_type_manager_->GetControllerMap()
+        .at(type)
+        ->GetLocalDataBatchUploader()
+        ->TriggerLocalDataMigration();
+  }
+}
+
+DataTypeSet SyncServiceImpl::GetDataTypesWithLocalDataBatchUploader() const {
+  DataTypeSet types;
+  for (const auto& [type, controller] :
+       data_type_manager_->GetControllerMap()) {
+    if (controller->GetLocalDataBatchUploader()) {
+      types.Put(type);
+    }
+  }
+  return types;
 }
 
 }  // namespace syncer

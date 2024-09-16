@@ -91,17 +91,13 @@
         {
           "builder": "android-12-x64-rel",
           "group": "tryserver.chromium.android"
-        },
-        {
-          "builder": "android-x64-rel",
-          "group": "tryserver.chromium.android"
         }
-      ]
+      ],
+      "targets_spec_directory": "src/infra/config/generated/builders/ci/android-12-x64-rel/targets"
     }
   },
   "$build/reclient": {
     "instance": "rbe-chromium-trusted",
-    "jobs": 500,
     "metrics_project": "chromium-reclient-metrics",
     "scandeps_server": true
   },
@@ -123,6 +119,9 @@
     ]
   },
   "builder_group": "chromium.android",
+  "gardener_rotations": [
+    "android"
+  ],
   "recipe": "chromium",
   "sheriff_rotations": [
     "android"

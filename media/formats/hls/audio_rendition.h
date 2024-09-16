@@ -84,6 +84,8 @@ class MEDIA_EXPORT AudioRendition {
 class MEDIA_EXPORT AudioRenditionGroup
     : public base::RefCounted<AudioRenditionGroup> {
  public:
+  REQUIRE_ADOPTION_FOR_REFCOUNTED_TYPE();
+
   explicit AudioRenditionGroup(base::PassKey<MultivariantPlaylist>,
                                std::string id);
   AudioRenditionGroup(const AudioRenditionGroup&) = delete;
@@ -138,4 +140,4 @@ class MEDIA_EXPORT AudioRenditionGroup
 
 }  // namespace media::hls
 
-#endif
+#endif  // MEDIA_FORMATS_HLS_AUDIO_RENDITION_H_

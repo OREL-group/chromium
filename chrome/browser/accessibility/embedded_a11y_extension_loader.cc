@@ -32,8 +32,15 @@ std::optional<base::Value::Dict> LoadManifestOnFileThread(
   auto manifest =
       extensions::file_util::LoadManifest(path, manifest_filename, &error);
   if (!manifest) {
-    LOG(ERROR) << "Can't load " << path.Append(manifest_filename).AsUTF8Unsafe()
-               << ": " << error;
+    std::ostringstream errorStream;
+    errorStream << "Can't load "
+                << path.Append(manifest_filename).AsUTF8Unsafe() << ": "
+                << error;
+    LOG(ERROR) << errorStream.str();
+    static auto* const crash_key = base::debug::AllocateCrashKeyString(
+        "helper_extension_failure", base::debug::CrashKeySize::Size1024);
+    base::debug::SetCrashKeyString(crash_key, errorStream.str());
+    base::debug::DumpWithoutCrashing();
     return std::nullopt;
   }
   if (localize) {
@@ -65,8 +72,8 @@ extensions::ComponentLoader* GetComponentLoader(Profile* profile) {
 }  // namespace
 
 EmbeddedA11yExtensionLoader::ExtensionInfo::ExtensionInfo(
-    const std::string& extension_id,
-    const std::string& extension_path,
+    const std::string extension_id,
+    const std::string extension_path,
     const base::FilePath::CharType* extension_manifest_file,
     bool should_localize)
     : extension_id(extension_id),
@@ -217,9 +224,15 @@ void EmbeddedA11yExtensionLoader::MaybeInstallExtension(
   }
 
   base::FilePath resources_path;
+#if BUILDFLAG(IS_MAC)
+  base::FilePath root_path;
+  CHECK(base::PathService::Get(base::DIR_MODULE, &root_path));
+  resources_path = root_path.Append("resources");
+#else
   if (!base::PathService::Get(chrome::DIR_RESOURCES, &resources_path)) {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
   }
+#endif
 
   base::FilePath::StringType common_path;
 #if BUILDFLAG(IS_WIN)
@@ -253,8 +266,18 @@ void EmbeddedA11yExtensionLoader::InstallExtension(
     return;
   }
 
+// TODO(b/324143642): Extension manifest file should not be null.
+// Temporarily logging the error to prevent crashes while we diagnose why it's
+// null.
+#if !BUILDFLAG(IS_CHROMEOS_LACROS)
+  if (!manifest) {
+    LOG(ERROR) << "Unable to load extension manifest for extension "
+               << extension_id << "; Path: " << path;
+    return;
+  }
+#endif  // !BUILDFLAG(IS_CHROMEOS_LACROS)
   CHECK(manifest) << "Unable to load extension manifest for extension "
-                  << extension_id;
+                  << extension_id << "; Path: " << path;
   std::string actual_id =
       component_loader->Add(std::move(manifest.value()), path);
   CHECK_EQ(actual_id, extension_id);

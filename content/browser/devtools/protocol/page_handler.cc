@@ -18,7 +18,10 @@
 #include "base/memory/ref_counted_memory.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/process/process_handle.h"
+#include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
+#include "base/strings/to_string.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
@@ -249,13 +252,10 @@ void GotManifest(protocol::Maybe<std::string> manifest_id,
   auto convert_icon = [](const blink::Manifest::ImageResource& input_icon)
       -> std::unique_ptr<Page::ImageResource> {
     auto icon = Page::ImageResource::Create();
-    std::string sizes;
-    for (const auto& size : input_icon.sizes) {
-      sizes += gfx::Size(size.width(), size.height()).ToString();
-      sizes += ' ';
-    }
-    sizes.pop_back();
-    icon.SetSizes(sizes);
+    std::vector<std::string> size_strings;
+    base::ranges::transform(input_icon.sizes, std::back_inserter(size_strings),
+                            &gfx::Size::ToString);
+    icon.SetSizes(base::JoinString(size_strings, " "));
     icon.SetType(base::UTF16ToUTF8(input_icon.type));
     return icon.SetUrl(input_icon.src.possibly_invalid_spec()).Build();
   };
@@ -271,10 +271,6 @@ void GotManifest(protocol::Maybe<std::string> manifest_id,
     return icons;
   };
 
-  auto enum_to_str = [](auto e) -> std::string {
-    return (std::stringstream() << e).str();
-  };
-
   auto manifest = Page::WebAppManifest::Create();
   if (input_manifest->has_background_color) {
     manifest.SetBackgroundColor(color_utils::SkColorToRgbaString(
@@ -285,11 +281,11 @@ void GotManifest(protocol::Maybe<std::string> manifest_id,
         base::UTF16ToUTF8(input_manifest->description.value()));
   }
   // TODO(crbug.com/331214986): Fill the WebAppManifest.dir (direction).
-  manifest.SetDisplay(enum_to_str(input_manifest->display));
+  manifest.SetDisplay(base::ToString(input_manifest->display));
   if (!input_manifest->display_override.empty()) {
     auto display_overrides = std::make_unique<protocol::Array<std::string>>();
     for (const auto& display_override : input_manifest->display_override) {
-      display_overrides->push_back(enum_to_str(display_override));
+      display_overrides->push_back(base::ToString(display_override));
     }
     manifest.SetDisplayOverrides(std::move(display_overrides));
   }
@@ -320,7 +316,7 @@ void GotManifest(protocol::Maybe<std::string> manifest_id,
           file_handler
               .SetAction(input_file_handler->action.possibly_invalid_spec())
               .SetName(base::UTF16ToUTF8(input_file_handler->name))
-              .SetLaunchType(enum_to_str(input_file_handler->launch_type))
+              .SetLaunchType(base::ToString(input_file_handler->launch_type))
               .Build());
     }
   }
@@ -332,14 +328,14 @@ void GotManifest(protocol::Maybe<std::string> manifest_id,
   if (input_manifest->launch_handler) {
     manifest.SetLaunchHandler(
         Page::LaunchHandler::Create()
-            .SetClientMode(
-                enum_to_str(input_manifest->launch_handler.value().client_mode))
+            .SetClientMode(base::ToString(
+                input_manifest->launch_handler.value().client_mode))
             .Build());
   }
   if (input_manifest->name) {
     manifest.SetName(base::UTF16ToUTF8(input_manifest->name.value()));
   }
-  manifest.SetOrientation(enum_to_str(input_manifest->orientation));
+  manifest.SetOrientation(base::ToString(input_manifest->orientation));
   manifest.SetPreferRelatedApplications(
       input_manifest->prefer_related_applications);
   if (!input_manifest->protocol_handlers.empty()) {
@@ -376,7 +372,7 @@ void GotManifest(protocol::Maybe<std::string> manifest_id,
       }
       screenshots->push_back(
           screenshot.SetImage(convert_icon(input_screenshot->image))
-              .SetFormFactor(enum_to_str(input_screenshot->form_factor))
+              .SetFormFactor(base::ToString(input_screenshot->form_factor))
               .Build());
     }
     manifest.SetScreenshots(std::move(screenshots));
@@ -400,8 +396,8 @@ void GotManifest(protocol::Maybe<std::string> manifest_id,
         share_target
             .SetAction(
                 input_manifest->share_target->action.possibly_invalid_spec())
-            .SetMethod(enum_to_str(input_manifest->share_target->method))
-            .SetEnctype(enum_to_str(input_manifest->share_target->action))
+            .SetMethod(base::ToString(input_manifest->share_target->method))
+            .SetEnctype(base::ToString(input_manifest->share_target->action))
             .Build());
   }
   if (!input_manifest->related_applications.empty()) {
@@ -658,6 +654,7 @@ Response PageHandler::Close() {
 
 void PageHandler::Reload(Maybe<bool> bypassCache,
                          Maybe<std::string> script_to_evaluate_on_load,
+                         Maybe<std::string> loader_id,
                          std::unique_ptr<ReloadCallback> callback) {
   Response response = AssureTopLevelActiveFrame();
   if (response.IsError()) {
@@ -670,6 +667,16 @@ void PageHandler::Reload(Maybe<bool> bypassCache,
   // itself will fail.
   RenderFrameHostImpl* outermost_main_frame =
       host_->GetOutermostMainFrameOrEmbedder();
+
+  if (loader_id.has_value()) {
+    auto navigation_token = outermost_main_frame->GetDevToolsNavigationToken();
+    if (!navigation_token.has_value() ||
+        *loader_id != navigation_token->ToString()) {
+      callback->sendFailure(Response::InvalidParams(
+          "Reload was discarded because the page already navigated"));
+      return;
+    }
+  }
 
   // It is important to fallback before triggering reload, so that
   // renderer could prepare beforehand.
@@ -924,7 +931,7 @@ void PageHandler::OnDownloadUpdated(download::DownloadItem* item) {
       state = Page::DownloadProgress::StateEnum::Canceled;
       break;
     case download::DownloadItem::MAX_DOWNLOAD_STATE:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
   frontend_->DownloadProgress(item->GetGuid(), item->GetTotalBytes(),
                               item->GetReceivedBytes(), state);
@@ -1042,7 +1049,7 @@ void PageHandler::CaptureSnapshot(
 
 // Sets a clip with full page dimensions. Calls CaptureScreenshot with updated
 // value to proceed with capturing the full page screenshot.
-// TODO(crbug.com/1363574): at the point this method is called, the page could
+// TODO(crbug.com/40238745): at the point this method is called, the page could
 // have changed its size.
 void PageHandler::CaptureFullPageScreenshot(
     Maybe<std::string> format,
@@ -1209,7 +1216,7 @@ void PageHandler::CaptureScreenshot(
         modified_web_prefs);
 
     {
-      // TODO(crbug.com/1141835): Remove the bug is fixed.
+      // TODO(crbug.com/40727379): Remove the bug is fixed.
       // Walkaround for the bug. Emulated `view_size` has to be set twice,
       // otherwise the scrollbar will be on the screenshot present.
       blink::DeviceEmulationParams tmp_params = modified_params;
@@ -1346,13 +1353,21 @@ Response PageHandler::HandleJavaScriptDialog(bool accept,
 }
 
 Response PageHandler::BringToFront() {
-  ResponseOrWebContents result = GetWebContentsForTopLevelActiveFrame();
-  if (absl::holds_alternative<Response>(result))
-    return absl::get<Response>(result);
+  // Not using AssureTopLevelActiveFrame here because
+  // we allow bringing WebContents to front that might have ongoing
+  // lifecycle updates.
+  if (!host_) {
+    return Response::ServerError(kErrorNotAttached);
+  }
 
-  WebContentsImpl* web_contents = absl::get<WebContentsImpl*>(result);
+  if (host_->GetParentOrOuterDocument()) {
+    return Response::ServerError(kCommandIsOnlyAvailableAtTopTarget);
+  }
+
+  WebContentsImpl* web_contents =
+      static_cast<WebContentsImpl*>(WebContents::FromRenderFrameHost(host_));
   web_contents->Activate();
-  web_contents->Focus();
+  web_contents->GetOutermostWebContents()->Focus();
   return Response::Success();
 }
 
@@ -1599,8 +1614,6 @@ Page::BackForwardCacheNotRestoredReason NotRestoredReasonToProtocol(
       return Page::BackForwardCacheNotRestoredReasonEnum::SchemeNotHTTPOrHTTPS;
     case Reason::kLoading:
       return Page::BackForwardCacheNotRestoredReasonEnum::Loading;
-    case Reason::kWasGrantedMediaAccess:
-      return Page::BackForwardCacheNotRestoredReasonEnum::WasGrantedMediaAccess;
     case Reason::kDisableForRenderFrameHostCalled:
       return Page::BackForwardCacheNotRestoredReasonEnum::
           DisableForRenderFrameHostCalled;
@@ -1704,10 +1717,25 @@ Page::BackForwardCacheNotRestoredReason NotRestoredReasonToProtocol(
     case Reason::kBroadcastChannelOnMessage:
       return Page::BackForwardCacheNotRestoredReasonEnum::
           BroadcastChannelOnMessage;
+    case Reason::kWebViewSettingsChanged:
+      return Page::BackForwardCacheNotRestoredReasonEnum::
+          WebViewSettingsChanged;
+    case Reason::kWebViewJavaScriptObjectChanged:
+      return Page::BackForwardCacheNotRestoredReasonEnum::
+          WebViewJavaScriptObjectChanged;
+    case Reason::kWebViewMessageListenerInjected:
+      return Page::BackForwardCacheNotRestoredReasonEnum::
+          WebViewMessageListenerInjected;
+    case Reason::kWebViewSafeBrowsingAllowlistChanged:
+      return Page::BackForwardCacheNotRestoredReasonEnum::
+          WebViewSafeBrowsingAllowlistChanged;
+    case Reason::kWebViewDocumentStartJavascriptChanged:
+      return Page::BackForwardCacheNotRestoredReasonEnum::
+          WebViewDocumentStartJavascriptChanged;
     case Reason::kBlocklistedFeatures:
       // Blocklisted features should be handled separately and be broken down
       // into sub reasons.
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return Page::BackForwardCacheNotRestoredReasonEnum::Unknown;
     case Reason::kUnknown:
       return Page::BackForwardCacheNotRestoredReasonEnum::Unknown;
@@ -1816,7 +1844,7 @@ Page::BackForwardCacheNotRestoredReason BlocklistedFeatureToProtocol(
       return Page::BackForwardCacheNotRestoredReasonEnum::IndexedDBEvent;
     case WebSchedulerTrackedFeature::kDummy:
       // This is a test only reason and should never be called.
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return Page::BackForwardCacheNotRestoredReasonEnum::Dummy;
     case WebSchedulerTrackedFeature::
         kJsNetworkRequestReceivedCacheControlNoStoreResource:
@@ -1825,7 +1853,7 @@ Page::BackForwardCacheNotRestoredReason BlocklistedFeatureToProtocol(
     case WebSchedulerTrackedFeature::kWebSerial:
       // Currently we add WebSchedulerTrackedFeature::kWebSerial only for
       // disabling aggressive throttling.
-      NOTREACHED_NORETURN();
+      NOTREACHED();
     case WebSchedulerTrackedFeature::kSmartCard:
       return Page::BackForwardCacheNotRestoredReasonEnum::SmartCard;
     case WebSchedulerTrackedFeature::kLiveMediaStreamTrack:
@@ -1858,10 +1886,10 @@ DisableForRenderFrameHostReasonToProtocol(
     BackForwardCache::DisabledReason reason) {
   switch (reason.source) {
     case BackForwardCache::DisabledSource::kLegacy:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return Page::BackForwardCacheNotRestoredReasonEnum::Unknown;
     case BackForwardCache::DisabledSource::kTesting:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return Page::BackForwardCacheNotRestoredReasonEnum::Unknown;
     case BackForwardCache::DisabledSource::kContent:
       switch (
@@ -1894,6 +1922,8 @@ DisableForRenderFrameHostReasonToProtocol(
         case BackForwardCacheDisable::DisabledReasonId::kScreenReader:
           return Page::BackForwardCacheNotRestoredReasonEnum::
               ContentScreenReader;
+        case BackForwardCacheDisable::DisabledReasonId::kDiscarded:
+          return Page::BackForwardCacheNotRestoredReasonEnum::ContentDiscarded;
       }
     case BackForwardCache::DisabledSource::kEmbedder:
       switch (static_cast<back_forward_cache::DisabledReasonId>(reason.id)) {
@@ -1939,6 +1969,9 @@ DisableForRenderFrameHostReasonToProtocol(
             kExtensionSentMessageToCachedFrame:
           return Page::BackForwardCacheNotRestoredReasonEnum::
               EmbedderExtensionSentMessageToCachedFrame;
+        case back_forward_cache::DisabledReasonId::kRequestedByWebViewClient:
+          return Page::BackForwardCacheNotRestoredReasonEnum::
+              RequestedByWebViewClient;
       }
   }
 }
@@ -1953,7 +1986,6 @@ Page::BackForwardCacheNotRestoredReasonType MapNotRestoredReasonToType(
     case Reason::kHTTPStatusNotOK:
     case Reason::kSchemeNotHTTPOrHTTPS:
     case Reason::kLoading:
-    case Reason::kWasGrantedMediaAccess:
     case Reason::kDisableForRenderFrameHostCalled:
     case Reason::kDomainNotAllowed:
     case Reason::kHTTPMethodNotGET:
@@ -1989,6 +2021,11 @@ Page::BackForwardCacheNotRestoredReasonType MapNotRestoredReasonToType(
     case Reason::kHTTPAuthRequired:
     case Reason::kCookieFlushed:
     case Reason::kBroadcastChannelOnMessage:
+    case Reason::kWebViewSettingsChanged:
+    case Reason::kWebViewJavaScriptObjectChanged:
+    case Reason::kWebViewMessageListenerInjected:
+    case Reason::kWebViewSafeBrowsingAllowlistChanged:
+    case Reason::kWebViewDocumentStartJavascriptChanged:
       return Page::BackForwardCacheNotRestoredReasonTypeEnum::Circumstantial;
     case Reason::kCacheControlNoStore:
     case Reason::kCacheControlNoStoreCookieModified:
@@ -2000,7 +2037,7 @@ Page::BackForwardCacheNotRestoredReasonType MapNotRestoredReasonToType(
     case Reason::kUnknown:
       return Page::BackForwardCacheNotRestoredReasonTypeEnum::SupportPending;
     case Reason::kBlocklistedFeatures:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return Page::BackForwardCacheNotRestoredReasonTypeEnum::PageSupportNeeded;
   }
 }
@@ -2060,7 +2097,7 @@ Page::BackForwardCacheNotRestoredReasonType MapBlocklistedFeatureToType(
     case WebSchedulerTrackedFeature::kWebSocketSticky:
       return Page::BackForwardCacheNotRestoredReasonTypeEnum::Circumstantial;
     case WebSchedulerTrackedFeature::kWebSerial:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -2216,7 +2253,7 @@ void PageHandler::BackForwardCacheNotUsed(
       result->not_restored_reasons(), result->blocklisted_features(),
       result->disabled_reasons(), result->blocking_details_map());
 
-  // TODO(crbug.com/1281855): |tree_result| should not be nullptr when |result|
+  // TODO(crbug.com/40812472): |tree_result| should not be nullptr when |result|
   // has the reasons.
   std::unique_ptr<Page::BackForwardCacheNotRestoredExplanationTree>
       explanation_tree =

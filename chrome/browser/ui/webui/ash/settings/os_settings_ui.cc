@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ui/webui/ash/settings/os_settings_ui.h"
 
 #include <utility>
@@ -35,6 +40,7 @@
 #include "chrome/browser/nearby_sharing/nearby_sharing_service_factory.h"
 #include "chrome/browser/nearby_sharing/nearby_sharing_service_impl.h"
 #include "chrome/browser/ui/webui/ash/settings/pages/apps/app_notification_handler.h"
+#include "chrome/browser/ui/webui/ash/settings/pages/apps/app_parental_controls_handler.h"
 #include "chrome/browser/ui/webui/ash/settings/pages/privacy/app_permission_handler.h"
 #include "chrome/browser/ui/webui/ash/settings/pages/storage/device_storage_handler.h"
 #include "chrome/browser/ui/webui/ash/settings/pref_names.h"
@@ -45,6 +51,7 @@
 #include "chrome/browser/ui/webui/ash/settings/services/settings_manager/os_settings_manager.h"
 #include "chrome/browser/ui/webui/ash/settings/services/settings_manager/os_settings_manager_factory.h"
 #include "chrome/browser/ui/webui/managed_ui_handler.h"
+#include "chrome/browser/ui/webui/sanitized_image_source.h"
 #include "chrome/browser/ui/webui/webui_util.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/os_settings_resources.h"
@@ -52,6 +59,8 @@
 #include "chromeos/ash/services/auth_factor_config/in_process_instances.h"
 #include "chromeos/ash/services/cellular_setup/cellular_setup_impl.h"
 #include "chromeos/ash/services/cellular_setup/public/mojom/esim_manager.mojom.h"
+#include "chromeos/ash/services/ime/public/mojom/ime_service.mojom.h"
+#include "chromeos/ash/services/ime/public/mojom/input_method_user_data.mojom.h"
 #include "chromeos/components/in_session_auth/in_process_instances.h"
 #include "chromeos/components/in_session_auth/mojom/in_session_auth.mojom.h"
 #include "components/pref_registry/pref_registry_syncable.h"
@@ -60,6 +69,7 @@
 #include "content/public/browser/web_ui_data_source.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
+#include "ui/base/ime/ash/input_method_manager.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/views/widget/widget.h"
 #include "ui/webui/color_change_listener/color_change_handler.h"
@@ -105,7 +115,8 @@ OSSettingsUI::OSSettingsUI(content::WebUI* web_ui)
   content::WebUIDataSource* html_source =
       content::WebUIDataSource::CreateAndAdd(profile,
                                              chrome::kChromeUIOSSettingsHost);
-
+  content::URLDataSource::Add(profile,
+                              std::make_unique<SanitizedImageSource>(profile));
   OsSettingsManager* manager = OsSettingsManagerFactory::GetForProfile(profile);
   manager->AddHandlers(web_ui);
   manager->AddLoadTimeData(html_source);
@@ -168,6 +179,12 @@ OSSettingsUI::~OSSettingsUI() {
   // background and the state remains stored in the manager, so we will reset
   // that knowledge.
   settingsHatsManager->SetSettingsUsedSearch(false);
+
+  // Resets the tracking of device IDs associated with notification clicks.
+  // This method is called when the Settings app is closed to prevent the
+  // recording of metrics if a user changes settings long after clicking a
+  // notification.
+  InputDeviceSettingsController::Get()->ResetNotificationDeviceTracking();
 }
 
 void OSSettingsUI::BindInterface(
@@ -218,6 +235,14 @@ void OSSettingsUI::BindInterface(
         receiver) {
   OsSettingsManagerFactory::GetForProfile(Profile::FromWebUI(web_ui()))
       ->app_notification_handler()
+      ->BindInterface(std::move(receiver));
+}
+
+void OSSettingsUI::BindInterface(
+    mojo::PendingReceiver<
+        app_parental_controls::mojom::AppParentalControlsHandler> receiver) {
+  OsSettingsManagerFactory::GetForProfile(Profile::FromWebUI(web_ui()))
+      ->app_parental_controls_handler()
       ->BindInterface(std::move(receiver));
 }
 
@@ -407,6 +432,19 @@ void OSSettingsUI::BindInterface(
         receiver) {
   DCHECK(features::IsBluetoothDisconnectWarningEnabled());
   GetHidPreservingBluetoothStateControllerService(std::move(receiver));
+}
+
+void OSSettingsUI::BindInterface(
+    mojo::PendingReceiver<ash::ime::mojom::InputMethodUserDataService>
+        receiver) {
+  input_method::InputMethodManager::Get()->BindInputMethodUserDataService(
+      std::move(receiver));
+}
+
+void OSSettingsUI::BindInterface(
+    mojo::PendingReceiver<date_time::mojom::PageHandlerFactory> receiver) {
+  date_time_handler_factory_ = std::make_unique<DateTimeHandlerFactory>(
+      web_ui(), Profile::FromWebUI(web_ui()), std::move(receiver));
 }
 
 WEB_UI_CONTROLLER_TYPE_IMPL(OSSettingsUI)

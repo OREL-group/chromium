@@ -14,6 +14,7 @@
 #include "ui/base/class_property.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/mojom/window_show_state.mojom.h"
 #include "ui/color/color_id.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/layer_animation_observer.h"
@@ -160,7 +161,7 @@ void FrameHeader::FrameAnimatorView::LayerDestroyed(ui::Layer* layer) {
 }
 
 void FrameHeader::FrameAnimatorView::OnImplicitAnimationsCompleted() {
-  // TODO(crbug.com/1172694): Remove this DCHECK if this is indeed the cause.
+  // TODO(crbug.com/40054632): Remove this DCHECK if this is indeed the cause.
   DCHECK(layer_owner_);
   if (layer_owner_) {
     RemoveLayerFromRegions(layer_owner_->root());
@@ -279,9 +280,10 @@ void FrameHeader::SetPaintAsActive(bool paint_as_active) {
   UpdateFrameColors();
 }
 
-void FrameHeader::OnShowStateChanged(ui::WindowShowState show_state) {
-  if (show_state == ui::SHOW_STATE_MINIMIZED)
+void FrameHeader::OnShowStateChanged(ui::mojom::WindowShowState show_state) {
+  if (show_state == ui::mojom::WindowShowState::kMinimized) {
     return;
+  }
 
   LayoutHeaderInternal();
 }

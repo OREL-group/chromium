@@ -95,7 +95,7 @@ struct BLINK_COMMON_EXPORT AdConfigMaybePromiseTraitsHelper {
       case Wrapper::Tag::kValue:
         return ViewTag::kValue;
     }
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return View::Tag::kPromise;
   }
 
@@ -417,6 +417,21 @@ struct BLINK_COMMON_EXPORT
     return params.auction_nonce;
   }
 
+  static const std::optional<
+      blink::AuctionConfig::NonSharedParams::RealTimeReportingType>&
+  seller_real_time_reporting_type(
+      const blink::AuctionConfig::NonSharedParams& params) {
+    return params.seller_real_time_reporting_type;
+  }
+
+  static const std::optional<base::flat_map<
+      url::Origin,
+      blink::AuctionConfig::NonSharedParams::RealTimeReportingType>>&
+  per_buyer_real_time_reporting_types(
+      const blink::AuctionConfig::NonSharedParams& params) {
+    return params.per_buyer_real_time_reporting_types;
+  }
+
   static const std::vector<blink::AuctionConfig>& component_auctions(
       const blink::AuctionConfig::NonSharedParams& params) {
     return params.component_auctions;
@@ -425,6 +440,11 @@ struct BLINK_COMMON_EXPORT
   static int32_t max_trusted_scoring_signals_url_length(
       const blink::AuctionConfig::NonSharedParams& params) {
     return params.max_trusted_scoring_signals_url_length;
+  }
+
+  static const std::optional<url::Origin>& trusted_scoring_signals_coordinator(
+      const blink::AuctionConfig::NonSharedParams& params) {
+    return params.trusted_scoring_signals_coordinator;
   }
 
   static bool Read(blink::mojom::AuctionAdConfigNonSharedParamsDataView data,

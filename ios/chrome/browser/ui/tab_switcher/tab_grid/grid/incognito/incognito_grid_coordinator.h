@@ -23,11 +23,11 @@ class Browser;
 @property(nonatomic, weak, readonly) id<GridCommands> gridHandler;
 
 // The Grid view controller.
-// TODO(crbug.com/1457146): Make it private.
+// TODO(crbug.com/40273478): Make it private.
 @property(nonatomic, readonly, strong)
     IncognitoGridViewController* gridViewController;
 // Incognito grid mediator.
-// TODO(crbug.com/1457146): Make it private.
+// TODO(crbug.com/40273478): Make it private.
 @property(nonatomic, readonly, strong)
     IncognitoGridMediator* incognitoGridMediator;
 
@@ -36,9 +36,6 @@ class Browser;
 
 // The incognito browser can be reset during the execution of the app.
 - (void)setIncognitoBrowser:(Browser*)incognitoBrowser;
-
-// Stops all child coordinators.
-- (void)stopChildCoordinators;
 
 @end
 

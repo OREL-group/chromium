@@ -6,6 +6,8 @@
 
 #include <stddef.h>
 
+#include <memory>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -13,6 +15,7 @@
 #include "ash/app_list/apps_collections_controller.h"
 #include "ash/public/cpp/app_list/app_list_client.h"
 #include "ash/public/cpp/app_list/app_list_controller.h"
+#include "ash/public/cpp/app_list/app_list_features.h"
 #include "ash/public/cpp/app_list/app_list_types.h"
 #include "ash/public/cpp/new_window_delegate.h"
 #include "ash/shell.h"
@@ -26,9 +29,11 @@
 #include "base/metrics/user_metrics.h"
 #include "base/strings/strcat.h"
 #include "base/trace_event/trace_event.h"
+#include "chrome/browser/apps/app_service/metrics/app_service_metrics.h"
 #include "chrome/browser/ash/app_list/app_list_controller_delegate.h"
 #include "chrome/browser/ash/app_list/app_list_model_updater.h"
 #include "chrome/browser/ash/app_list/app_list_notifier_impl.h"
+#include "chrome/browser/ash/app_list/app_list_survey_handler.h"
 #include "chrome/browser/ash/app_list/app_list_syncable_service.h"
 #include "chrome/browser/ash/app_list/app_list_syncable_service_factory.h"
 #include "chrome/browser/ash/app_list/app_sync_ui_state_watcher.h"
@@ -36,8 +41,6 @@
 #include "chrome/browser/ash/app_list/search/ranking/launch_data.h"
 #include "chrome/browser/ash/app_list/search/search_controller.h"
 #include "chrome/browser/ash/app_list/search/search_controller_factory.h"
-#include "chrome/browser/ash/crosapi/browser_util.h"
-#include "chrome/browser/ash/crosapi/url_handler_ash.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/feature_engagement/tracker_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -54,7 +57,6 @@
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/ui/webui/chrome_web_ui_controller_factory.h"
 #include "chromeos/ash/components/browser_context_helper/browser_context_helper.h"
 #include "chromeos/ash/components/scalable_iph/scalable_iph.h"
 #include "chromeos/crosapi/cpp/gurl_os_handler_utils.h"
@@ -97,24 +99,16 @@ ChromeSearchResult* FindAppResultByAppId(
   return result;
 }
 
-ash::NewWindowDelegate::Disposition ConvertDisposition(
-    WindowOpenDisposition disposition) {
-  switch (disposition) {
-    case WindowOpenDisposition::NEW_FOREGROUND_TAB:
-    case WindowOpenDisposition::NEW_BACKGROUND_TAB:
-      return ash::NewWindowDelegate::Disposition::kNewForegroundTab;
-    case WindowOpenDisposition::UNKNOWN:
-    case WindowOpenDisposition::NEW_POPUP:
-    case WindowOpenDisposition::NEW_WINDOW:
-    case WindowOpenDisposition::SAVE_TO_DISK:
-    case WindowOpenDisposition::OFF_THE_RECORD:
-    case WindowOpenDisposition::IGNORE_ACTION:
-    case WindowOpenDisposition::NEW_PICTURE_IN_PICTURE:
-      return ash::NewWindowDelegate::Disposition::kNewWindow;
-    case WindowOpenDisposition::CURRENT_TAB:
-    case WindowOpenDisposition::SINGLETON_TAB:
-    case WindowOpenDisposition::SWITCH_TO_TAB:
-      return ash::NewWindowDelegate::Disposition::kSwitchToTab;
+void RecordDefaultAppsForHistogram(const std::string& histogram_name,
+                                   const std::vector<std::string>& apps) {
+  for (std::string id : apps) {
+    const std::optional<apps::DefaultAppName> default_app_name =
+        apps::AppIdToName(id);
+    // Only record default apps.
+    if (!default_app_name) {
+      continue;
+    }
+    base::UmaHistogramEnumeration(histogram_name, default_app_name.value());
   }
 }
 
@@ -342,7 +336,8 @@ void AppListClientImpl::InvokeSearchResultAction(
 void AppListClientImpl::ActivateItem(int profile_id,
                                      const std::string& id,
                                      int event_flags,
-                                     ash::AppListLaunchedFrom launched_from) {
+                                     ash::AppListLaunchedFrom launched_from,
+                                     bool is_above_the_fold) {
   auto* requested_model_updater = profile_model_mappings_[profile_id];
 
   // Pointless to notify the AppListModelUpdater of the activated item if the
@@ -385,6 +380,7 @@ void AppListClientImpl::ActivateItem(int profile_id,
   }
 
   MaybeRecordLauncherAction(launched_from);
+  MaybeRecordActivatedItemVisibility(id, launched_from, is_above_the_fold);
   requested_model_updater->ActivateChromeItem(id, event_flags);
 }
 
@@ -415,11 +411,33 @@ void AppListClientImpl::OnAppListVisibilityWillChange(bool visible) {
   }
 }
 
+void AppListClientImpl::MaybeRecalculateAppsGridDefaultOrder() {
+  // Do not attempt to calculate the experimental arm if the active
+  // profile is not the primary profile.
+  if (!IsPrimaryProfile(ProfileManager::GetActiveUserProfile())) {
+    return;
+  }
+
+  ash::AppsCollectionsController* apps_collections_controller =
+      ash::AppsCollectionsController::Get();
+  apps_collections_controller->CalculateExperimentalArm();
+  if (apps_collections_controller->GetUserExperimentalArm() !=
+      ash::AppsCollectionsController::ExperimentalArm::kModifiedOrder) {
+    return;
+  }
+  CHECK(current_model_updater_);
+
+  current_model_updater_->RequestDefaultPositionForModifiedOrder();
+}
+
 void AppListClientImpl::OnAppListVisibilityChanged(bool visible) {
   app_list_visible_ = visible;
   if (visible) {
     RecordViewShown(
         ash::AppsCollectionsController::Get()->ShouldShowAppsCollection());
+    if (survey_handler_) {
+      survey_handler_->MaybeTriggerSurvey();
+    }
   } else if (current_model_updater_) {
     current_model_updater_->OnAppListHidden();
     // If the user started search, record no action if a result open event has
@@ -655,27 +673,9 @@ void AppListClientImpl::OpenURL(Profile* profile,
                                 const GURL& url,
                                 ui::PageTransition transition,
                                 WindowOpenDisposition disposition) {
-  if (crosapi::browser_util::IsLacrosEnabled()) {
-    // Handle os:// URLs directly, without involving Lacros.
-    // See comment in OmniboxLacrosProvider::StartWithoutSearchProvider.
-    if (crosapi::gurl_os_handler_utils::HasOsScheme(url)) {
-      const GURL ash_url =
-          crosapi::gurl_os_handler_utils::GetAshUrlFromLacrosUrl(url);
-      if (ChromeWebUIControllerFactory::GetInstance()->CanHandleUrl(ash_url)) {
-        crosapi::UrlHandlerAsh().OpenUrl(ash_url);
-      } else {
-        LOG(WARNING) << "URL not supported: " << url << " (" << ash_url << ")";
-      }
-    } else {
-      ash::NewWindowDelegate::GetPrimary()->OpenUrl(
-          url, ash::NewWindowDelegate::OpenUrlFrom::kUserInteraction,
-          ConvertDisposition(disposition));
-    }
-  } else {
-    NavigateParams params(profile, url, transition);
-    params.disposition = disposition;
-    Navigate(&params);
-  }
+  NavigateParams params(profile, url, transition);
+  params.disposition = disposition;
+  Navigate(&params);
 }
 
 void AppListClientImpl::OnProfileAdded(Profile* profile) {
@@ -696,12 +696,17 @@ void AppListClientImpl::OnProfileAdded(Profile* profile) {
     app_list_syncable_service->OnFirstSync(base::BindOnce(
         [](const base::WeakPtr<AppListClientImpl>& self,
            bool was_first_sync_ever) {
-          if (self) {
-            self->is_primary_profile_new_user_ = was_first_sync_ever;
+          if (!self) {
+            return;
+          }
+          self->is_primary_profile_new_user_ = was_first_sync_ever;
+          if (was_first_sync_ever) {
+            self->MaybeRecalculateAppsGridDefaultOrder();
           }
         },
         weak_ptr_factory_.GetWeakPtr()));
   }
+  survey_handler_ = std::make_unique<app_list::AppListSurveyHandler>(profile);
 }
 
 void AppListClientImpl::OnProfileManagerDestroying() {
@@ -721,6 +726,14 @@ void AppListClientImpl::RecalculateWouldTriggerLauncherSearchIph() {
   }
 
   current_model_updater_->RecalculateWouldTriggerLauncherSearchIph();
+}
+
+bool AppListClientImpl::HasReordered() {
+  if (!current_model_updater_) {
+    return false;
+  }
+
+  return current_model_updater_->ModelHasBeenReorderedInThisSession();
 }
 
 std::unique_ptr<ash::ScopedIphSession>
@@ -875,7 +888,8 @@ void AppListClientImpl::MaybeRecordLauncherAction(
       launched_from == ash::AppListLaunchedFrom::kLaunchedFromSearchBox ||
       launched_from == ash::AppListLaunchedFrom::kLaunchedFromContinueTask ||
       launched_from == ash::AppListLaunchedFrom::kLaunchedFromQuickAppAccess ||
-      launched_from == ash::AppListLaunchedFrom::kLaunchedFromAppsCollections);
+      launched_from == ash::AppListLaunchedFrom::kLaunchedFromAppsCollections ||
+      launched_from == ash::AppListLaunchedFrom::kLaunchedFromDiscoveryChip);
 
   // Return early if the current user is not new.
   if (!user_manager::UserManager::Get()->IsCurrentUserNew()) {
@@ -921,11 +935,69 @@ void AppListClientImpl::MaybeRecordLauncherAction(
   }
 }
 
+void AppListClientImpl::MaybeRecordActivatedItemVisibility(
+    const std::string& id,
+    ash::AppListLaunchedFrom launched_from,
+    bool is_app_above_the_fold) {
+  // Do not record this metric for tablet mode.
+  if (display::Screen::GetScreen()->InTabletMode()) {
+    return;
+  }
+  const std::optional<apps::DefaultAppName> default_app_name =
+      apps::AppIdToName(id);
+  // This metric only cares for default apps.
+  if (!default_app_name) {
+    return;
+  }
+
+  const std::string_view app_list_page =
+      launched_from == ash::AppListLaunchedFrom::kLaunchedFromAppsCollections
+          ? "AppsCollectionsPage"
+          : "AppsPage";
+  const std::string_view visibility =
+      is_app_above_the_fold ? "AboveTheFold" : "BelowTheFold";
+  base::UmaHistogramEnumeration(
+      base::StrCat({"Apps.AppListBubble.", app_list_page,
+                    ".AppLaunchesByVisibility.", visibility,
+                    ash::AppsCollectionsController::Get()
+                        ->GetUserExperimentalArmAsHistogramSuffix()}),
+      default_app_name.value());
+}
+
 std::optional<bool> AppListClientImpl::IsNewUser(
     const AccountId& account_id) const {
   // NOTE: Apps Collections in Ash is currently only supported for the primary
-  // user profile. This is a self-imposed restriction.
+  // user profile. This is a self-imposed restriction but may happen in tests.
   auto* const profile = GetProfile(account_id);
-  CHECK(IsPrimaryProfile(profile));
+  if (!IsPrimaryProfile(profile)) {
+    return false;
+  }
   return is_primary_profile_new_user_;
+}
+
+void AppListClientImpl::RecordAppsDefaultVisibility(
+    const std::vector<std::string>& apps_above_the_fold,
+    const std::vector<std::string>& apps_below_the_fold,
+    bool is_apps_collections_page) {
+  // Do not record this metric for tablet mode.
+  if (display::Screen::GetScreen()->InTabletMode()) {
+    return;
+  }
+
+  const std::string app_list_page =
+      is_apps_collections_page ? "AppsCollectionsPage" : "AppsPage";
+
+  RecordDefaultAppsForHistogram(
+      base::StrCat({"Apps.AppListBubble.", app_list_page,
+                    ".AppVisibilityOnLauncherShown.AboveTheFold",
+                    ash::AppsCollectionsController::Get()
+                        ->GetUserExperimentalArmAsHistogramSuffix()}),
+      apps_above_the_fold);
+
+  RecordDefaultAppsForHistogram(
+      base::StrCat({"Apps.AppListBubble.", app_list_page,
+                    ".AppVisibilityOnLauncherShown.BelowTheFold",
+                    ash::AppsCollectionsController::Get()
+                        ->GetUserExperimentalArmAsHistogramSuffix()}),
+      apps_below_the_fold);
 }

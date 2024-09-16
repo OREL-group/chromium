@@ -26,14 +26,10 @@ class ASH_EXPORT PlaylistImageButton : public views::Button,
   METADATA_HEADER(PlaylistImageButton, views::Button)
 
  public:
-  PlaylistImageButton(const gfx::ImageSkia& image, PressedCallback callback);
+  PlaylistImageButton();
   PlaylistImageButton(const PlaylistImageButton&) = delete;
   PlaylistImageButton& operator=(const PlaylistImageButton&) = delete;
   ~PlaylistImageButton() override;
-
-  // views::Button:
-  void OnMouseEntered(const ui::MouseEvent& event) override;
-  void OnMouseExited(const ui::MouseEvent& event) override;
 
   // views::LayoutDelegate:
   views::ProposedLayout CalculateProposedLayout(
@@ -43,15 +39,29 @@ class ASH_EXPORT PlaylistImageButton : public views::Button,
   // state.
   void SetIsPlaying(bool is_playing);
 
+  bool GetIsSelected() const;
+
+  // Called when this view is pressed to show/hide `selected_curvycutout_icon_`.
+  void SetIsSelected(bool is_selected);
+
+  // Replaces the `image_view_` with a new image.
+  void UpdateContents(const gfx::ImageSkia& image);
+
  private:
   // views::Button:
   void OnSetTooltipText(const std::u16string& tooltip_text) override;
+  void OnThemeChanged() override;
 
-  void UpdateVisibility();
+  // Updates to use the default image.
+  void UpdateToDefaultImage();
 
   bool is_playing_ = false;
+  bool is_selected_ = true;
+
+  // Indicates if this button uses a default image.
+  bool is_default_image_ = false;
+
   raw_ptr<views::ImageView> image_view_ = nullptr;
-  raw_ptr<views::ImageView> media_action_icon_ = nullptr;
   raw_ptr<views::ImageView> selected_curvycutout_icon_ = nullptr;
   raw_ptr<views::AnimatedImageView> lottie_animation_view_ = nullptr;
 };

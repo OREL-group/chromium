@@ -209,7 +209,8 @@ PillButton::PillButton(PressedCallback callback,
 
 PillButton::~PillButton() = default;
 
-gfx::Size PillButton::CalculatePreferredSize() const {
+gfx::Size PillButton::CalculatePreferredSize(
+    const views::SizeBounds& available_size) const {
   int button_width =
       label()
           ->GetPreferredSize(views::SizeBounds(label()->width(), {}))
@@ -229,10 +230,6 @@ gfx::Size PillButton::CalculatePreferredSize() const {
   gfx::Size size(button_width, height);
   size.SetToMax(gfx::Size(kPillButtonMinimumWidth, height));
   return size;
-}
-
-int PillButton::GetHeightForWidth(int width) const {
-  return GetButtonHeight(type_);
 }
 
 gfx::Insets PillButton::GetInsets() const {
@@ -313,7 +310,10 @@ views::PropertyEffects PillButton::UpdateStyleToIndicateDefaultStatus() {
 
 std::u16string PillButton::GetTooltipText(const gfx::Point& p) const {
   const auto& tooltip = views::LabelButton::GetTooltipText(p);
-  return tooltip.empty() ? GetText() : tooltip;
+  if (use_label_as_default_tooltip_ && tooltip.empty()) {
+    return GetText();
+  }
+  return tooltip;
 }
 
 void PillButton::SetBackgroundColor(const SkColor background_color) {
@@ -376,6 +376,11 @@ void PillButton::SetEnableBackgroundBlur(bool enable) {
 
 void PillButton::SetTextWithStringId(int message_id) {
   SetText(l10n_util::GetStringUTF16(message_id));
+}
+
+void PillButton::SetUseLabelAsDefaultTooltip(
+    bool use_label_as_default_tooltip) {
+  use_label_as_default_tooltip_ = use_label_as_default_tooltip;
 }
 
 void PillButton::Init() {

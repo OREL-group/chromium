@@ -26,9 +26,9 @@ std::optional<StyleColor> ColorFromKeyword(CSSValueID css_value_id) {
     return std::nullopt;
   }
 
-  Color color = StyleColor::ColorFromKeyword(css_value_id,
-                                             mojom::blink::ColorScheme::kLight,
-                                             /*color_provider=*/nullptr);
+  Color color = StyleColor::ColorFromKeyword(
+      css_value_id, mojom::blink::ColorScheme::kLight,
+      /*color_provider=*/nullptr, /*is_in_web_app_scope=*/false);
   return (StyleColor(color));
 }
 
@@ -102,7 +102,7 @@ class InheritedScrollbarColorChecker
  private:
   bool IsValid(const StyleResolverState& state,
                const InterpolationValue& underlying) const final {
-    return scrollbar_color_ == state.ParentStyle()->ScrollbarColor();
+    return scrollbar_color_ == state.ParentStyle()->UsedScrollbarColor();
   }
 
   Member<const StyleScrollbarColor> scrollbar_color_;
@@ -119,7 +119,10 @@ InterpolationValue CSSScrollbarColorInterpolationType::MaybeConvertInitial(
     const StyleResolverState& state,
     ConversionCheckers& conversion_checkers) const {
   const StyleScrollbarColor* initial_scrollbar_color =
-      state.GetDocument().GetStyleResolver().InitialStyle().ScrollbarColor();
+      state.GetDocument()
+          .GetStyleResolver()
+          .InitialStyle()
+          .UsedScrollbarColor();
   return InterpolationValue(
       CreateScrollbarColorValue(initial_scrollbar_color),
       CSSScrollbarColorNonInterpolableValue::Create(initial_scrollbar_color));
@@ -133,7 +136,7 @@ InterpolationValue CSSScrollbarColorInterpolationType::MaybeConvertInherit(
   }
 
   const StyleScrollbarColor* inherited_scrollbar_color =
-      state.ParentStyle()->ScrollbarColor();
+      state.ParentStyle()->UsedScrollbarColor();
   conversion_checkers.push_back(
       MakeGarbageCollected<InheritedScrollbarColorChecker>(
           inherited_scrollbar_color));
@@ -170,11 +173,13 @@ InterpolationValue CSSScrollbarColorInterpolationType::MaybeConvertValue(
     return nullptr;
   }
 
-  StyleScrollbarColor scrollbar_color(thumb_color.value(), track_color.value());
+  StyleScrollbarColor* scrollbar_color =
+      MakeGarbageCollected<StyleScrollbarColor>(thumb_color.value(),
+                                                track_color.value());
 
   return InterpolationValue(
-      InterpolableScrollbarColor::Create(scrollbar_color),
-      CSSScrollbarColorNonInterpolableValue::Create(&scrollbar_color));
+      InterpolableScrollbarColor::Create(*scrollbar_color),
+      CSSScrollbarColorNonInterpolableValue::Create(scrollbar_color));
 }
 
 PairwiseInterpolationValue
@@ -196,8 +201,9 @@ InterpolationValue
 CSSScrollbarColorInterpolationType::MaybeConvertStandardPropertyUnderlyingValue(
     const ComputedStyle& style) const {
   return InterpolationValue(
-      CreateScrollbarColorValue(style.ScrollbarColor()),
-      CSSScrollbarColorNonInterpolableValue::Create(style.ScrollbarColor()));
+      CreateScrollbarColorValue(style.UsedScrollbarColor()),
+      CSSScrollbarColorNonInterpolableValue::Create(
+          style.UsedScrollbarColor()));
 }
 
 void CSSScrollbarColorInterpolationType::Composite(

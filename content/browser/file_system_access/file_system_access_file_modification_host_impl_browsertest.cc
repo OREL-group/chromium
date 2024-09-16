@@ -42,8 +42,6 @@ class FileSystemAccessFileModificationHostImplBrowserTest
                                    temp_dir_.GetPath());
     command_line->AppendSwitch(
         switches::kEnableExperimentalWebPlatformFeatures);
-
-    ContentBrowserTest::SetUpCommandLine(command_line);
   }
 
   void RunOnIOThreadBlocking(base::OnceClosure task) {
@@ -160,7 +158,7 @@ IN_PROC_BROWSER_TEST_F(FileSystemAccessFileModificationHostImplBrowserTest,
   EXPECT_EQ(usage_before_operation, usage_after_operation + 100);
 }
 
-// TODO(crbug.com/1304977): Failing on various builders.
+// TODO(crbug.com/40826793): Failing on various builders.
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) ||                     \
     (BUILDFLAG(IS_CHROMEOS_LACROS) && defined(ADDRESS_SANITIZER) && \
      defined(LEAK_SANITIZER))
@@ -170,7 +168,7 @@ IN_PROC_BROWSER_TEST_F(FileSystemAccessFileModificationHostImplBrowserTest,
 #endif
 IN_PROC_BROWSER_TEST_F(FileSystemAccessFileModificationHostImplBrowserTest,
                        MAYBE_QuotaUsageOverallocation) {
-  // TODO(https://crbug.com/1240056): Implement a more sophisticated test suite
+  // TODO(crbug.com/40194113): Implement a more sophisticated test suite
   // for this feature.
   const GURL& test_url =
       embedded_test_server()->GetURL("/run_async_code_on_worker.html");
@@ -213,10 +211,8 @@ IN_PROC_BROWSER_TEST_F(FileSystemAccessFileModificationHostImplBrowserTest,
             4 * 1024 * 1024);
 }
 
-// TODO(crbug.com/1304977): Failing on Mac, Linux, and ChromeOS builders.
-// TODO(crbug.com/1459385): Re-enable this test
 IN_PROC_BROWSER_TEST_F(FileSystemAccessFileModificationHostImplBrowserTest,
-                       DISABLED_QuotaUsageShrinks) {
+                       QuotaUsageShrinks) {
   const GURL& test_url =
       embedded_test_server()->GetURL("/run_async_code_on_worker.html");
   Shell* browser = CreateBrowser();

@@ -8,7 +8,6 @@
 #include <optional>
 #include <string>
 
-#include "base/strings/string_piece.h"
 #include "services/device/public/mojom/screen_orientation_lock_types.mojom-shared.h"
 #include "third_party/blink/public/common/common_export.h"
 #include "third_party/blink/public/common/manifest/manifest.h"
@@ -30,6 +29,13 @@ BLINK_COMMON_EXPORT bool IsDefaultManifest(const mojom::Manifest& manifest,
                                            const GURL& document_url);
 BLINK_COMMON_EXPORT bool IsDefaultManifest(const mojom::ManifestPtr& manifest,
                                            const GURL& document_url);
+
+// Returns the blink::mojom::Manifest_TextDirection which matches |dir|.
+// |dir| should be one of
+// https://www.w3.org/TR/appmanifest/#dfn-text-directions.
+// |dir| is case insensitive. Returns std::nullopt if there is no match.
+BLINK_COMMON_EXPORT std::optional<blink::mojom::Manifest_TextDirection>
+TextDirectionFromString(const std::string& dir);
 
 // Converts a blink::mojom::DisplayMode to a string. Returns one of
 // https://www.w3.org/TR/appmanifest/#dfn-display-modes-values. Return values

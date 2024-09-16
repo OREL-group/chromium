@@ -31,6 +31,7 @@
 #include "media/base/media_util.h"
 #include "media/base/overlay_info.h"
 #include "media/base/platform_features.h"
+#include "media/base/supported_types.h"
 #include "media/base/video_decoder.h"
 #include "media/base/video_types.h"
 #include "media/video/gpu_video_accelerator_factories.h"
@@ -105,7 +106,14 @@ void RecordReinitializationLatency(base::TimeDelta latency) {
 }
 
 bool HasSoftwareFallback(media::VideoCodec video_codec) {
-#if BUILDFLAG(IS_ANDROID) && !BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS)
+  if (video_codec == media::VideoCodec::kHEVC) {
+    return false;
+  }
+// TODO(crbug.com/355256378): OpenH264 for encoding and FFmpeg for H264 decoding
+// should be detangled such that software decoding can be enabled without
+// software encoding.
+#if BUILDFLAG(IS_ANDROID) && \
+    (!BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS) || !BUILDFLAG(ENABLE_OPENH264))
   return video_codec != media::VideoCodec::kH264;
 #else
   return true;
@@ -117,10 +125,13 @@ struct EncodedImageExternalMemory
  public:
   explicit EncodedImageExternalMemory(
       rtc::scoped_refptr<webrtc::EncodedImageBufferInterface> buffer_interface)
-      : ExternalMemory(base::make_span(buffer_interface->data(),
-                                       buffer_interface->size())),
-        buffer_interface_(std::move(buffer_interface)) {}
-  ~EncodedImageExternalMemory() override = default;
+      : buffer_interface_(std::move(buffer_interface)) {
+    DCHECK(buffer_interface_);
+  }
+
+  const base::span<const uint8_t> Span() const override {
+    return *buffer_interface_;
+  }
 
  private:
   rtc::scoped_refptr<webrtc::EncodedImageBufferInterface> buffer_interface_;
@@ -515,7 +526,8 @@ std::unique_ptr<RTCVideoDecoderAdapter> RTCVideoDecoderAdapter::Create(
       media::EncryptionScheme::kUnencrypted);
   config.set_is_rtc(true);
 
-  if (!resolution_monitor) {
+  // HEVC does not have SW fallback, so resolution monitor is not needed.
+  if (!resolution_monitor && HasSoftwareFallback(config.codec())) {
     resolution_monitor = ResolutionMonitor::Create(config.codec());
     if (!resolution_monitor) {
       DLOG(ERROR) << "Failed to create ResolutionMonitor for codec: "
@@ -552,8 +564,10 @@ RTCVideoDecoderAdapter::RTCVideoDecoderAdapter(
       resolution_monitor_(std::move(resolution_monitor)) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(decoding_sequence_checker_);
   DVLOG(1) << __func__;
-  CHECK(resolution_monitor_);
-  CHECK_EQ(resolution_monitor_->codec(), config_.codec());
+  if (HasSoftwareFallback(config.codec())) {
+    CHECK(resolution_monitor_);
+    CHECK_EQ(resolution_monitor_->codec(), config_.codec());
+  }
 
   decoder_info_.implementation_name = "ExternalDecoder (Unknown)";
   decoder_info_.is_hardware_accelerated = true;
@@ -627,8 +641,10 @@ bool RTCVideoDecoderAdapter::Configure(const Settings& settings) {
 
   if (WebRtcToMediaVideoCodec(settings.codec_type()) != config_.codec())
     return false;
-  CHECK_EQ(resolution_monitor_->codec(),
-           WebRtcToMediaVideoCodec(settings.codec_type()));
+  if (HasSoftwareFallback(config_.codec())) {
+    CHECK_EQ(resolution_monitor_->codec(),
+             WebRtcToMediaVideoCodec(settings.codec_type()));
+  }
 
   const bool init_success = status_ != Status::kError;
   base::UmaHistogramBoolean("Media.RTCVideoDecoderInitDecodeSuccess",

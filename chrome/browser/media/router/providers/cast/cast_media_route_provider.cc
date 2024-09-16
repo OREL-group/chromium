@@ -188,7 +188,7 @@ void CastMediaRouteProvider::CreateRoute(const std::string& source_id,
                                          CreateRouteCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  // TODO(https://crbug.com/809249): Handle mirroring routes, including
+  // TODO(crbug.com/40561499): Handle mirroring routes, including
   // mirror-to-Cast transitions.
   const MediaSinkInternal* sink = media_sink_service_->GetSinkById(sink_id);
   if (!sink) {
@@ -213,7 +213,8 @@ void CastMediaRouteProvider::CreateRoute(const std::string& source_id,
     return;
   }
   activity_manager_->LaunchSession(*cast_source, *sink, presentation_id, origin,
-                                   frame_tree_node_id, std::move(callback));
+                                   content::FrameTreeNodeId(frame_tree_node_id),
+                                   std::move(callback));
 }
 
 void CastMediaRouteProvider::JoinRoute(const std::string& media_source,
@@ -237,7 +238,7 @@ void CastMediaRouteProvider::JoinRoute(const std::string& media_source,
   if (!activity_manager_) {
     // This should never happen, but it looks like maybe it does.  See
     // crbug.com/1114067.
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     // This message will probably go unnoticed, but it's here to give some
     // indication of what went wrong, since NOTREACHED() is compiled out of
     // release builds.  It would be nice if we could log a message to |logger_|,
@@ -250,7 +251,8 @@ void CastMediaRouteProvider::JoinRoute(const std::string& media_source,
     return;
   }
   activity_manager_->JoinSession(*cast_source, presentation_id, origin,
-                                 frame_tree_node_id, std::move(callback));
+                                 content::FrameTreeNodeId(frame_tree_node_id),
+                                 std::move(callback));
 }
 
 void CastMediaRouteProvider::TerminateRoute(const std::string& route_id,
@@ -267,7 +269,8 @@ void CastMediaRouteProvider::SendRouteMessage(const std::string& media_route_id,
 void CastMediaRouteProvider::SendRouteBinaryMessage(
     const std::string& media_route_id,
     const std::vector<uint8_t>& data) {
-  NOTREACHED() << "Binary messages are not supported for Cast routes.";
+  NOTREACHED_IN_MIGRATION()
+      << "Binary messages are not supported for Cast routes.";
 }
 
 void CastMediaRouteProvider::StartObservingMediaSinks(

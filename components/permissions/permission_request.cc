@@ -96,7 +96,10 @@ PermissionRequest::GetDialogAnnotatedMessageText(
       break;
     case RequestType::kDiskQuota:
       // Handled by an override in `QuotaPermissionRequest`.
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
+      break;
+    case RequestType::kHandTracking:
+      message_id = IDS_HAND_TRACKING_INFOBAR_TEXT;
       break;
     case RequestType::kGeolocation:
       message_id = IDS_GEOLOCATION_INFOBAR_TEXT;
@@ -125,19 +128,19 @@ PermissionRequest::GetDialogAnnotatedMessageText(
       break;
     case RequestType::kStorageAccess:
       // The SA prompt does not currently bold any part of its message.
-        return AnnotatedMessageText(
-            l10n_util::GetStringFUTF16(
-                IDS_CONCAT_TWO_STRINGS_WITH_PERIODS,
-                l10n_util::GetStringFUTF16(
-                    IDS_STORAGE_ACCESS_PERMISSION_TWO_ORIGIN_PROMPT_TITLE,
-                    requesting_origin_string_formatted),
-                l10n_util::GetStringFUTF16(
-                    IDS_STORAGE_ACCESS_PERMISSION_TWO_ORIGIN_EXPLANATION,
-                    requesting_origin_string_formatted,
-                    embedding_origin_string_formatted)),
-            /*bolded_ranges=*/{});
+      return AnnotatedMessageText(
+          l10n_util::GetStringFUTF16(
+              IDS_CONCAT_TWO_STRINGS_WITH_PERIODS,
+              l10n_util::GetStringFUTF16(
+                  IDS_STORAGE_ACCESS_PERMISSION_TWO_ORIGIN_PROMPT_TITLE,
+                  requesting_origin_string_formatted),
+              l10n_util::GetStringFUTF16(
+                  IDS_STORAGE_ACCESS_PERMISSION_TWO_ORIGIN_EXPLANATION,
+                  requesting_origin_string_formatted,
+                  embedding_origin_string_formatted)),
+          /*bolded_ranges=*/{});
     case RequestType::kTopLevelStorageAccess:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
     case RequestType::kVrSession:
       message_id = IDS_VR_INFOBAR_TEXT;
@@ -152,7 +155,7 @@ PermissionRequest::GetDialogAnnotatedMessageText(
   // prompt design on Clank)
   return GetDialogAnnotatedMessageText(
       requesting_origin_string_formatted, message_id, /*format_origin_bold=*/
-      permissions::PermissionUtil::CanPermissionBeAllowedOnce(
+      permissions::PermissionUtil::DoesSupportTemporaryGrants(
           GetContentSettingsType()));
 }
 
@@ -233,8 +236,25 @@ std::optional<std::u16string> PermissionRequest::GetRequestChipText(
          IDS_PERMISSIONS_GEOLOCATION_ALLOWED_CONFIRMATION_SCREENREADER_ANNOUNCEMENT,
          IDS_PERMISSIONS_PERMISSION_ALLOWED_ONCE_CONFIRMATION,
          IDS_PERMISSIONS_GEOLOCATION_NOT_ALLOWED_CONFIRMATION_SCREENREADER_ANNOUNCEMENT}},
+       {RequestType::kHandTracking,
+        {IDS_HAND_TRACKING_PERMISSION_CHIP,
+         IDS_HAND_TRACKING_PERMISSION_BLOCKED_CHIP,
+         IDS_PERMISSIONS_PERMISSION_ALLOWED_CONFIRMATION,
+         IDS_PERMISSIONS_PERMISSION_ALLOWED_ONCE_CONFIRMATION,
+         IDS_PERMISSIONS_PERMISSION_NOT_ALLOWED_CONFIRMATION,
+         IDS_PERMISSIONS_HAND_TRACKING_ALLOWED_CONFIRMATION_SCREENREADER_ANNOUNCEMENT,
+         IDS_PERMISSIONS_HAND_TRACKING_ALLOWED_ONCE_CONFIRMATION_SCREENREADER_ANNOUNCEMENT,
+         IDS_PERMISSIONS_HAND_TRACKING_NOT_ALLOWED_CONFIRMATION_SCREENREADER_ANNOUNCEMENT}},
        {RequestType::kIdleDetection,
         {IDS_IDLE_DETECTION_PERMISSION_CHIP, -1, -1, -1, -1, -1, -1, -1}},
+       {RequestType::kKeyboardLock,
+        {IDS_KEYBOARD_LOCK_PERMISSION_CHIP, -1,
+         IDS_PERMISSIONS_PERMISSION_ALLOWED_CONFIRMATION,
+         IDS_PERMISSIONS_PERMISSION_ALLOWED_ONCE_CONFIRMATION,
+         IDS_PERMISSIONS_PERMISSION_NOT_ALLOWED_CONFIRMATION,
+         IDS_PERMISSIONS_KEYBOARD_LOCK_ALLOWED_CONFIRMATION_SCREENREADER_ANNOUNCEMENT,
+         IDS_PERMISSIONS_PERMISSION_ALLOWED_ONCE_CONFIRMATION,
+         IDS_PERMISSIONS_KEYBOARD_LOCK_NOT_ALLOWED_CONFIRMATION_SCREENREADER_ANNOUNCEMENT}},
        {RequestType::kMicStream,
         {IDS_MEDIA_CAPTURE_AUDIO_ONLY_PERMISSION_CHIP, -1,
          IDS_PERMISSIONS_PERMISSION_ALLOWED_CONFIRMATION,
@@ -253,6 +273,14 @@ std::optional<std::u16string> PermissionRequest::GetRequestChipText(
          IDS_PERMISSIONS_NOTIFICATION_ALLOWED_CONFIRMATION_SCREENREADER_ANNOUNCEMENT,
          -1,
          IDS_PERMISSIONS_NOTIFICATION_NOT_ALLOWED_CONFIRMATION_SCREENREADER_ANNOUNCEMENT}},
+       {RequestType::kPointerLock,
+        {IDS_POINTER_LOCK_PERMISSION_CHIP, -1,
+         IDS_PERMISSIONS_PERMISSION_ALLOWED_CONFIRMATION,
+         IDS_PERMISSIONS_PERMISSION_ALLOWED_ONCE_CONFIRMATION,
+         IDS_PERMISSIONS_PERMISSION_NOT_ALLOWED_CONFIRMATION,
+         IDS_PERMISSIONS_POINTER_LOCK_ALLOWED_CONFIRMATION_SCREENREADER_ANNOUNCEMENT,
+         IDS_PERMISSIONS_PERMISSION_ALLOWED_ONCE_CONFIRMATION,
+         IDS_PERMISSIONS_POINTER_LOCK_NOT_ALLOWED_CONFIRMATION_SCREENREADER_ANNOUNCEMENT}},
        {RequestType::kStorageAccess,
         {IDS_SAA_PERMISSION_CHIP, -1,
          IDS_PERMISSIONS_PERMISSION_ALLOWED_CONFIRMATION, -1,
@@ -260,7 +288,15 @@ std::optional<std::u16string> PermissionRequest::GetRequestChipText(
          IDS_PERMISSIONS_SAA_ALLOWED_CONFIRMATION_SCREENREADER_ANNOUNCEMENT, -1,
          IDS_PERMISSIONS_SAA_NOT_ALLOWED_CONFIRMATION_SCREENREADER_ANNOUNCEMENT}},
        {RequestType::kVrSession,
-        {IDS_VR_PERMISSION_CHIP, -1, -1, -1, -1, -1, -1, -1}}});
+        {IDS_VR_PERMISSION_CHIP, -1, -1, -1, -1, -1, -1, -1}},
+       {RequestType::kWebAppInstallation,
+        {IDS_WEB_APP_INSTALLATION_PERMISSION_CHIP, -1,
+         IDS_PERMISSIONS_PERMISSION_ALLOWED_CONFIRMATION,
+         IDS_PERMISSIONS_PERMISSION_ALLOWED_ONCE_CONFIRMATION,
+         IDS_PERMISSIONS_PERMISSION_NOT_ALLOWED_CONFIRMATION,
+         IDS_PERMISSIONS_WEB_INSTALL_ALLOWED_CONFIRMATION_SCREENREADER_ANNOUNCEMENT,
+         IDS_PERMISSIONS_PERMISSION_ALLOWED_ONCE_CONFIRMATION,
+         IDS_PERMISSIONS_WEB_INSTALL_NOT_ALLOWED_CONFIRMATION_SCREENREADER_ANNOUNCEMENT}}});
 
   auto messages = kMessageIds->find(request_type());
   if (messages != kMessageIds->end() && messages->second[type] != -1)
@@ -299,6 +335,9 @@ std::u16string PermissionRequest::GetMessageTextFragment() const {
     case RequestType::kGeolocation:
       message_id = IDS_GEOLOCATION_INFOBAR_PERMISSION_FRAGMENT;
       break;
+    case RequestType::kHandTracking:
+      message_id = IDS_HAND_TRACKING_PERMISSION_FRAGMENT;
+      break;
     case RequestType::kIdleDetection:
       message_id = IDS_IDLE_DETECTION_PERMISSION_FRAGMENT;
       break;
@@ -330,12 +369,12 @@ std::u16string PermissionRequest::GetMessageTextFragment() const {
 #endif
     case RequestType::kRegisterProtocolHandler:
       // Handled by an override in `RegisterProtocolHandlerPermissionRequest`.
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return std::u16string();
 #if BUILDFLAG(IS_CHROMEOS)
     case RequestType::kSmartCard:
       // Handled by an override in `SmartCardPermissionRequest`.
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return std::u16string();
 #endif
     case RequestType::kStorageAccess:
@@ -344,6 +383,9 @@ std::u16string PermissionRequest::GetMessageTextFragment() const {
       break;
     case RequestType::kVrSession:
       message_id = IDS_VR_PERMISSION_FRAGMENT;
+      break;
+    case RequestType::kWebAppInstallation:
+      message_id = IDS_WEB_APP_INSTALLATION_PERMISSION_FRAGMENT;
       break;
 #if BUILDFLAG(IS_CHROMEOS) && BUILDFLAG(USE_CUPS)
     case RequestType::kWebPrinting:
@@ -420,11 +462,14 @@ std::u16string PermissionRequest::GetPermissionNameTextFragment() const {
     case RequestType::kCameraStream:
       message_id = IDS_CAMERA_PERMISSION_NAME_FRAGMENT;
       break;
+    case RequestType::kGeolocation:
+      message_id = IDS_GEOLOCATION_NAME_FRAGMENT;
+      break;
     case RequestType::kMicStream:
       message_id = IDS_MICROPHONE_PERMISSION_NAME_FRAGMENT;
       break;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return std::u16string();
   }
   DCHECK_NE(0, message_id);

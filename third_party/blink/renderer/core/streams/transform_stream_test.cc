@@ -24,6 +24,7 @@
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/v8_binding.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "v8/include/v8.h"
@@ -86,19 +87,21 @@ class TestTransformer : public TransformStreamTransformer {
                              TransformStreamDefaultController*,
                              ExceptionState&) {}
 
-  ScriptPromiseUntyped Transform(v8::Local<v8::Value> chunk,
-                                 TransformStreamDefaultController* controller,
-                                 ExceptionState& exception_state) override {
+  ScriptPromise<IDLUndefined> Transform(
+      v8::Local<v8::Value> chunk,
+      TransformStreamDefaultController* controller,
+      ExceptionState& exception_state) override {
     TransformVoid(chunk, controller, exception_state);
-    return ScriptPromiseUntyped::CastUndefined(script_state_.Get());
+    return ToResolvedUndefinedPromise(script_state_.Get());
   }
 
   virtual void FlushVoid(TransformStreamDefaultController*, ExceptionState&) {}
 
-  ScriptPromiseUntyped Flush(TransformStreamDefaultController* controller,
-                             ExceptionState& exception_state) override {
+  ScriptPromise<IDLUndefined> Flush(
+      TransformStreamDefaultController* controller,
+      ExceptionState& exception_state) override {
     FlushVoid(controller, exception_state);
-    return ScriptPromiseUntyped::CastUndefined(script_state_.Get());
+    return ToResolvedUndefinedPromise(script_state_.Get());
   }
 
   ScriptState* GetScriptState() override { return script_state_.Get(); }
@@ -132,12 +135,12 @@ class MockTransformStreamTransformer : public TransformStreamTransformer {
       : script_state_(script_state) {}
 
   MOCK_METHOD3(Transform,
-               ScriptPromiseUntyped(v8::Local<v8::Value> chunk,
-                                    TransformStreamDefaultController*,
-                                    ExceptionState&));
+               ScriptPromise<IDLUndefined>(v8::Local<v8::Value> chunk,
+                                           TransformStreamDefaultController*,
+                                           ExceptionState&));
   MOCK_METHOD2(Flush,
-               ScriptPromiseUntyped(TransformStreamDefaultController*,
-                                    ExceptionState&));
+               ScriptPromise<IDLUndefined>(TransformStreamDefaultController*,
+                                           ExceptionState&));
 
   ScriptState* GetScriptState() override { return script_state_.Get(); }
 
@@ -178,8 +181,8 @@ TEST_F(TransformStreamTest, TransformIsCalled) {
   CopyReadableAndWritableToGlobal(scope);
 
   EXPECT_CALL(*mock, Transform(_, _, _))
-      .WillOnce(Return(
-          ByMove(ScriptPromiseUntyped::CastUndefined(scope.GetScriptState()))));
+      .WillOnce(
+          Return(ByMove(ToResolvedUndefinedPromise(scope.GetScriptState()))));
 
   // The initial read is needed to relieve backpressure.
   EvalWithPrintingError(&scope,
@@ -201,8 +204,8 @@ TEST_F(TransformStreamTest, FlushIsCalled) {
   CopyReadableAndWritableToGlobal(scope);
 
   EXPECT_CALL(*mock, Flush(_, _))
-      .WillOnce(Return(
-          ByMove(ScriptPromiseUntyped::CastUndefined(scope.GetScriptState()))));
+      .WillOnce(
+          Return(ByMove(ToResolvedUndefinedPromise(scope.GetScriptState()))));
 
   EvalWithPrintingError(&scope,
                         "const writer = writable.getWriter();\n"
@@ -403,9 +406,10 @@ TEST_F(TransformStreamTest, CreateFromReadableWritablePair) {
       ReadableStream::Create(scope.GetScriptState(), ASSERT_NO_EXCEPTION);
   WritableStream* writable =
       WritableStream::Create(scope.GetScriptState(), ASSERT_NO_EXCEPTION);
-  TransformStream transform(readable, writable);
-  EXPECT_EQ(readable, transform.Readable());
-  EXPECT_EQ(writable, transform.Writable());
+  TransformStream* transform =
+      MakeGarbageCollected<TransformStream>(readable, writable);
+  EXPECT_EQ(readable, transform->Readable());
+  EXPECT_EQ(writable, transform->Writable());
 }
 
 TEST_F(TransformStreamTest, WaitInTransform) {
@@ -417,9 +421,9 @@ TEST_F(TransformStreamTest, WaitInTransform) {
               MakeGarbageCollected<ScriptPromiseResolver<IDLUndefined>>(
                   script_state)) {}
 
-    ScriptPromiseUntyped Transform(v8::Local<v8::Value>,
-                                   TransformStreamDefaultController*,
-                                   ExceptionState&) override {
+    ScriptPromise<IDLUndefined> Transform(v8::Local<v8::Value>,
+                                          TransformStreamDefaultController*,
+                                          ExceptionState&) override {
       return transform_promise_resolver_->Promise();
     }
 
@@ -486,8 +490,8 @@ TEST_F(TransformStreamTest, WaitInFlush) {
               MakeGarbageCollected<ScriptPromiseResolver<IDLUndefined>>(
                   script_state)) {}
 
-    ScriptPromiseUntyped Flush(TransformStreamDefaultController*,
-                               ExceptionState&) override {
+    ScriptPromise<IDLUndefined> Flush(TransformStreamDefaultController*,
+                                      ExceptionState&) override {
       return flush_promise_resolver_->Promise();
     }
 

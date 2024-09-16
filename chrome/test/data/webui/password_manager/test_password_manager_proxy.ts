@@ -25,6 +25,11 @@ export class TestPasswordManagerProxy extends TestBrowserProxy implements
     isAccountStorageDefault: boolean,
     passwords: chrome.passwordsPrivate.PasswordUiEntry[],
     isPasswordManagerPinAvailable: boolean,
+    isCloudAuthenticatorConnected: boolean,
+    changePasswordManagerPinSuccesful: boolean|null,
+    disconnectCloudAuthenticatorSuccessful: boolean|null,
+    isConnectedToCloudAuthenticator: boolean|null,
+    deleteAllPasswordManagerData: boolean|null,
   };
 
   listeners: {
@@ -42,6 +47,8 @@ export class TestPasswordManagerProxy extends TestBrowserProxy implements
   private requestCredentialsDetailsResponse_:
       chrome.passwordsPrivate.PasswordUiEntry[]|null = null;
 
+  private switchBiometricAuthBeforeFillingStateResult_: boolean = false;
+
   private importResults_: chrome.passwordsPrivate.ImportResults = {
     status: chrome.passwordsPrivate.ImportResultsStatus.SUCCESS,
     numberImported: 0,
@@ -56,6 +63,8 @@ export class TestPasswordManagerProxy extends TestBrowserProxy implements
       'changeCredential',
       'changePasswordManagerPin',
       'continueImport',
+      'deleteAllPasswordManagerData',
+      'disconnectCloudAuthenticator',
       'dismissSafetyHubPasswordMenuNotification',
       'exportPasswords',
       'extendAuthValidity',
@@ -69,6 +78,7 @@ export class TestPasswordManagerProxy extends TestBrowserProxy implements
       'getUrlCollection',
       'importPasswords',
       'isAccountStoreDefault',
+      'isConnectedToCloudAuthenticator',
       'isOptedInForAccountStorage',
       'isPasswordManagerPinAvailable',
       'movePasswordsToAccount',
@@ -103,6 +113,11 @@ export class TestPasswordManagerProxy extends TestBrowserProxy implements
       isAccountStorageDefault: false,
       passwords: [],
       isPasswordManagerPinAvailable: false,
+      isCloudAuthenticatorConnected: false,
+      changePasswordManagerPinSuccesful: null,
+      disconnectCloudAuthenticatorSuccessful: null,
+      isConnectedToCloudAuthenticator: null,
+      deleteAllPasswordManagerData: null,
     };
 
     // Holds listeners so they can be called when needed.
@@ -279,6 +294,11 @@ export class TestPasswordManagerProxy extends TestBrowserProxy implements
 
   switchBiometricAuthBeforeFillingState() {
     this.methodCalled('switchBiometricAuthBeforeFillingState');
+    return Promise.resolve(this.switchBiometricAuthBeforeFillingStateResult_);
+  }
+
+  setSwitchBiometricAuthBeforeFillingStateResponse(result: boolean) {
+    this.switchBiometricAuthBeforeFillingStateResult_ = result;
   }
 
   undoRemoveSavedPasswordOrException() {
@@ -383,10 +403,41 @@ export class TestPasswordManagerProxy extends TestBrowserProxy implements
 
   changePasswordManagerPin() {
     this.methodCalled('changePasswordManagerPin');
+    if (this.data.changePasswordManagerPinSuccesful !== null) {
+      return Promise.resolve(this.data.changePasswordManagerPinSuccesful);
+    }
+    return Promise.reject(new Error());
   }
 
   isPasswordManagerPinAvailable(): Promise<boolean> {
     this.methodCalled('isPasswordManagerPinAvailable');
     return Promise.resolve(this.data.isPasswordManagerPinAvailable);
+  }
+
+  disconnectCloudAuthenticator(): Promise<boolean> {
+    this.methodCalled('disconnectCloudAuthenticator');
+    if (this.data.isConnectedToCloudAuthenticator !== null &&
+        this.data.disconnectCloudAuthenticatorSuccessful !== null) {
+      this.data.isConnectedToCloudAuthenticator = false;
+      return Promise.resolve(this.data.disconnectCloudAuthenticatorSuccessful);
+    }
+    return Promise.reject(new Error());
+  }
+
+  deleteAllPasswordManagerData(): Promise<boolean> {
+    this.methodCalled('deleteAllPasswordManagerData');
+    if (this.data.deleteAllPasswordManagerData !== null) {
+      return Promise.resolve(this.data.deleteAllPasswordManagerData);
+    }
+    return Promise.reject(new Error());
+  }
+
+  isConnectedToCloudAuthenticator(): Promise<boolean> {
+    this.methodCalled('isConnectedToCloudAuthenticator');
+    if (this.data.isConnectedToCloudAuthenticator !== null) {
+      return Promise.resolve(this.data.isConnectedToCloudAuthenticator);
+    }
+
+    return Promise.reject(new Error());
   }
 }

@@ -11,7 +11,6 @@
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/browser_features.h"
 #include "chrome/browser/external_protocol/external_protocol_handler.h"
-#include "chrome/browser/page_load_metrics/observers/navigation_handle_user_data.h"
 #include "chrome/browser/preloading/chrome_preloading.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -29,13 +28,13 @@
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/common/bookmark_pref_names.h"
 #include "components/bookmarks/test/bookmark_test_helpers.h"
+#include "components/page_load_metrics/browser/navigation_handle_user_data.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/navigation_handle_observer.h"
-#include "content/public/test/preloading_test_util.h"
 #include "content/public/test/prerender_test_util.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "net/dns/mock_host_resolver.h"
@@ -133,14 +132,16 @@ class BookmarkBarNavigationTest : public InProcessBrowserTest,
   void DidFinishNavigation(
       content::NavigationHandle* navigation_handle) override {
     auto* navigation_userdata =
-        NavigationHandleUserData::GetForNavigationHandle(*navigation_handle);
+        page_load_metrics::NavigationHandleUserData::GetForNavigationHandle(
+            *navigation_handle);
     if (navigation_userdata) {
       bookmark_navigation_list_.push_back(
           navigation_userdata->navigation_type());
     }
   }
 
-  const std::vector<NavigationHandleUserData::InitiatorLocation>&
+  const std::vector<
+      page_load_metrics::NavigationHandleUserData::InitiatorLocation>&
   bookmark_navigation_list() {
     return bookmark_navigation_list_;
   }
@@ -153,7 +154,7 @@ class BookmarkBarNavigationTest : public InProcessBrowserTest,
   net::EmbeddedTestServer http_test_server_;
   std::unique_ptr<BookmarkBarViewTestHelper> test_helper_;
   base::test::ScopedFeatureList scoped_feature_list_;
-  std::vector<NavigationHandleUserData::InitiatorLocation>
+  std::vector<page_load_metrics::NavigationHandleUserData::InitiatorLocation>
       bookmark_navigation_list_;
 };
 
@@ -366,6 +367,11 @@ static const auto kMockElapsedTime =
 class PrerenderBookmarkBarNavigationTestBase
     : public BookmarkBarNavigationTest {
  public:
+  PrerenderBookmarkBarNavigationTestBase()
+      : prerender_helper_(base::BindRepeating(
+            &PrerenderBookmarkBarNavigationTestBase::GetActiveWebContents,
+            base::Unretained(this))) {}
+
   content::WebContents* GetActiveWebContents() {
     return browser()->tab_strip_model()->GetActiveWebContents();
   }
@@ -404,18 +410,18 @@ class PrerenderBookmarkBarNavigationTestBase
 
     gfx::Point center(10, 10);
     button->OnMouseEntered(ui::MouseEvent(
-        ui::ET_MOUSE_ENTERED, center, center, ui::EventTimeForNow(),
+        ui::EventType::kMouseEntered, center, center, ui::EventTimeForNow(),
         /*flags=*/ui::EF_NONE,
         /*changed_button_flags=*/ui::EF_NONE));
     button->OnMousePressed(ui::MouseEvent(
-        ui::ET_MOUSE_PRESSED, center, center, ui::EventTimeForNow(),
+        ui::EventType::kMousePressed, center, center, ui::EventTimeForNow(),
         ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON));
     if (expect_activation) {
       content::test::PrerenderTestHelper::WaitForPrerenderLoadCompletion(
           *GetActiveWebContents(), prerender_url);
     }
     button->OnMouseReleased(ui::MouseEvent(
-        ui::ET_MOUSE_RELEASED, center, center, ui::EventTimeForNow(),
+        ui::EventType::kMouseReleased, center, center, ui::EventTimeForNow(),
         ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON));
 
     if (expect_activation) {
@@ -426,6 +432,7 @@ class PrerenderBookmarkBarNavigationTestBase
   }
 
  private:
+  content::test::PrerenderTestHelper prerender_helper_;
   std::unique_ptr<ukm::TestAutoSetUkmRecorder> test_ukm_recorder_;
   std::unique_ptr<base::ScopedMockElapsedTimersForTest> scoped_test_timer_;
 };
@@ -468,7 +475,7 @@ class PrerenderBookmarkBarOnPressedNavigationTest
       ukm_entry_builder_;
 };
 
-// TODO(crbug.com/1491942): This fails with the field trial testing config.
+// TODO(crbug.com/40285326): This fails with the field trial testing config.
 class PrerenderBookmarkBarOnPressedNavigationTestNoTestingConfig
     : public PrerenderBookmarkBarOnPressedNavigationTest {
  public:
@@ -493,8 +500,7 @@ IN_PROC_BROWSER_TEST_F(
   CreateBookmarkButton(prerender_url);
   NavigateToBookmarkByMousePressed(prerender_url, true);
 
-  EXPECT_EQ(GetActiveWebContents()->GetLastCommittedURL(),
-            https_test_server()->GetURL("/empty.html?prerender"));
+  EXPECT_EQ(GetActiveWebContents()->GetLastCommittedURL(), prerender_url);
 
   {
     ukm::SourceId ukm_source_id = activation_observer.next_page_ukm_source_id();
@@ -520,6 +526,28 @@ IN_PROC_BROWSER_TEST_F(
                 testing::UnorderedElementsAreArray(expected_entries))
         << content::test::ActualVsExpectedUkmEntriesToString(ukm_entries,
                                                              expected_entries);
+
+    auto entries =
+        test_ukm_recorder()->GetMergedEntriesByName("PrerenderPageLoad");
+    bool witness_bookmarkbar_ukm = false;
+    for (auto& kv : entries) {
+      const ukm::mojom::UkmEntry* entry = kv.second.get();
+      const ukm::UkmSource* source =
+          test_ukm_recorder()->GetSourceForSourceId(entry->source_id);
+      if (!source) {
+        continue;
+      }
+      EXPECT_TRUE(source->url().is_valid());
+      if (source->url() == prerender_url) {
+        test_ukm_recorder()->ExpectEntryMetric(
+            entry,
+            ukm::builders::PrerenderPageLoad::kNavigation_InitiatorLocationName,
+            static_cast<int>(page_load_metrics::NavigationHandleUserData::
+                                 InitiatorLocation::kBookmarkBar));
+        witness_bookmarkbar_ukm = true;
+      }
+    }
+    EXPECT_TRUE(witness_bookmarkbar_ukm);
   }
 
   histogram_tester.ExpectUniqueSample(
@@ -535,7 +563,8 @@ IN_PROC_BROWSER_TEST_F(
   ASSERT_EQ(bookmark_navigation_list().size(), 2u);
   for (int i = 0; i < 2; ++i) {
     EXPECT_EQ(bookmark_navigation_list()[i],
-              NavigationHandleUserData::InitiatorLocation::kBookmarkBar);
+              page_load_metrics::NavigationHandleUserData::InitiatorLocation::
+                  kBookmarkBar);
   }
   histogram_tester.ExpectTotalCount(
       "Bookmarks.BookmarkBar.PrerenderNavigationToActivation", 1);
@@ -611,7 +640,7 @@ class PrerenderBookmarkBarOnHoverNavigationTest
 
     gfx::Point center(10, 10);
     button->OnMouseEntered(ui::MouseEvent(
-        ui::ET_MOUSE_ENTERED, center, center, ui::EventTimeForNow(),
+        ui::EventType::kMouseEntered, center, center, ui::EventTimeForNow(),
         /*flags=*/ui::EF_NONE,
         /*changed_button_flags=*/ui::EF_NONE));
 
@@ -628,8 +657,8 @@ class PrerenderBookmarkBarOnHoverNavigationTest
     views::LabelButton* button = GetBookmarkButton(0);
 
     gfx::Point center(10, 10);
-    button->OnMouseExited(ui::MouseEvent(ui::ET_MOUSE_EXITED, center, center,
-                                         ui::EventTimeForNow(),
+    button->OnMouseExited(ui::MouseEvent(ui::EventType::kMouseExited, center,
+                                         center, ui::EventTimeForNow(),
                                          /*flags=*/ui::EF_NONE,
                                          /*changed_button_flags=*/ui::EF_NONE));
   }
@@ -692,13 +721,14 @@ IN_PROC_BROWSER_TEST_F(PrerenderBookmarkBarOnHoverNavigationTest,
   ASSERT_EQ(bookmark_navigation_list().size(), 2u);
   for (int i = 0; i < 2; ++i) {
     EXPECT_EQ(bookmark_navigation_list()[i],
-              NavigationHandleUserData::InitiatorLocation::kBookmarkBar);
+              page_load_metrics::NavigationHandleUserData::InitiatorLocation::
+                  kBookmarkBar);
   }
   histogram_tester.ExpectTotalCount(
       "Bookmarks.BookmarkBar.PrerenderNavigationToActivation", 1);
 }
 
-// TODO(crbug.com/1491942): This fails with the field trial testing config.
+// TODO(crbug.com/40285326): This fails with the field trial testing config.
 class PrerenderBookmarkBarOnHoverNavigationTestNoTestingConfig
     : public PrerenderBookmarkBarOnHoverNavigationTest {
  public:
@@ -797,12 +827,12 @@ IN_PROC_BROWSER_TEST_F(PrerenderBookmarkBarOnHoverNavigationTest,
 
   // Mouse enters and exits the button immediately.
   gfx::Point center(10, 10);
-  button->OnMouseEntered(ui::MouseEvent(ui::ET_MOUSE_ENTERED, center, center,
-                                        ui::EventTimeForNow(),
+  button->OnMouseEntered(ui::MouseEvent(ui::EventType::kMouseEntered, center,
+                                        center, ui::EventTimeForNow(),
                                         /*flags=*/ui::EF_NONE,
                                         /*changed_button_flags=*/ui::EF_NONE));
-  button->OnMouseExited(ui::MouseEvent(ui::ET_MOUSE_EXITED, center, center,
-                                       ui::EventTimeForNow(),
+  button->OnMouseExited(ui::MouseEvent(ui::EventType::kMouseExited, center,
+                                       center, ui::EventTimeForNow(),
                                        /*flags=*/ui::EF_NONE,
                                        /*changed_button_flags=*/ui::EF_NONE));
 
@@ -827,10 +857,8 @@ IN_PROC_BROWSER_TEST_F(PrerenderBookmarkBarOnHoverNavigationTest,
       /*content::PredictorConfusionMatrix::kFalseNegative*/ 3, 1);
 }
 
-// TODO(crbug.com/40286740): Gardener 2023-20-26: Fails consistently on bots,
-// and ~10% locally.
 IN_PROC_BROWSER_TEST_F(PrerenderBookmarkBarOnHoverNavigationTest,
-                       DISABLED_PrerenderNonHttps) {
+                       PrerenderNonHttps) {
   base::HistogramTester histogram_tester;
   // Navigate to an non-empty tab
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
@@ -897,10 +925,10 @@ class PrerenderBookmarkBarDisabledNavigationTest
 
     gfx::Point center(10, 10);
     button->OnMousePressed(ui::MouseEvent(
-        ui::ET_MOUSE_PRESSED, center, center, ui::EventTimeForNow(),
+        ui::EventType::kMousePressed, center, center, ui::EventTimeForNow(),
         ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON));
     button->OnMouseReleased(ui::MouseEvent(
-        ui::ET_MOUSE_RELEASED, center, center, ui::EventTimeForNow(),
+        ui::EventType::kMouseReleased, center, center, ui::EventTimeForNow(),
         ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON));
   }
 
@@ -928,7 +956,8 @@ IN_PROC_BROWSER_TEST_F(PrerenderBookmarkBarDisabledNavigationTest,
   ASSERT_EQ(bookmark_navigation_list().size(), 1u);
   for (int i = 0; i < 1; ++i) {
     EXPECT_EQ(bookmark_navigation_list()[i],
-              NavigationHandleUserData::InitiatorLocation::kBookmarkBar);
+              page_load_metrics::NavigationHandleUserData::InitiatorLocation::
+                  kBookmarkBar);
   }
   histogram_tester.ExpectTotalCount(
       "Bookmarks.BookmarkBar.PrerenderNavigationToActivation", 0);

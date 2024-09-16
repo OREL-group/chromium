@@ -111,8 +111,9 @@ class MockClientCertStore : public net::ClientCertStore {
   explicit MockClientCertStore(net::ClientCertIdentityList certs)
       : certs_(std::move(certs)) {}
 
-  void GetClientCerts(const net::SSLCertRequestInfo& cert_request_info,
-                      ClientCertListCallback callback) override {
+  void GetClientCerts(
+      scoped_refptr<const net::SSLCertRequestInfo> cert_request_info,
+      ClientCertListCallback callback) override {
     std::move(callback).Run(std::move(certs_));
   }
 
@@ -610,7 +611,7 @@ class EnterpriseReportingPrivateGetCertificateTest : public policy::PolicyTest {
   }
 
   void SetPolicyValue(const std::string& policy_value) {
-    EXPECT_FALSE(chrome::enterprise_util::IsMachinePolicyPref(
+    EXPECT_FALSE(enterprise_util::IsMachinePolicyPref(
         prefs::kManagedAutoSelectCertificateForUrls));
 
     base::Value::List list;
@@ -623,7 +624,7 @@ class EnterpriseReportingPrivateGetCertificateTest : public policy::PolicyTest {
                  nullptr);
     UpdateProviderPolicy(policies);
 
-    EXPECT_TRUE(chrome::enterprise_util::IsMachinePolicyPref(
+    EXPECT_TRUE(enterprise_util::IsMachinePolicyPref(
         prefs::kManagedAutoSelectCertificateForUrls));
   }
 

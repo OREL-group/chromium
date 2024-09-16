@@ -207,7 +207,7 @@ void VRUiHostImpl::OnPromptRemoved() {
   RemoveHeadsetNotificationPrompt();
 }
 
-void VRUiHostImpl::OnDialogOpened() {
+void VRUiHostImpl::OnDialogOpened(const DesktopMediaPicker::Params&) {
   ShowExternalNotificationPrompt();
 }
 
@@ -289,7 +289,7 @@ void VRUiHostImpl::PollCapturingState() {
 
   // location, microphone, camera, midi.
   CapturingStateModel active_capturing = active_capturing_;
-  // TODO(https://crbug.com/1103176): Plumb the actual frame reference here (we
+  // TODO(crbug.com/40139135): Plumb the actual frame reference here (we
   // should get a RFH from VRServiceImpl instead of WebContents)
   if (web_contents_) {
     content_settings::PageSpecificContentSettings* settings =

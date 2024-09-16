@@ -16,8 +16,7 @@ class SidePanelCustomizeChromeTest : public WebUIMochaBrowserTest {
   SidePanelCustomizeChromeTest() {
     set_test_loader_host(chrome::kChromeUICustomizeChromeSidePanelHost);
     scoped_feature_list_.InitWithFeatures(
-        {features::kCustomizeChromeSidePanel,
-         ntp_features::kCustomizeChromeWallpaperSearch,
+        {ntp_features::kCustomizeChromeWallpaperSearch,
          optimization_guide::features::kOptimizationGuideModelExecution},
         {});
   }
@@ -69,6 +68,10 @@ IN_PROC_BROWSER_TEST_F(SidePanelCustomizeChromeTest, Themes) {
 
 IN_PROC_BROWSER_TEST_F(SidePanelCustomizeChromeTest, ThemeSnapshot) {
   RunTest("side_panel/customize_chrome/theme_snapshot_test.js", "mocha.run()");
+}
+
+IN_PROC_BROWSER_TEST_F(SidePanelCustomizeChromeTest, Toolbar) {
+  RunTest("side_panel/customize_chrome/toolbar_test.js", "mocha.run()");
 }
 
 using CustomizeChromeWallpaperSearchTest = SidePanelCustomizeChromeTest;

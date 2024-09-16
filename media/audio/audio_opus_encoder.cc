@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/audio/audio_opus_encoder.h"
 
 #include <utility>
@@ -23,12 +28,6 @@
 namespace media {
 
 namespace {
-
-// Recommended value for opus_encode_float(), according to documentation in
-// third_party/opus/src/include/opus.h, so that the Opus encoder does not
-// degrade the audio due to memory constraints, and is independent of the
-// duration of the encoded buffer.
-constexpr int kOpusMaxDataBytes = 4000;
 
 // Opus preferred sampling rate for encoding. This is also the one WebM likes
 // to have: https://wiki.xiph.org/MatroskaOpus.
@@ -84,8 +83,6 @@ AudioParameters CreateOpusCompatibleParams(const AudioParameters& params,
 
 }  // namespace
 
-// TODO: Remove after switching to C++17
-constexpr int AudioOpusEncoder::kMinBitrate;
 
 AudioOpusEncoder::AudioOpusEncoder()
     : opus_encoder_(nullptr, OpusEncoderDeleter) {}
@@ -202,7 +199,7 @@ void AudioOpusEncoder::Encode(std::unique_ptr<AudioBus> audio_bus,
 
   DCHECK(timestamp_tracker_);
 
-  if (timestamp_tracker_->base_timestamp() == kNoTimestamp) {
+  if (!timestamp_tracker_->base_timestamp()) {
     timestamp_tracker_->SetBaseTimestamp(capture_time - base::TimeTicks());
   }
 
@@ -251,7 +248,7 @@ void AudioOpusEncoder::Flush(EncoderStatusCB done_cb) {
     fifo_has_data_ = false;
   }
 
-  timestamp_tracker_->SetBaseTimestamp(kNoTimestamp);
+  timestamp_tracker_->Reset();
   if (current_done_cb_) {
     // Is |current_done_cb_| is null, it means OnFifoOutput() has already
     // reported an error.
@@ -273,10 +270,9 @@ void AudioOpusEncoder::DoEncode(const AudioBus* audio_bus) {
   if (!current_done_cb_)
     return;
 
-  auto encoded_data = base::HeapArray<uint8_t>::Uninit(kOpusMaxDataBytes);
   auto result = opus_encode_float(opus_encoder_.get(), buffer_.data(),
                                   converted_params_.frames_per_buffer(),
-                                  encoded_data.data(), kOpusMaxDataBytes);
+                                  encoding_buffer_.data(), kOpusMaxDataBytes);
 
   if (result < 0) {
     DCHECK(current_done_cb_);
@@ -311,9 +307,11 @@ void AudioOpusEncoder::DoEncode(const AudioBus* audio_bus) {
       return;
     }
 
-    EncodedAudioBuffer encoded_buffer(converted_params_,
-                                      std::move(encoded_data),
-                                      encoded_data_size, ts, duration);
+    EncodedAudioBuffer encoded_buffer(
+        converted_params_,
+        base::HeapArray<uint8_t>::CopiedFrom(
+            base::span(encoding_buffer_).first(encoded_data_size)),
+        ts, duration);
     output_cb_.Run(std::move(encoded_buffer), desc);
   }
   timestamp_tracker_->AddFrames(converted_params_.frames_per_buffer());
@@ -393,25 +391,18 @@ EncoderStatus::Or<OwnedOpusEncoder> AudioOpusEncoder::CreateOpusEncoder(
                                             use_in_band_fec));
   }
 
-  const unsigned int use_dtx = opus_options.value().use_dtx ? 1 : 0;
-
-  unsigned int opus_signal_from_config;
+  unsigned int opus_signal;
   switch (opus_options.value().signal) {
     case AudioEncoder::OpusSignal::kAuto:
-      opus_signal_from_config = OPUS_AUTO;
+      opus_signal = OPUS_AUTO;
       break;
     case AudioEncoder::OpusSignal::kMusic:
-      opus_signal_from_config = OPUS_SIGNAL_MUSIC;
+      opus_signal = OPUS_SIGNAL_MUSIC;
       break;
     case AudioEncoder::OpusSignal::kVoice:
-      opus_signal_from_config = OPUS_SIGNAL_VOICE;
+      opus_signal = OPUS_SIGNAL_VOICE;
       break;
   }
-
-  // For some reason, DTX doesn't work without setting the `OPUS_SIGNAL_VOICE`
-  // hint. Set or unset the signal type accordingly before using DTX.
-  const unsigned int opus_signal =
-      use_dtx ? OPUS_SIGNAL_VOICE : opus_signal_from_config;
 
   if (opus_encoder_ctl(encoder.get(), OPUS_SET_SIGNAL(opus_signal)) !=
       OPUS_OK) {
@@ -420,6 +411,7 @@ EncoderStatus::Or<OwnedOpusEncoder> AudioOpusEncoder::CreateOpusEncoder(
         base::StringPrintf("Failed to set Opus signal hint: %d", opus_signal));
   }
 
+  const unsigned int use_dtx = opus_options.value().use_dtx ? 1 : 0;
   if (opus_encoder_ctl(encoder.get(), OPUS_SET_DTX(use_dtx)) != OPUS_OK) {
     return EncoderStatus(
         EncoderStatus::Codes::kEncoderInitializationError,

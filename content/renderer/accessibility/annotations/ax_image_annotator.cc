@@ -31,7 +31,6 @@
 #include "services/image_annotation/public/mojom/image_annotation.mojom-forward.h"
 #include "services/metrics/public/cpp/mojo_ukm_recorder.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
-#include "third_party/blink/public/strings/grit/blink_accessibility_strings.h"
 #include "third_party/blink/public/web/web_ax_object.h"
 #include "third_party/blink/public/web/web_document.h"
 #include "third_party/blink/public/web/web_element.h"
@@ -44,6 +43,7 @@
 #include "ui/base/models/image_model.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/geometry/transform.h"
+#include "ui/strings/grit/auto_image_annotation_strings.h"
 #include "url/gurl.h"
 
 using blink::WebAXObject;
@@ -179,7 +179,7 @@ bool SearchForExactlyOneInnerImage(WebAXObject obj,
   }
 
   // Don't count ignored nodes toward depth.
-  int next_depth = obj.AccessibilityIsIgnored() ? max_depth : max_depth - 1;
+  int next_depth = obj.IsIgnored() ? max_depth : max_depth - 1;
 
   // Recurse.
   for (unsigned int i = 0; i < obj.ChildCount(); i++) {
@@ -220,7 +220,7 @@ void AXImageAnnotator::EnableAnnotations() {
   mojo::PendingRemote<image_annotation::mojom::Annotator> annotator;
   render_accessibility_->render_frame()
       ->GetBrowserInterfaceBroker()
-      ->GetInterface(annotator.InitWithNewPipeAndPassReceiver());
+      .GetInterface(annotator.InitWithNewPipeAndPassReceiver());
   annotator_remote_.Bind(std::move(annotator));
 }
 
@@ -299,7 +299,7 @@ void AXImageAnnotator::AddImageAnnotationsForNode(WebAXObject& src,
   static const int kMinImageAnnotationHeight = 16;
 
   // Reject ignored objects
-  if (src.AccessibilityIsIgnored()) {
+  if (src.IsIgnored()) {
     return;
   }
 
@@ -666,7 +666,7 @@ void AXImageAnnotator::MarkDirty(const blink::WebAXObject& image) const {
   blink::WebAXObject parent = image.ParentObject();
   for (int ancestor_count = 0; !parent.IsDetached() && ancestor_count < 2;
        parent = parent.ParentObject()) {
-    if (!parent.AccessibilityIsIgnored()) {
+    if (!parent.IsIgnored()) {
       ++ancestor_count;
       if (ui::IsLink(parent.Role()) || ui::IsPlatformDocument(parent.Role())) {
         render_accessibility_->MarkWebAXObjectDirty(parent);

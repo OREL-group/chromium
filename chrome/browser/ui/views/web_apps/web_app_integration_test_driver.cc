@@ -4,13 +4,14 @@
 
 #include "chrome/browser/ui/views/web_apps/web_app_integration_test_driver.h"
 
-#include <codecvt>
 #include <cstddef>
 #include <cstring>
+#include <ios>
 #include <map>
 #include <optional>
 #include <ostream>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "base/command_line.h"
@@ -18,6 +19,7 @@
 #include "base/containers/extend.h"
 #include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
+#include "base/containers/span.h"
 #include "base/feature_list.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
@@ -41,7 +43,7 @@
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "chrome/app/chrome_command_ids.h"
-#include "chrome/browser/apps/app_service/app_icon/app_icon_source.h"
+#include "chrome/browser/apps/app_service/app_icon_source.h"
 #include "chrome/browser/apps/app_service/app_registry_cache_waiter.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/apps/link_capturing/link_capturing_features.h"
@@ -97,6 +99,7 @@
 #include "chrome/browser/web_applications/policy/web_app_policy_manager.h"
 #include "chrome/browser/web_applications/preinstalled_web_app_config_utils.h"
 #include "chrome/browser/web_applications/preinstalled_web_app_manager.h"
+#include "chrome/browser/web_applications/proto/web_app_install_state.pb.h"
 #include "chrome/browser/web_applications/test/debug_info_printer.h"
 #include "chrome/browser/web_applications/test/os_integration_test_override_impl.h"
 #include "chrome/browser/web_applications/test/web_app_icon_test_utils.h"
@@ -129,7 +132,6 @@
 #include "components/webapps/common/web_app_id.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/notification_service.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
@@ -159,7 +161,6 @@
 #if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/ui/views/apps/app_dialog/app_uninstall_dialog_view.h"
-#include "chromeos/constants/chromeos_features.h"
 #else
 #include "chrome/browser/ui/webui/app_home/app_home.mojom.h"
 #include "chrome/browser/ui/webui/app_home/app_home_page_handler.h"
@@ -187,8 +188,8 @@
 #include "chrome/browser/apps/app_shim/app_shim_manager_mac.h"
 #include "chrome/browser/apps/app_shim/web_app_shim_manager_delegate_mac.h"
 #include "chrome/browser/chrome_browser_main.h"
-#include "chrome/browser/web_applications/app_shim_registry_mac.h"
-#include "chrome/browser/web_applications/os_integration/web_app_shortcut_mac.h"
+#include "chrome/browser/web_applications/os_integration/mac/app_shim_launch.h"
+#include "chrome/browser/web_applications/os_integration/mac/app_shim_registry.h"
 #include "chrome/browser/web_applications/web_app_ui_manager.h"
 #include "chrome/common/mac/app_mode_common.h"
 #include "chrome/test/base/launchservices_utils_mac.h"
@@ -255,7 +256,7 @@ int NumberToInt(Number number) {
 
 // Flushes the shortcuts tasks, which seem to sometimes still hang around after
 // our tasks are done.
-// TODO(crbug.com/1273568): Investigate the true source of flakiness instead of
+// TODO(crbug.com/40206415): Investigate the true source of flakiness instead of
 // papering over it here.
 void FlushShortcutTasks() {
   // Execute the UI thread task runner before and after the shortcut task runner
@@ -492,7 +493,7 @@ std::string GetSiteId(Site site) {
   return base::NumberToString(base::to_underlying(site));
 }
 
-web_package::WebBundleSigner::Ed25519KeyPair GetKeyPairForSite(Site site) {
+web_package::test::Ed25519KeyPair GetKeyPairForSite(Site site) {
   std::string site_id = GetSiteId(site);
   size_t seed_length = 32;
   site_id.resize(seed_length, 'a');
@@ -501,7 +502,7 @@ web_package::WebBundleSigner::Ed25519KeyPair GetKeyPairForSite(Site site) {
   uint8_t public_key[ED25519_PUBLIC_KEY_LEN];
   uint8_t private_key[ED25519_PRIVATE_KEY_LEN];
   ED25519_keypair_from_seed(public_key, private_key, seed.data());
-  return web_package::WebBundleSigner::Ed25519KeyPair(public_key, private_key);
+  return web_package::test::Ed25519KeyPair(public_key, private_key);
 }
 
 std::string GetFileExtension(FileExtension file_extension) {
@@ -814,8 +815,8 @@ void LoadFileFromDisk(const base::FilePath& path,
   std::string result;
   CHECK(base::ReadFileToString(path, &result));
 
-  std::move(callback).Run(new base::RefCountedBytes(
-      reinterpret_cast<const unsigned char*>(result.data()), result.size()));
+  std::move(callback).Run(
+      new base::RefCountedBytes(base::as_byte_span(result)));
 }
 
 void LoadResponseFromDisk(const base::FilePath& root,
@@ -1044,8 +1045,8 @@ void WebAppIntegrationTestDriver::TearDownOnMainThread() {
       }
       LOG(INFO) << "TearDownOnMainThread: Uninstall complete.";
     }
-    // TODO(crbug.com/1273568): Investigate the true source of flakiness instead
-    // of papering over it here.
+    // TODO(crbug.com/40206415): Investigate the true source of flakiness
+    // instead of papering over it here.
     provider->command_manager().AwaitAllCommandsCompleteForTesting();
     FlushShortcutTasks();
   }
@@ -1106,7 +1107,7 @@ void WebAppIntegrationTestDriver::HandleAppIdentityUpdateDialogResponse(
       break;
     }
     case UpdateDialogResponse::kSkipDialog:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -1121,18 +1122,6 @@ void WebAppIntegrationTestDriver::AwaitManifestUpdate(Site site) {
     if (!previous_manifest_updates_.contains(app_id)) {
       waiting_for_update_id_ = app_id;
       waiting_for_update_run_loop_ = std::make_unique<base::RunLoop>();
-      // Only close windows if immediate updating is not enabled.
-      if (!base::FeatureList::IsEnabled(
-              features::kWebAppManifestImmediateUpdating)) {
-        Browser* browser = GetAppBrowserForAppId(profile(), app_id);
-        while (browser != nullptr) {
-          if (browser == app_browser_) {
-            app_browser_ = nullptr;
-          }
-          delegate_->CloseBrowserSynchronously(browser);
-          browser = GetAppBrowserForAppId(profile(), app_id);
-        }
-      }
       waiting_for_update_run_loop_->Run();
       waiting_for_update_run_loop_.reset();
     }
@@ -1305,10 +1294,12 @@ void WebAppIntegrationTestDriver::CreateShortcut(Site site,
                                                  WindowOptions options) {
   bool open_in_window = options == WindowOptions::kWindowed;
 
-#if BUILDFLAG(IS_CHROMEOS)
-  if (chromeos::features::IsCrosShortstandEnabled() && open_in_window) {
-    GTEST_SKIP() << "With project Shortstand, users are no longer allowed to "
-                    "create shortcut and open in window.";
+#if !BUILDFLAG(IS_CHROMEOS)
+  // TODO(crbug.com/344912771): Remove tests that use the current create
+  // shortcut flow once ShortcutsNotApps is launched to 100% Stable.
+  if (base::FeatureList::IsEnabled(features::kShortcutsNotApps)) {
+    GTEST_SKIP()
+        << "Shortcuts are no longer web apps if kShortcutsNotApps is enabled";
   }
 #endif
 
@@ -1778,17 +1769,17 @@ void WebAppIntegrationTestDriver::LaunchFromChromeApps(Site site) {
       << "No app installed for site: " << static_cast<int>(site);
 
   WebAppRegistrar& app_registrar = provider()->registrar_unsafe();
-#if BUILDFLAG(IS_CHROMEOS)
-  DisplayMode display_mode = app_registrar.GetAppEffectiveDisplayMode(app_id);
-  bool is_open_in_app_browser =
+  const DisplayMode display_mode =
+      app_registrar.GetAppEffectiveDisplayMode(app_id);
+  const bool is_open_in_app_browser =
       (display_mode != blink::mojom::DisplayMode::kBrowser);
+#if BUILDFLAG(IS_CHROMEOS)
   if (is_open_in_app_browser) {
     app_browser_ = LaunchWebAppBrowserAndWait(profile(), app_id);
     active_app_id_ = app_id;
   } else {
     ui_test_utils::UrlLoadObserver url_observer(
-        app_registrar.GetAppLaunchUrl(app_id),
-        content::NotificationService::AllSources());
+        app_registrar.GetAppLaunchUrl(app_id));
     LaunchBrowserForWebAppInTab(profile(), app_id);
     url_observer.Wait();
   }
@@ -1808,15 +1799,18 @@ void WebAppIntegrationTestDriver::LaunchFromChromeApps(Site site) {
   event_ptr->meta_key = false;
   event_ptr->shift_key = false;
 
+  BrowserAddedWaiter browser_added_waiter;
   ui_test_utils::UrlLoadObserver url_observer(
-      app_registrar.GetAppLaunchUrl(app_id),
-      content::NotificationService::AllSources());
+      app_registrar.GetAppLaunchUrl(app_id));
   app_home_page_handler.LaunchApp(app_id, std::move(event_ptr));
   url_observer.Wait();
 
-  // The app_browser_ is needed only for apps that open in a new window, and is
-  // nullptr for apps that launch in a tab.
-  app_browser_ = GetAppBrowserForAppId(profile(), app_id);
+  // The app_browser_ is needed only for apps that open in a new window.
+  if (is_open_in_app_browser) {
+    browser_added_waiter.Wait();
+    app_browser_ = browser_added_waiter.browser_added();
+    EXPECT_TRUE(AppBrowserController::IsForWebApp(app_browser(), app_id));
+  }
   active_app_id_ = app_id;
 #endif
   AfterStateChangeAction();
@@ -1872,7 +1866,7 @@ void WebAppIntegrationTestDriver::LaunchFromMenuOption(Site site) {
 
 void WebAppIntegrationTestDriver::LaunchFromPlatformShortcut(Site site) {
 #if BUILDFLAG(IS_CHROMEOS)
-  NOTREACHED_NORETURN() << "Not implemented on Chrome OS.";
+  NOTREACHED() << "Not implemented on Chrome OS.";
 #else
   if (!BeforeStateChangeAction(__FUNCTION__)) {
     return;
@@ -1904,7 +1898,8 @@ void WebAppIntegrationTestDriver::LaunchFromPlatformShortcut(Site site) {
     }
     base::RunLoop run_loop;
     apps::SetMacShimStartupDoneCallbackForTesting(run_loop.QuitClosure());
-    LaunchFromAppShim(site, /*urls=*/{}, /*wait_for_complete_launch=*/true);
+    ASSERT_TRUE(LaunchFromAppShim(site, /*urls=*/{},
+                                  /*wait_for_complete_launch=*/true));
     run_loop.Run();
     if (!app_browser_ && !had_open_browsers) {
       browser_added_waiter.Wait();
@@ -1917,7 +1912,8 @@ void WebAppIntegrationTestDriver::LaunchFromPlatformShortcut(Site site) {
   } else {
     base::RunLoop run_loop;
     apps::SetMacShimStartupDoneCallbackForTesting(run_loop.QuitClosure());
-    LaunchFromAppShim(site, /*urls=*/{}, /*wait_for_complete_launch=*/true);
+    ASSERT_TRUE(LaunchFromAppShim(site, /*urls=*/{},
+                                  /*wait_for_complete_launch=*/true));
     run_loop.Run();
   }
 #else
@@ -1981,7 +1977,7 @@ void WebAppIntegrationTestDriver::LaunchFromAppShimFallback(Site site) {
 
 void WebAppIntegrationTestDriver::OpenAppSettingsFromAppMenu(Site site) {
 #if BUILDFLAG(IS_CHROMEOS)
-  NOTREACHED_NORETURN() << "Not implemented on Chrome OS.";
+  NOTREACHED() << "Not implemented on Chrome OS.";
 #else
   if (!BeforeStateChangeAction(__FUNCTION__)) {
     return;
@@ -2015,7 +2011,7 @@ void WebAppIntegrationTestDriver::OpenAppSettingsFromAppMenu(Site site) {
 
 void WebAppIntegrationTestDriver::OpenAppSettingsFromChromeApps(Site site) {
 #if BUILDFLAG(IS_CHROMEOS)
-  NOTREACHED_NORETURN() << "Not implemented on Chrome OS.";
+  NOTREACHED() << "Not implemented on Chrome OS.";
 #else
   if (!BeforeStateChangeAction(__FUNCTION__)) {
     return;
@@ -2041,7 +2037,7 @@ void WebAppIntegrationTestDriver::OpenAppSettingsFromChromeApps(Site site) {
 
 void WebAppIntegrationTestDriver::OpenAppSettingsFromCommand(Site site) {
 #if BUILDFLAG(IS_CHROMEOS)
-  NOTREACHED_NORETURN() << "Not implemented on Chrome OS.";
+  NOTREACHED() << "Not implemented on Chrome OS.";
 #else
   if (!BeforeStateChangeAction(__FUNCTION__)) {
     return;
@@ -2061,7 +2057,7 @@ void WebAppIntegrationTestDriver::OpenAppSettingsFromCommand(Site site) {
 
 void WebAppIntegrationTestDriver::CreateShortcutsFromList(Site site) {
 #if BUILDFLAG(IS_CHROMEOS)
-  NOTREACHED_NORETURN() << "Not implemented on Chrome OS.";
+  NOTREACHED() << "Not implemented on Chrome OS.";
 #else  // !BUILDFLAG(IS_CHROMEOS)
   if (!BeforeStateChangeAction(__FUNCTION__)) {
     return;
@@ -2119,7 +2115,7 @@ void WebAppIntegrationTestDriver::CheckAppSettingsAppState(
     Profile* profile,
     const AppState& app_state) {
 #if BUILDFLAG(IS_CHROMEOS)
-  NOTREACHED_NORETURN() << "Not implemented on Chrome OS.";
+  NOTREACHED() << "Not implemented on Chrome OS.";
 #else
   auto app_management_page_handler = CreateAppManagementPageHandler(profile);
 
@@ -2188,11 +2184,8 @@ std::vector<base::FilePath> WebAppIntegrationTestDriver::GetTestFilePaths(
 // CUJs are implemented.
 void WebAppIntegrationTestDriver::SyncAndInstallPreinstalledAppConfig(
     const GURL& install_url,
-    base::StringPiece app_config_string) {
+    std::string_view app_config_string) {
   base::AutoReset<bool> bypass_offline_manifest_requirement =
-      PreinstalledWebAppManager::BypassOfflineManifestRequirementForTesting();
-  // TODO: resolve how to handle return value.
-  std::ignore =
       PreinstalledWebAppManager::BypassOfflineManifestRequirementForTesting();
   base::FilePath test_config_dir = GetResourceFile(
       FILE_PATH_LITERAL("webapps_integration/preinstalled_config_dir/"));
@@ -2212,7 +2205,7 @@ void WebAppIntegrationTestDriver::SyncAndInstallPreinstalledAppConfig(
 
   using InstallAppsResults =
       std::map<GURL, web_app::ExternallyManagedAppManager::InstallResult>;
-  using UninstallAppsResults = std::map<GURL, bool>;
+  using UninstallAppsResults = std::map<GURL, webapps::UninstallResultCode>;
   base::test::TestFuture<InstallAppsResults, UninstallAppsResults> test_future;
   provider()->preinstalled_web_app_manager().LoadAndSynchronizeForTesting(
       test_future.GetCallback());
@@ -2581,7 +2574,7 @@ void WebAppIntegrationTestDriver::UninstallFromList(Site site) {
 
 void WebAppIntegrationTestDriver::UninstallFromAppSettings(Site site) {
 #if BUILDFLAG(IS_CHROMEOS)
-  NOTREACHED_NORETURN() << "Not implemented on Chrome OS.";
+  NOTREACHED() << "Not implemented on Chrome OS.";
 #else
   if (!BeforeStateChangeAction(__FUNCTION__)) {
     return;
@@ -2723,7 +2716,7 @@ void WebAppIntegrationTestDriver::UninstallFromOs(Site site) {
   site_remember_deny_open_file_.erase(site);
   AfterStateChangeAction();
 #else
-  NOTREACHED_NORETURN() << "Not supported on non-Windows platforms";
+  NOTREACHED() << "Not supported on non-Windows platforms";
 #endif
 }
 
@@ -3015,7 +3008,7 @@ void WebAppIntegrationTestDriver::CheckBrowserNavigation(Site site) {
 void WebAppIntegrationTestDriver::CheckBrowserNavigationIsAppSettings(
     Site site) {
 #if BUILDFLAG(IS_CHROMEOS)
-  NOTREACHED_NORETURN() << "Not implemented on Chrome OS.";
+  NOTREACHED() << "Not implemented on Chrome OS.";
 #else
   if (!BeforeStateCheckAction(__FUNCTION__)) {
     return;
@@ -3132,7 +3125,7 @@ void WebAppIntegrationTestDriver::CheckAppIcon(Site site, Color color) {
   std::map<int, SkColor> shortcut_colors;
 
   base::RunLoop shortcut_run_loop;
-  provider()->os_integration_manager().GetShortcutInfoForApp(
+  provider()->os_integration_manager().GetShortcutInfoForAppFromRegistrar(
       active_app_id_, base::BindLambdaForTesting(
                           [&](std::unique_ptr<ShortcutInfo> shortcut_info) {
                             if (shortcut_info) {
@@ -3186,6 +3179,14 @@ void WebAppIntegrationTestDriver::CheckAppTitle(Site site, Title title) {
 }
 
 void WebAppIntegrationTestDriver::CheckCreateShortcutNotShown() {
+#if !BUILDFLAG(IS_CHROMEOS)
+  // TODO(crbug.com/344912771): Remove tests that use the current create
+  // shortcut flow once ShortcutsNotApps is launched to 100% Stable.
+  if (base::FeatureList::IsEnabled(features::kShortcutsNotApps)) {
+    GTEST_SKIP()
+        << "Shortcuts are no longer web apps if kShortcutsNotApps is enabled";
+  }
+#endif  // !BUILDFLAG(IS_CHROMEOS)
   if (!BeforeStateCheckAction(__FUNCTION__)) {
     return;
   }
@@ -3194,6 +3195,14 @@ void WebAppIntegrationTestDriver::CheckCreateShortcutNotShown() {
 }
 
 void WebAppIntegrationTestDriver::CheckCreateShortcutShown() {
+#if !BUILDFLAG(IS_CHROMEOS)
+  // TODO(crbug.com/344912771): Remove tests that use the current create
+  // shortcut flow once ShortcutsNotApps is launched to 100% Stable.
+  if (base::FeatureList::IsEnabled(features::kShortcutsNotApps)) {
+    GTEST_SKIP()
+        << "Shortcuts are no longer web apps if kShortcutsNotApps is enabled";
+  }
+#endif  // !BUILDFLAG(IS_CHROMEOS)
   if (!BeforeStateCheckAction(__FUNCTION__)) {
     return;
   }
@@ -3476,7 +3485,7 @@ void WebAppIntegrationTestDriver::CheckSiteNotHandlesFile(
 void WebAppIntegrationTestDriver::CheckUserCannotSetRunOnOsLoginAppSettings(
     Site site) {
 #if BUILDFLAG(IS_CHROMEOS)
-  NOTREACHED_NORETURN() << "Not implemented on Chrome OS.";
+  NOTREACHED() << "Not implemented on Chrome OS.";
 #else
   if (!BeforeStateCheckAction(__FUNCTION__)) {
     return;
@@ -3509,7 +3518,7 @@ void WebAppIntegrationTestDriver::CheckUserCannotSetRunOnOsLoginAppSettings(
 void WebAppIntegrationTestDriver::CheckUserCannotSetRunOnOsLoginAppHome(
     Site site) {
 #if BUILDFLAG(IS_CHROMEOS)
-  NOTREACHED_NORETURN() << "Not implemented on Chrome OS.";
+  NOTREACHED() << "Not implemented on Chrome OS.";
 #else
   if (!BeforeStateCheckAction(__FUNCTION__)) {
     return;
@@ -4087,27 +4096,17 @@ void WebAppIntegrationTestDriver::AwaitManifestSystemIdle() {
   // Wait till all manifest update data fetch commands have completed.
   command_manager.AwaitAllCommandsCompleteForTesting();
 
-  // If there are any apps that have no app windows, then wait for the
-  // ui_manager to post the task and schedule the manifest update finalize
-  // command.
-  for (const webapps::AppId& app_id :
-       manifest_update_manager.GetAppsPendingWindowsClosingForTesting()) {
-    if (provider()->ui_manager().GetNumWindowsForApp(app_id) == 0) {
-      base::RunLoop().RunUntilIdle();
-    }
-  }
   // Wait till all manifest update finalize commands have completed (if any).
   command_manager.AwaitAllCommandsCompleteForTesting();
 }
 
 webapps::AppId GetAppIdForIsolatedSite(Site site) {
   auto parent_site = GetSiteConfiguration(site).parent_site;
-  web_package::WebBundleSigner::Ed25519KeyPair key_pair =
+  web_package::test::Ed25519KeyPair key_pair =
       GetKeyPairForSite(parent_site ? parent_site.value() : site);
 
   auto url_info = IsolatedWebAppUrlInfo::CreateFromSignedWebBundleId(
-      web_package::SignedWebBundleId::CreateForEd25519PublicKey(
-          key_pair.public_key));
+      web_package::SignedWebBundleId::CreateForPublicKey(key_pair.public_key));
 
   if (parent_site) {
     // The scope and manifest ID of an Isolated Web App are always the unique
@@ -4233,11 +4232,15 @@ WebAppIntegrationTestDriver::ConstructStateSnapshot() {
             registrar.GetAppEffectiveDisplayMode(app_id),
             registrar.GetAppUserDisplayMode(app_id),
             manifest_launcher_icon_filename,
-            registrar.IsLocallyInstalled(app_id),
+            registrar.IsInstallState(
+                app_id, {web_app::proto::INSTALLED_WITHOUT_OS_INTEGRATION,
+                         web_app::proto::INSTALLED_WITH_OS_INTEGRATION}),
             IsShortcutAndIconCreated(profile, registrar.GetAppShortName(app_id),
                                      app_id));
 #if !BUILDFLAG(IS_CHROMEOS)
-        if (registrar.IsLocallyInstalled(app_id)) {
+        if (registrar.IsInstallState(
+                app_id, {web_app::proto::INSTALLED_WITHOUT_OS_INTEGRATION,
+                         web_app::proto::INSTALLED_WITH_OS_INTEGRATION})) {
           CheckAppSettingsAppState(profile->GetOriginalProfile(), state);
         }
 #endif
@@ -4773,7 +4776,6 @@ WebAppIntegrationTest::WebAppIntegrationTest() : helper_(this) {
   std::vector<base::test::FeatureRef> disabled_features;
   enabled_features.push_back(blink::features::kDesktopPWAsSubApps);
   enabled_features.push_back(blink::features::kDesktopPWAsTabStrip);
-  enabled_features.push_back(features::kDesktopPWAsEnforceWebAppSettingsPolicy);
   enabled_features.push_back(features::kDesktopPWAsTabStripSettings);
   enabled_features.push_back(features::kIsolatedWebAppDevMode);
   enabled_features.push_back(features::kIsolatedWebApps);
@@ -4786,11 +4788,11 @@ WebAppIntegrationTest::WebAppIntegrationTest() : helper_(this) {
   base::Extend(disabled_features, ash::standalone_browser::GetFeatureRefs());
 #endif
 #if BUILDFLAG(IS_CHROMEOS)
-  // TODO(crbug.com/1357905): Update test driver to work with new UI.
+  // TODO(crbug.com/40236806): Update test driver to work with new UI.
   enabled_features.push_back(apps::features::kLinkCapturingUiUpdate);
 #else
-  // TOOD(b/313492499): Update test driver to work with new intent picker UI.
-  enabled_features.push_back(features::kDesktopPWAsLinkCapturing);
+  // TODO(b/313492499): Update test driver to work with new intent picker UI.
+  enabled_features.push_back(features::kPwaNavigationCapturing);
 #endif  // BUILDFLAG(IS_CHROMEOS)
   scoped_feature_list_.InitWithFeatures(enabled_features, disabled_features);
 }
@@ -4839,16 +4841,16 @@ bool WebAppIntegrationTest::IsSyncTest() {
 }
 
 void WebAppIntegrationTest::SyncTurnOff() {
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 void WebAppIntegrationTest::SyncTurnOn() {
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 void WebAppIntegrationTest::AwaitWebAppQuiescence() {
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 Profile* WebAppIntegrationTest::GetProfileClient(ProfileClient client) {
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 }  // namespace web_app::integration_tests

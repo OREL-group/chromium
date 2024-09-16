@@ -125,9 +125,13 @@ WaylandDataDragController::~WaylandDataDragController() {
 bool WaylandDataDragController::StartSession(const OSExchangeData& data,
                                              int operations,
                                              DragEventSource source) {
-  DCHECK_EQ(state_, State::kIdle);
-  DCHECK(!origin_window_);
-  DCHECK(!icon_surface_);
+  // TODO(crbug.com/340398746): Should be DCHECK'ed instead, though due to buggy
+  // compositors, eg: KWin 6, which do not send data_source.dnd_finish|cancelled
+  // in some cases, it was temporarily turned into this conditional avoid
+  // browser crashes. Revert once it stabilizes at compositors side.
+  if (state_ != State::kIdle) {
+    Reset();
+  }
 
   auto* origin_window = source == DragEventSource::kTouch
                             ? window_manager_->GetCurrentTouchFocusedWindow()
@@ -202,10 +206,14 @@ bool WaylandDataDragController::StartSession(const OSExchangeData& data,
 }
 
 void WaylandDataDragController::CancelSession() {
-  CHECK(IsDragSource());
+  // Inform the compositor that we're no longer interested in the data offer.
+  if (data_offer_) {
+    data_offer_->SetDndActions(0);
+  }
 
-  // Reset() will reset the wl_data_source we created for the drag, which as per
-  // the spec for wl_data_device.start_drag() will cancel the DnD session.
+  // If this is an outgoing drag session, Reset() will reset the wl_data_source
+  // we created for the drag, which as per the spec for
+  // wl_data_device.start_drag() will cancel the DnD session.
   //
   // Note: resetting immediately might lead to issues in tests in the future,
   // because WaylandWindow::StartDrag() will return even though the compositor
@@ -213,7 +221,12 @@ void WaylandDataDragController::CancelSession() {
   // deferring the reset (e.g. until we receive wl_data_device.leave) in turn
   // might lead to issues for real users if the compositor implements the spec
   // incorrectly or just in a way we didn't foresee.
-  Reset(DragResult::kCancelled, ui::EventTimeForNow());
+  HandleDragEnd(DragResult::kCancelled, ui::EventTimeForNow());
+  Reset();
+}
+
+bool WaylandDataDragController::IsDragInProgress() const {
+  return state_ != State::kIdle;
 }
 
 void WaylandDataDragController::UpdateDragImage(const gfx::ImageSkia& image,
@@ -237,6 +250,10 @@ bool WaylandDataDragController::ShouldReleaseCaptureForDrag(
   // For a window dragging session, we must not release capture to be able to
   // handle window dragging even when dragging out of the window.
   return !IsWindowDraggingSession(*data);
+}
+
+bool WaylandDataDragController::IsWindowDragSessionRunning() const {
+  return !!pointer_grabber_for_window_drag_;
 }
 
 void WaylandDataDragController::DumpState(std::ostream& out) const {
@@ -492,11 +509,15 @@ void WaylandDataDragController::OnDragDrop(base::TimeTicks timestamp) {
 
   window_->OnDragDrop();
 
-  // Offer must be finished and destroyed here as some compositors may delay to
-  // send wl_data_source::finished|cancelled until owning client destroys the
-  // drag offer. e.g: Exosphere.
-  data_offer_->FinishOffer();
-  data_offer_.reset();
+  // Might have already been reset if the drag was cancelled in response to the
+  // OnDragDrop() above.
+  if (data_offer_) {
+    // Offer must be finished and destroyed here as some compositors may delay
+    // to send wl_data_source::finished|cancelled until owning client destroys
+    // the drag offer. e.g: Exosphere.
+    data_offer_->FinishOffer();
+    data_offer_.reset();
+  }
 }
 
 void WaylandDataDragController::OnDataSourceFinish(WaylandDataSource* source,
@@ -507,8 +528,25 @@ void WaylandDataDragController::OnDataSourceFinish(WaylandDataSource* source,
           << " origin=" << !!origin_window_
           << " nested_dispatcher=" << !!nested_dispatcher_;
 
-  auto result = completed ? DragResult::kCompleted : DragResult::kCancelled;
-  Reset(result, timestamp);
+  // HandleDragEnd below is likely no-op, though is called to protect against
+  // buggy/malicious compositors, where no prior dnd_drop_performed was
+  // received, for example. In which case, it could result in UI hangs where
+  // input events would stop being processed because the nested drag message
+  // loop would keep running indefinitely.
+  HandleDragEnd(completed ? DragResult::kCompleted : DragResult::kCancelled,
+                timestamp);
+  Reset();
+}
+
+void WaylandDataDragController::OnDataSourceDropPerformed(
+    WaylandDataSource* source,
+    base::TimeTicks timestamp) {
+  CHECK_EQ(data_source_.get(), source);
+  VLOG(1) << __FUNCTION__ << " window=" << !!window_
+          << " origin=" << !!origin_window_
+          << " nested_dispatcher=" << !!nested_dispatcher_;
+
+  HandleDragEnd(DragResult::kCompleted, timestamp);
 }
 
 const WaylandWindow* WaylandDataDragController::GetDragTarget() const {
@@ -521,6 +559,15 @@ void WaylandDataDragController::OnDataSourceSend(WaylandDataSource* source,
   CHECK_EQ(data_source_.get(), source);
   CHECK(buffer);
   VLOG(1) << __FUNCTION__ << " mime=" << mime_type;
+
+  // We don't actually have any data to send. Nothing except Chrome itself
+  // should accept this MIME type, and Chrome won't request the non-existent
+  // data; but the KDE desktop seems to accept and request the data. To prevent
+  // hitting a CHECK in ExtractData() due to the MIME type, we exit early here.
+  if (mime_type == ui::kMimeTypeWindowDrag) {
+    return;
+  }
+
   if (!GetOfferedExchangeDataProvider()->ExtractData(mime_type, buffer)) {
     LOG(WARNING) << "Cannot deliver data of type " << mime_type
                  << " and no text representation is available.";
@@ -533,6 +580,10 @@ void WaylandDataDragController::OnWindowRemoved(WaylandWindow* window) {
   }
 
   if (window == origin_window_) {
+    // See the declaration of TakeWaylandSurface() for why this is needed.
+    if (IsWindowDragSessionRunning()) {
+      origin_surface_ = origin_window_->TakeWaylandSurface();
+    }
     origin_window_ = nullptr;
   }
 
@@ -654,12 +705,31 @@ void WaylandDataDragController::CancelDataFetchingIfNeeded() {
   }
 }
 
-void WaylandDataDragController::Reset(DragResult result,
-                                      base::TimeTicks timestamp) {
+void WaylandDataDragController::Reset() {
   if (state_ == State::kIdle) {
     return;
   }
 
+  data_source_.reset();
+  data_offer_.reset();
+  origin_window_ = nullptr;
+  origin_surface_.reset();
+  icon_buffer_.reset();
+  icon_surface_.reset();
+  icon_surface_buffer_scale_ = 1.0f;
+  icon_image_ = gfx::ImageSkia();
+  icon_frame_callback_.reset();
+  offered_exchange_data_provider_.reset();
+  data_device_->ResetDragDelegate();
+  has_received_enter_ = false;
+  state_ = State::kIdle;
+}
+
+// TODO(crbug.com/329479345): Drop DragResult in favor of intermediary states
+// `kDropping` and `kCancelling`, move `Reset` back into this function, called
+// conditionally depending on the state it would be transitioning to.
+void WaylandDataDragController::HandleDragEnd(DragResult result,
+                                              base::TimeTicks timestamp) {
   if (origin_window_) {
     DragOperation operation =
         (result == DragResult::kCompleted)
@@ -670,6 +740,11 @@ void WaylandDataDragController::Reset(DragResult result,
     // with no data fetching (wl_data_source::cancelled event).
     if (result != DragResult::kCompleted) {
       origin_window_->OnDragLeave();
+    }
+
+    // Ensure we don't send a second leave event below.
+    if (origin_window_ == window_) {
+      window_ = nullptr;
     }
     origin_window_ = nullptr;
   }
@@ -685,17 +760,14 @@ void WaylandDataDragController::Reset(DragResult result,
     DispatchPointerRelease(timestamp);
   }
 
-  data_source_.reset();
-  data_offer_.reset();
-  icon_buffer_.reset();
-  icon_surface_.reset();
-  icon_surface_buffer_scale_ = 1.0f;
-  icon_image_ = gfx::ImageSkia();
-  icon_frame_callback_.reset();
-  offered_exchange_data_provider_.reset();
-  data_device_->ResetDragDelegate();
-  has_received_enter_ = false;
-  state_ = State::kIdle;
+  // If we called this method because we want to cancel an incoming drag
+  // session, make sure we send a final leave event. The real leave event we'll
+  // receive from the compositor won't be propagated because we reset
+  // |data_device_|'s delegate below.
+  if (window_) {
+    window_->OnDragLeave();
+    window_ = nullptr;
+  }
 }
 
 std::optional<wl::Serial>
@@ -705,8 +777,7 @@ WaylandDataDragController::GetAndValidateSerialForDrag(DragEventSource source) {
   switch (source) {
     case DragEventSource::kMouse:
       serial_type = wl::SerialType::kMousePress;
-      should_drag =
-          pointer_delegate_->IsPointerButtonPressed(EF_LEFT_MOUSE_BUTTON);
+      should_drag = pointer_delegate_->IsPointerButtonPressed(EF_MOUSE_BUTTON);
       break;
     case DragEventSource::kTouch:
       serial_type = wl::SerialType::kTouchPress;
@@ -750,9 +821,10 @@ void WaylandDataDragController::DispatchPointerRelease(
     base::TimeTicks timestamp) {
   DCHECK(pointer_grabber_for_window_drag_);
   pointer_delegate_->OnPointerButtonEvent(
-      ET_MOUSE_RELEASED, EF_LEFT_MOUSE_BUTTON, timestamp,
+      EventType::kMouseReleased, EF_LEFT_MOUSE_BUTTON, timestamp,
       pointer_grabber_for_window_drag_, wl::EventDispatchPolicy::kImmediate,
-      /*allow_release_of_unpressed_button=*/true);
+      /*allow_release_of_unpressed_button=*/true,
+      /*is_synthesized=*/true);
   pointer_grabber_for_window_drag_ = nullptr;
 }
 
@@ -763,29 +835,20 @@ bool WaylandDataDragController::CanDispatchEvent(const PlatformEvent& event) {
 uint32_t WaylandDataDragController::DispatchEvent(const PlatformEvent& event) {
   DCHECK_NE(state_, State::kIdle);
 
-  // Two distinct problematic edge cases are handled here, where mouse button
-  // release events come in after start_drag has already been requested:
-  //
-  // 1. If it's received before the drag session effectively starts at
-  // compositor side, which is possible given the asynchronous nature of the
-  // Wayland protocol. In this case, to preventing UI from getting stuck on the
-  // drag nested loop, we just abort the drag session by calling.
-  //
-  // 2. Otherwise, button release events may be received from buggy compositors
-  // in addition to the actual dnd drop events, in which case the event is
-  // suppressed, otherwise it leads to broken UI state, as observed for example
-  // in https://crbug.com/329703410.
-  //
   // Currently, there's no reliable way in the protocol to determine when the
   // drag session has effectively started, so as a best-effort heuristic we
   // consider it started once wl_data_device.enter has been received at least
   // once.
-  if (event->type() == ET_MOUSE_RELEASED) {
-    if (!has_received_enter_) {
-      Reset(DragResult::kCancelled, event->time_stamp());
-    } else {
-      return POST_DISPATCH_STOP_PROPAGATION;
-    }
+  auto cancel_drag_cb = base::BindOnce(
+      [](WaylandDataDragController* self, base::TimeTicks time_stamp) {
+        self->HandleDragEnd(DragResult::kCancelled, time_stamp);
+        self->Reset();
+      },
+      base::Unretained(this), event->time_stamp());
+  if (wl::MaybeHandlePlatformEventForDrag(
+          event, /*start_drag_ack_received=*/has_received_enter_,
+          std::move(cancel_drag_cb))) {
+    return POST_DISPATCH_STOP_PROPAGATION;
   }
 
   return POST_DISPATCH_PERFORM_DEFAULT;

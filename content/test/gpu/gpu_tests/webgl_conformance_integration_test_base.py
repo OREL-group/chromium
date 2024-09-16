@@ -74,7 +74,6 @@ class WebGLConformanceIntegrationTestBase(
     gpu_integration_test.GpuIntegrationTest):
 
   _webgl_version: Optional[int] = None
-  is_asan = False
   _crash_count = 0
   _gl_backend = ''
   _angle_backend = ''
@@ -225,7 +224,8 @@ class WebGLConformanceIntegrationTestBase(
         cls._original_environ = os.environ.copy()
       os.environ['MTL_DEBUG_LAYER'] = '1'
       os.environ['MTL_DEBUG_LAYER_VALIDATE_LOAD_ACTIONS'] = '1'
-      os.environ['MTL_DEBUG_LAYER_VALIDATE_STORE_ACTIONS'] = '1'
+      # TODO(crbug.com/40275874)  Re-enable when Apple fixes the validation
+      # os.environ['MTL_DEBUG_LAYER_VALIDATE_STORE_ACTIONS'] = '1'
       os.environ['MTL_DEBUG_LAYER_VALIDATE_UNRETAINED_RESOURCES'] = '4'
 
   @classmethod
@@ -328,7 +328,8 @@ class WebGLConformanceIntegrationTestBase(
           'connectWebsocket("%d")' %
           self.__class__.websocket_server.server_port,
           timeout=WEBSOCKET_JAVASCRIPT_TIMEOUT_S)
-      self.__class__.websocket_server.WaitForConnection()
+      self.__class__.websocket_server.WaitForConnection(
+          websocket_utils.GetScaledConnectionTimeout(self.child.jobs))
       response = self.__class__.websocket_server.Receive(
           WEBSOCKET_JAVASCRIPT_TIMEOUT_S)
       response = json.loads(response)
@@ -397,7 +398,7 @@ class WebGLConformanceIntegrationTestBase(
     # Parallel jobs increase load and can slow down test execution, so scale
     # based on the number of jobs. Target 2x increase with 4 jobs.
     multiplier = 1 + (self.child.jobs - 1) / 3.0
-    if self.is_asan:
+    if self._is_asan:
       multiplier *= ASAN_MULTIPLIER
     if self._finder_options.browser_type == 'web-engine-shell':
       multiplier *= WEBENGINE_MULTIPLIER
@@ -459,7 +460,7 @@ class WebGLConformanceIntegrationTestBase(
 
   def _GetTestTimeout(self) -> int:
     timeout = 300
-    if self.is_asan:
+    if self._is_asan:
       # Asan runs much slower and needs a longer timeout
       timeout *= 2
     return timeout
@@ -637,13 +638,6 @@ class WebGLConformanceIntegrationTestBase(
   def GetPlatformTags(cls, browser: ct.Browser) -> List[str]:
     assert cls._webgl_version is not None
     tags = super().GetPlatformTags(browser)
-
-    system_info = browser.GetSystemInfo()
-    gpu_info = None
-    if system_info:
-      gpu_info = system_info.gpu
-      cls.is_asan = gpu_info.aux_attributes.get('is_asan', False)
-
     return tags
 
   @classmethod

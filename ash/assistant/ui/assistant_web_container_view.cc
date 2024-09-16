@@ -81,7 +81,8 @@ AssistantWebContainerView::AssistantWebContainerView(
 
 AssistantWebContainerView::~AssistantWebContainerView() = default;
 
-gfx::Size AssistantWebContainerView::CalculatePreferredSize() const {
+gfx::Size AssistantWebContainerView::CalculatePreferredSize(
+    const views::SizeBounds& available_size) const {
   const int non_client_frame_view_height =
       views::GetCaptionButtonLayoutSize(
           views::CaptionButtonLayoutSize::kNonBrowserCaption)
@@ -203,8 +204,9 @@ void AssistantWebContainerView::SetCanGoBackForTesting(bool can_go_back) {
 }
 
 void AssistantWebContainerView::InitLayout() {
-  views::Widget::InitParams params;
-  params.type = views::Widget::InitParams::TYPE_WINDOW;
+  views::Widget::InitParams params(
+      views::Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET,
+      views::Widget::InitParams::TYPE_WINDOW);
   params.delegate = this;
   params.name = GetClassName();
 

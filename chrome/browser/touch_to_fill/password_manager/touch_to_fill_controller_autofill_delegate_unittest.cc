@@ -18,11 +18,13 @@
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
 #include "base/types/pass_key.h"
+#include "chrome/browser/password_manager/android/access_loss/mock_password_access_loss_warning_bridge.h"
 #include "chrome/browser/password_manager/android/password_manager_launcher_android.h"
 #include "chrome/browser/password_manager/chrome_password_manager_client.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/touch_to_fill/password_manager/touch_to_fill_controller.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
+#include "components/autofill/core/common/unique_ids.h"
 #include "components/device_reauth/mock_device_authenticator.h"
 #include "components/password_manager/content/browser/mock_keyboard_replacing_surface_visibility_controller.h"
 #include "components/password_manager/core/browser/features/password_features.h"
@@ -30,10 +32,13 @@
 #include "components/password_manager/core/browser/mock_webauthn_credentials_delegate.h"
 #include "components/password_manager/core/browser/origin_credential_store.h"
 #include "components/password_manager/core/browser/passkey_credential.h"
+#include "components/password_manager/core/browser/password_form.h"
 #include "components/password_manager/core/browser/password_manager_util.h"
 #include "components/password_manager/core/browser/stub_password_manager_client.h"
 #include "components/password_manager/core/common/password_manager_features.h"
+#include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/ukm/test_ukm_recorder.h"
+#include "components/webauthn/android/mock_webauthn_cred_man_delegate.h"
 #include "components/webauthn/android/webauthn_cred_man_delegate.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -58,6 +63,7 @@ using ::testing::ElementsAreArray;
 using ::testing::Eq;
 using ::testing::Return;
 using ::testing::WithArg;
+using webauthn::MockWebAuthnCredManDelegate;
 using webauthn::WebAuthnCredManDelegate;
 using IsOriginSecure = TouchToFillView::IsOriginSecure;
 
@@ -80,7 +86,7 @@ class MockPasswordManagerClient
               (override));
   MOCK_METHOD(void, MarkSharedCredentialsAsNotified, (const GURL&), (override));
   MOCK_METHOD(bool,
-              CanUseBiometricAuthForFilling,
+              IsReauthBeforeFillingRequired,
               (device_reauth::DeviceAuthenticator*),
               (override));
 };
@@ -96,23 +102,6 @@ struct MockTouchToFillView : TouchToFillView {
               (override));
   MOCK_METHOD(void, OnCredentialSelected, (const UiCredential&));
   MOCK_METHOD(void, OnDismiss, ());
-};
-
-struct MockWebAuthnCredManDelegate : public WebAuthnCredManDelegate {
-  MockWebAuthnCredManDelegate()
-      : WebAuthnCredManDelegate(/*web_contents=*/nullptr) {}
-
-  MOCK_METHOD(WebAuthnCredManDelegate::State, HasPasskeys, (), (override));
-
-  MOCK_METHOD(void,
-              TriggerCredManUi,
-              (WebAuthnCredManDelegate::RequestPasswords),
-              (override));
-
-  MOCK_METHOD(void,
-              SetRequestCompletionCallback,
-              (base::RepeatingCallback<void(bool)>),
-              (override));
 };
 
 struct MakeUiCredentialParams {
@@ -132,6 +121,8 @@ UiCredential MakeUiCredential(MakeUiCredentialParams params) {
 }
 
 }  // namespace
+// The anonymous namespace needs to end here because of `friend`ships between
+// the tests and the production code.
 
 class TouchToFillControllerAutofillTest
     : public ChromeRenderViewHostTestHarness {
@@ -145,7 +136,7 @@ class TouchToFillControllerAutofillTest
         OverrideManagePasswordWhenPasskeysPresentForTesting(false);
 
     // By default, disable biometric authentication.
-    ON_CALL(client(), CanUseBiometricAuthForFilling)
+    ON_CALL(client(), IsReauthBeforeFillingRequired)
         .WillByDefault(Return(false));
 
     scoped_feature_list_.InitAndEnableFeature(
@@ -193,15 +184,21 @@ class TouchToFillControllerAutofillTest
   MakeTouchToFillControllerDelegate(
       autofill::mojom::SubmissionReadinessState submission_readiness,
       std::unique_ptr<MockPasswordCredentialFiller> filler,
+      const password_manager::PasswordForm* form_to_fill,
+      autofill::FieldRendererId focused_field_renderer_id,
       TouchToFillControllerAutofillDelegate::ShowHybridOption
           should_show_hybrid_option) {
     ON_CALL(*filler, GetSubmissionReadinessState())
         .WillByDefault(Return(submission_readiness));
+    std::unique_ptr<MockPasswordAccessLossWarningBridge> mock_bridge =
+        std::make_unique<MockPasswordAccessLossWarningBridge>();
+    mock_access_loss_warning_bridge_ = mock_bridge.get();
     return std::make_unique<TouchToFillControllerAutofillDelegate>(
         base::PassKey<TouchToFillControllerAutofillTest>(), &client_,
         web_contents(), std::move(authenticator_),
         webauthn_credentials_delegate_.AsWeakPtr(), std::move(filler),
-        should_show_hybrid_option, show_password_migration_warning().Get());
+        form_to_fill, focused_field_renderer_id, should_show_hybrid_option,
+        show_password_migration_warning().Get(), std::move(mock_bridge));
   }
 
   password_manager::MockWebAuthnCredentialsDelegate&
@@ -218,6 +215,14 @@ class TouchToFillControllerAutofillTest
     return scoped_feature_list_;
   }
 
+  const password_manager::PasswordForm* form_to_fill() {
+    return &form_to_fill_;
+  }
+
+  MockPasswordAccessLossWarningBridge* mock_access_loss_warning_bridge() {
+    return mock_access_loss_warning_bridge_;
+  }
+
   void SetUp() override {
     ChromeRenderViewHostTestHarness::SetUp();
     auto mock_view = std::make_unique<MockTouchToFillView>();
@@ -227,6 +232,8 @@ class TouchToFillControllerAutofillTest
     touch_to_fill_controller_ = std::make_unique<TouchToFillController>(
         profile(), visibility_controller_->AsWeakPtr());
     touch_to_fill_controller().set_view(std::move(mock_view));
+    form_to_fill_.password_element_renderer_id = autofill::FieldRendererId(1);
+    form_to_fill_.username_element_renderer_id = autofill::FieldRendererId(2);
   }
 
  private:
@@ -248,7 +255,9 @@ class TouchToFillControllerAutofillTest
       Profile*,
       password_manager::metrics_util::PasswordMigrationWarningTriggers)>>
       show_password_migration_warning_;
+  raw_ptr<MockPasswordAccessLossWarningBridge> mock_access_loss_warning_bridge_;
   raw_ptr<MockPasswordCredentialFiller> weak_filler_;
+  password_manager::PasswordForm form_to_fill_;
 };
 
 TEST_F(TouchToFillControllerAutofillTest, Show_Fill_And_Submit) {
@@ -266,7 +275,8 @@ TEST_F(TouchToFillControllerAutofillTest, Show_Fill_And_Submit) {
       credentials, {},
       MakeTouchToFillControllerDelegate(
           autofill::mojom::SubmissionReadinessState::kTwoFields,
-          std::move(filler_to_pass),
+          std::move(filler_to_pass), form_to_fill(),
+          form_to_fill()->password_element_renderer_id,
           TouchToFillControllerAutofillDelegate::ShowHybridOption(false)),
       /*cred_man_delegate=*/nullptr, /*frame_driver=*/nullptr);
 
@@ -294,7 +304,8 @@ TEST_F(TouchToFillControllerAutofillTest, Show_Fill_And_Dont_Submit) {
       credentials, {},
       MakeTouchToFillControllerDelegate(
           autofill::mojom::SubmissionReadinessState::kNoInformation,
-          std::move(filler_to_pass),
+          std::move(filler_to_pass), form_to_fill(),
+          form_to_fill()->password_element_renderer_id,
           TouchToFillControllerAutofillDelegate::ShowHybridOption(false)),
       /*cred_man_delegate=*/nullptr, /*frame_driver=*/nullptr);
 
@@ -314,6 +325,10 @@ TEST_F(TouchToFillControllerAutofillTest,
       {password_manager::features::
            kUnifiedPasswordManagerLocalPasswordsMigrationWarning},
       {});
+  profile()->GetPrefs()->SetInteger(
+      password_manager::prefs::kPasswordsUseUPMLocalAndSeparateStores,
+      static_cast<int>(
+          password_manager::prefs::UseUpmLocalAndSeparateStoresState::kOff));
   UiCredential credentials[] = {
       MakeUiCredential({.username = "alice", .password = "p4ssw0rd"})};
   auto filler_to_pass = CreateMockFiller();
@@ -326,7 +341,8 @@ TEST_F(TouchToFillControllerAutofillTest,
       credentials, {},
       MakeTouchToFillControllerDelegate(
           autofill::mojom::SubmissionReadinessState::kTwoFields,
-          std::move(filler_to_pass),
+          std::move(filler_to_pass), form_to_fill(),
+          form_to_fill()->password_element_renderer_id,
           TouchToFillControllerAutofillDelegate::ShowHybridOption(false)),
       /*cred_man_delegate=*/nullptr, /*frame_driver=*/nullptr);
 
@@ -339,6 +355,41 @@ TEST_F(TouchToFillControllerAutofillTest,
               Run(_, _,
                   password_manager::metrics_util::
                       PasswordMigrationWarningTriggers::kTouchToFill));
+
+  touch_to_fill_controller().OnCredentialSelected(credentials[0]);
+}
+
+TEST_F(TouchToFillControllerAutofillTest, FillingShowsAccessLossWarning) {
+  UiCredential credentials[] = {
+      MakeUiCredential({.username = "alice", .password = "p4ssw0rd"})};
+  auto filler_to_pass = CreateMockFiller();
+
+  EXPECT_CALL(view(), Show(Eq(GURL(kExampleCom)), IsOriginSecure(true),
+                           ElementsAreArray(credentials),
+                           ElementsAreArray(std::vector<PasskeyCredential>()),
+                           TouchToFillView::kNone));
+  touch_to_fill_controller().Show(
+      credentials, {},
+      MakeTouchToFillControllerDelegate(
+          autofill::mojom::SubmissionReadinessState::kTwoFields,
+          std::move(filler_to_pass), form_to_fill(),
+          form_to_fill()->password_element_renderer_id,
+          TouchToFillControllerAutofillDelegate::ShowHybridOption(false)),
+      /*cred_man_delegate=*/nullptr, /*frame_driver=*/nullptr);
+  EXPECT_CALL(*mock_access_loss_warning_bridge(),
+              ShouldShowAccessLossNoticeSheet(profile()->GetPrefs(),
+                                              /*called_at_startup=*/false))
+      .WillRepeatedly(testing::Return(true));
+
+  EXPECT_CALL(*last_mock_filler(),
+              FillUsernameAndPassword(std::u16string(u"alice"),
+                                      std::u16string(u"p4ssw0rd")));
+  EXPECT_CALL(*last_mock_filler(), UpdateTriggerSubmission(false));
+  EXPECT_CALL(client(), StartSubmissionTrackingAfterTouchToFill(_)).Times(0);
+  EXPECT_CALL(
+      *mock_access_loss_warning_bridge(),
+      MaybeShowAccessLossNoticeSheet(profile()->GetPrefs(), _, profile(),
+                                     /*called_at_startup=*/false));
 
   touch_to_fill_controller().OnCredentialSelected(credentials[0]);
 }
@@ -362,7 +413,8 @@ TEST_F(TouchToFillControllerAutofillTest, Dont_Submit_With_Empty_Username) {
       credentials, {},
       MakeTouchToFillControllerDelegate(
           autofill::mojom::SubmissionReadinessState::kTwoFields,
-          std::move(filler_to_pass),
+          std::move(filler_to_pass), form_to_fill(),
+          form_to_fill()->password_element_renderer_id,
           TouchToFillControllerAutofillDelegate::ShowHybridOption(false)),
       /*cred_man_delegate=*/nullptr, /*frame_driver=*/nullptr);
 
@@ -397,7 +449,8 @@ TEST_F(TouchToFillControllerAutofillTest,
       credentials, {},
       MakeTouchToFillControllerDelegate(
           autofill::mojom::SubmissionReadinessState::kTwoFields,
-          std::move(filler_to_pass),
+          std::move(filler_to_pass), form_to_fill(),
+          form_to_fill()->password_element_renderer_id,
           TouchToFillControllerAutofillDelegate::ShowHybridOption(false)),
       /*cred_man_delegate=*/nullptr, /*frame_driver=*/nullptr);
 
@@ -422,7 +475,8 @@ TEST_F(TouchToFillControllerAutofillTest, Show_And_Fill_No_Auth_Available) {
       credentials, {},
       MakeTouchToFillControllerDelegate(
           autofill::mojom::SubmissionReadinessState::kNoInformation,
-          CreateMockFiller(),
+          CreateMockFiller(), form_to_fill(),
+          form_to_fill()->password_element_renderer_id,
           TouchToFillControllerAutofillDelegate::ShowHybridOption(false)),
       /*cred_man_delegate=*/nullptr, /*frame_driver=*/nullptr);
 
@@ -430,7 +484,7 @@ TEST_F(TouchToFillControllerAutofillTest, Show_And_Fill_No_Auth_Available) {
   EXPECT_CALL(*last_mock_filler(),
               FillUsernameAndPassword(std::u16string(u"alice"),
                                       std::u16string(u"p4ssw0rd")));
-  ON_CALL(client(), CanUseBiometricAuthForFilling).WillByDefault(Return(false));
+  ON_CALL(client(), IsReauthBeforeFillingRequired).WillByDefault(Return(false));
 
   touch_to_fill_controller().OnCredentialSelected(credentials[0]);
 
@@ -459,7 +513,8 @@ TEST_F(TouchToFillControllerAutofillTest,
       credentials, {},
       MakeTouchToFillControllerDelegate(
           autofill::mojom::SubmissionReadinessState::kTwoFields,
-          std::move(filler_to_pass),
+          std::move(filler_to_pass), form_to_fill(),
+          form_to_fill()->password_element_renderer_id,
           TouchToFillControllerAutofillDelegate::ShowHybridOption(false)),
       /*cred_man_delegate=*/nullptr, /*frame_driver=*/nullptr);
 
@@ -469,7 +524,7 @@ TEST_F(TouchToFillControllerAutofillTest,
               FillUsernameAndPassword(std::u16string(u"alice"),
                                       std::u16string(u"p4ssw0rd")));
 
-  ON_CALL(client(), CanUseBiometricAuthForFilling).WillByDefault(Return(true));
+  ON_CALL(client(), IsReauthBeforeFillingRequired).WillByDefault(Return(true));
   EXPECT_CALL(*authenticator_ptr, AuthenticateWithMessage)
       .WillOnce(RunOnceCallback<1>(true));
   EXPECT_CALL(client(), StartSubmissionTrackingAfterTouchToFill(Eq(u"alice")));
@@ -491,13 +546,14 @@ TEST_F(TouchToFillControllerAutofillTest,
       credentials, {},
       MakeTouchToFillControllerDelegate(
           autofill::mojom::SubmissionReadinessState::kNoInformation,
-          CreateMockFiller(),
+          CreateMockFiller(), form_to_fill(),
+          form_to_fill()->password_element_renderer_id,
           TouchToFillControllerAutofillDelegate::ShowHybridOption(false)),
       /*cred_man_delegate=*/nullptr, /*frame_driver=*/nullptr);
 
   EXPECT_CALL(*last_mock_filler(), FillUsernameAndPassword(_, _)).Times(0);
 
-  ON_CALL(client(), CanUseBiometricAuthForFilling).WillByDefault(Return(true));
+  ON_CALL(client(), IsReauthBeforeFillingRequired).WillByDefault(Return(true));
   EXPECT_CALL(*authenticator_ptr, AuthenticateWithMessage)
       .WillOnce(RunOnceCallback<1>(false));
   touch_to_fill_controller().OnCredentialSelected(credentials[0]);
@@ -515,7 +571,8 @@ TEST_F(TouchToFillControllerAutofillTest, Show_Empty) {
       {}, {},
       MakeTouchToFillControllerDelegate(
           autofill::mojom::SubmissionReadinessState::kNoInformation,
-          CreateMockFiller(),
+          CreateMockFiller(), form_to_fill(),
+          form_to_fill()->password_element_renderer_id,
           TouchToFillControllerAutofillDelegate::ShowHybridOption(false)),
       /*cred_man_delegate=*/nullptr, /*frame_driver=*/nullptr);
 }
@@ -536,7 +593,8 @@ TEST_F(TouchToFillControllerAutofillTest, Show_Insecure_Origin) {
       credentials, {},
       MakeTouchToFillControllerDelegate(
           autofill::mojom::SubmissionReadinessState::kNoInformation,
-          std::move(filler_to_pass),
+          std::move(filler_to_pass), form_to_fill(),
+          form_to_fill()->password_element_renderer_id,
           TouchToFillControllerAutofillDelegate::ShowHybridOption(false)),
       /*cred_man_delegate=*/nullptr, /*frame_driver=*/nullptr);
 }
@@ -566,7 +624,8 @@ TEST_F(TouchToFillControllerAutofillTest, Show_And_Fill_Android_Credential) {
       credentials, {},
       MakeTouchToFillControllerDelegate(
           autofill::mojom::SubmissionReadinessState::kNoInformation,
-          CreateMockFiller(),
+          CreateMockFiller(), form_to_fill(),
+          form_to_fill()->password_element_renderer_id,
           TouchToFillControllerAutofillDelegate::ShowHybridOption(false)),
       /*cred_man_delegate=*/nullptr, /*frame_driver=*/nullptr);
 
@@ -574,7 +633,7 @@ TEST_F(TouchToFillControllerAutofillTest, Show_And_Fill_Android_Credential) {
   EXPECT_CALL(*last_mock_filler(),
               FillUsernameAndPassword(std::u16string(u"bob"),
                                       std::u16string(u"s3cr3t")));
-  ON_CALL(client(), CanUseBiometricAuthForFilling).WillByDefault(Return(false));
+  ON_CALL(client(), IsReauthBeforeFillingRequired).WillByDefault(Return(false));
   touch_to_fill_controller().OnCredentialSelected(credentials[1]);
 
   auto entries = test_recorder().GetEntriesByName(UkmBuilder::kEntryName);
@@ -620,7 +679,8 @@ TEST_F(TouchToFillControllerAutofillTest, Show_Orders_Credentials) {
       credentials, {},
       MakeTouchToFillControllerDelegate(
           autofill::mojom::SubmissionReadinessState::kNoInformation,
-          CreateMockFiller(),
+          CreateMockFiller(), form_to_fill(),
+          form_to_fill()->username_element_renderer_id,
           TouchToFillControllerAutofillDelegate::ShowHybridOption(false)),
       /*cred_man_delegate=*/nullptr, /*frame_driver=*/nullptr);
 }
@@ -637,7 +697,8 @@ TEST_F(TouchToFillControllerAutofillTest, Dismiss) {
       credentials, {},
       MakeTouchToFillControllerDelegate(
           autofill::mojom::SubmissionReadinessState::kNoInformation,
-          CreateMockFiller(),
+          CreateMockFiller(), form_to_fill(),
+          form_to_fill()->password_element_renderer_id,
           TouchToFillControllerAutofillDelegate::ShowHybridOption(false)),
       /*cred_man_delegate=*/nullptr, /*frame_driver=*/nullptr);
 
@@ -669,7 +730,8 @@ TEST_F(TouchToFillControllerAutofillTest, ManagePasswordsSelected) {
       credentials, {},
       MakeTouchToFillControllerDelegate(
           autofill::mojom::SubmissionReadinessState::kNoInformation,
-          CreateMockFiller(),
+          CreateMockFiller(), form_to_fill(),
+          form_to_fill()->password_element_renderer_id,
           TouchToFillControllerAutofillDelegate::ShowHybridOption(false)),
       /*cred_man_delegate=*/nullptr, /*frame_driver=*/nullptr);
 
@@ -709,11 +771,12 @@ TEST_F(TouchToFillControllerAutofillTest, DestroyedWhileAuthRunning) {
       credentials, {},
       MakeTouchToFillControllerDelegate(
           autofill::mojom::SubmissionReadinessState::kNoInformation,
-          CreateMockFiller(),
+          CreateMockFiller(), form_to_fill(),
+          form_to_fill()->password_element_renderer_id,
           TouchToFillControllerAutofillDelegate::ShowHybridOption(false)),
       /*cred_man_delegate=*/nullptr, /*frame_driver=*/nullptr);
 
-  ON_CALL(client(), CanUseBiometricAuthForFilling).WillByDefault(Return(true));
+  ON_CALL(client(), IsReauthBeforeFillingRequired).WillByDefault(Return(true));
   EXPECT_CALL(*authenticator_ptr, AuthenticateWithMessage);
   touch_to_fill_controller().OnCredentialSelected(credentials[0]);
 
@@ -737,7 +800,8 @@ TEST_F(TouchToFillControllerAutofillTest, ShowWebAuthnCredential) {
       {}, credentials,
       MakeTouchToFillControllerDelegate(
           autofill::mojom::SubmissionReadinessState::kNoInformation,
-          CreateMockFiller(),
+          CreateMockFiller(), form_to_fill(),
+          form_to_fill()->password_element_renderer_id,
           TouchToFillControllerAutofillDelegate::ShowHybridOption(false)),
       /*cred_man_delegate=*/nullptr, /*frame_driver=*/nullptr);
 
@@ -765,7 +829,8 @@ TEST_F(TouchToFillControllerAutofillTest, ShowAndSelectHybrid) {
       credentials, {},
       MakeTouchToFillControllerDelegate(
           autofill::mojom::SubmissionReadinessState::kNoInformation,
-          CreateMockFiller(),
+          CreateMockFiller(), form_to_fill(),
+          form_to_fill()->password_element_renderer_id,
           TouchToFillControllerAutofillDelegate::ShowHybridOption(true)),
       /*cred_man_delegate=*/nullptr, /*frame_driver=*/nullptr);
 
@@ -794,7 +859,8 @@ TEST_F(TouchToFillControllerAutofillTest, ShowCredManEntryIfThereArePasskeys) {
       credentials, {},
       MakeTouchToFillControllerDelegate(
           autofill::mojom::SubmissionReadinessState::kNoInformation,
-          CreateMockFiller(),
+          CreateMockFiller(), form_to_fill(),
+          form_to_fill()->password_element_renderer_id,
           TouchToFillControllerAutofillDelegate::ShowHybridOption(false)),
       &cred_man_delegate, /*frame_driver=*/nullptr);
 }
@@ -812,7 +878,8 @@ TEST_F(TouchToFillControllerAutofillTest,
       {}, {},
       MakeTouchToFillControllerDelegate(
           autofill::mojom::SubmissionReadinessState::kNoInformation,
-          CreateMockFiller(),
+          CreateMockFiller(), form_to_fill(),
+          form_to_fill()->password_element_renderer_id,
           TouchToFillControllerAutofillDelegate::ShowHybridOption(false)),
       &cred_man_delegate, /*frame_driver=*/nullptr);
 }
@@ -831,9 +898,32 @@ TEST_F(TouchToFillControllerAutofillTest, NoCredManEntryIfNoPasskeys) {
       credentials, {},
       MakeTouchToFillControllerDelegate(
           autofill::mojom::SubmissionReadinessState::kNoInformation,
-          CreateMockFiller(),
+          CreateMockFiller(), form_to_fill(),
+          form_to_fill()->password_element_renderer_id,
           TouchToFillControllerAutofillDelegate::ShowHybridOption(false)),
       &cred_man_delegate, /*frame_driver=*/nullptr);
+}
+
+TEST_F(TouchToFillControllerAutofillTest,
+       ShouldNotShowTouchToFillForNewPasswordField) {
+  base::test::ScopedFeatureList enabledFeatures(
+      password_manager::features::kPasswordSuggestionBottomSheetV2);
+
+  const UiCredential credentials[] = {
+      MakeUiCredential({.username = "alice", .password = "p4ssw0rd"})};
+  MockWebAuthnCredManDelegate cred_man_delegate;
+  password_manager::PasswordForm change_password_form(*form_to_fill());
+  change_password_form.new_password_element_renderer_id =
+      autofill::FieldRendererId(3);
+  bool is_shown = touch_to_fill_controller().Show(
+      credentials, {},
+      MakeTouchToFillControllerDelegate(
+          autofill::mojom::SubmissionReadinessState::kNoInformation,
+          CreateMockFiller(), &change_password_form,
+          change_password_form.new_password_element_renderer_id,
+          TouchToFillControllerAutofillDelegate::ShowHybridOption(false)),
+      &cred_man_delegate, /*frame_driver=*/nullptr);
+  EXPECT_FALSE(is_shown);
 }
 
 class TouchToFillControllerAutofillTestWithSubmissionReadinessVariationTest
@@ -855,7 +945,8 @@ TEST_P(TouchToFillControllerAutofillTestWithSubmissionReadinessVariationTest,
   touch_to_fill_controller().Show(
       credentials, {},
       MakeTouchToFillControllerDelegate(
-          submission_readiness, CreateMockFiller(),
+          submission_readiness, CreateMockFiller(), form_to_fill(),
+          form_to_fill()->password_element_renderer_id,
           TouchToFillControllerAutofillDelegate::ShowHybridOption(false)),
       /*cred_man_delegate=*/nullptr, /*frame_driver=*/nullptr);
 

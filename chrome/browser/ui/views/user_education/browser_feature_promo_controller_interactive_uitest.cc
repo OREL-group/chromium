@@ -141,10 +141,11 @@ class BrowserFeaturePromoControllerUiTest : public InteractiveFeaturePromoTest {
                     user_action_tester_.GetActionCount(
                         std::string("UserEducation.MessageAction.Snooze.")
                             .append(iph_feature.name)));
-          EXPECT_EQ(abort_count,
-                    user_action_tester_.GetActionCount(
-                        std::string("UserEducation.MessageAction.Abort.")
-                            .append(iph_feature.name)));
+          EXPECT_EQ(
+              abort_count,
+              user_action_tester_.GetActionCount(
+                  std::string("UserEducation.MessageAction.AbortedByFeature.")
+                      .append(iph_feature.name)));
           EXPECT_EQ(
               feature_engaged_count,
               user_action_tester_.GetActionCount(
@@ -166,7 +167,7 @@ class BrowserFeaturePromoControllerUiTest : public InteractiveFeaturePromoTest {
               snooze_count);
           histogram_tester_.ExpectBucketCount(
               action_name,
-              static_cast<int>(FeaturePromoClosedReason::kAbortPromo),
+              static_cast<int>(FeaturePromoClosedReason::kAbortedByFeature),
               abort_count);
           histogram_tester_.ExpectBucketCount(
               action_name,
@@ -329,10 +330,9 @@ IN_PROC_BROWSER_TEST_F(BrowserFeaturePromoControllerActivationUiTest,
       WithView(kBrowserViewElementId,
                [&widget](BrowserView* browser_view) {
                  views::Widget::InitParams params(
+                     views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET,
                      views::Widget::InitParams::TYPE_WINDOW);
                  params.context = browser_view->GetWidget()->GetNativeWindow();
-                 params.ownership =
-                     views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
                  params.bounds = gfx::Rect(0, 0, 200, 200);
                  widget->Init(std::move(params));
 

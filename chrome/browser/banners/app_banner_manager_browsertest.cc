@@ -123,9 +123,7 @@ class AppBannerManagerTest : public AppBannerManager {
     InstallableParams params;
     params.valid_primary_icon = true;
     params.installable_criteria =
-        base::FeatureList::IsEnabled(features::kUniversalInstallManifest)
-            ? InstallableCriteria::kImplicitManifestFieldsHTML
-            : InstallableCriteria::kValidManifestWithIcons;
+        InstallableCriteria::kImplicitManifestFieldsHTML;
     params.fetch_screenshots = true;
     return params;
   }
@@ -139,7 +137,7 @@ class AppBannerManagerTest : public AppBannerManager {
                                    const GURL& validated_url,
                                    const blink::mojom::Manifest& manifest,
                                    NativeCheckCallback callback) override {
-    NOTREACHED_NORETURN();
+    NOTREACHED();
   }
 
   void OnWebAppInstallableCheckedNoErrors(
@@ -937,7 +935,8 @@ IN_PROC_BROWSER_TEST_F(AppBannerManagerPrerenderBrowserTest,
 
   // Load a page in the prerender.
   GURL prerender_url = GetBannerURL();
-  const int host_id = prerender_test_helper().AddPrerender(prerender_url);
+  const content::FrameTreeNodeId host_id =
+      prerender_test_helper().AddPrerender(prerender_url);
   content::test::PrerenderHostObserver host_observer(*web_contents(), host_id);
   EXPECT_FALSE(host_observer.was_activated());
   EXPECT_EQ(manager->state(), AppBannerManager::State::INACTIVE);
@@ -1062,68 +1061,7 @@ IN_PROC_BROWSER_TEST_F(AppBannerManagerBrowserTest, PendingServiceWorker) {
             u"Manifest test app");
 }
 
-enum class InstallableCriteriaType {
-  kValidManifestWithIcons,
-  kImplicitManifestFields,
-  kUniversalInstallRootScopeNoManifest
-};
-
-class AppBannerInstallCriteriaTest
-    : public AppBannerManagerBrowserTest,
-      public testing::WithParamInterface<InstallableCriteriaType> {
- public:
-  AppBannerInstallCriteriaTest() {
-    switch (GetParam()) {
-      case InstallableCriteriaType::kValidManifestWithIcons:
-        scoped_feature_list_.InitWithFeatures(
-            {}, {features::kUniversalInstallManifest,
-                 features::kUniversalInstallIcon});
-        break;
-      case InstallableCriteriaType::kImplicitManifestFields:
-        scoped_feature_list_.InitWithFeatures(
-            {features::kUniversalInstallManifest,
-             features::kUniversalInstallIcon},
-            {});
-        break;
-      case InstallableCriteriaType::kUniversalInstallRootScopeNoManifest:
-        scoped_feature_list_.InitWithFeatures(
-            {features::kUniversalInstallManifest,
-             features::kUniversalInstallIcon,
-             features::kUniversalInstallRootScopeNoManifest},
-            {});
-        break;
-    }
-  }
-
- public:
-  ~AppBannerInstallCriteriaTest() override = default;
-
-  AppBannerInstallCriteriaTest(const AppBannerInstallCriteriaTest&) = delete;
-  AppBannerInstallCriteriaTest& operator=(const AppBannerInstallCriteriaTest&) =
-      delete;
-
-  void SetUpOnMainThread() override {
-    AppBannerManagerBrowserTest::SetUpOnMainThread();
-  }
-
-  void CheckBannerResult(AppBannerManagerTest* manager) {
-    if (GetParam() == InstallableCriteriaType::kValidManifestWithIcons) {
-      ASSERT_EQ(manager->state(), AppBannerManager::State::COMPLETE);
-      EXPECT_EQ(manager->GetInstallableWebAppCheckResult(),
-                InstallableWebAppCheckResult::kNo);
-    } else {  // InstallableCriteriaType::kImplicitManifestFields
-      ASSERT_EQ(manager->state(),
-                AppBannerManager::State::PENDING_PROMPT_NOT_CANCELED);
-      EXPECT_EQ(manager->GetInstallableWebAppCheckResult(),
-                InstallableWebAppCheckResult::kYes_Promotable);
-    }
-  }
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
-};
-
-IN_PROC_BROWSER_TEST_P(AppBannerInstallCriteriaTest, ValidManifestShowBanner) {
+IN_PROC_BROWSER_TEST_F(AppBannerManagerBrowserTest, ValidManifestShowBanner) {
   std::unique_ptr<AppBannerManagerTest> manager(CreateAppBannerManager());
   RunBannerTest(
       web_contents(), manager.get(),
@@ -1135,60 +1073,41 @@ IN_PROC_BROWSER_TEST_P(AppBannerInstallCriteriaTest, ValidManifestShowBanner) {
             InstallableWebAppCheckResult::kYes_Promotable);
 }
 
-IN_PROC_BROWSER_TEST_P(AppBannerInstallCriteriaTest, ImplicitName) {
+IN_PROC_BROWSER_TEST_F(AppBannerManagerBrowserTest, ImplicitName) {
   std::unique_ptr<AppBannerManagerTest> manager(CreateAppBannerManager());
 
   GURL test_url = embedded_test_server()->GetURL(
       "/banners/manifest_test_page.html?manifest="
       "manifest_empty_name_short_name.json&application-name=TestApp");
 
-  std::optional<InstallableStatusCode> expected_histogram_code =
-      (GetParam() == InstallableCriteriaType::kValidManifestWithIcons)
-          ? std::make_optional(
-                InstallableStatusCode::MANIFEST_MISSING_NAME_OR_SHORT_NAME)
-          : std::nullopt;
-  RunBannerTest(web_contents(), manager.get(), test_url,
-                expected_histogram_code);
+  RunBannerTest(web_contents(), manager.get(), test_url, std::nullopt);
 
-  CheckBannerResult(manager.get());
+  ASSERT_EQ(manager->state(),
+            AppBannerManager::State::PENDING_PROMPT_NOT_CANCELED);
+  EXPECT_EQ(manager->GetInstallableWebAppCheckResult(),
+            InstallableWebAppCheckResult::kYes_Promotable);
   ASSERT_TRUE(manager->GetCurrentBannerConfig());
-  if (GetParam() != InstallableCriteriaType::kValidManifestWithIcons) {
     EXPECT_EQ(manager->GetCurrentBannerConfig()->GetWebOrNativeAppName(),
               u"TestApp");
-  }
 }
 
-IN_PROC_BROWSER_TEST_P(AppBannerInstallCriteriaTest,
-                       ImplicitNameDocumentTitle) {
+IN_PROC_BROWSER_TEST_F(AppBannerManagerBrowserTest, ImplicitNameDocumentTitle) {
   std::unique_ptr<AppBannerManagerTest> manager(CreateAppBannerManager());
 
   GURL test_url = embedded_test_server()->GetURL(
       "/banners/manifest_test_page.html?manifest="
       "manifest_empty_name_short_name.json");
 
-  std::optional<InstallableStatusCode> expected_histogram_code =
-      (GetParam() == InstallableCriteriaType::kValidManifestWithIcons)
-          ? std::make_optional(
-                InstallableStatusCode::MANIFEST_MISSING_NAME_OR_SHORT_NAME)
-          : std::nullopt;
-  RunBannerTest(web_contents(), manager.get(), test_url,
-                expected_histogram_code);
+  RunBannerTest(web_contents(), manager.get(), test_url, std::nullopt);
 
-  CheckBannerResult(manager.get());
+  ASSERT_EQ(manager->state(),
+            AppBannerManager::State::PENDING_PROMPT_NOT_CANCELED);
+  EXPECT_EQ(manager->GetInstallableWebAppCheckResult(),
+            InstallableWebAppCheckResult::kYes_Promotable);
   ASSERT_TRUE(manager->GetCurrentBannerConfig());
-  if (GetParam() != InstallableCriteriaType::kValidManifestWithIcons) {
     EXPECT_EQ(manager->GetCurrentBannerConfig()->GetWebOrNativeAppName(),
               u"Web app banner test page");
-  }
 }
-
-INSTANTIATE_TEST_SUITE_P(
-    All,
-    AppBannerInstallCriteriaTest,
-    testing::Values(
-        InstallableCriteriaType::kValidManifestWithIcons,
-        InstallableCriteriaType::kImplicitManifestFields,
-        InstallableCriteriaType::kUniversalInstallRootScopeNoManifest));
 
 #if !BUILDFLAG(IS_ANDROID)
 // TODO(http://crbug.com/329255543): Add the config data after the struct is

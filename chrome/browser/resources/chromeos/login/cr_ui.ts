@@ -148,7 +148,13 @@ export class Oobe extends DisplayManager {
         // TODO(b/260015541): migrate logic to dedicated test api.
         chrome.send(
             'toggleFakeEnrollmentAndCompleteLogin',
-            [username, OobeTypes.LicenseType.ENTERPRISE],
+            [
+              username,
+              gaiaId,
+              password,
+              /*using_saml*/ false,
+              OobeTypes.LicenseType.ENTERPRISE,
+            ],
         );
       });
     }
@@ -229,8 +235,6 @@ export class Oobe extends DisplayManager {
       const localizedString = loadTimeData.getValue(stringName);
       document.documentElement.setAttribute(attribute, localizedString);
     }
-    document.documentElement.toggleAttribute(
-        'tablet', loadTimeData.getBoolean('isInTabletMode'));
 
     document.querySelector<ApiKeysNoticeElement>('#api-keys-notice')
         ?.updateLocaleAndMaybeShowNotice();
@@ -241,7 +245,7 @@ export class Oobe extends DisplayManager {
    * @param isInTabletMode True when in tablet mode.
    */
   static setTabletModeState(isInTabletMode: boolean): void {
-    Oobe.getInstance().setTabletModeState(isInTabletMode);
+    document.documentElement.toggleAttribute('tablet', isInTabletMode);
   }
 
   /**

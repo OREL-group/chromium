@@ -25,7 +25,6 @@ struct BeginFrameArgs;
 namespace cc {
 struct BeginMainFrameMetrics;
 struct CommitState;
-struct WebVitalMetrics;
 
 struct ApplyViewportChangesArgs {
   // Scroll offset delta of the inner (visual) viewport.
@@ -177,7 +176,6 @@ class CC_EXPORT LayerTreeHostClient {
                          base::TimeTicks commit_start_time,
                          base::TimeTicks commit_finish_time) = 0;
   virtual void DidCommitAndDrawFrame(int source_frame_number) = 0;
-  virtual void DidReceiveCompositorFrameAck() = 0;
   virtual void DidCompletePageScaleAnimation(int source_frame_number) = 0;
   virtual void DidPresentCompositorFrame(
       uint32_t frame_token,
@@ -202,15 +200,21 @@ class CC_EXPORT LayerTreeHostClient {
   virtual std::unique_ptr<BeginMainFrameMetrics> GetBeginMainFrameMetrics() = 0;
   virtual void NotifyThroughputTrackerResults(CustomTrackerResults results) = 0;
 
-  // Should only be implemented by Blink.
-  virtual std::unique_ptr<WebVitalMetrics> GetWebVitalMetrics() = 0;
-
   virtual void RunPaintBenchmark(int repeat_count,
                                  PaintBenchmarkResult& result) {}
 
   // Return a string that is the paused debugger message for the heads-up
   // display overlay.
   virtual std::string GetPausedDebuggerLocalizedMessage();
+
+  // This is an inaccurate signal that has been used to represent that content
+  // was displayed. This actually maps to the removal of backpressure by the
+  // GPU. This can be signalled when the GPU attempts to Draw; when a submitted
+  // frame, that has not drawn, is being replaced by a newer one; or merged with
+  // future OnBeginFrames.
+  //
+  // To determine when presentation occurred see `DidPresentCompositorFrame`.
+  virtual void DidReceiveCompositorFrameAckDeprecatedForCompositor() {}
 
  protected:
   virtual ~LayerTreeHostClient() = default;

@@ -31,6 +31,7 @@
 #include "content/public/browser/web_ui_data_source.h"
 #include "content/public/common/content_features.h"
 #include "media/base/media_switches.h"
+#include "ui/accessibility/accessibility_features.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/webui/web_ui_util.h"
 
@@ -57,6 +58,24 @@ std::u16string GetHelpUrlWithBoard(const std::u16string& original_url) {
 
 }  // namespace
 #endif
+
+void AddAxAnnotationsSectionStrings(content::WebUIDataSource* html_source) {
+  static constexpr webui::LocalizedString kLocalizedStrings[] = {
+      {"mainNodeAnnotationsDownloadErrorLabel",
+       IDS_SETTINGS_MAIN_NODE_ANNOTATIONS_DOWNLOAD_ERROR},
+      {"mainNodeAnnotationsDownloadProgressLabel",
+       IDS_SETTINGS_MAIN_NODE_ANNOTATIONS_DOWNLOAD_PROGRESS},
+      {"mainNodeAnnotationsDownloadingLabel",
+       IDS_SETTINGS_MAIN_NODE_ANNOTATIONS_DOWNLOADING},
+      {"mainNodeAnnotationsTitle", IDS_SETTINGS_MAIN_NODE_ANNOTATIONS_TITLE},
+      {"mainNodeAnnotationsSubtitle",
+       IDS_SETTINGS_MAIN_NODE_ANNOTATIONS_SUBTITLE},
+  };
+  html_source->AddLocalizedStrings(kLocalizedStrings);
+  html_source->AddBoolean(
+      "mainNodeAnnotationsEnabled",
+      base::FeatureList::IsEnabled(features::kMainNodeAnnotations));
+}
 
 void AddCaptionSubpageStrings(content::WebUIDataSource* html_source) {
   static constexpr webui::LocalizedString kLocalizedStrings[] = {
@@ -98,8 +117,14 @@ void AddCaptionSubpageStrings(content::WebUIDataSource* html_source) {
        IDS_SETTINGS_CAPTIONS_MANAGE_LANGUAGES_SUBTITLE},
       {"captionsLiveTranslateTargetLanguage",
        IDS_SETTINGS_CAPTIONS_LIVE_TRANSLATE_TARGET_LANGUAGE},
+      {"captionsLiveTranslateTargetLanguageSubtitle",
+       IDS_SETTINGS_CAPTIONS_LIVE_TRANSLATE_TARGET_LANGUAGE_SUBTITLE},
       {"removeLanguageAriaLabel",
        IDS_SETTINGS_CAPTIONS_REMOVE_LANGUAGE_ARIA_LABEL},
+      {"removeLanguageLabel", IDS_SETTINGS_CAPTIONS_REMOVE_LANGUAGE_LABEL},
+      {"makeDefaultLanguageLabel",
+       IDS_SETTINGS_CAPTIONS_MAKE_DEFAULT_LANGUAGE_LABEL},
+      {"defaultLanguageLabel", IDS_SETTINGS_CAPTIONS_DEFAULT_LANGUAGE_LABEL},
   };
   html_source->AddLocalizedStrings(kLocalizedStrings);
 
@@ -138,8 +163,7 @@ void AddLiveCaptionSectionStrings(content::WebUIDataSource* html_source) {
   const bool liveCaptionMultiLanguageEnabled =
       base::FeatureList::IsEnabled(media::kLiveCaptionMultiLanguage);
 
-  const bool liveTranslateEnabled =
-      base::FeatureList::IsEnabled(media::kLiveTranslate);
+  const bool liveTranslateEnabled = media::IsLiveTranslateEnabled();
 
   const int live_caption_subtitle_message =
       GetLiveCaptionSubtitle(liveCaptionMultiLanguageEnabled);

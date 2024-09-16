@@ -174,13 +174,13 @@ bool IsNodeIdIntAttribute(ax::mojom::IntAttribute attr) {
     case ax::mojom::IntAttribute::kAriaCellRowSpan:
     case ax::mojom::IntAttribute::kImageAnnotationStatus:
     case ax::mojom::IntAttribute::kDropeffectDeprecated:
-    case ax::mojom::IntAttribute::kDOMNodeId:
+    case ax::mojom::IntAttribute::kDOMNodeIdDeprecated:
     case ax::mojom::IntAttribute::kAriaNotificationInterruptDeprecated:
     case ax::mojom::IntAttribute::kAriaNotificationPriorityDeprecated:
       return false;
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return false;
 }
 
@@ -483,9 +483,11 @@ bool AXNodeData::GetHtmlAttribute(const char* attribute,
 }
 
 void AXNodeData::AddChildTreeId(const AXTreeID& tree_id) {
-  DCHECK(!HasChildTreeID());
+  if (HasStringAttribute(ax::mojom::StringAttribute::kChildTreeId)) {
+    RemoveStringAttribute(ax::mojom::StringAttribute::kChildTreeId);
+  }
   if (tree_id.type() == ax::mojom::AXTreeIDType::kUnknown) {
-    DUMP_WILL_BE_NOTREACHED_NORETURN();
+    DUMP_WILL_BE_NOTREACHED();
     return;
   }
   std::string tree_id_str = tree_id.ToString();
@@ -640,6 +642,10 @@ AXTextAttributes AXNodeData::GetTextAttributes() const {
   return text_attributes;
 }
 
+int AXNodeData::GetDOMNodeId() const {
+  return id > 0 ? id : 0;
+}
+
 void AXNodeData::SetName(const std::string& name) {
   // Elements with role='presentation' have Role::kNone. They should not be
   // named. Objects with Role::kUnknown were never given a role. This check
@@ -774,13 +780,6 @@ bool AXNodeData::HasTextStyle(ax::mojom::TextStyle text_style_enum) const {
                    static_cast<uint32_t>(text_style_enum));
 }
 
-bool AXNodeData::HasDropeffect(ax::mojom::Dropeffect dropeffect_enum) const {
-  int32_t dropeffect =
-      GetIntAttribute(ax::mojom::IntAttribute::kDropeffectDeprecated);
-  return IsFlagSet(static_cast<uint32_t>(dropeffect),
-                   static_cast<uint32_t>(dropeffect_enum));
-}
-
 void AXNodeData::AddState(ax::mojom::State state_enum) {
   DCHECK_GT(static_cast<int>(state_enum),
             static_cast<int>(ax::mojom::State::kNone));
@@ -800,7 +799,7 @@ void AXNodeData::RemoveState(ax::mojom::State state_enum) {
 void AXNodeData::AddAction(ax::mojom::Action action_enum) {
   switch (action_enum) {
     case ax::mojom::Action::kNone:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
 
     // Note: all of the attributes are included here explicitly, rather than
@@ -858,6 +857,14 @@ void AXNodeData::AddAction(ax::mojom::Action action_enum) {
   }
 
   actions = ModifyFlag(actions, static_cast<uint32_t>(action_enum), true);
+}
+
+void AXNodeData::RemoveAction(ax::mojom::Action action_enum) {
+  DCHECK_GT(static_cast<int>(action_enum),
+            static_cast<int>(ax::mojom::Action::kNone));
+  DCHECK_LE(static_cast<int>(action_enum),
+            static_cast<int>(ax::mojom::Action::kMaxValue));
+  actions = ModifyFlag(actions, static_cast<uint64_t>(action_enum), false);
 }
 
 void AXNodeData::AddTextStyle(ax::mojom::TextStyle text_style_enum) {
@@ -1232,7 +1239,7 @@ std::string AXNodeData::ToString(bool verbose) const {
           GetStringAttribute(ax::mojom::StringAttribute::kClassName).c_str());
     }
     std::string id_attr;
-    if (GetHtmlAttribute("id", &id_attr)) {
+    if (GetStringAttribute(ax::mojom::StringAttribute::kHtmlId, &id_attr)) {
       result += base::StringPrintf("#%s", id_attr.c_str());
     }
     result += ">";
@@ -1667,8 +1674,7 @@ std::string AXNodeData::ToString(bool verbose) const {
       case ax::mojom::IntAttribute::kDropeffectDeprecated:
         result += " dropeffect=" + value;
         break;
-      case ax::mojom::IntAttribute::kDOMNodeId:
-        result += " dom_node_id=" + value;
+      case ax::mojom::IntAttribute::kDOMNodeIdDeprecated:
         break;
       case ax::mojom::IntAttribute::kAriaNotificationInterruptDeprecated:
         result +=
@@ -1692,6 +1698,12 @@ std::string AXNodeData::ToString(bool verbose) const {
     switch (string_attribute.first) {
       case ax::mojom::StringAttribute::kAccessKey:
         result += " access_key=" + value;
+        break;
+      case ax::mojom::StringAttribute::kAriaCellColumnIndexText:
+        result += " aria_cell_column_index_text=" + value;
+        break;
+      case ax::mojom::StringAttribute::kAriaCellRowIndexText:
+        result += " aria_cell_row_index_text=" + value;
         break;
       case ax::mojom::StringAttribute::kAriaInvalidValueDeprecated:
         result += " aria_invalid_value=" + value;
@@ -1790,6 +1802,7 @@ std::string AXNodeData::ToString(bool verbose) const {
         result += " virtual_content=" + value;
         break;
       case ax::mojom::StringAttribute::kClassName:
+      case ax::mojom::StringAttribute::kHtmlId:
       case ax::mojom::StringAttribute::kHtmlTag:
       case ax::mojom::StringAttribute::kRole:
       case ax::mojom::StringAttribute::kUrl:
@@ -2136,25 +2149,6 @@ size_t AXNodeData::AXNodeDataSize::ByteSize() const {
   return int_attribute_size + float_attribute_size + bool_attribute_size +
          string_attribute_size + int_list_attribhute_size +
          string_list_attribute_size + html_attribute_size + child_ids_size;
-}
-
-std::string AXNodeData::DropeffectBitfieldToString() const {
-  if (!HasIntAttribute(ax::mojom::IntAttribute::kDropeffectDeprecated)) {
-    return "";
-  }
-
-  std::string str;
-  for (int dropeffect_idx = static_cast<int>(ax::mojom::Dropeffect::kMinValue);
-       dropeffect_idx <= static_cast<int>(ax::mojom::Dropeffect::kMaxValue);
-       ++dropeffect_idx) {
-    ax::mojom::Dropeffect dropeffect_enum =
-        static_cast<ax::mojom::Dropeffect>(dropeffect_idx);
-    if (HasDropeffect(dropeffect_enum))
-      str += " " + std::string(ui::ToString(dropeffect_enum));
-  }
-
-  // Removing leading space in final string.
-  return str.substr(1);
 }
 
 }  // namespace ui

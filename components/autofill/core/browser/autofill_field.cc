@@ -63,7 +63,9 @@ static constexpr auto kAutofillHeuristicsVsHtmlOverrides =
          {ADDRESS_HOME_DEPENDENT_LOCALITY, HtmlFieldType::kAddressLine3},
          {ADDRESS_HOME_OVERFLOW_AND_LANDMARK, HtmlFieldType::kAddressLine2},
          {ADDRESS_HOME_OVERFLOW, HtmlFieldType::kAddressLine2},
-         {ADDRESS_HOME_OVERFLOW, HtmlFieldType::kAddressLine3}});
+         {ADDRESS_HOME_OVERFLOW, HtmlFieldType::kAddressLine3},
+         {ADDRESS_HOME_HOUSE_NUMBER, HtmlFieldType::kStreetAddress},
+         {ADDRESS_HOME_STREET_NAME, HtmlFieldType::kStreetAddress}});
 
 // This list includes pairs (heuristic_type, server_type) that express which
 // heuristics predictions should be prioritized over server predictions. The
@@ -126,9 +128,7 @@ bool AreCollapsibleLogEvents(const AutofillField::FieldLogEventType& event1,
 // want to prioritize local heuristics over the autocomplete type.
 bool PreferHeuristicOverHtml(FieldType heuristic_type,
                              HtmlFieldType html_type) {
-  return base::FeatureList::IsEnabled(
-             features::kAutofillLocalHeuristicsOverrides) &&
-         base::Contains(kAutofillHeuristicsVsHtmlOverrides,
+  return base::Contains(kAutofillHeuristicsVsHtmlOverrides,
                         std::make_pair(heuristic_type, html_type));
 }
 
@@ -139,9 +139,7 @@ bool PreferHeuristicOverHtml(FieldType heuristic_type,
 // can help the server to "learn" the correct classification for these fields.
 bool PreferHeuristicOverServer(FieldType heuristic_type,
                                FieldType server_type) {
-  return base::FeatureList::IsEnabled(
-             features::kAutofillLocalHeuristicsOverrides) &&
-         base::Contains(kAutofillHeuristicsVsServerOverrides,
+  return base::Contains(kAutofillHeuristicsVsServerOverrides,
                         std::make_pair(heuristic_type, server_type));
 }
 
@@ -234,7 +232,7 @@ bool AutofillField::server_type_prediction_is_override() const {
 void AutofillField::set_heuristic_type(HeuristicSource s, FieldType type) {
   if (type < 0 || type > MAX_VALID_FIELD_TYPE ||
       type == FIELD_WITH_DEFAULT_VALUE) {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     // This case should not be reachable; but since this has potential
     // implications on data uploaded to the server, better safe than sorry.
     type = UNKNOWN_TYPE;
@@ -309,7 +307,7 @@ AutofillType AutofillField::ComputedType() const {
     return AutofillType(server_type());
   }
 
-  // TODO(crbug/1441057) Delete this if-statement when
+  // TODO(crbug.com/40266396) Delete this if-statement when
   // features::kAutofillEnableExpirationDateImprovements has launched. This
   // should be covered by
   // FormStructureRationalizer::RationalizeAutocompleteAttributes.
@@ -394,6 +392,22 @@ AutofillType AutofillField::ComputedType() const {
           base::FeatureList::IsEnabled(
               features::kAutofillGivePrecedenceToNumericQuantities));
 
+    // Password Manager ignores the computed type - it looks at server
+    // predictions directly. Since many username fields also admit emails, we
+    // can thus give precedence to the EMAIL_ADDRESS classification. This will
+    // not affect Password Manager suggestions, but allow Autofill to provide
+    // email-related suggestions if Password Manager does not have any username
+    // suggestions to show.
+    // TODO: crbug.com/360791229 - Move into
+    // `kAutofillHeuristicsVsServerOverrides` once the feature is cleaned up.
+    const bool server_type_is_username_type =
+        server_type() == USERNAME || server_type() == SINGLE_USERNAME;
+    believe_server =
+        believe_server &&
+        !(heuristic_type() == EMAIL_ADDRESS && server_type_is_username_type &&
+          base::FeatureList::IsEnabled(
+              features::kAutofillGivePrecedenceToEmailOverUsername));
+
     if (believe_server)
       return AutofillType(server_type());
   }
@@ -431,11 +445,11 @@ bool AutofillField::IsFieldFillable() const {
 }
 
 bool AutofillField::HasExpirationDateType() const {
-  static constexpr std::array kExpirationDateTypes = {
+  static constexpr DenseSet kExpirationDateTypes = {
       CREDIT_CARD_EXP_MONTH, CREDIT_CARD_EXP_2_DIGIT_YEAR,
       CREDIT_CARD_EXP_4_DIGIT_YEAR, CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR,
       CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR};
-  return base::Contains(kExpirationDateTypes, Type().GetStorableType());
+  return kExpirationDateTypes.contains(Type().GetStorableType());
 }
 
 bool AutofillField::ShouldSuppressSuggestionsAndFillingByDefault() const {
@@ -454,7 +468,7 @@ bool AutofillField::IsCreditCardPrediction() const {
 
 void AutofillField::AppendLogEventIfNotRepeated(
     const FieldLogEventType& log_event) {
-  // TODO(crbug.com/1325851): Consider to use an Overflow event to stop
+  // TODO(crbug.com/40225658): Consider to use an Overflow event to stop
   // recording log events into |field_log_events_| to save memory when
   // |field_log_events_| reaches certain threshold, e.g. 1000.
 

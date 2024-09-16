@@ -31,7 +31,8 @@ Link::Link(const std::u16string& title, int text_context, int text_style)
   enabled_changed_subscription_ = AddEnabledChangedCallback(
       base::BindRepeating(&Link::RecalculateFont, base::Unretained(this)));
 
-  SetAccessibilityProperties(ax::mojom::Role::kLink, title);
+  GetViewAccessibility().SetRole(ax::mojom::Role::kLink);
+  GetViewAccessibility().SetName(title);
   // Prevent invisible links from being announced by screen reader.
   GetViewAccessibility().SetIsIgnored(title.empty());
 
@@ -142,9 +143,9 @@ void Link::OnGestureEvent(ui::GestureEvent* event) {
   if (!GetEnabled())
     return;
 
-  if (event->type() == ui::ET_GESTURE_TAP_DOWN) {
+  if (event->type() == ui::EventType::kGestureTapDown) {
     SetPressed(true);
-  } else if (event->type() == ui::ET_GESTURE_TAP) {
+  } else if (event->type() == ui::EventType::kGestureTap) {
     OnClick(*event);
   } else {
     SetPressed(false);

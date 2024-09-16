@@ -10,15 +10,16 @@
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_browser_main.h"
-#include "chrome/browser/chrome_browser_main_extra_parts.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/shell_integration.h"
 #include "chrome/browser/ui/accelerator_utils.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
-#include "chrome/browser/ui/startup/default_browser_prompt.h"
-#include "chrome/browser/ui/startup/default_browser_prompt_manager.h"
+#include "chrome/browser/ui/startup/default_browser_prompt/default_browser_prompt.h"
+#include "chrome/browser/ui/startup/default_browser_prompt/default_browser_prompt_manager.h"
 #include "chrome/browser/ui/startup/infobar_utils.h"
+#include "chrome/browser/ui/toolbar/app_menu_model.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/infobars/confirm_infobar.h"
@@ -42,33 +43,17 @@
 #include "ui/gfx/animation/animation_test_api.h"
 
 namespace {
-#if !BUILDFLAG(IS_LINUX)
-DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kFirstTabContents);
-#endif
 DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kSecondTabContents);
-
-const WebContentsInteractionTestUtil::DeepQuery kDefaultBrowserButton = {
-    "settings-ui", "settings-main", "settings-basic-page",
-    "settings-default-browser-page", "cr-button"};
 }  // namespace
 
-class DefaultBrowserInfobarInteractiveTest
-    : public WebUiInteractiveTestMixin<InteractiveBrowserTest> {
+class DefaultBrowserInfobarInteractiveTest : public InteractiveBrowserTest {
  public:
   void SetUp() override {
     scoped_feature_list_.InitAndDisableFeature(
         features::kDefaultBrowserPromptRefresh);
 
+    shell_integration::DefaultBrowserWorker::DisableSetAsDefaultForTesting();
     InteractiveBrowserTest::SetUp();
-  }
-
-  ConfirmInfoBar* GetActiveInfoBar() {
-    content::WebContents* web_contents =
-        browser()->tab_strip_model()->GetActiveWebContents();
-    infobars::ContentInfoBarManager* infobar_manager =
-        infobars::ContentInfoBarManager::FromWebContents(web_contents);
-    CHECK(infobar_manager);
-    return static_cast<ConfirmInfoBar*>(infobar_manager->infobars()[0]);
   }
 
  private:
@@ -79,19 +64,21 @@ IN_PROC_BROWSER_TEST_F(DefaultBrowserInfobarInteractiveTest,
                        ShowsDefaultBrowserPromptRefreshDisabled) {
   ShowPromptForTesting();
   RunTestSequence(
-      WaitForShow(ConfirmInfoBar::kInfoBarElementId), FlushEvents(),
+      WaitForShow(ConfirmInfoBar::kInfoBarElementId),
       AddInstrumentedTab(kSecondTabContents, GURL(chrome::kChromeUINewTabURL)),
       WaitForHide(ConfirmInfoBar::kInfoBarElementId));
 }
 
 class DefaultBrowserInfobarWithRefreshInteractiveTest
-    : public DefaultBrowserInfobarInteractiveTest {
+    : public WebUiInteractiveTestMixin<InteractiveBrowserTest> {
  public:
   void SetUp() override {
     scoped_feature_list_.InitAndEnableFeatureWithParameters(
         features::kDefaultBrowserPromptRefresh,
-        {{features::kShowDefaultBrowserInfoBar.name, "true"}});
+        {{features::kShowDefaultBrowserInfoBar.name, "true"},
+         {features::kShowDefaultBrowserAppMenuItem.name, "true"}});
 
+    shell_integration::DefaultBrowserWorker::DisableSetAsDefaultForTesting();
     InteractiveBrowserTest::SetUp();
   }
 
@@ -103,7 +90,7 @@ IN_PROC_BROWSER_TEST_F(DefaultBrowserInfobarWithRefreshInteractiveTest,
                        ShowsDefaultBrowserPromptOnNewTab) {
   DefaultBrowserPromptManager::GetInstance()->MaybeShowPrompt();
   RunTestSequence(
-      WaitForShow(ConfirmInfoBar::kInfoBarElementId), FlushEvents(),
+      WaitForShow(ConfirmInfoBar::kInfoBarElementId),
       AddInstrumentedTab(kSecondTabContents, GURL(chrome::kChromeUINewTabURL)),
       WaitForShow(ConfirmInfoBar::kInfoBarElementId));
 }
@@ -113,7 +100,7 @@ IN_PROC_BROWSER_TEST_F(DefaultBrowserInfobarWithRefreshInteractiveTest,
   int height;
   DefaultBrowserPromptManager::GetInstance()->MaybeShowPrompt();
   RunTestSequence(
-      WaitForShow(ConfirmInfoBar::kInfoBarElementId), FlushEvents(),
+      WaitForShow(ConfirmInfoBar::kInfoBarElementId),
       WithView(ConfirmInfoBar::kInfoBarElementId,
                [&height](ConfirmInfoBar* info_bar) {
                  height = info_bar->target_height_for_testing();
@@ -143,34 +130,22 @@ IN_PROC_BROWSER_TEST_F(DefaultBrowserInfobarWithRefreshInteractiveTest,
 }
 
 IN_PROC_BROWSER_TEST_F(DefaultBrowserInfobarWithRefreshInteractiveTest,
-                       RemovesAllBrowserPromptsOnAccept) {
-  DefaultBrowserPromptManager::GetInstance()->MaybeShowPrompt();
-  RunTestSequence(
-      WaitForShow(ConfirmInfoBar::kInfoBarElementId), FlushEvents(),
-      AddInstrumentedTab(kSecondTabContents, GURL(chrome::kChromeUINewTabURL)),
-      WaitForShow(ConfirmInfoBar::kInfoBarElementId),
-      PressButton(ConfirmInfoBar::kOkButtonElementId),
-      WaitForHide(ConfirmInfoBar::kInfoBarElementId), FlushEvents(),
-      SelectTab(kTabStripElementId, 0),
-      WaitForHide(ConfirmInfoBar::kInfoBarElementId));
-}
+                       DoesNotShowAppMenuItemOnIncognitoTab) {
+  ui::Accelerator incognito_accelerator;
+  chrome::AcceleratorProviderForBrowser(browser())->GetAcceleratorForCommandId(
+      IDC_NEW_INCOGNITO_WINDOW, &incognito_accelerator);
 
-// Linux test environment doesn't allow setting default via the
-// chrome://settings/defaultBrowser page.
-#if !BUILDFLAG(IS_LINUX)
-IN_PROC_BROWSER_TEST_F(DefaultBrowserInfobarWithRefreshInteractiveTest,
-                       RemovesAllBrowserPromptsOnSettingsChange) {
   DefaultBrowserPromptManager::GetInstance()->MaybeShowPrompt();
   RunTestSequence(
-      InstrumentTab(kFirstTabContents),
-      WaitForShow(ConfirmInfoBar::kInfoBarElementId),
-      NavigateWebContents(
-          kFirstTabContents,
-          GURL(chrome::GetSettingsUrl(chrome::kDefaultBrowserSubPage))),
-      ClickElement(kFirstTabContents, kDefaultBrowserButton),
-      WaitForHide(ConfirmInfoBar::kInfoBarElementId));
+      PressButton(kToolbarAppMenuButtonElementId),
+
+      WaitForShow(AppMenuModel::kSetBrowserAsDefaultMenuItem),
+      SendAccelerator(kBrowserViewElementId, incognito_accelerator),
+      InAnyContext(
+          WaitForShow(kBrowserViewElementId).SetTransitionOnlyOnEvent(true)),
+      InSameContext(
+          EnsureNotPresent(AppMenuModel::kSetBrowserAsDefaultMenuItem)));
 }
-#endif
 
 IN_PROC_BROWSER_TEST_F(DefaultBrowserInfobarWithRefreshInteractiveTest,
                        HandlesAcceptWithDisabledAnimation) {
@@ -206,7 +181,7 @@ IN_PROC_BROWSER_TEST_F(DefaultBrowserInfobarWithRefreshInteractiveTest,
   DefaultBrowserPromptManager::GetInstance()->MaybeShowPrompt();
   RunTestSequence(WaitForShow(ConfirmInfoBar::kInfoBarElementId),
                   // This flush is needed to prevent TSan builders from flaking.
-                  FlushEvents(),
+
                   PressButton(ConfirmInfoBar::kOkButtonElementId),
                   WaitForHide(ConfirmInfoBar::kInfoBarElementId));
 
@@ -223,13 +198,13 @@ IN_PROC_BROWSER_TEST_F(DefaultBrowserInfobarWithRefreshInteractiveTest,
   DefaultBrowserPromptManager::GetInstance()->MaybeShowPrompt();
   RunTestSequence(
       // Open two tabs
-      WaitForShow(ConfirmInfoBar::kInfoBarElementId), FlushEvents(),
+      WaitForShow(ConfirmInfoBar::kInfoBarElementId),
       AddInstrumentedTab(kSecondTabContents, GURL(chrome::kChromeUINewTabURL)),
       WaitForShow(ConfirmInfoBar::kInfoBarElementId),
       // Dismiss prompt on one tab
       PressButton(ConfirmInfoBar::kDismissButtonElementId),
       // Wait for hide
-      WaitForHide(ConfirmInfoBar::kInfoBarElementId), FlushEvents(),
+      WaitForHide(ConfirmInfoBar::kInfoBarElementId),
       // Move tab to new window
       InstrumentNextTab(kTabMovedToNewWindowId, AnyBrowser()),
       Do([&]() { chrome::MoveTabsToNewWindow(browser(), {1}); }),

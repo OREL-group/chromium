@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/compiler_specific.h"
 #include "base/containers/heap_array.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
@@ -339,7 +340,10 @@ GLDisplayEGL* GLSurfaceEGL::GetGLDisplayEGL() {
       GpuPreference::kDefault);
 }
 
-GLSurfaceEGL::~GLSurfaceEGL() = default;
+GLSurfaceEGL::~GLSurfaceEGL() {
+  // InvalidateWeakPtrs should be called from the concrete dtors.
+  CHECK(!HasWeakPtrs());
+}
 
 #if BUILDFLAG(IS_ANDROID)
 NativeViewGLSurfaceEGL::NativeViewGLSurfaceEGL(
@@ -703,7 +707,7 @@ void NativeViewGLSurfaceEGL::TraceSwapEvents(EGLuint64KHR oldFrameId) {
 
   const char* pending_symbols = valid_symbols.c_str();
   for (size_t i = 1; i < tracePairs.size(); i++) {
-    pending_symbols++;
+    UNSAFE_TODO(pending_symbols++);
     TRACE_EVENT_COPY_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP0(
         kSwapEventTraceCategories, pending_symbols, trace_id,
         tracePairs[i - 1].time);
@@ -981,6 +985,7 @@ void NativeViewGLSurfaceEGL::SetVSyncEnabled(bool enabled) {
 }
 
 NativeViewGLSurfaceEGL::~NativeViewGLSurfaceEGL() {
+  InvalidateWeakPtrs();
   Destroy();
 }
 
@@ -1065,7 +1070,8 @@ bool PbufferGLSurfaceEGL::IsOffscreen() {
 
 gfx::SwapResult PbufferGLSurfaceEGL::SwapBuffers(PresentationCallback callback,
                                                  gfx::FrameData data) {
-  NOTREACHED() << "Attempted to call SwapBuffers on a PbufferGLSurfaceEGL.";
+  NOTREACHED_IN_MIGRATION()
+      << "Attempted to call SwapBuffers on a PbufferGLSurfaceEGL.";
   return gfx::SwapResult::SWAP_FAILED;
 }
 
@@ -1110,7 +1116,7 @@ EGLSurface PbufferGLSurfaceEGL::GetHandle() {
 
 void* PbufferGLSurfaceEGL::GetShareHandle() {
 #if BUILDFLAG(IS_ANDROID)
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return nullptr;
 #else
   if (!display_->ext->b_EGL_ANGLE_query_surface_pointer)
@@ -1131,6 +1137,7 @@ void* PbufferGLSurfaceEGL::GetShareHandle() {
 }
 
 PbufferGLSurfaceEGL::~PbufferGLSurfaceEGL() {
+  InvalidateWeakPtrs();
   Destroy();
 }
 
@@ -1180,6 +1187,7 @@ void* SurfacelessEGL::GetShareHandle() {
 }
 
 SurfacelessEGL::~SurfacelessEGL() {
+  InvalidateWeakPtrs();
 }
 
 }  // namespace gl

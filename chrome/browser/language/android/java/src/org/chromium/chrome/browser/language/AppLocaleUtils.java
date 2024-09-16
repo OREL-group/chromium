@@ -14,8 +14,8 @@ import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 
 import org.chromium.base.BuildInfo;
-import org.chromium.base.BundleUtils;
 import org.chromium.base.LocaleUtils;
+import org.chromium.build.BuildConfig;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
 import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
 import org.chromium.components.language.LocaleManagerDelegate;
@@ -28,8 +28,8 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Provides utility functions to assist with overriding the application language.
- * This class manages the AppLanguagePref.
+ * Provides utility functions to assist with overriding the application language. This class manages
+ * the AppLanguagePref.
  */
 public class AppLocaleUtils {
     private AppLocaleUtils() {}
@@ -91,7 +91,7 @@ public class AppLocaleUtils {
      * Get the value of system App language using {@link LocaleManager}, Android ensures this
      * language is always supported by Chrome. If no override language is set
      * |APP_LOCALE_USE_SYSTEM_LANGUAGE| is returned. Only used on Android T (API level 33).
-     * TODO(crbug.com/1333981) Move to Android T.
+     * TODO(crbug.com/40228013) Move to Android T.
      */
     @RequiresApi(Build.VERSION_CODES.S)
     static @Nullable String getSystemManagedAppLanguage() {
@@ -106,8 +106,8 @@ public class AppLocaleUtils {
      * Gets the first original system locale from {@link LocaleManager}. This is the language that
      * Chrome would use if there was no override set. If there are no possible UI languages en-US is
      * returned since that is the default UI language in that case. Only used on Android T (API
-     * level 33).
-     * TODO(crbug.com/1333981) Move to Android T.
+     * level 33). TODO(crbug.com/40228013) Move to Android T.
+     *
      * @return The UI language of the system.
      */
     @RequiresApi(Build.VERSION_CODES.S)
@@ -159,7 +159,7 @@ public class AppLocaleUtils {
         // If this is not a bundle build or the default system language is being used the language
         // split should not be installed. Instead indicate that the listener completed successfully
         // since the language resources will already be present.
-        if (!BundleUtils.isBundle() || isFollowSystemLanguage(languageName)) {
+        if (!BuildConfig.IS_BUNDLE || isFollowSystemLanguage(languageName)) {
             wrappedListener.onComplete(true);
         } else {
             LanguageSplitInstaller.getInstance().installLanguage(languageName, wrappedListener);
@@ -167,8 +167,8 @@ public class AppLocaleUtils {
     }
 
     /**
-     * Sets the {@link LocaleManager} App language to |languageName|.
-     * TODO(crbug.com/1333981) Move to Android T.
+     * Sets the {@link LocaleManager} App language to |languageName|. TODO(crbug.com/40228013) Move
+     * to Android T.
      */
     @RequiresApi(Build.VERSION_CODES.S)
     private static void setSystemManagedAppLanguage(String languageName) {
@@ -176,9 +176,8 @@ public class AppLocaleUtils {
     }
 
     /**
-     * Get the LocaleManagerDelegate for {@link LocaleManager}.
-     * Only used on Android T+ (API level 33).
-     * TODO(crbug.com/1333981) Move to Android T.
+     * Get the LocaleManagerDelegate for {@link LocaleManager}. Only used on Android T+ (API level
+     * 33). TODO(crbug.com/40228013) Move to Android T.
      */
     @RequiresApi(Build.VERSION_CODES.S)
     static LocaleManagerDelegate getAppLocaleManagerDelegate() {
@@ -189,7 +188,7 @@ public class AppLocaleUtils {
      * Migrate the App override language from Chrome SharedPreferences to the {@link LocaleManager}
      * service if needed. A migration is only attempted once on Android T and done if there is a
      * Chrome SharedPreferences override language but no system App override language.
-     * TODO(crbug.com/1333981) Move to Android T. TODO(crbug.com/40846627) Remove migration after
+     * TODO(crbug.com/40228013) Move to Android T. TODO(crbug.com/40846627) Remove migration after
      * Oct 2023.
      */
     @RequiresApi(Build.VERSION_CODES.S)
@@ -225,8 +224,9 @@ public class AppLocaleUtils {
     /**
      * The LocaleManager API is only available on Android T. While using pre-release SDKs it is not
      * possible to use Build.VERSION_CODES.T. This method uses {@link BuildInfo.isAtLeastT} to check
-     * that the current SDK is T (API level 33).
-     * TODO(crbug.com/1333981) Remove when on released versions of the SDK.
+     * that the current SDK is T (API level 33). TODO(crbug.com/40228013) Remove when on released
+     * versions of the SDK.
+     *
      * @return True if the current Android SDK supports {@link LocaleManager}
      */
     @ChecksSdkIntAtLeast(api = 33)

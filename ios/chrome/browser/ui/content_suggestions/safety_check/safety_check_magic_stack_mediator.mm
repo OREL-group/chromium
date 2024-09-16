@@ -41,10 +41,14 @@
   std::unique_ptr<SafetyCheckObserverBridge> _safetyCheckManagerObserver;
   // Bridge to listen to pref changes.
   std::unique_ptr<PrefObserverBridge> _prefObserverBridge;
-  // Registrar for pref changes notifications.
+  // Registrar for local pref changes notifications.
   PrefChangeRegistrar _prefChangeRegistrar;
+  // Registrar for user pref changes notifications.
+  PrefChangeRegistrar _userPrefChangeRegistrar;
   // Local State prefs.
   raw_ptr<PrefService> _localState;
+  // User prefs.
+  raw_ptr<PrefService> _userState;
   AppState* _appState;
   // Used by the Safety Check (Magic Stack) module for the current Safety Check
   // state.
@@ -55,23 +59,26 @@
 - (instancetype)initWithSafetyCheckManager:
                     (IOSChromeSafetyCheckManager*)safetyCheckManager
                                 localState:(PrefService*)localState
+                                 userState:(PrefService*)userState
                                   appState:(AppState*)appState {
   self = [super init];
   if (self) {
     _safetyCheckManager = safetyCheckManager;
     _localState = localState;
+    _userState = userState;
     _appState = appState;
 
     [_appState addObserver:self];
 
-    if (!safety_check_prefs::IsSafetyCheckInMagicStackDisabled(_localState)) {
+    if (!safety_check_prefs::IsSafetyCheckInMagicStackDisabled(
+            IsHomeCustomizationEnabled() ? _userState : _localState)) {
       if (!_prefObserverBridge) {
         _prefObserverBridge = std::make_unique<PrefObserverBridge>(self);
       }
 
       _prefChangeRegistrar.Init(localState);
 
-      // TODO(crbug.com/1481230): Stop observing
+      // TODO(crbug.com/40930653): Stop observing
       // `kIosSettingsSafetyCheckLastRunTime` changes once the Settings Safety
       // Check is refactored to use the new Safety Check Manager.
       _prefObserverBridge->ObserveChangesForPreference(
@@ -84,7 +91,19 @@
           safety_check_prefs::kSafetyCheckInMagicStackDisabledPref,
           &_prefChangeRegistrar);
 
+      if (IsHomeCustomizationEnabled()) {
+        _userPrefChangeRegistrar.Init(userState);
+        _prefObserverBridge->ObserveChangesForPreference(
+            prefs::kHomeCustomizationMagicStackSafetyCheckEnabled,
+            &_userPrefChangeRegistrar);
+      }
+
       _safetyCheckState = [self initialSafetyCheckState];
+
+      if (ShouldHideSafetyCheckModuleIfNoIssues()) {
+        [self updateIssueCount:[_safetyCheckState numberOfIssues]
+               withPrefService:localState];
+      }
 
       _safetyCheckManagerObserver =
           std::make_unique<SafetyCheckObserverBridge>(self, safetyCheckManager);
@@ -92,7 +111,14 @@
       if (_appState.initStage > InitStageNormalUI &&
           _appState.firstSceneHasInitializedUI &&
           _safetyCheckState.runningState == RunningSafetyCheckState::kRunning) {
-        safetyCheckManager->StartSafetyCheck();
+        // When the Safety Check Notifications feature is enabled, the Magic
+        // Stack should never initiate a Safety Check run.
+        //
+        // TODO(crbug.com/354727175): Remove `StartSafetyCheck()` from the Magic
+        // Stack once Safety Check Notifications fully launches.
+        if (!IsSafetyCheckNotificationsEnabled()) {
+          safetyCheckManager->StartSafetyCheck();
+        }
       }
     }
   }
@@ -103,6 +129,10 @@
   _safetyCheckManagerObserver.reset();
   if (_prefObserverBridge) {
     _prefChangeRegistrar.RemoveAll();
+    if (IsHomeCustomizationEnabled()) {
+      _userPrefChangeRegistrar.RemoveAll();
+    }
+
     _prefObserverBridge.reset();
   }
   [_appState removeObserver:self];
@@ -113,7 +143,18 @@
 }
 
 - (void)disableModule {
-  safety_check_prefs::DisableSafetyCheckInMagicStack(_localState);
+  safety_check_prefs::DisableSafetyCheckInMagicStack(
+      IsHomeCustomizationEnabled() ? _userState : _localState);
+}
+
+- (void)reset {
+  _safetyCheckState = [[SafetyCheckState alloc]
+      initWithUpdateChromeState:UpdateChromeSafetyCheckState::kDefault
+                  passwordState:PasswordSafetyCheckState::kDefault
+              safeBrowsingState:SafeBrowsingSafetyCheckState::kDefault
+                   runningState:RunningSafetyCheckState::kDefault];
+  _safetyCheckState.audience = self;
+  _safetyCheckState.safetyCheckConsumerSource = self;
 }
 
 #pragma mark - SafetyCheckConsumerSource
@@ -131,19 +172,14 @@
 
 #pragma mark - SafetyCheckManagerObserver
 
-- (void)passwordCheckStateChanged:(PasswordSafetyCheckState)state {
+- (void)passwordCheckStateChanged:(PasswordSafetyCheckState)state
+           insecurePasswordCounts:(password_manager::InsecurePasswordCounts)
+                                      insecurePasswordCounts {
   _safetyCheckState.passwordState = state;
-
-  std::vector<password_manager::CredentialUIEntry> insecureCredentials =
-      _safetyCheckManager->GetInsecureCredentials();
-
-  password_manager::InsecurePasswordCounts counts =
-      password_manager::CountInsecurePasswordsPerInsecureType(
-          insecureCredentials);
-
-  _safetyCheckState.weakPasswordsCount = counts.weak_count;
-  _safetyCheckState.reusedPasswordsCount = counts.reused_count;
-  _safetyCheckState.compromisedPasswordsCount = counts.compromised_count;
+  _safetyCheckState.weakPasswordsCount = insecurePasswordCounts.weak_count;
+  _safetyCheckState.reusedPasswordsCount = insecurePasswordCounts.reused_count;
+  _safetyCheckState.compromisedPasswordsCount =
+      insecurePasswordCounts.compromised_count;
 }
 
 - (void)safeBrowsingCheckStateChanged:(SafeBrowsingSafetyCheckState)state {
@@ -158,7 +194,13 @@
   _safetyCheckState.runningState = state;
   _safetyCheckState.shouldShowSeeMore = [_safetyCheckState numberOfIssues] > 2;
 
-  if (safety_check_prefs::IsSafetyCheckInMagicStackDisabled(_localState)) {
+  if (ShouldHideSafetyCheckModuleIfNoIssues()) {
+    [self updateIssueCount:[_safetyCheckState numberOfIssues]
+           withPrefService:_localState];
+  }
+
+  if (safety_check_prefs::IsSafetyCheckInMagicStackDisabled(
+          IsHomeCustomizationEnabled() ? _userState : _localState)) {
     // Safety Check can be disabled by long-pressing the module, so
     // SafetyCheckManager can still be running and returning results even after
     // disabling.
@@ -169,11 +211,7 @@
   // running state changes; this avoids calling the consumer every time an
   // individual check state changes.
   _safetyCheckState.audience = self;
-  if (IsIOSMagicStackCollectionViewEnabled()) {
-    [_safetyCheckConsumer safetyCheckStateDidChange:_safetyCheckState];
-  } else {
-    [self.consumer showSafetyCheck:_safetyCheckState];
-  }
+  [_safetyCheckConsumer safetyCheckStateDidChange:_safetyCheckState];
 }
 
 - (void)safetyCheckManagerWillShutdown {
@@ -189,10 +227,18 @@
 // `StartSafetyCheck()` on an already-running Safety Check is a no-op.
 - (void)appState:(AppState*)appState
     willTransitionToInitStage:(InitStage)nextInitStage {
-  if (!safety_check_prefs::IsSafetyCheckInMagicStackDisabled(_localState) &&
+  if (!safety_check_prefs::IsSafetyCheckInMagicStackDisabled(
+          IsHomeCustomizationEnabled() ? _userState : _localState) &&
       nextInitStage == InitStageFinal && appState.firstSceneHasInitializedUI &&
       _safetyCheckState.runningState == RunningSafetyCheckState::kRunning) {
-    _safetyCheckManager->StartSafetyCheck();
+    // When the Safety Check Notifications feature is enabled, the Magic
+    // Stack should never initiate a Safety Check run.
+    //
+    // TODO(crbug.com/354727175): Remove `StartSafetyCheck()` from the Magic
+    // Stack once Safety Check Notifications fully launches.
+    if (!IsSafetyCheckNotificationsEnabled()) {
+      _safetyCheckManager->StartSafetyCheck();
+    }
   }
 }
 
@@ -217,6 +263,12 @@
     if (safety_check_prefs::IsSafetyCheckInMagicStackDisabled(_localState)) {
       [self.delegate removeSafetyCheckModule];
     }
+  } else if (preferenceName ==
+                 prefs::kHomeCustomizationMagicStackSafetyCheckEnabled &&
+             !_userState->GetBoolean(
+                 prefs::kHomeCustomizationMagicStackSafetyCheckEnabled)) {
+    CHECK(IsHomeCustomizationEnabled());
+    [self.delegate removeSafetyCheckModule];
   }
 }
 
@@ -322,6 +374,17 @@
   }
 
   return std::nullopt;
+}
+
+// Persists the current number of Safety Check issues, `issuesCount`, to
+// `localPrefService`.
+- (void)updateIssueCount:(NSUInteger)issuesCount
+         withPrefService:(PrefService*)localPrefService {
+  CHECK(localPrefService);
+  CHECK(ShouldHideSafetyCheckModuleIfNoIssues());
+
+  localPrefService->SetInteger(
+      prefs::kHomeCustomizationMagicStackSafetyCheckIssuesCount, issuesCount);
 }
 
 @end

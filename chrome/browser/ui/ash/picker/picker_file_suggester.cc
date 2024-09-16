@@ -4,6 +4,10 @@
 
 #include "chrome/browser/ui/ash/picker/picker_file_suggester.h"
 
+#include <optional>
+#include <string>
+#include <utility>
+
 #include "base/barrier_callback.h"
 #include "base/time/time.h"
 #include "chrome/browser/ash/app_list/search/files/file_title.h"
@@ -12,6 +16,7 @@
 #include "chrome/browser/ash/fileapi/recent_model.h"
 #include "chrome/browser/ash/fileapi/recent_model_factory.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/common/extensions/api/file_manager_private.h"
 #include "content/public/browser/storage_partition.h"
 #include "storage/browser/file_system/file_system_context.h"
 #include "storage/browser/file_system/file_system_url.h"
@@ -21,8 +26,10 @@ namespace {
 
 using LocalFile = PickerFileSuggester::LocalFile;
 using DriveFile = PickerFileSuggester::DriveFile;
+namespace fmp = extensions::api::file_manager_private;
 
-constexpr base::TimeDelta kMaxFileRecencyDelta = base::Days(30);
+constexpr base::TimeDelta kMaxDriveFileRecencyDelta = base::Days(30);
+constexpr base::TimeDelta kScanTimeout = base::Seconds(1);
 
 storage::FileSystemContext* GetFileSystemContextForProfile(Profile* profile) {
   content::StoragePartition* storage = profile->GetDefaultStoragePartition();
@@ -30,6 +37,10 @@ storage::FileSystemContext* GetFileSystemContextForProfile(Profile* profile) {
 }
 
 void GetRecentFiles(Profile* profile,
+                    ash::RecentSource::FileType file_type,
+                    fmp::VolumeType volume_type,
+                    size_t max_files,
+                    base::TimeDelta now_delta,
                     ash::RecentModel::GetRecentFilesCallback callback) {
   const scoped_refptr<storage::FileSystemContext> file_system_context =
       GetFileSystemContextForProfile(profile);
@@ -41,10 +52,17 @@ void GetRecentFiles(Profile* profile,
   if (!model) {
     return;
   }
+  ash::RecentModelOptions options;
+  options.now_delta = now_delta;
+  options.file_type = file_type;
+  options.scan_timeout = kScanTimeout;
+  options.max_files = max_files;
+  options.source_specs = {
+      ash::RecentSourceSpec{.volume_type = volume_type},
+  };
 
   model->GetRecentFiles(file_system_context.get(), GURL(), /*query=*/"",
-                        kMaxFileRecencyDelta, ash::RecentModel::FileType::kAll,
-                        /*invalidate_cache=*/false, std::move(callback));
+                        options, std::move(callback));
 }
 
 void GetDriveFileMetadata(
@@ -66,8 +84,9 @@ void GetDriveFileMetadata(
                   if (error != drive::FILE_ERROR_OK) {
                     return std::nullopt;
                   }
-                  return DriveFile{.title = app_list::GetFileTitle(path),
-                                   .url = GURL(metadata->alternate_url)};
+                  return DriveFile(metadata->item_id,
+                                   app_list::GetFileTitle(path), path,
+                                   GURL(metadata->alternate_url));
                 },
                 path)
                 .Then(std::move(callback)));
@@ -88,38 +107,58 @@ std::vector<DriveFile> FilterDriveFiles(
 
 }  // namespace
 
+PickerFileSuggester::DriveFile::DriveFile(std::optional<std::string> id,
+                                          std::u16string title,
+                                          base::FilePath local_path,
+                                          GURL url)
+    : id(std::move(id)),
+      title(std::move(title)),
+      local_path(std::move(local_path)),
+      url(std::move(url)) {}
+
+PickerFileSuggester::DriveFile::~DriveFile() = default;
+
+PickerFileSuggester::DriveFile::DriveFile(const DriveFile&) = default;
+PickerFileSuggester::DriveFile::DriveFile(DriveFile&&) = default;
+PickerFileSuggester::DriveFile& PickerFileSuggester::DriveFile::operator=(
+    const DriveFile&) = default;
+PickerFileSuggester::DriveFile& PickerFileSuggester::DriveFile::operator=(
+    DriveFile&&) = default;
+
 PickerFileSuggester::PickerFileSuggester(Profile* profile)
     : profile_(profile) {}
 
 PickerFileSuggester::~PickerFileSuggester() = default;
 
-void PickerFileSuggester::GetRecentLocalFiles(
-    RecentLocalFilesCallback callback) {
+void PickerFileSuggester::GetRecentLocalImages(
+    size_t max_files,
+    base::TimeDelta now_delta,
+    RecentLocalImagesCallback callback) {
   GetRecentFiles(
-      profile_,
-      base::BindOnce(&PickerFileSuggester::OnGetRecentLocalFiles,
+      profile_, ash::RecentSource::FileType::kImage,
+      fmp::VolumeType::kDownloads, max_files, now_delta,
+      base::BindOnce(&PickerFileSuggester::OnGetRecentLocalImages,
                      weak_factory_.GetWeakPtr(), std::move(callback)));
 }
 
 void PickerFileSuggester::GetRecentDriveFiles(
+    size_t max_files,
     RecentDriveFilesCallback callback) {
   GetRecentFiles(
-      profile_,
+      profile_, ash::RecentSource::FileType::kAll, fmp::VolumeType::kDrive,
+      max_files, kMaxDriveFileRecencyDelta,
       base::BindOnce(&PickerFileSuggester::OnGetRecentDriveFiles,
                      weak_factory_.GetWeakPtr(), std::move(callback)));
 }
 
-void PickerFileSuggester::OnGetRecentLocalFiles(
-    RecentLocalFilesCallback callback,
+void PickerFileSuggester::OnGetRecentLocalImages(
+    RecentLocalImagesCallback callback,
     const std::vector<ash::RecentFile>& recent_files) {
   std::vector<LocalFile> files;
   files.reserve(recent_files.size());
   for (const ash::RecentFile& recent_file : recent_files) {
-    const storage::FileSystemURL& url = recent_file.url();
-    if (url.type() == storage::kFileSystemTypeLocal) {
-      const base::FilePath& path = url.path();
-      files.push_back({.title = app_list::GetFileTitle(path), .path = path});
-    }
+    const base::FilePath& path = recent_file.url().path();
+    files.push_back({.title = app_list::GetFileTitle(path), .path = path});
   }
   std::move(callback).Run(std::move(files));
 }

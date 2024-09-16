@@ -6,16 +6,19 @@
 #include "components/viz/host/host_frame_sink_manager.h"
 #include "content/browser/compositor/surface_utils.h"
 #include "content/browser/renderer_host/frame_tree_node.h"
+#include "content/browser/renderer_host/view_transition_opt_in_state.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/test/back_forward_cache_util.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/shell/browser/shell.h"
+#include "content/shell/browser/shell_download_manager_delegate.h"
 #include "content/test/content_browser_test_utils_internal.h"
 #include "mojo/public/cpp/bindings/sync_call_restrictions.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/default_handlers.h"
+#include "services/viz/privileged/mojom/compositing/features.mojom-features.h"
 #include "third_party/blink/public/common/features.h"
 
 namespace content {
@@ -40,7 +43,8 @@ class ViewTransitionBrowserTest : public ContentBrowserTest {
   ViewTransitionBrowserTest() {
     feature_list_.InitWithFeatures(
         /*enabled_features=*/
-        {blink::features::kViewTransitionOnNavigation},
+        {blink::features::kViewTransitionOnNavigation,
+         viz::mojom::EnableVizTestApis},
         /*disabled_features=*/{});
   }
 
@@ -62,6 +66,14 @@ class ViewTransitionBrowserTest : public ContentBrowserTest {
     run_loop_->Run();
   }
 
+  bool HasVTOptIn(RenderFrameHost* rfh) {
+    auto* opt_in_state = ViewTransitionOptInState::GetForCurrentDocument(
+        static_cast<RenderFrameHostImpl*>(rfh));
+    return opt_in_state &&
+           opt_in_state->same_origin_opt_in() ==
+               blink::mojom::ViewTransitionSameOriginOptIn::kEnabled;
+  }
+
  private:
   base::test::ScopedFeatureList feature_list_;
   std::unique_ptr<base::RunLoop> run_loop_;
@@ -73,6 +85,7 @@ IN_PROC_BROWSER_TEST_F(ViewTransitionBrowserTest,
   GURL test_url(
       embedded_test_server()->GetURL("/view_transitions/basic-vt-opt-in.html"));
   ASSERT_TRUE(NavigateToURL(shell()->web_contents(), test_url));
+  WaitForCopyableViewInWebContents(shell()->web_contents());
 
   TestNavigationManager navigation_manager(shell()->web_contents(), test_url);
   ASSERT_TRUE(
@@ -95,13 +108,18 @@ IN_PROC_BROWSER_TEST_F(ViewTransitionBrowserTest,
 
   mojo::ScopedAllowSyncCallForTesting allow_sync;
 
-  ASSERT_TRUE(
-      GetHostFrameSinkManager()->HasUnclaimedViewTransitionResourcesForTest());
+  bool has_resources = false;
+  GetHostFrameSinkManager()
+      ->GetFrameSinkManagerTestApi()
+      .HasUnclaimedViewTransitionResources(&has_resources);
+  ASSERT_TRUE(has_resources);
 
   shell()->web_contents()->Stop();
   ASSERT_FALSE(navigation_manager.was_committed());
-  ASSERT_FALSE(
-      GetHostFrameSinkManager()->HasUnclaimedViewTransitionResourcesForTest());
+  GetHostFrameSinkManager()
+      ->GetFrameSinkManagerTestApi()
+      .HasUnclaimedViewTransitionResources(&has_resources);
+  ASSERT_FALSE(has_resources);
 
   // Ensure the old renderer discards the outgoing transition.
   EXPECT_TRUE(ExecJs(
@@ -115,6 +133,7 @@ IN_PROC_BROWSER_TEST_F(ViewTransitionBrowserTest,
   GURL test_url(
       embedded_test_server()->GetURL("/view_transitions/basic-vt-opt-in.html"));
   ASSERT_TRUE(NavigateToURL(shell()->web_contents(), test_url));
+  WaitForCopyableViewInWebContents(shell()->web_contents());
 
   TestNavigationManager navigation_manager(shell()->web_contents(), test_url);
   ASSERT_TRUE(
@@ -148,6 +167,7 @@ IN_PROC_BROWSER_TEST_F(ViewTransitionBrowserTest,
   GURL test_url(
       embedded_test_server()->GetURL("/view_transitions/basic-vt-opt-in.html"));
   ASSERT_TRUE(NavigateToURL(shell()->web_contents(), test_url));
+  WaitForCopyableViewInWebContents(shell()->web_contents());
 
   TestNavigationManager navigation_manager(shell()->web_contents(), test_url);
   ASSERT_TRUE(
@@ -173,6 +193,55 @@ IN_PROC_BROWSER_TEST_F(ViewTransitionBrowserTest,
   WaitForCopyableViewInWebContents(shell()->web_contents());
 
   EXPECT_EQ(false, EvalJs(shell()->web_contents(), "had_incoming_transition"));
+}
+
+class ViewTransitionDownloadBrowserTest : public ViewTransitionBrowserTest {
+ public:
+  void SetUpOnMainThread() override {
+    ViewTransitionBrowserTest::SetUpOnMainThread();
+
+    // Set up a test download directory, in order to prevent prompting for
+    // handling downloads.
+    ASSERT_TRUE(downloads_directory_.CreateUniqueTempDir());
+    ShellDownloadManagerDelegate* delegate =
+        static_cast<ShellDownloadManagerDelegate*>(
+            shell()
+                ->web_contents()
+                ->GetBrowserContext()
+                ->GetDownloadManagerDelegate());
+    delegate->SetDownloadBehaviorForTesting(downloads_directory_.GetPath());
+  }
+
+ private:
+  base::ScopedTempDir downloads_directory_;
+};
+
+IN_PROC_BROWSER_TEST_F(ViewTransitionDownloadBrowserTest,
+                       NavigationToDownloadLink) {
+  GURL test_url(
+      embedded_test_server()->GetURL("/view_transitions/basic-vt-opt-in.html"));
+  ASSERT_TRUE(NavigateToURL(shell()->web_contents(), test_url));
+  WaitForCopyableViewInWebContents(shell()->web_contents());
+
+  GURL download_url(embedded_test_server()->GetURL("/download-test1.lib"));
+  TestNavigationManager navigation_manager(shell()->web_contents(),
+                                           download_url);
+  ASSERT_TRUE(ExecJs(shell()->web_contents(),
+                     JsReplace("location.href = $1", download_url)));
+
+  // Wait for response and resume. The navigation should not be blocked by the
+  // view transition condition.
+  ASSERT_TRUE(navigation_manager.WaitForRequestStart());
+
+  ASSERT_TRUE(HasVTOptIn(shell()->web_contents()->GetPrimaryMainFrame()));
+  auto* navigation_request =
+      NavigationRequest::From(navigation_manager.GetNavigationHandle());
+  ASSERT_EQ(
+      shell()->web_contents()->GetPrimaryMainFrame()->GetLastCommittedOrigin(),
+      navigation_request->GetTentativeOriginAtRequestTime());
+
+  ASSERT_TRUE(navigation_manager.WaitForNavigationFinished());
+  ASSERT_FALSE(navigation_manager.was_committed());
 }
 
 class ViewTransitionBrowserTestTraverse

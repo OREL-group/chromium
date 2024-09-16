@@ -43,7 +43,7 @@ using GLSurfaceContextPair =
     std::pair<scoped_refptr<gl::GLSurface>, scoped_refptr<gl::GLContext>>;
 
 GLSurfaceContextPair GetRealContextForVulkan() {
-  // TODO(crbug.com/1143279): Remove all of this after code no longer expects
+  // TODO(crbug.com/40155015): Remove all of this after code no longer expects
   // GL to be present (eg for getting capabilities or calling glGetError).
   static base::NoDestructor<base::WeakPtr<gl::GLSurface>> cached_surface;
   static base::NoDestructor<base::WeakPtr<gl::GLContext>> cached_context;
@@ -89,7 +89,7 @@ void OnContextLost(std::unique_ptr<bool> expect_loss,
       crash_keys::kContextLossReason);
   reason_key.Set(base::NumberToString(static_cast<int>(context_lost_reason)));
 
-  // TODO(https://crbug.com/1112841): Debugging contexts losts. WebView will
+  // TODO(crbug.com/40143203): Debugging contexts losts. WebView will
   // intentionally crash in HardwareRenderer::OnViz::DisplayOutputSurface
   // that will happen after this callback. That crash happens on viz thread and
   // doesn't have any useful information. Crash here on RenderThread to
@@ -190,12 +190,10 @@ void OutputSurfaceProviderWebView::InitializeContext() {
     // the ANGLE context.
     attribs.angle_create_from_external_context = is_angle;
 
-    if (is_angle && display->ext->b_EGL_ANGLE_create_context_client_arrays) {
-      // By default client arrays are disabled as they are not supported by
-      // Chrome's IPC architecture. However, they are required for WebView's
-      // usage (in particular, for supporting complex clips).
-      attribs.angle_create_context_client_arrays = true;
-    }
+    // By default client arrays are disabled as they are not supported by
+    // Chrome's IPC architecture. However, they are required for WebView's
+    // usage (in particular, for supporting complex clips).
+    attribs.allow_client_arrays = true;
 
     // Skip validation when dcheck is off.
 #if DCHECK_IS_ON()

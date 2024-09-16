@@ -21,8 +21,8 @@
 #import "ios/chrome/browser/shared/coordinator/scene/scene_state.h"
 #import "ios/chrome/browser/shared/model/browser/browser_provider.h"
 #import "ios/chrome/browser/shared/model/browser/browser_provider_interface.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
 #import "ios/chrome/test/app/tab_test_util.h"
 #import "ios/web/public/navigation/navigation_manager.h"
@@ -137,18 +137,6 @@ bool HostToLocalHostRewrite(GURL* url, web::BrowserState* browser_state) {
   chrome_test_util::GetCurrentWebState()
       ->GetNavigationManager()
       ->AddTransientURLRewriter(&HostToLocalHostRewrite);
-}
-
-+ (NSString*)frYahooSearchEngineName {
-  return base::SysUTF16ToNSString(TemplateURLPrepopulateData::yahoo_fr.name);
-}
-
-+ (NSString*)usYahooSearchEngineName {
-  return base::SysUTF16ToNSString(TemplateURLPrepopulateData::yahoo.name);
-}
-
-+ (NSString*)googleSearchEngineName {
-  return base::SysUTF16ToNSString(TemplateURLPrepopulateData::google.name);
 }
 
 @end

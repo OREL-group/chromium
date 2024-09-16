@@ -172,7 +172,7 @@ void WebContentsObserverConsistencyChecker::RenderFrameHostChanged(
 }
 
 void WebContentsObserverConsistencyChecker::FrameDeleted(
-    int frame_tree_node_id) {
+    FrameTreeNodeId frame_tree_node_id) {
   // A frame can be deleted before RenderFrame in the renderer process is
   // created, so there is not much that can be enforced here.
   CHECK(!web_contents_destroyed_);
@@ -378,15 +378,15 @@ void WebContentsObserverConsistencyChecker::WebContentsDestroyed() {
 void WebContentsObserverConsistencyChecker::DidStartLoading() {
   // TODO(clamy): add checks for the loading state in the rest of observer
   // methods.
-  // TODO(crbug.com/1145572): Add back CHECK(!is_loading_). The CHECK was
+  // TODO(crbug.com/40155922): Add back CHECK(!is_loading_). The CHECK was
   // removed because of flaky failures during some browser_tests.
   CHECK(web_contents()->IsLoading());
   is_loading_ = true;
 }
 
 void WebContentsObserverConsistencyChecker::DidStopLoading() {
-  // TODO(crbug.com/466089): Add back CHECK(is_loading_). The CHECK was removed
-  // because of flaky failures during browser_test shutdown.
+  // TODO(crbug.com/40409075): Add back CHECK(is_loading_). The CHECK was
+  // removed because of flaky failures during browser_test shutdown.
   CHECK(!web_contents()->IsLoading());
   is_loading_ = false;
 }

@@ -17,23 +17,29 @@
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
 #include "components/content_settings/core/browser/content_settings_registry.h"
+#include "components/content_settings/core/common/content_settings_constraints.h"
 #include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
 constexpr char kUrl1[] = "https://example1.com:443";
-const base::Time kPastTime = base::Time::Now() - base::Days(60);
+const base::TimeDelta kLifetime = base::Days(60);
+const base::Time kPastTime = base::Time::Now() - kLifetime;
 
-// TODO(crbug.com/1443466): Use a mock result instead.
+// TODO(crbug.com/40267370): Use a mock result instead.
 std::unique_ptr<UnusedSitePermissionsService::UnusedSitePermissionsResult>
 CreateUnusedSitePermissionsResult(base::Value::List urls) {
   auto result = std::make_unique<
       UnusedSitePermissionsService::UnusedSitePermissionsResult>();
+  PermissionsData permissions_data;
   for (base::Value& url_val : urls) {
-    auto origin = ContentSettingsPattern::FromString(url_val.GetString());
-    std::set<ContentSettingsType> permission_types(
-        {ContentSettingsType::GEOLOCATION});
-    result->AddRevokedPermission(origin, permission_types, kPastTime);
+    permissions_data.primary_pattern =
+        ContentSettingsPattern::FromString(url_val.GetString());
+    permissions_data.permission_types = {ContentSettingsType::GEOLOCATION};
+    permissions_data.constraints =
+        content_settings::ContentSettingConstraints(kPastTime);
+    permissions_data.constraints.set_lifetime(kLifetime);
+    result->AddRevokedPermission(permissions_data);
   }
   return result;
 }
@@ -77,7 +83,8 @@ class SafetyHubMenuNotificationTest : public testing::Test {
   std::unique_ptr<UnusedSitePermissionsService> service_;
 };
 
-TEST_F(SafetyHubMenuNotificationTest, ToFromDictValue) {
+// TODO(crbug.com/364523673): This test is flaking on android pie builder.
+TEST_F(SafetyHubMenuNotificationTest, DISABLED_ToFromDictValue) {
   // Creating a mock menu notification.
   base::Time last = kPastTime + base::Days(30);
   auto notification = std::make_unique<SafetyHubMenuNotification>(
@@ -128,7 +135,8 @@ TEST_F(SafetyHubMenuNotificationTest, ToFromDictValue) {
                        .GetString());
 }
 
-TEST_F(SafetyHubMenuNotificationTest, ShouldBeShown) {
+// TODO(crbug.com/364523673): This test is flaking on android pie builder.
+TEST_F(SafetyHubMenuNotificationTest, DISABLED_ShouldBeShown) {
   base::TimeDelta interval = base::Days(30);
   auto notification = std::make_unique<SafetyHubMenuNotification>(
       safety_hub::SafetyHubModuleType::UNUSED_SITE_PERMISSIONS);
@@ -216,7 +224,8 @@ TEST_F(SafetyHubMenuNotificationTest, ShouldBeShown) {
   ASSERT_FALSE(other_notification->ShouldBeShown(interval));
 }
 
-TEST_F(SafetyHubMenuNotificationTest, IsCurrentlyActive) {
+// TODO(crbug.com/364523673): This test is flaking on android pie builder.
+TEST_F(SafetyHubMenuNotificationTest, DISABLED_IsCurrentlyActive) {
   auto notification = std::make_unique<SafetyHubMenuNotification>(
       safety_hub::SafetyHubModuleType::UNUSED_SITE_PERMISSIONS);
 
@@ -237,5 +246,5 @@ TEST_F(SafetyHubMenuNotificationTest, IsCurrentlyActive) {
   ASSERT_FALSE(notification->IsCurrentlyActive());
 }
 
-// TODO(crbug.com/1443466): Add tests for other types of Safety Hub services and
-// Safety Hub results.
+// TODO(crbug.com/40267370): Add tests for other types of Safety Hub services
+// and Safety Hub results.

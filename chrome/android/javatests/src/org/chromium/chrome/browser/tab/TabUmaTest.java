@@ -14,12 +14,14 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.jank_tracker.PlaceholderJankTracker;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.supplier.OneshotSupplierImpl;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.cc.input.BrowserControlsState;
@@ -35,7 +37,6 @@ import org.chromium.chrome.test.batch.BlankCTATabInitialStateRule;
 import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.components.browser_ui.util.BrowserControlsVisibilityDelegate;
 import org.chromium.content_public.browser.LoadUrlParams;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.net.test.EmbeddedTestServer;
 
 import java.io.DataOutputStream;
@@ -101,16 +102,18 @@ public class TabUmaTest {
                 null,
                 null,
                 rootUiCoordinator.getToolbarManager().getTabStripHeightSupplier(),
-                new OneshotSupplierImpl<ModuleRegistry>());
+                new OneshotSupplierImpl<ModuleRegistry>(),
+                new ObservableSupplierImpl<>());
     }
 
     private Tab createLazilyLoadedTab(boolean show) throws ExecutionException {
-        return TestThreadUtils.runOnUiThreadBlocking(
+        return ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     Tab bgTab =
                             TabBuilder.createForLazyLoad(
                                             sActivityTestRule.getProfile(false),
-                                            new LoadUrlParams(mTestUrl))
+                                            new LoadUrlParams(mTestUrl),
+                                            /* title= */ null)
                                     .setWindow(sActivityTestRule.getActivity().getWindowAndroid())
                                     .setLaunchType(TabLaunchType.FROM_LONGPRESS_BACKGROUND)
                                     .setDelegateFactory(createTabDelegateFactory())
@@ -122,7 +125,7 @@ public class TabUmaTest {
     }
 
     private Tab createLiveTab(boolean foreground, boolean kill) throws ExecutionException {
-        return TestThreadUtils.runOnUiThreadBlocking(
+        return ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     Tab tab =
                             TabBuilder.createLiveTab(
@@ -146,6 +149,7 @@ public class TabUmaTest {
     @Test
     @MediumTest
     @Feature({"Uma"})
+    @DisabledTest(message = "Flakey on most bots https://crbug.com/41486308")
     public void testTabStatusWhenSwitchedToLazyLoads() throws ExecutionException {
         final Tab tab = createLazilyLoadedTab(/* show= */ false);
 
@@ -155,7 +159,7 @@ public class TabUmaTest {
                         histogram, TabUma.TAB_STATUS_LAZY_LOAD_FOR_BG_TAB);
 
         // Show the tab and verify that one sample was recorded in the lazy load bucket.
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     tab.show(TabSelectionType.FROM_USER, TabLoadIfNeededCaller.OTHER);
                 });
@@ -163,7 +167,7 @@ public class TabUmaTest {
 
         // Show the tab again and verify that we didn't record another sample.
         statusHistogram = HistogramWatcher.newBuilder().expectNoRecords(histogram).build();
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     tab.show(TabSelectionType.FROM_USER, TabLoadIfNeededCaller.OTHER);
                 });
@@ -174,13 +178,14 @@ public class TabUmaTest {
     @Test
     @MediumTest
     @Feature({"Uma"})
+    @DisabledTest(message = "Flakey on most bots https://crbug.com/41486308")
     public void testNoCreationStateNoTabUma() throws Exception {
         String switchFgStatus = "Tab.StatusWhenSwitchedBackToForeground";
 
         int switchFgStatusOffset = getHistogram(switchFgStatus);
         // Test a normal tab without an explicit creation state. UMA task doesn't start.
         Tab tab =
-                TestThreadUtils.runOnUiThreadBlocking(
+                ThreadUtils.runOnUiThreadBlocking(
                         () -> {
                             return new TabBuilder(sActivityTestRule.getProfile(false))
                                     .setWindow(sActivityTestRule.getActivity().getWindowAndroid())
@@ -190,7 +195,7 @@ public class TabUmaTest {
                                     .build();
                         });
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> tab.show(TabSelectionType.FROM_USER, TabLoadIfNeededCaller.OTHER));
 
         // There should be no histogram changes.

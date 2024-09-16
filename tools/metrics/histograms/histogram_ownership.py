@@ -13,7 +13,6 @@ import os
 import sys
 from xml.etree import ElementTree as ET
 
-import extract_histograms
 import histogram_paths
 import merge_xml
 
@@ -37,22 +36,15 @@ def PrintOwners(root):
 
     name = histogram.attrib['name']
     owners = []
-    obsolete = False
     for node in histogram.getchildren():
-      if node.tag == 'obsolete':
-        obsolete = True
-        continue
       if node.tag != 'owner':
-        continue
-      if node.text == extract_histograms.OWNER_PLACEHOLDER:
         continue
       owners.append(node.text)
 
-    if not obsolete:
-      if owners:
-        print(name, ' '.join(owners))
-      else:
-        print(name, 'NO_OWNER')
+    if owners:
+      print(name, ' '.join(owners))
+    else:
+      print(name, 'NO_OWNER')
 
 
 def main():

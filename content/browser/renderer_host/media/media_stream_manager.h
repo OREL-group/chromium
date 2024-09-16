@@ -53,12 +53,12 @@
 #include "content/browser/media/captured_surface_controller.h"
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "media/capture/video/chromeos/system_event_monitor_impl.h"
-#endif
-
 namespace media {
 class AudioSystem;
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+class JpegAcceleratorProviderImpl;
+class SystemEventMonitorImpl;
+#endif
 }
 
 namespace url {
@@ -219,7 +219,7 @@ class CONTENT_EXPORT MediaStreamManager
   // appear to the user. |device_stopped_callback| is set to receive device
   // stopped notifications. |device_changed_callback| is set to receive device
   // changed notifications.  |device_request_state_change_callback| is used to
-  // notify clients about request state changes.  TODO(crbug.com/1288839):
+  // notify clients about request state changes.  TODO(crbug.com/40058526):
   // Package device-related callbacks into a single struct.
   void GenerateStreams(
       GlobalRenderFrameHostId render_frame_host_id,
@@ -440,6 +440,12 @@ class CONTENT_EXPORT MediaStreamManager
       base::OnceCallback<void(blink::mojom::CapturedSurfaceControlResult)>
           callback);
 
+  void RequestCapturedSurfaceControlPermission(
+      GlobalRenderFrameHostId capturer_rfh_id,
+      const base::UnguessableToken& session_id,
+      base::OnceCallback<void(blink::mojom::CapturedSurfaceControlResult)>
+          callback);
+
 #endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
 
   void RegisterDispatcherHost(
@@ -451,6 +457,9 @@ class CONTENT_EXPORT MediaStreamManager
       std::unique_ptr<media::mojom::VideoCaptureHost> host,
       mojo::PendingReceiver<media::mojom::VideoCaptureHost> receiver);
   size_t num_video_capture_hosts() const { return video_capture_hosts_.size(); }
+
+  std::optional<url::Origin> GetOriginByVideoSessionId(
+      const base::UnguessableToken& session_id);
 
  private:
   friend class MediaStreamManagerTest;
@@ -544,7 +553,6 @@ class CONTENT_EXPORT MediaStreamManager
       const std::string& label) const;
   DeviceRequest* FindRequest(const std::string& label) const;
 
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
   // Find a request by the session-ID of its video device.
   // (In case of multiple video devices - any of them would fit.)
   // TOOD(crbug.com/1466247): Remove this after making the Captured Surface
@@ -552,6 +560,7 @@ class CONTENT_EXPORT MediaStreamManager
   DeviceRequest* FindRequestByVideoSessionId(
       const base::UnguessableToken& session_id) const;
 
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
   CapturedSurfaceController* GetCapturedSurfaceController(
       GlobalRenderFrameHostId capturer_rfh_id,
       const base::UnguessableToken& session_id,
@@ -845,6 +854,9 @@ class CONTENT_EXPORT MediaStreamManager
   GenerateStreamTestCallback generate_stream_test_callback_;
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
+  std::unique_ptr<media::JpegAcceleratorProviderImpl>
+      jpeg_accelerator_provider_;
+
   std::unique_ptr<media::SystemEventMonitorImpl> system_event_monitor_;
 #endif
 };

@@ -16,6 +16,7 @@
 #import "ios/chrome/browser/ui/menu/menu_histograms.h"
 
 @class CrURL;
+@protocol SystemIdentity;
 #ifdef __cplusplus
 class TabGroup;
 #endif
@@ -37,6 +38,12 @@ class TabGroup;
 // Creates a UIAction instance configured for sharing which will invoke
 // the given `block` upon execution.
 - (UIAction*)actionToShareWithBlock:(ProceduralBlock)block;
+
+// Creates a UIAction instance configured to show the full `URLString` that
+// appears in the web context menu and which will invoke the given `block` upon
+// execution.
+- (UIAction*)actionToShowFullURL:(NSString*)URLString
+                           block:(ProceduralBlock)block;
 
 // Creates a UIAction instance configured for pinning a tab which will invoke
 // the given `block` upon execution.
@@ -139,8 +146,10 @@ class TabGroup;
                                            inSubmenu:(BOOL)inSubmenu
                                                block:(ProceduralBlock)block;
 
-// Creates a UIAction instance for opening  a link in new tab group
-- (UIAction*)actionToOpenLinkInNewGroupWithBlock:(ProceduralBlock)block;
+// Creates a UIAction instance for opening  a link in new tab group. `inSubmenu`
+// changes the string to be displayed.
+- (UIAction*)actionToOpenLinkInNewGroupWithBlock:(ProceduralBlock)block
+                                       inSubmenu:(BOOL)inSubmenu;
 
 #ifdef __cplusplus
 // Creates a UIMenu instance for adding a tab to an existing group or to a new
@@ -183,6 +192,39 @@ class TabGroup;
 
 // Creates a UIAction instance for deleting a tab group.
 - (UIAction*)actionToDeleteTabGroupWithBlock:(ProceduralBlock)block;
+
+// Creates a UIAction instance for closing a tab group.
+- (UIAction*)actionToCloseTabGroupWithBlock:(ProceduralBlock)block;
+
+// Creates a UIAction instance whose title and icon are configured for showing
+// details, which will invoke the given `block` when executed.
+- (UIAction*)actionToShowDetailsWithBlock:(ProceduralBlock)block;
+
+// Creates a UIAction instance to sort drive items by name.
+- (UIAction*)actionToSortDriveItemsByNameWithBlock:(ProceduralBlock)block;
+
+// Creates a UIAction instance to sort drive items by modification time.
+- (UIAction*)actionToSortDriveItemsByModificationTimeWithBlock:
+    (ProceduralBlock)block;
+
+// Creates a UIAction instance to sort drive items by opening time.
+- (UIAction*)actionToSortDriveItemsByOpeningTimeWithBlock:
+    (ProceduralBlock)block;
+
+// Creates a UIMenu instance for identity selection within drive file picker.
+- (UIMenuElement*)
+    menuToSelectDriveIdentityWithIdentities:
+        (NSArray<id<SystemIdentity>>*)identities
+                            currentIdentity:(id<SystemIdentity>)currentIdentity
+                                      block:(void (^)(const id<SystemIdentity>))
+                                                block;
+
+// Creates a UIAction instance to add an account to choose drive files from.
+- (UIAction*)actionToAddAccountForDriveWithBlock:(ProceduralBlock)block;
+
+// Creates a UIAction instance whose title and icon are configured for showing
+// manage in a new tab, which will invoke the given `block` when executed.
+- (UIAction*)actionToManageLinkInNewTabWithBlock:(ProceduralBlock)block;
 
 @end
 

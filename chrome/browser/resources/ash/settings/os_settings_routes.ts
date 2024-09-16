@@ -198,8 +198,7 @@ export interface OsSettingsRoutes extends MinimumRoutes {
   KNOWN_NETWORKS: Route;
   LOCK_SCREEN: Route;
   MANAGE_ACCESSIBILITY: Route;
-  MANAGE_FACEGAZE_CURSOR_SETTINGS: Route;
-  MANAGE_FACEGAZE_FACIAL_EXPRESSIONS_SETTINGS: Route;
+  MANAGE_FACEGAZE_SETTINGS: Route;
   MANAGE_ISOLATED_WEB_APPS: Route;
   MANAGE_SWITCH_ACCESS_SETTINGS: Route;
   MANAGE_TTS_SETTINGS: Route;
@@ -248,6 +247,9 @@ export interface OsSettingsRoutes extends MinimumRoutes {
   SYNC: Route;
   SYNC_ADVANCED: Route;
   SYSTEM_PREFERENCES: Route;
+
+  // Internal routes
+  INTERNAL_STORYBOOK: Route;
 }
 
 function createSection(
@@ -298,10 +300,9 @@ export function createRoutes(): OsSettingsRoutes {
   r.KNOWN_NETWORKS = createSubpage(
       r.INTERNET, routesMojom.KNOWN_NETWORKS_SUBPAGE_PATH,
       Subpage.kKnownNetworks);
-  if (loadTimeData.getBoolean('isHotspotEnabled')) {
-    r.HOTSPOT_DETAIL = createSubpage(
-        r.INTERNET, routesMojom.HOTSPOT_SUBPAGE_PATH, Subpage.kHotspotDetails);
-  }
+  r.HOTSPOT_DETAIL = createSubpage(
+      r.INTERNET, routesMojom.HOTSPOT_SUBPAGE_PATH, Subpage.kHotspotDetails);
+
   if (loadTimeData.getBoolean('isApnRevampEnabled')) {
     r.APN =
         createSubpage(r.INTERNET, routesMojom.APN_SUBPAGE_PATH, Subpage.kApn);
@@ -502,14 +503,9 @@ export function createRoutes(): OsSettingsRoutes {
       r.A11Y_KEYBOARD_AND_TEXT_INPUT,
       routesMojom.SWITCH_ACCESS_OPTIONS_SUBPAGE_PATH,
       Subpage.kSwitchAccessOptions);
-  r.MANAGE_FACEGAZE_CURSOR_SETTINGS = createSubpage(
-      r.A11Y_CURSOR_AND_TOUCHPAD,
-      routesMojom.FACE_GAZE_CURSOR_SETTINGS_SUBPAGE_PATH,
-      Subpage.kFaceGazeCursorSettings);
-  r.MANAGE_FACEGAZE_FACIAL_EXPRESSIONS_SETTINGS = createSubpage(
-      r.A11Y_CURSOR_AND_TOUCHPAD,
-      routesMojom.FACE_GAZE_FACIAL_EXPRESSIONS_SETTINGS_SUBPAGE_PATH,
-      Subpage.kFaceGazeFacialExpressionsSettings);
+  r.MANAGE_FACEGAZE_SETTINGS = createSubpage(
+      r.A11Y_CURSOR_AND_TOUCHPAD, routesMojom.FACE_GAZE_SETTINGS_SUBPAGE_PATH,
+      Subpage.kFaceGazeSettings);
 
   // Privacy and Security section.
   r.OS_PRIVACY = createSection(
@@ -550,6 +546,11 @@ export function createRoutes(): OsSettingsRoutes {
   r.ABOUT_DETAILED_BUILD_INFO = createSubpage(
       r.ABOUT, routesMojom.DETAILED_BUILD_INFO_SUBPAGE_PATH,
       Subpage.kDetailedBuildInfo);
+
+  // Internal pages (under About section).
+  r.INTERNAL_STORYBOOK = createSubpage(
+      r.ABOUT, routesMojom.INTERNAL_STORYBOOK_SUBPAGE_PATH,
+      Subpage.kInternalStorybook);
 
   if (isRevampWayfindingEnabled()) {
     // Device section, Input subpages.

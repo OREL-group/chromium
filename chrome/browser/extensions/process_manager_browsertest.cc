@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <stddef.h>
 
 #include <memory>
@@ -201,7 +206,7 @@ class NavigationCompletedObserver : public content::WebContentsObserver {
 class ProcessManagerBrowserTest : public ExtensionBrowserTest {
  public:
   ProcessManagerBrowserTest() {
-    // TODO(https://crbug.com/1110891): Remove this once Extensions are
+    // TODO(crbug.com/40142347): Remove this once Extensions are
     // supported with BackForwardCache.
     disabled_feature_list_.InitWithFeatures({}, {features::kBackForwardCache});
   }

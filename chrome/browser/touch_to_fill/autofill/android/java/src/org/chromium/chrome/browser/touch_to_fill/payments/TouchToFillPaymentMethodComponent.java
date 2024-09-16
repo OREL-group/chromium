@@ -8,7 +8,10 @@ import android.content.Context;
 
 import org.chromium.chrome.browser.autofill.PersonalDataManager;
 import org.chromium.chrome.browser.touch_to_fill.common.BottomSheetFocusHelper;
+import org.chromium.components.autofill.AutofillSuggestion;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
+
+import java.util.List;
 
 /**
  * This component allows to select a payment method to be filled into a form. It acts as a 1-tap
@@ -32,7 +35,21 @@ interface TouchToFillPaymentMethodComponent {
          * @param uniqueId A backend id of the card.
          * @param isVirtual A boolean to identify if the card is a virtual card.
          */
-        void suggestionSelected(String uniqueId, boolean isVirtual);
+        void creditCardSuggestionSelected(String uniqueId, boolean isVirtual);
+
+        /**
+         * Called when the user selects a local IBAN.
+         *
+         * @param GUID of the selected local IBAN.
+         */
+        void localIbanSuggestionSelected(String guid);
+
+        /**
+         * Called when the user selects a server IBAN.
+         *
+         * @param InstrumentId of the selected server IBAN.
+         */
+        void serverIbanSuggestionSelected(long instrumentId);
     }
 
     /**
@@ -53,11 +70,24 @@ interface TouchToFillPaymentMethodComponent {
             Delegate delegate,
             BottomSheetFocusHelper bottomSheetFocusHelper);
 
-    /** Displays a new credit card bottom sheet. */
-    void showSheet(PersonalDataManager.CreditCard[] cards, boolean shouldShowScanCreditCard);
+    /**
+     * Displays a new credit card bottom sheet.
+     *
+     * @param cards A list of {@link PersonalDataManager.CreditCard} to be displayed on the sheet.
+     * @param suggestions A list of {@link AutofillSuggestion}, each generated from a corresponding
+     *     credit card. There's a one-to-one mapping between each credit card and its associated
+     *     suggestion. It includes a boolean that denotes if the card is acceptable for the given
+     *     merchant. If not acceptable, the card suggestion is grayed out.
+     * @param shouldShowScanCreditCard A boolean that conveys whether 'ScanCreditCard' should be
+     *     shown.
+     */
+    void showSheet(
+            List<PersonalDataManager.CreditCard> cards,
+            List<AutofillSuggestion> suggestions,
+            boolean shouldShowScanCreditCard);
 
     /** Displays a new IBAN bottom sheet. */
-    void showSheet(PersonalDataManager.Iban[] ibans);
+    void showSheet(List<PersonalDataManager.Iban> ibans);
 
     /** Hides the bottom sheet if shown. */
     void hideSheet();

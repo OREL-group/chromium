@@ -19,6 +19,11 @@
  *
  */
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_TEXT_TEXT_BREAK_ITERATOR_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_TEXT_TEXT_BREAK_ITERATOR_H_
 
@@ -216,7 +221,7 @@ class PLATFORM_EXPORT LazyLineBreakIterator final {
  private:
   FRIEND_TEST_ALL_PREFIXES(TextBreakIteratorTest, Strictness);
 
-  template <typename CharacterType>
+  template <typename CharacterType, bool use_fast_table>
   struct Context;
 
   const AtomicString& LocaleWithKeyword() const;
@@ -247,6 +252,13 @@ class PLATFORM_EXPORT LazyLineBreakIterator final {
     return iterator_.get();
   }
 
+  template <typename CharacterType,
+            LineBreakType,
+            BreakSpaceType,
+            bool use_fast_table>
+  unsigned NextBreakablePosition(unsigned pos,
+                                 const CharacterType* str,
+                                 unsigned len) const;
   template <typename CharacterType, LineBreakType, BreakSpaceType>
   unsigned NextBreakablePosition(unsigned pos,
                                  const CharacterType* str,

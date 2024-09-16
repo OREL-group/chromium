@@ -23,7 +23,7 @@ class GURL;
   [SigninEarlGreyImpl invokedFromFile:@"" __FILE__ lineNumber:__LINE__]
 
 // Methods used for the EarlGrey tests.
-// TODO(crbug.com/974833): Consider moving these into ChromeEarlGrey.
+// TODO(crbug.com/41465348): Consider moving these into ChromeEarlGrey.
 @interface SigninEarlGreyImpl : BaseEGTestHelperImpl
 
 // Calls -[SigninEarlGreyImpl addFakeIdentity:withUnknownCapabilities:NO].
@@ -33,6 +33,11 @@ class GURL;
 // unset. Does nothing if the identity is already added.
 - (void)addFakeIdentity:(FakeSystemIdentity*)fakeIdentity
     withUnknownCapabilities:(BOOL)usingUnknownCapabilities;
+
+// Adds `fakeIdentity` and set the capabilities before firing the list changed
+// notification.
+- (void)addFakeIdentity:(FakeSystemIdentity*)fakeIdentity
+       withCapabilities:(NSDictionary<NSString*, NSNumber*>*)capabilities;
 
 // Calls -[SigninEarlGreyImpl
 // addFakeIdentityForSSOAuthAddAccountFlow:withUnknownCapabilities:NO].
@@ -48,20 +53,12 @@ class GURL;
             (FakeSystemIdentity*)fakeIdentity
                         withUnknownCapabilities:(BOOL)usingUnknownCapabilities;
 
-// Maps capability to the `fakeIdentity`. Check fails if the
-// `fakeIdentity` has not been added to the fake identity service.
-- (void)setIsSubjectToParentalControls:(BOOL)value
-                           forIdentity:(FakeSystemIdentity*)fakeIdentity;
-- (void)setCanHaveEmailAddressDisplayed:(BOOL)value
-                            forIdentity:(FakeSystemIdentity*)fakeIdentity;
-- (void)setCanShowHistorySyncOptInsWithoutMinorModeRestrictions:(BOOL)value
-                                                    forIdentity:
-                                                        (FakeSystemIdentity*)
-                                                            fakeIdentity;
-
 // Removes `fakeIdentity` from the fake identity service asynchronously to
 // simulate identity removal from the device.
 - (void)forgetFakeIdentity:(FakeSystemIdentity*)fakeIdentity;
+
+// Returns YES if the identity was added to the fake identity service.
+- (BOOL)isIdentityAdded:(FakeSystemIdentity*)fakeIdentity;
 
 // Returns the gaia ID of the signed-in account.
 // If there is no signed-in account returns an empty string.
@@ -93,6 +90,9 @@ class GURL;
 // kMigrateSyncingUserToSignedIn).
 - (void)signinAndEnableLegacySyncFeature:(FakeSystemIdentity*)identity;
 
+// Signs in with `identity` without history sync consent.
+- (void)signInWithoutHistorySyncWithFakeIdentity:(FakeSystemIdentity*)identity;
+
 // Triggers the web sign-in consistency dialog. This is done by calling
 // directly the current SceneController.
 // `url` that triggered the web sign-in/consistency dialog.
@@ -100,7 +100,7 @@ class GURL;
 
 // Triggers the reauth dialog. This is done by sending ShowSigninCommand to
 // SceneController, without any UI interaction to open the dialog.
-// TODO(crbug.com/1454101): To be consistent, this method should be renamed to
+// TODO(crbug.com/40916763): To be consistent, this method should be renamed to
 // `triggerSigninAndSyncReauthWithFakeIdentity:`.
 - (void)triggerReauthDialogWithFakeIdentity:(FakeSystemIdentity*)identity;
 

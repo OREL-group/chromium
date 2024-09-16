@@ -12,11 +12,12 @@
 #import "components/previous_session_info/previous_session_info.h"
 #import "ios/chrome/app/chrome_overlay_window.h"
 #import "ios/chrome/app/main_application_delegate.h"
-#import "ios/chrome/browser/crash_report/model/main_thread_freeze_detector.h"
+#import "ios/chrome/browser/appearance/ui_bundled/appearance_customization.h"
 #import "ios/chrome/browser/shared/model/paths/paths.h"
-#import "ios/chrome/browser/ui/appearance/appearance_customization.h"
 
 namespace {
+
+NSString* const kOriginDetectedKey = @"OriginDetectedKey";
 
 // Set the breadcrumbs log in PreviousSessionInfo.
 void SyncBreadcrumbsLog() {
@@ -39,7 +40,6 @@ void SyncBreadcrumbsLog() {
   });
 }
 }  // namespace
-NSString* const kOriginDetectedKey = @"OriginDetectedKey";
 
 @implementation SceneDelegate
 
@@ -66,11 +66,8 @@ NSString* const kOriginDetectedKey = @"OriginDetectedKey";
 - (UIWindow*)window {
   if (!_window) {
     // With iOS15 pre-warming, this appears to be the first callback after the
-    // app is restored.  This is a no-op in non-prewarming.
-    [[MainThreadFreezeDetector sharedInstance] start];
-
-    // Sync the breadcrumbs log as early as possible, before any MetricKit crash
-    // reports may come in.
+    // app is restored. Sync the breadcrumbs log as early as possible, before
+    // any MetricKit crash reports may come in.
     SyncBreadcrumbsLog();
 
     // Sizing of the window is handled by UIKit.

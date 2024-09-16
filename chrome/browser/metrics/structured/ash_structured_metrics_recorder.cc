@@ -12,6 +12,7 @@
 #include "base/task/current_thread.h"
 #include "chrome/browser/metrics/structured/ash_event_storage.h"
 #include "chrome/browser/metrics/structured/key_data_provider_ash.h"
+#include "chrome/browser/metrics/structured/storage_manager_impl.h"
 #include "components/metrics/structured/enums.h"
 #include "components/metrics/structured/histogram_util.h"
 #include "components/metrics/structured/structured_metrics_features.h"
@@ -33,14 +34,22 @@ constexpr char kExternalMetricsDir[] = "/var/lib/metrics/structured/events";
 constexpr char kAshPreUserStorePath[] =
     "/var/lib/metrics/structured/chromium/events";
 
+std::unique_ptr<EventStorage<StructuredEventProto>> CreateEventStorage() {
+  if (base::FeatureList::IsEnabled(kEventStorageManager)) {
+    const StorageManagerConfig config =
+        StorageManagerImpl::GetStorageManagerConfig();
+    return std::make_unique<StorageManagerImpl>(config);
+  }
+  return std::make_unique<AshEventStorage>(
+      AshEventStorage::kSaveDelay, base::FilePath(kAshPreUserStorePath));
+}
+
 }  // namespace
 
 AshStructuredMetricsRecorder::AshStructuredMetricsRecorder(
     metrics::MetricsProvider* system_profile_provider)
     : AshStructuredMetricsRecorder(std::make_unique<KeyDataProviderAsh>(),
-                                   std::make_unique<AshEventStorage>(
-                                       AshEventStorage::kSaveDelay,
-                                       base::FilePath(kAshPreUserStorePath)),
+                                   CreateEventStorage(),
                                    system_profile_provider) {}
 
 AshStructuredMetricsRecorder::AshStructuredMetricsRecorder(
@@ -78,9 +87,6 @@ void AshStructuredMetricsRecorder::ProvideEventMetrics(
   // Base class handles most of the work that is needed.
   StructuredMetricsRecorder::ProvideEventMetrics(uma_proto);
 
-  // Add the system profile.
-  ProvideSystemProfile(uma_proto.mutable_system_profile());
-
   // Handle External Metrics statistics.
   LogExternalMetricsScanInUpload(external_metrics_scans_);
   external_metrics_scans_ = 0;
@@ -115,6 +121,13 @@ void AshStructuredMetricsRecorder::AddSequenceMetadata(
   if (secondary_id.has_value()) {
     proto->set_device_project_id(secondary_id.value());
   }
+}
+
+void AshStructuredMetricsRecorder::ProvideLogMetadata(
+    ChromeUserMetricsExtension& uma_proto) {
+  StructuredMetricsRecorder::ProvideLogMetadata(uma_proto);
+  // Add the system profile.
+  ProvideSystemProfile(uma_proto.mutable_system_profile());
 }
 
 void AshStructuredMetricsRecorder::OnSystemProfileInitialized() {

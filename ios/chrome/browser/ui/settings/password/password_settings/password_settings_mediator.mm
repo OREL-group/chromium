@@ -16,7 +16,7 @@
 #import "components/password_manager/core/common/password_manager_pref_names.h"
 #import "components/prefs/pref_service.h"
 #import "components/signin/public/identity_manager/objc/identity_manager_observer_bridge.h"
-#import "components/sync/base/model_type.h"
+#import "components/sync/base/data_type.h"
 #import "components/sync/base/passphrase_enums.h"
 #import "components/sync/base/user_selectable_type.h"
 #import "components/sync/service/sync_service_utils.h"
@@ -159,7 +159,7 @@ bool IsCredentialNotInAccountStore(const CredentialUIEntry& credential) {
   [self.consumer setSignedInAccount:base::SysUTF8ToNSString(
                                         _syncService->GetAccountInfo().email)];
 
-  // TODO(crbug.com/1082827): In addition to setting this value here, we should
+  // TODO(crbug.com/40131118): In addition to setting this value here, we should
   // observe for changes (i.e., if policy changes while the screen is open) and
   // push that to the consumer.
   [self.consumer setManagedByPolicy:_prefService->IsManagedPreference(
@@ -176,9 +176,9 @@ bool IsCredentialNotInAccountStore(const CredentialUIEntry& credential) {
   int localPasswordsCount = [self computeLocalPasswordsCount];
 
   _syncService->TriggerLocalDataMigration(
-      syncer::ModelTypeSet{syncer::ModelType::PASSWORDS});
+      syncer::DataTypeSet{syncer::DataType::PASSWORDS});
 
-  // TODO(crbug.com/1482293): Remove this histogram enumeration when using
+  // TODO(crbug.com/40281800): Remove this histogram enumeration when using
   // `MoveCredentialsToAccount`.
   base::UmaHistogramEnumeration(
       "PasswordManager.AccountStorage.MoveToAccountStoreFlowAccepted2",

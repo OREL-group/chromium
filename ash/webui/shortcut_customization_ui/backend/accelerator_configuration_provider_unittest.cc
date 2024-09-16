@@ -45,6 +45,8 @@
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/base/ime/ash/fake_ime_keyboard.h"
+#include "ui/base/ime/ash/ime_keyboard.h"
 #include "ui/base/ime/ash/input_method_manager.h"
 #include "ui/base/ime/ash/mock_input_method_manager.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -350,6 +352,11 @@ class AcceleratorConfigurationProviderTest : public AshTestBase {
       }
     }
 
+    input_method::ImeKeyboard* GetImeKeyboard() override {
+      return &ime_keyboard_;
+    }
+
+    input_method::FakeImeKeyboard ime_keyboard_;
     base::ObserverList<InputMethodManager::Observer>::Unchecked observers_;
   };
 
@@ -1696,6 +1703,15 @@ TEST_F(AcceleratorConfigurationProviderTest, AddAcceleratorBadAccelerator) {
                           mail_accelerator, &result);
   EXPECT_EQ(mojom::AcceleratorConfigResult::kNonStandardWithSearch,
             result->result);
+
+  // Block right alt key pressing.
+  const ui::Accelerator right_alt_accelerator(ui::VKEY_RIGHT_ALT,
+                                              ui::EF_COMMAND_DOWN);
+  ash::shortcut_customization::mojom::
+      AcceleratorConfigurationProviderAsyncWaiter(provider_.get())
+          .AddAccelerator(mojom::AcceleratorSource::kAsh, kToggleMirrorMode,
+                          right_alt_accelerator, &result);
+  EXPECT_EQ(mojom::AcceleratorConfigResult::kBlockRightAlt, result->result);
 }
 
 TEST_F(AcceleratorConfigurationProviderTest, AddAcceleratorExceedsMaximum) {

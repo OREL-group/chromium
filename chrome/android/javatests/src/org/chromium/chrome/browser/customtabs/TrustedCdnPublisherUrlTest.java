@@ -43,6 +43,7 @@ import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.CommandLine;
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
@@ -56,6 +57,7 @@ import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.app.ChromeActivity;
 import org.chromium.chrome.browser.browserservices.intents.BrowserServicesIntentDataProvider;
+import org.chromium.chrome.browser.crypto.CipherFactory;
 import org.chromium.chrome.browser.customtabs.content.CustomTabIntentHandler;
 import org.chromium.chrome.browser.customtabs.dependency_injection.BaseCustomTabActivityModule;
 import org.chromium.chrome.browser.customtabs.features.toolbar.CustomTabToolbar;
@@ -78,7 +80,6 @@ import org.chromium.chrome.test.util.ChromeRenderTestRule;
 import org.chromium.components.offlinepages.SavePageResult;
 import org.chromium.components.url_formatter.SchemeDisplay;
 import org.chromium.components.url_formatter.UrlFormatter;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.content_public.browser.test.util.TestTouchUtils;
 import org.chromium.net.NetworkChangeNotifier;
 import org.chromium.net.test.util.TestWebServer;
@@ -104,13 +105,15 @@ public class TrustedCdnPublisherUrlTest {
                                     CustomTabIntentHandler.IntentIgnoringCriterion
                                             intentIgnoringCriterion,
                                     TopUiThemeColorProvider topUiThemeColorProvider,
-                                    DefaultBrowserProviderImpl customTabDefaultBrowserProvider) ->
+                                    DefaultBrowserProviderImpl customTabDefaultBrowserProvider,
+                                    CipherFactory cipherFactory) ->
                                     new BaseCustomTabActivityModule(
                                             intentDataProvider,
                                             nightModeController,
                                             intentIgnoringCriterion,
                                             topUiThemeColorProvider,
-                                            new FakeDefaultBrowserProviderImpl()));
+                                            new FakeDefaultBrowserProviderImpl(),
+                                            cipherFactory));
 
     public CustomTabActivityTestRule mCustomTabActivityTestRule = new CustomTabActivityTestRule();
     public ChromeRenderTestRule mRenderTestRule =
@@ -153,7 +156,7 @@ public class TrustedCdnPublisherUrlTest {
 
     @Before
     public void setUp() throws Exception {
-        TestThreadUtils.runOnUiThreadBlocking(() -> FirstRunStatus.setFirstRunFlowComplete(true));
+        ThreadUtils.runOnUiThreadBlocking(() -> FirstRunStatus.setFirstRunFlowComplete(true));
 
         LibraryLoader.getInstance().ensureInitialized();
         mWebServer = TestWebServer.start();
@@ -166,7 +169,7 @@ public class TrustedCdnPublisherUrlTest {
 
     @After
     public void tearDown() {
-        TestThreadUtils.runOnUiThreadBlocking(() -> FirstRunStatus.setFirstRunFlowComplete(false));
+        ThreadUtils.runOnUiThreadBlocking(() -> FirstRunStatus.setFirstRunFlowComplete(false));
 
         mWebServer.shutdown();
     }
@@ -324,7 +327,7 @@ public class TrustedCdnPublisherUrlTest {
         final ChromeActivity newActivity = (ChromeActivity) activity;
         CriteriaHelper.pollUiThread(() -> newActivity.getActivityTab() == tab, "Tab did not load");
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     Assert.assertNull(TrustedCdn.getPublisherUrl(tab));
                 });
@@ -351,7 +354,7 @@ public class TrustedCdnPublisherUrlTest {
 
         // TODO (https://crbug.com/1063807):  Add incognito mode tests.
         OfflinePageBridge offlinePageBridge =
-                TestThreadUtils.runOnUiThreadBlockingNoException(
+                ThreadUtils.runOnUiThreadBlocking(
                         () -> {
                             Profile profile = ProfileManager.getLastUsedRegularProfile();
                             return OfflinePageBridge.getForProfile(profile);
@@ -396,7 +399,7 @@ public class TrustedCdnPublisherUrlTest {
                 });
         callback2.waitForCallback(0);
 
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     NetworkChangeNotifier.forceConnectivityState(false);
                 });

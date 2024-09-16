@@ -16,6 +16,7 @@
 #include "chrome/browser/ui/webui/ash/emoji/seal.h"
 #include "chrome/browser/ui/webui/ash/emoji/seal.mojom.h"
 #include "chrome/browser/ui/webui/top_chrome/top_chrome_web_ui_controller.h"
+#include "chrome/browser/ui/webui/top_chrome/top_chrome_webui_config.h"
 #include "chrome/browser/ui/webui/webui_load_timer.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chromeos/ash/components/emoji/emoji_search.h"
@@ -38,11 +39,12 @@ namespace ash {
 class EmojiUI;
 
 // WebUIConfig for chrome://emoji-picker
-class EmojiUIConfig : public content::DefaultWebUIConfig<EmojiUI> {
+class EmojiUIConfig : public DefaultTopChromeWebUIConfig<EmojiUI> {
  public:
-  EmojiUIConfig()
-      : DefaultWebUIConfig(content::kChromeUIScheme,
-                           chrome::kChromeUIEmojiPickerHost) {}
+  EmojiUIConfig();
+
+  // DefaultTopChromeWebUIConfig:
+  bool ShouldAutoResizeHost() override;
 };
 
 class EmojiUI : public TopChromeWebUIController,
@@ -56,7 +58,8 @@ class EmojiUI : public TopChromeWebUIController,
   static bool ShouldShow(const ui::TextInputClient* input_client,
                          ui::EmojiPickerFocusBehavior focus_behavior);
   static void Show(ui::EmojiPickerCategory category,
-                   ui::EmojiPickerFocusBehavior focus_behavior);
+                   ui::EmojiPickerFocusBehavior focus_behavior,
+                   const std::string& initial_query);
 
   // Instantiates the implementor of the mojom::PageHandler mojo interface
   // passing the pending receiver that will be internally bound.
@@ -99,6 +102,7 @@ class EmojiUI : public TopChromeWebUIController,
   bool incognito_mode_ = false;
   bool no_text_field_ = false;
   emoji_picker::mojom::Category initial_category_;
+  std::string initial_query_;
 
   WEB_UI_CONTROLLER_TYPE_DECL();
 };

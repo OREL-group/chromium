@@ -18,10 +18,14 @@
 #include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/metrics/payments/mandatory_reauth_metrics.h"
+#include "components/autofill/core/browser/payments/payments_autofill_client.h"
+#include "components/autofill/core/browser/payments_data_manager.h"
 #include "components/autofill/core/common/autofill_prefs.h"
 #include "components/device_reauth/mock_device_authenticator.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/test/browser_test.h"
+
+namespace {
 
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
 using autofill::autofill_metrics::MandatoryReauthAuthenticationFlowEvent;
@@ -48,7 +52,8 @@ class MandatoryReauthSettingsPageMetricsTest
         autofill_client()->GetPrefs());
     autofill_client()
         ->GetPersonalDataManager()
-        ->SetPaymentMethodsMandatoryReauthEnabled(IsFeatureTurnedOn());
+        ->payments_data_manager()
+        .SetPaymentMethodsMandatoryReauthEnabled(IsFeatureTurnedOn());
     extensions::AutofillPrivateEventRouterFactory::GetForProfile(
         browser_context())
         ->RebindPersonalDataManagerForTesting(
@@ -102,7 +107,9 @@ IN_PROC_BROWSER_TEST_P(MandatoryReauthSettingsPageMetricsTest,
   base::HistogramTester histogram_tester;
 
   ON_CALL(*static_cast<autofill::payments::MockMandatoryReauthManager*>(
-              autofill_client()->GetOrCreatePaymentsMandatoryReauthManager()),
+              autofill_client()
+                  ->GetPaymentsAutofillClient()
+                  ->GetOrCreatePaymentsMandatoryReauthManager()),
           AuthenticateWithMessage)
       .WillByDefault(
           testing::WithArg<1>([auth_success = IsUserAuthSuccessful()](
@@ -132,7 +139,9 @@ IN_PROC_BROWSER_TEST_P(MandatoryReauthSettingsPageMetricsTest,
   base::HistogramTester histogram_tester;
 
   ON_CALL(*static_cast<autofill::payments::MockMandatoryReauthManager*>(
-              autofill_client()->GetOrCreatePaymentsMandatoryReauthManager()),
+              autofill_client()
+                  ->GetPaymentsAutofillClient()
+                  ->GetOrCreatePaymentsMandatoryReauthManager()),
           AuthenticateWithMessage)
       .WillByDefault(
           testing::WithArg<1>([auth_success = IsUserAuthSuccessful()](
@@ -175,8 +184,11 @@ class AutofillPrivateApiUnitTest : public extensions::ExtensionApiTest {
 
   void SetUpOnMainThread() override {
     ExtensionApiTest::SetUpOnMainThread();
-    autofill_client()->GetPersonalDataManager()->SetSyncingForTest(
-        /*is_syncing_for_test=*/true);
+    autofill_client()
+        ->GetPersonalDataManager()
+        ->payments_data_manager()
+        .SetSyncingForTest(
+            /*is_syncing_for_test=*/true);
   }
 
   autofill::TestContentAutofillClient* autofill_client() {
@@ -208,13 +220,14 @@ IN_PROC_BROWSER_TEST_F(AutofillPrivateApiUnitTest, BulkDeleteAllCvcs) {
       autofill::test::WithCvc(autofill::test::GetMaskedServerCard(), u"098");
   autofill::TestPersonalDataManager* personal_data =
       autofill_client()->GetPersonalDataManager();
-  personal_data->AddCreditCard(local_card);
-  personal_data->AddServerCreditCard(server_card);
+  personal_data->payments_data_manager().AddCreditCard(local_card);
+  personal_data->test_payments_data_manager().AddServerCreditCard(server_card);
 
   // Verify that cards are same as above and the CVCs are present for both of
   // them.
-  ASSERT_EQ(personal_data->GetCreditCards().size(), 2u);
-  for (const autofill::CreditCard* card : personal_data->GetCreditCards()) {
+  ASSERT_EQ(personal_data->payments_data_manager().GetCreditCards().size(), 2u);
+  for (const autofill::CreditCard* card :
+       personal_data->payments_data_manager().GetCreditCards()) {
     EXPECT_FALSE(card->cvc().empty());
     if (card->record_type() ==
         autofill::CreditCard::RecordType::kMaskedServerCard) {
@@ -230,8 +243,9 @@ IN_PROC_BROWSER_TEST_F(AutofillPrivateApiUnitTest, BulkDeleteAllCvcs) {
 
   // Verify that cards are same as above and the CVCs are deleted for both of
   // them.
-  ASSERT_EQ(personal_data->GetCreditCards().size(), 2u);
-  for (const autofill::CreditCard* card : personal_data->GetCreditCards()) {
+  ASSERT_EQ(personal_data->payments_data_manager().GetCreditCards().size(), 2u);
+  for (const autofill::CreditCard* card :
+       personal_data->payments_data_manager().GetCreditCards()) {
     EXPECT_TRUE(card->cvc().empty());
     if (card->record_type() ==
         autofill::CreditCard::RecordType::kMaskedServerCard) {
@@ -241,3 +255,5 @@ IN_PROC_BROWSER_TEST_F(AutofillPrivateApiUnitTest, BulkDeleteAllCvcs) {
     }
   }
 }
+
+}  // namespace

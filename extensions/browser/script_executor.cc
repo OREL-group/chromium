@@ -35,7 +35,6 @@
 #include "pdf/buildflags.h"
 
 #if BUILDFLAG(ENABLE_PDF)
-#include "base/feature_list.h"
 #include "extensions/common/constants.h"
 #include "pdf/pdf_features.h"
 #endif  // BUILDFLAG(ENABLE_PDF)
@@ -171,7 +170,7 @@ class Handler : public content::WebContentsObserver {
     }
 
 #if BUILDFLAG(ENABLE_PDF)
-    if (base::FeatureList::IsEnabled(chrome_pdf::features::kPdfOopif)) {
+    if (chrome_pdf::features::IsOopifPdfEnabled()) {
       // Don't expose any child frames of the PDF extension frame, such as the
       // PDF content frame.
       content::RenderFrameHost* parent = frame->GetParent();
@@ -200,9 +199,9 @@ class Handler : public content::WebContentsObserver {
     // Preallocate the results to hold the initial `frame_id` and `document_id`.
     // As the primary main frame uses a magic number 0 for the `frame_id`, it
     // can be changed if the primary page is changed. It happens on pre-rendered
-    // page activation or portal page activation on MPArch. The `document_id`
-    // can be stale if navigation happens and the same renderer is reused in the
-    // case, e.g. navigation from about:blank, or same-origin navigation.
+    // page activation on MPArch. The `document_id` can be stale if navigation
+    // happens and the same renderer is reused in the case, e.g. navigation from
+    // about:blank, or same-origin navigation.
     ScriptExecutor::FrameResult result;
     result.frame_id = frame_id;
     result.document_id = ExtensionApiFrameIdMap::GetDocumentId(frame);

@@ -16,17 +16,18 @@
 #include "chrome/browser/ash/login/lock/online_reauth/lock_screen_reauth_manager_factory.h"
 #include "chrome/browser/ash/login/login_pref_names.h"
 #include "chrome/browser/ash/login/signin_partition_manager.h"
-#include "chrome/browser/ash/login/ui/login_display_host_webui.h"
 #include "chrome/browser/ash/policy/core/browser_policy_connector_ash.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/enterprise/util/managed_browser_utils.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
+#include "chrome/browser/ui/ash/login/login_display_host_webui.h"
 #include "chrome/browser/ui/webui/ash/lock_screen_reauth/lock_screen_reauth_dialogs.h"
 #include "chrome/browser/ui/webui/ash/login/check_passwords_against_cryptohome_helper.h"
 #include "chrome/browser/ui/webui/ash/login/online_login_utils.h"
 #include "chrome/common/chrome_features.h"
+#include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/installer/util/google_update_settings.h"
 #include "chromeos/ash/components/login/auth/challenge_response/cert_utils.h"
@@ -49,7 +50,15 @@ namespace ash {
 namespace {
 
 bool ShouldDoSamlRedirect(const std::string& email) {
-  if (features::IsGaiaReauthEndpointEnabled()) {
+  // TODO(b/335388700): If automatic re-authentication start is configured we
+  // have to skip any user verification notice page. For SAML this is currently
+  // only possible with redirect endpoint. Once reauth endpoint enables this,
+  // remove auto_start_reauth from this function.
+  const PrefService* prefs =
+      user_manager::UserManager::Get()->GetPrimaryUser()->GetProfilePrefs();
+  bool auto_start_reauth =
+      prefs && prefs->GetBoolean(::prefs::kLockScreenAutoStartOnlineReauth);
+  if (!auto_start_reauth) {
     return false;
   }
 
@@ -132,7 +141,6 @@ void LockScreenReauthHandler::LoadAuthenticatorParam() {
 
   authenticator_state_ = AuthenticatorState::LOADING;
   login::GaiaContext context;
-  context.force_reload = true;
   context.email = email_;
   context.gaia_id = user_manager::UserManager::Get()
                         ->GetPrimaryUser()
@@ -210,16 +218,14 @@ void LockScreenReauthHandler::OnSetCookieForLoadGaiaWithPartition(
   if (do_saml_redirect) {
     params.Set("gaiaPath",
                gaia_urls.saml_redirect_chromeos_url().path().substr(1));
-  } else if (features::IsGaiaReauthEndpointEnabled() &&
-             !context.email.empty()) {
+  } else if (!context.email.empty()) {
     params.Set("gaiaPath",
                gaia_urls.embedded_reauth_chromeos_url().path().substr(1));
   } else {
     params.Set("gaiaPath", default_gaia_path);
   }
 
-  const std::string domain =
-      chrome::enterprise_util::GetDomainFromEmail(context.email);
+  const std::string domain = enterprise_util::GetDomainFromEmail(context.email);
   if (!domain.empty()) {
     params.Set("enterpriseEnrollmentDomain", domain);
   } else {
@@ -300,7 +306,7 @@ void LockScreenReauthHandler::HandleCompleteAuthentication(
     auto challenge_response_key_or_error = login::ExtractClientCertificates(
         *extension_provided_client_cert_usage_observer_);
     if (!challenge_response_key_or_error.has_value()) {
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return;
     }
     challenge_response_key = challenge_response_key_or_error.value();
@@ -351,7 +357,8 @@ void LockScreenReauthHandler::FinishAuthentication(
 }
 
 void LockScreenReauthHandler::OnCookieWaitTimeout() {
-  NOTREACHED() << "Cookie has timed out while attempting to login in.";
+  NOTREACHED_IN_MIGRATION()
+      << "Cookie has timed out while attempting to login in.";
   LockScreenStartReauthDialog::Dismiss();
 }
 
@@ -432,7 +439,7 @@ void LockScreenReauthHandler::SamlConfirmPassword(
     return;
   }
 
-  // TODO(https://crbug.com/1295294) Eliminate redundant cryptohome check.
+  // TODO(crbug.com/40214270) Eliminate redundant cryptohome check.
   check_passwords_against_cryptohome_helper_ =
       std::make_unique<CheckPasswordsAgainstCryptohomeHelper>(
           *user_context_.get(), scraped_saml_passwords_,

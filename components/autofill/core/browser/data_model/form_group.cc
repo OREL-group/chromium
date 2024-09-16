@@ -10,13 +10,16 @@
 #include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/autofill/core/browser/data_model/autofill_profile_comparator.h"
 #include "components/autofill/core/browser/data_model/autofill_structured_address_component.h"
+#include "components/autofill/core/browser/data_model/profile_value_source.h"
 #include "components/autofill/core/common/autofill_l10n_util.h"
 
 namespace autofill {
 
-void FormGroup::GetMatchingTypes(const std::u16string& text,
-                                 const std::string& app_locale,
-                                 FieldTypeSet* matching_types) const {
+void FormGroup::GetMatchingTypesWithProfileSources(
+    const std::u16string& text,
+    const std::string& app_locale,
+    FieldTypeSet* matching_types,
+    PossibleProfileValueSources* profile_value_sources) const {
   if (text.empty()) {
     matching_types->insert(EMPTY_TYPE);
     return;
@@ -31,9 +34,8 @@ void FormGroup::GetMatchingTypes(const std::u16string& text,
       AutofillProfileComparator::NormalizeForComparison(text);
   FieldTypeSet types;
   GetSupportedTypes(&types);
-  for (auto type : types) {
-    if (comparator.Compare(canonicalized_text,
-                           GetInfo(AutofillType(type), app_locale))) {
+  for (FieldType type : types) {
+    if (comparator.Compare(canonicalized_text, GetInfo(type, app_locale))) {
       matching_types->insert(type);
     }
   }
@@ -43,9 +45,10 @@ void FormGroup::GetNonEmptyTypes(const std::string& app_locale,
                                  FieldTypeSet* non_empty_types) const {
   FieldTypeSet types;
   GetSupportedTypes(&types);
-  for (auto type : types) {
-    if (!GetInfo(AutofillType(type), app_locale).empty())
+  for (FieldType type : types) {
+    if (!GetInfo(type, app_locale).empty()) {
       non_empty_types->insert(type);
+    }
   }
 }
 

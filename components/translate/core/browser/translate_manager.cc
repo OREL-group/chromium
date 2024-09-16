@@ -6,6 +6,7 @@
 
 #include <map>
 #include <memory>
+#include <string_view>
 #include <tuple>
 #include <utility>
 
@@ -17,7 +18,6 @@
 #include "base/metrics/histogram.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -557,7 +557,9 @@ std::string TranslateManager::GetTargetLanguage(
     std::string auto_translate_language =
         translate::TranslateManager::GetAutoTargetLanguage(source_lang_code,
                                                            prefs);
-    if (!auto_translate_language.empty()) {
+    if (!auto_translate_language.empty() &&
+        TranslateDownloadManager::IsSupportedLanguage(
+            auto_translate_language)) {
       target_language_origin =
           TranslateBrowserMetrics::TargetLanguageOrigin::kAutoTranslate;
       return auto_translate_language;
@@ -568,7 +570,8 @@ std::string TranslateManager::GetTargetLanguage(
 
   // If we've recorded the most recent target language, use that.
   if (base::FeatureList::IsEnabled(kTranslateRecentTarget) &&
-      !recent_target.empty()) {
+      !recent_target.empty() &&
+      TranslateDownloadManager::IsSupportedLanguage(recent_target)) {
     target_language_origin =
         TranslateBrowserMetrics::TargetLanguageOrigin::kRecentTarget;
     return recent_target;
@@ -735,7 +738,7 @@ void TranslateManager::AddTargetLanguageToAcceptLanguages(
   std::vector<std::string> languages;
   prefs->GetLanguageList(&languages);
 
-  base::StringPiece target_language, tail;
+  std::string_view target_language, tail;
   // |target_language_code| should satisfy BCP47 and consist of a language code
   // and an optional region code joined by an hyphen.
   std::tie(target_language, tail) =

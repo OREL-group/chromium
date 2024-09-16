@@ -92,7 +92,7 @@ namespace autofill {
 // country code. If we don't reformat the number, the GetRawInfo()
 // representation remains without one. In all countries but the US and Canada,
 // formatting will put a + in front of the country code.
-// TODO(crbug.com/1311937) Clean this up once AutofillInferCountryCallingCode
+// TODO(crbug.com/40220393) Clean this up once AutofillInferCountryCallingCode
 // is launched.
 //
 // PHONE_HOME_EXTENSION: Extensions are detected, but not filled. This would
@@ -444,7 +444,8 @@ enum FieldType {
   // fields between single username and password forms.
   // Will be used to rollout new predictions based on new votes of Username
   // First Flow with intermediate values.
-  // TODO(b/294195764): Deprecate after fully rolling out new predictions.
+  // TODO(crbug.com/294195764): Deprecate after fully rolling out new
+  // predictions.
   SINGLE_USERNAME_WITH_INTERMEDIATE_VALUES = 160,
 
   // SERVER_RESPONSE_PENDING is not exposed as an enum value to prevent
@@ -454,6 +455,13 @@ enum FieldType {
   // the same as NO_SERVER_DATA, which indicates that the server has no
   // classification for the field.
   // SERVER_RESPONSE_PENDING = 161;
+
+  // Improved Prediction indicates that this field is support by the predition
+  // improvement system.
+  // This type is a metatype and does not correspond to a specific sort of
+  // data.
+  // It should not take precedence over existing types.
+  IMPROVED_PREDICTION = 162,
 
   // No new types can be added without a corresponding change to the Autofill
   // server.
@@ -465,7 +473,7 @@ enum FieldType {
   // If the newly added type is a storable type of AutofillProfile, update
   // AutofillProfile.StorableTypes in
   // tools/metrics/histograms/metadata/autofill/histograms.xml.
-  MAX_VALID_FIELD_TYPE = 162,
+  MAX_VALID_FIELD_TYPE = 163,
 };
 // LINT.ThenChange(//chrome/common/extensions/api/autofill_private.idl)
 
@@ -482,7 +490,9 @@ enum class FieldTypeGroup {
   kUsernameField,
   kUnfillable,
   kIban,
-  kMaxValue = kIban,
+  kStandaloneCvcField,
+  kPredictionImprovements,
+  kMaxValue = kPredictionImprovements,
 };
 
 template <>
@@ -493,6 +503,8 @@ struct DenseSetTraits<FieldType> {
 };
 
 using FieldTypeSet = DenseSet<FieldType>;
+
+using FieldTypeGroupSet = DenseSet<FieldTypeGroup>;
 
 using HtmlFieldTypeSet = DenseSet<HtmlFieldType>;
 
@@ -572,7 +584,9 @@ constexpr HtmlFieldType ToSafeHtmlFieldType(
     return static_cast<underlying_type_t>(HtmlFieldType::kMinValue) <= t &&
            t <= static_cast<underlying_type_t>(HtmlFieldType::kMaxValue) &&
            // Full address is deprecated.
-           t != 17;
+           t != 17 &&
+           // UPI is deprecated.
+           t != 46;
   };
   return IsValid(raw_value) ? static_cast<HtmlFieldType>(raw_value)
                             : fallback_value;

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ui/views/frame/browser_frame_view_win.h"
 
 #include <dwmapi.h>
@@ -30,6 +35,7 @@
 #include "chrome/browser/ui/web_applications/app_browser_controller.h"
 #include "chrome/browser/web_applications/web_app_icon_manager.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
+#include "chrome/browser/win/mica_titlebar.h"
 #include "chrome/browser/win/titlebar_config.h"
 #include "content/public/browser/web_contents.h"
 #include "skia/ext/image_operations.h"
@@ -39,6 +45,7 @@
 #include "ui/base/theme_provider.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/base/win/hwnd_metrics.h"
+#include "ui/color/color_provider_key.h"
 #include "ui/display/win/dpi.h"
 #include "ui/display/win/screen_win.h"
 #include "ui/gfx/canvas.h"
@@ -71,7 +78,7 @@ base::win::ScopedHICON CreateHICONFromSkBitmapSizedTo(
 }
 
 // Additional left margin in the title bar when the window is maximized.
-// TODO(https://crbug.com/1411801): Avoid hardcoding sizes like this.
+// TODO(crbug.com/40890502): Avoid hardcoding sizes like this.
 constexpr int kMaximizedLeftMargin = 2;
 
 constexpr int kIconTitleSpacing = 5;
@@ -168,7 +175,7 @@ void BrowserFrameViewWin::LayoutWebAppWindowTitle(
   gfx::Rect bounds = available_space;
   // If nothing has been added to the left, match native Windows 10 UWP apps
   // that don't have window icons.
-  // TODO(https://crbug.com/1411801): Avoid hardcoding sizes like this.
+  // TODO(crbug.com/40890502): Avoid hardcoding sizes like this.
   constexpr int kMinimumTitleLeftBorderMargin = 11;
   if (bounds.x() < kMinimumTitleLeftBorderMargin) {
     bounds.SetHorizontalBounds(kMinimumTitleLeftBorderMargin, bounds.right());
@@ -252,10 +259,6 @@ void BrowserFrameViewWin::WindowControlsOverlayEnabledChanged() {
   caption_button_container_->OnWindowControlsOverlayEnabledChanged();
 }
 
-TabSearchBubbleHost* BrowserFrameViewWin::GetTabSearchBubbleHost() {
-  return caption_button_container_->GetTabSearchBubbleHost();
-}
-
 void BrowserFrameViewWin::PaintAsActiveChanged() {
   BrowserNonClientFrameView::PaintAsActiveChanged();
 
@@ -317,13 +320,15 @@ int BrowserFrameViewWin::NonClientHitTest(const gfx::Point& point) {
   // At the window corners the resize area is not actually bigger, but the 16
   // pixels at the end of the top and bottom edges trigger diagonal resizing.
   constexpr int kResizeCornerWidth = 16;
-  int window_component = GetHTComponentForFrame(
-      point, gfx::Insets::TLBR(GetLayoutConstant(TAB_STRIP_PADDING), 0, 0, 0),
-      GetLayoutConstant(TAB_STRIP_PADDING),
-      kResizeCornerWidth - FrameBorderThickness(),
+
+  const int top_border_thickness = GetLayoutConstant(TAB_STRIP_PADDING);
+
+  const int window_component = GetHTComponentForFrame(
+      point, gfx::Insets::TLBR(top_border_thickness, 0, 0, 0),
+      top_border_thickness, kResizeCornerWidth - FrameBorderThickness(),
       frame()->widget_delegate()->CanResize());
 
-  int frame_component = frame()->client_view()->NonClientHitTest(point);
+  const int frame_component = frame()->client_view()->NonClientHitTest(point);
 
   // See if we're in the sysmenu region.  We still have to check the tabstrip
   // first so that clicks in a tab don't get treated as sysmenu clicks.
@@ -349,8 +354,8 @@ int BrowserFrameViewWin::NonClientHitTest(const gfx::Point& point) {
   }
 
   // Then see if the point is within any of the window controls.
-  gfx::Point local_point = point;
-  ConvertPointToTarget(parent(), caption_button_container_, &local_point);
+  const gfx::Point local_point =
+      ConvertPointToTarget(parent(), caption_button_container_, point);
   if (caption_button_container_->HitTestPoint(local_point)) {
     const int hit_test_result =
         caption_button_container_->NonClientHitTest(local_point);
@@ -556,26 +561,8 @@ int BrowserFrameViewWin::TopAreaHeight(bool restored) const {
     return top;
   }
 
-  // In Refresh, the tabstrip controls its own top padding.
-  if (features::IsChromeRefresh2023()) {
-    return top;
-  }
-
-  // In maximized mode, we do not add any additional thickness to the grab
-  // handle above the tabs; just return the frame thickness.
-  if (maximized) {
-    return top;
-  }
-
-  // Besides the frame border, there's empty space atop the window in restored
-  // mode, to use to drag the window around.
-  constexpr int kNonClientRestoredExtraThickness = 4;
-  int thickness = kNonClientRestoredExtraThickness;
-  if (EverHasVisibleBackgroundTabShapes()) {
-    thickness =
-        std::max(thickness, BrowserNonClientFrameView::kMinimumDragHeight);
-  }
-  return top + thickness;
+  // The tabstrip controls its own top padding.
+  return top;
 }
 
 int BrowserFrameViewWin::TitlebarMaximizedVisualHeight() const {
@@ -678,7 +665,8 @@ void BrowserFrameViewWin::TabletModeChanged() {
 void BrowserFrameViewWin::SetSystemMicaTitlebarAttributes() {
   CHECK(SystemTitlebarCanUseMicaMaterial());
 
-  const BOOL dark_titlebar_enabled = GetNativeTheme()->ShouldUseDarkColors();
+  const BOOL dark_titlebar_enabled =
+      frame()->GetColorMode() == ui::ColorProviderKey::ColorMode::kDark;
   DwmSetWindowAttribute(views::HWNDForWidget(frame()),
                         DWMWA_USE_IMMERSIVE_DARK_MODE, &dark_titlebar_enabled,
                         sizeof(dark_titlebar_enabled));
@@ -822,30 +810,17 @@ void BrowserFrameViewWin::LayoutCaptionButtons() {
 
   const gfx::Size preferred_size =
       caption_button_container_->GetPreferredSize();
-  int height = preferred_size.height();
-  // We use the standard caption bar height when maximized in tablet mode, which
-  // is smaller than our preferred button size.
-  if (IsWebUITabStrip() && IsMaximized()) {
-    height = std::min(height, TitlebarMaximizedVisualHeight());
-  }
-  if (!browser_view()->GetWebAppFrameToolbarPreferredSize().IsEmpty()) {
-    height = IsMaximized() ? TitlebarMaximizedVisualHeight()
-                           : TitlebarHeight(false) - WindowTopY();
-  }
 
   const int system_caption_buttons_width =
       ShouldBrowserCustomDrawTitlebar(browser_view())
           ? 0
           : width() - frame()->GetMinimizeButtonOffset();
 
-  height = features::IsChromeRefresh2023() ? GetFrameHeight()
-                                           : std::min(GetFrameHeight(), height);
-
   caption_button_container_->SetBounds(
       CaptionButtonsOnLeadingEdge()
           ? system_caption_buttons_width
           : width() - system_caption_buttons_width - preferred_size.width(),
-      WindowTopY(), preferred_size.width(), height);
+      WindowTopY(), preferred_size.width(), GetFrameHeight());
 }
 
 void BrowserFrameViewWin::LayoutClientView() {

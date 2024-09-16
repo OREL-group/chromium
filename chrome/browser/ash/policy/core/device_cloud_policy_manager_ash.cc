@@ -63,10 +63,6 @@ namespace policy {
 
 namespace {
 
-// Zero-touch enrollment flag values.
-
-const char kZeroTouchEnrollmentForced[] = "forced";
-
 // Default frequency for uploading enterprise status reports. Can be overriden
 // by Device Policy.
 // Keep the default value in sync with device_status_frequency in
@@ -166,29 +162,6 @@ void DeviceCloudPolicyManagerAsh::RegisterPrefs(PrefRegistrySimple* registry) {
   registry->RegisterStringPref(::prefs::kLastRsuDeviceIdUploaded,
                                std::string());
   registry->RegisterListPref(prefs::kStoreLogStatesAcrossReboots);
-}
-
-// static
-ZeroTouchEnrollmentMode
-DeviceCloudPolicyManagerAsh::GetZeroTouchEnrollmentMode() {
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  if (!command_line->HasSwitch(
-          ash::switches::kEnterpriseEnableZeroTouchEnrollment)) {
-    return ZeroTouchEnrollmentMode::DISABLED;
-  }
-
-  std::string value = command_line->GetSwitchValueASCII(
-      ash::switches::kEnterpriseEnableZeroTouchEnrollment);
-  if (value == kZeroTouchEnrollmentForced) {
-    return ZeroTouchEnrollmentMode::FORCED;
-  }
-  if (value.empty()) {
-    return ZeroTouchEnrollmentMode::ENABLED;
-  }
-  LOG(WARNING) << "Malformed value \"" << value << "\" for switch --"
-               << ash::switches::kEnterpriseEnableZeroTouchEnrollment
-               << ". Ignoring switch.";
-  return ZeroTouchEnrollmentMode::DISABLED;
 }
 
 void DeviceCloudPolicyManagerAsh::StartConnection(
@@ -300,8 +273,7 @@ void DeviceCloudPolicyManagerAsh::OnUserManagerCreated(
       std::make_unique<ReportingUserTracker>(user_manager);
 }
 
-void DeviceCloudPolicyManagerAsh::OnUserManagerWillBeDestroyed(
-    user_manager::UserManager* user_manager) {
+void DeviceCloudPolicyManagerAsh::OnUserManagerWillBeDestroyed() {
   // DeviceStatusCollector internally holds the reference to the
   // ReportingUserTracker instance, so should be released via Shutdown()
   // before this is reached.
@@ -412,5 +384,15 @@ void DeviceCloudPolicyManagerAsh::CreateManagedSessionServiceAndReporters() {
 HeartbeatScheduler*
 DeviceCloudPolicyManagerAsh::GetHeartbeatSchedulerForTesting() const {
   return heartbeat_scheduler_.get();
+}
+
+reporting::OsUpdatesReporter*
+DeviceCloudPolicyManagerAsh::GetOsUpdatesReporter() const {
+  return os_updates_reporter_.get();
+}
+
+reporting::MetricReportingManager*
+DeviceCloudPolicyManagerAsh::GetMetricReportingManager() {
+  return metric_reporting_manager_.get();
 }
 }  // namespace policy

@@ -40,6 +40,7 @@
 #include "third_party/blink/renderer/core/html/html_br_element.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/html/html_li_element.h"
+#include "third_party/blink/renderer/core/html/html_span_element.h"
 #include "third_party/blink/renderer/core/html/html_ulist_element.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
@@ -598,11 +599,11 @@ void InsertListCommand::ListifyParagraph(const VisiblePosition& original_start,
 
   // If original_start is of type kOffsetInAnchor, then the offset can become
   // invalid when inserting the <li>. So use a RelocatablePosition.
-  std::optional<RelocatablePosition> relocatable_original_start(
+  RelocatablePosition* relocatable_original_start =
       original_start.DeepEquivalent().IsOffsetInAnchor()
-          ? std::optional<RelocatablePosition>(
-                RelocatablePosition(original_start.DeepEquivalent()))
-          : std::nullopt);
+          ? MakeGarbageCollected<RelocatablePosition>(
+                original_start.DeepEquivalent())
+          : nullptr;
 
   // Check for adjoining lists.
   HTMLElement* const previous_list = AdjacentEnclosingList(

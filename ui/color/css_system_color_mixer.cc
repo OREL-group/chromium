@@ -14,7 +14,7 @@
 
 namespace ui {
 
-#if !BUILDFLAG(IS_WIN)
+#if !BUILDFLAG(IS_WIN) && !BUILDFLAG(IS_MAC)
 void MapNativeColorsToCssSystemColors(ColorMixer& mixer, ColorProviderKey key) {
 }
 #endif
@@ -105,7 +105,7 @@ void AddCssSystemColorMixer(ColorProvider* provider,
       AddWhitePageColorsToMixer(mixer);
       break;
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 
   // Don't apply system colors to web native controls if forced colors is

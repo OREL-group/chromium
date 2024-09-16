@@ -30,6 +30,11 @@ class PdfService : public mojom::PdfService {
 
  private:
   // mojom::PdfService:
+  void BindPdfProgressiveSearchifier(
+      mojo::PendingReceiver<mojom::PdfProgressiveSearchifier> receiver,
+      mojo::PendingRemote<mojom::Ocr> ocr) override;
+  void BindPdfSearchifier(mojo::PendingReceiver<mojom::PdfSearchifier> receiver,
+                          mojo::PendingRemote<mojom::Ocr> ocr) override;
   void BindPdfThumbnailer(
       mojo::PendingReceiver<mojom::PdfThumbnailer> receiver) override;
 

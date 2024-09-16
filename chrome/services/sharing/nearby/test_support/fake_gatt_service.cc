@@ -4,12 +4,6 @@
 
 #include "chrome/services/sharing/nearby/test_support/fake_gatt_service.h"
 
-namespace {
-
-const uint32_t kReadCharacteristicOffset = 0;
-
-}  // namespace
-
 namespace bluetooth {
 
 FakeGattService::FakeGattService() = default;
@@ -29,6 +23,15 @@ void FakeGattService::CreateCharacteristic(
   std::move(callback).Run(/*success=*/set_create_characteristic_result_);
 }
 
+void FakeGattService::Register(RegisterCallback callback) {
+  if (should_register_succeed_) {
+    std::move(callback).Run(std::nullopt);
+    return;
+  }
+
+  std::move(callback).Run(device::BluetoothGattService::GattErrorCode::kFailed);
+}
+
 void FakeGattService::SetObserver(
     mojo::PendingRemote<mojom::GattServiceObserver> observer) {
   observer_remote_.Bind(std::move(observer));
@@ -38,15 +41,24 @@ void FakeGattService::SetCreateCharacteristicResult(bool success) {
   set_create_characteristic_result_ = success;
 }
 
+void FakeGattService::SetShouldRegisterSucceed(bool should_register_succeed) {
+  should_register_succeed_ = should_register_succeed;
+}
+
+void FakeGattService::CloseReceiver() {
+  gatt_service_.reset();
+}
+
 void FakeGattService::TriggerReadCharacteristicRequest(
     const device::BluetoothUUID& service_uuid,
     const device::BluetoothUUID& characteristic_uuid,
-    ValueCallback callback) {
+    ValueCallback callback,
+    uint32_t offset) {
   observer_remote_->OnLocalCharacteristicRead(
       /*device=*/mojom::DeviceInfo::New(),
       /*characteristic_uuid=*/characteristic_uuid,
       /*service_uuid=*/service_uuid,
-      /*offset=*/kReadCharacteristicOffset,
+      /*offset=*/offset,
       /*callback=*/
       base::BindOnce(&FakeGattService::OnLocalCharacteristicReadResponse,
                      base::Unretained(this), std::move(callback)));

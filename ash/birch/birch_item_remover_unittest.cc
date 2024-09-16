@@ -61,6 +61,40 @@ TEST_F(BirchItemRemoverTest, RemoveTab) {
   EXPECT_EQ(tab_items, std::vector({item0, item1, item3}));
 }
 
+TEST_F(BirchItemRemoverTest, RemoveSelfShareItems) {
+  BirchSelfShareItem item0(u"item0_guid", u"item0_title",
+                           GURL("https://example.com/0"), base::Time(),
+                           u"device_name", SecondaryIconType::kTabFromDesktop,
+                           base::DoNothing());
+  BirchSelfShareItem item1(u"item1_guid", u"item1_title",
+                           GURL("https://example.com/1"), base::Time(),
+                           u"device_name", SecondaryIconType::kTabFromDesktop,
+                           base::DoNothing());
+  BirchSelfShareItem item2(u"item2_guid", u"item2_title",
+                           GURL("https://example.com/2"), base::Time(),
+                           u"device_name", SecondaryIconType::kTabFromDesktop,
+                           base::DoNothing());
+  BirchSelfShareItem item3(u"item3_guid", u"item3_title",
+                           GURL("https://example.com/3"), base::Time(),
+                           u"device_name", SecondaryIconType::kTabFromDesktop,
+                           base::DoNothing());
+  std::vector<BirchSelfShareItem> self_share_items = {item0, item1, item2,
+                                                      item3};
+
+  // Filter `self_share_items` before any items are removed. The list should
+  // remain unchanged.
+  item_remover_->FilterRemovedSelfShareItems(&self_share_items);
+  ASSERT_EQ(4u, self_share_items.size());
+
+  // Remove `item2`, and filter it from the list of tabs.
+  item_remover_->RemoveItem(&item2);
+  item_remover_->FilterRemovedSelfShareItems(&self_share_items);
+
+  // Check that `item2` is filtered out.
+  ASSERT_EQ(3u, self_share_items.size());
+  EXPECT_EQ(self_share_items, std::vector({item0, item1, item3}));
+}
+
 TEST_F(BirchItemRemoverTest, RemoveCalendarItem) {
   BirchCalendarItem item0(u"Event 0", /*start_time=*/base::Time(),
                           /*end_time=*/base::Time(), /*calendar_url=*/GURL(),
@@ -91,11 +125,11 @@ TEST_F(BirchItemRemoverTest, RemoveCalendarItem) {
 }
 
 TEST_F(BirchItemRemoverTest, RemoveFileItem) {
-  BirchFileItem item0(base::FilePath(), u"justification", base::Time(),
+  BirchFileItem item0(base::FilePath(), "title", u"justification", base::Time(),
                       "file_id_0", "icon_url");
-  BirchFileItem item1(base::FilePath(), u"justification", base::Time(),
+  BirchFileItem item1(base::FilePath(), "title", u"justification", base::Time(),
                       "file_id_1", "icon_url");
-  BirchFileItem item2(base::FilePath(), u"justification", base::Time(),
+  BirchFileItem item2(base::FilePath(), "title", u"justification", base::Time(),
                       "file_id_2", "icon_url");
   std::vector<BirchFileItem> file_items = {item0, item1, item2};
 

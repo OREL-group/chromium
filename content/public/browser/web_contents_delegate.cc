@@ -23,6 +23,7 @@
 #include "content/public/common/url_constants.h"
 #include "third_party/blink/public/common/security/protocol_handler_security_level.h"
 #include "third_party/blink/public/mojom/mediastream/media_stream.mojom.h"
+#include "ui/base/mojom/window_show_state.mojom.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/gfx/geometry/rect.h"
 
@@ -40,6 +41,17 @@ WebContents* WebContentsDelegate::OpenURLFromTab(
 bool WebContentsDelegate::ShouldAllowRendererInitiatedCrossProcessNavigation(
     bool is_outermost_main_frame_navigation) {
   return true;
+}
+
+WebContents* WebContentsDelegate::AddNewContents(
+    WebContents* source,
+    std::unique_ptr<WebContents> new_contents,
+    const GURL& target_url,
+    WindowOpenDisposition disposition,
+    const blink::mojom::WindowFeatures& window_features,
+    bool user_gesture,
+    bool* was_blocked) {
+  return nullptr;
 }
 
 bool WebContentsDelegate::CanOverscrollContent() {
@@ -98,13 +110,13 @@ bool WebContentsDelegate::HandleContextMenu(RenderFrameHost& render_frame_host,
 
 KeyboardEventProcessingResult WebContentsDelegate::PreHandleKeyboardEvent(
     WebContents* source,
-    const NativeWebKeyboardEvent& event) {
+    const input::NativeWebKeyboardEvent& event) {
   return KeyboardEventProcessingResult::NOT_HANDLED;
 }
 
 bool WebContentsDelegate::HandleKeyboardEvent(
     WebContents* source,
-    const NativeWebKeyboardEvent& event) {
+    const input::NativeWebKeyboardEvent& event) {
   return false;
 }
 
@@ -167,8 +179,8 @@ bool WebContentsDelegate::GetCanResize() {
   return false;
 }
 
-ui::WindowShowState WebContentsDelegate::GetWindowShowState() const {
-  return ui::SHOW_STATE_DEFAULT;
+ui::mojom::WindowShowState WebContentsDelegate::GetWindowShowState() const {
+  return ui::mojom::WindowShowState::kDefault;
 }
 
 bool WebContentsDelegate::IsFullscreenForTabOrPending(
@@ -188,8 +200,7 @@ FullscreenState WebContentsDelegate::GetFullscreenState(
 }
 
 bool WebContentsDelegate::CanEnterFullscreenModeForTab(
-    RenderFrameHost* requesting_frame,
-    const blink::mojom::FullscreenOptions& options) {
+    RenderFrameHost* requesting_frame) {
   return true;
 }
 
@@ -219,7 +230,7 @@ void WebContentsDelegate::RequestKeyboardLock(WebContents* web_contents,
   web_contents->GotResponseToKeyboardLockRequest(true);
 }
 
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_APPLE)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
 std::unique_ptr<ColorChooser> WebContentsDelegate::OpenColorChooser(
     WebContents* web_contents,
     SkColor color,
@@ -371,7 +382,8 @@ bool WebContentsDelegate::ShouldAllowLazyLoad() {
   return true;
 }
 
-bool WebContentsDelegate::IsBackForwardCacheSupported() {
+bool WebContentsDelegate::IsBackForwardCacheSupported(
+    WebContents& web_contents) {
   return false;
 }
 
@@ -385,11 +397,9 @@ WebContentsDelegate::ShouldOverrideUserAgentForPrerender2() {
   return NavigationController::UA_OVERRIDE_INHERIT;
 }
 
-void WebContentsDelegate::UpdateInspectedWebContentsIfNecessary(
-    WebContents* old_contents,
-    WebContents* new_contents,
-    base::OnceCallback<void()> callback) {
-  std::move(callback).Run();
+bool WebContentsDelegate::ShouldAllowPartialParamMismatchOfPrerender2(
+    NavigationHandle& navigation_handle) {
+  return false;
 }
 
 bool WebContentsDelegate::ShouldShowStaleContentOnEviction(
@@ -416,5 +426,16 @@ bool WebContentsDelegate::MaybeCopyContentAreaAsBitmap(
     base::OnceCallback<void(const SkBitmap&)> callback) {
   return false;
 }
+
+#if BUILDFLAG(IS_ANDROID)
+SkBitmap WebContentsDelegate::MaybeCopyContentAreaAsBitmapSync() {
+  return SkBitmap();
+}
+
+BackForwardTransitionAnimationManager::FallbackUXConfig
+WebContentsDelegate::GetBackForwardTransitionFallbackUXConfig() {
+  return BackForwardTransitionAnimationManager::FallbackUXConfig();
+}
+#endif  // BUILDFLAG(IS_ANDROID)
 
 }  // namespace content

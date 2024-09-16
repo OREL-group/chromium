@@ -10,7 +10,6 @@
 #include "third_party/blink/renderer/platform/fonts/font.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/font_features.h"
 #include "third_party/blink/renderer/platform/testing/font_test_helpers.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 
 namespace blink {
@@ -23,10 +22,7 @@ Font CreateNotoCjk() {
       16.0);
 }
 
-class HanKerningTest : public testing::Test, ScopedCSSTextSpacingTrimForTest {
- public:
-  explicit HanKerningTest() : ScopedCSSTextSpacingTrimForTest(true) {}
-};
+class HanKerningTest : public testing::Test {};
 
 TEST_F(HanKerningTest, MayApply) {
   Font noto_cjk = CreateNotoCjk();

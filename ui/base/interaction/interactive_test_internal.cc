@@ -5,6 +5,7 @@
 #include "ui/base/interaction/interactive_test_internal.h"
 
 #include <memory>
+#include <string_view>
 #include <variant>
 
 #include "base/callback_list.h"
@@ -12,7 +13,6 @@
 #include "base/containers/contains.h"
 #include "base/functional/bind.h"
 #include "base/functional/overloaded.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/interaction/element_identifier.h"
@@ -34,6 +34,9 @@ StateObserverElement::StateObserverElement(ElementIdentifier id,
 StateObserverElement::~StateObserverElement() = default;
 
 DEFINE_FRAMEWORK_SPECIFIC_METADATA(StateObserverElement)
+
+// static
+bool InteractiveTestPrivate::allow_interactive_test_verbs_ = false;
 
 InteractiveTestPrivate::InteractiveTestPrivate(
     std::unique_ptr<InteractionTestUtil> test_util)
@@ -171,7 +174,19 @@ void InteractiveTestPrivate::OnSequenceAborted(
       DCHECK_EQ(OnIncompatibleAction::kHaltTest, on_incompatible_action_);
     }
   } else {
-    GTEST_FAIL() << "Interactive test failed " << data;
+    std::ostringstream additional_message;
+    if (data.aborted_reason == InteractionSequence::AbortedReason::
+                                   kElementHiddenBetweenTriggerAndStepStart) {
+      additional_message
+          << "\nNOTE: Please check for one of the following common mistakes:\n"
+             " - A RunLoop whose type is not set to kNestableTasksAllowed. "
+             "Change the type and try again.\n"
+             " - A check being performed on an element that has been hidden. "
+             "Wrap waiting for the hide and subsequent checks in a "
+             "WithoutDelay() to avoid possible access-after-delete.";
+    }
+    GTEST_FAIL() << "Interactive test failed " << data
+                 << additional_message.str();
   }
 }
 
@@ -180,14 +195,14 @@ void SpecifyElement(ui::InteractionSequence::StepBuilder& builder,
   std::visit(
       base::Overloaded{
           [&builder](ElementIdentifier id) { builder.SetElementID(id); },
-          [&builder](base::StringPiece name) { builder.SetElementName(name); }},
+          [&builder](std::string_view name) { builder.SetElementName(name); }},
       element);
 }
 
 std::string DescribeElement(ElementSpecifier element) {
   return std::visit(
       base::Overloaded{[](ElementIdentifier id) { return id.GetName(); },
-                       [](base::StringPiece name) {
+                       [](std::string_view name) {
                          return base::StringPrintf("\"%s\"", name.data());
                        }},
       element);

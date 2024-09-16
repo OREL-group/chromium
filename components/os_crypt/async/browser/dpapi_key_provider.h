@@ -31,9 +31,10 @@ class DPAPIKeyProvider : public KeyProvider {
   ~DPAPIKeyProvider() override;
 
  private:
-  friend class DPAPIKeyProviderTest;
+  friend class DPAPIKeyProviderTestBase;
   FRIEND_TEST_ALL_PREFIXES(DPAPIKeyProviderTest, OSCryptNotInit);
   FRIEND_TEST_ALL_PREFIXES(DPAPIKeyProviderTest, OSCryptBadKeyHeader);
+  FRIEND_TEST_ALL_PREFIXES(DPAPIKeyProviderTestBase, NoOSCrypt);
 
   // These values are persisted to logs. Entries should not be renumbered and
   // numeric values should never be reused.
@@ -51,6 +52,7 @@ class DPAPIKeyProvider : public KeyProvider {
   // os_crypt_async::KeyProvider interface.
   void GetKey(KeyCallback callback) override;
   bool UseForEncryption() override;
+  bool IsCompatibleWithOsCryptSync() override;
 
   // Attempt to retrieve `encrypted_key` from `pref_path`. If a key is found
   // that matches and has correct `key_prefix` then the raw encrypted key is

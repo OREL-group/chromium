@@ -148,7 +148,8 @@ class DevToolsUIBindings : public DevToolsEmbedderMessageDispatcher::Delegate,
   void ShowItemInFolder(const std::string& file_system_path) override;
   void SaveToFile(const std::string& url,
                   const std::string& content,
-                  bool save_as) override;
+                  bool save_as,
+                  bool is_base64) override;
   void AppendToFile(const std::string& url,
                     const std::string& content) override;
   void RequestFileSystems() override;
@@ -212,6 +213,7 @@ class DevToolsUIBindings : public DevToolsEmbedderMessageDispatcher::Delegate,
   void RemovePreference(const std::string& name) override;
   void ClearPreferences() override;
   void GetSyncInformation(DispatchCallback callback) override;
+  void GetHostConfig(DispatchCallback callback) override;
   void Reattach(DispatchCallback callback) override;
   void ReadyForTest() override;
   void ConnectionReady() override;
@@ -225,7 +227,8 @@ class DevToolsUIBindings : public DevToolsEmbedderMessageDispatcher::Delegate,
   void DoAidaConversation(DispatchCallback callback,
                           const std::string& request,
                           int stream_id) override;
-  void RegisterAidaClientEvent(const std::string& request) override;
+  void RegisterAidaClientEvent(DispatchCallback callback,
+                               const std::string& request) override;
 
   void EnableRemoteDeviceCounter(bool enable);
 
@@ -295,9 +298,14 @@ class DevToolsUIBindings : public DevToolsEmbedderMessageDispatcher::Delegate,
       base::TimeTicks start_time,
       const base::Value* response);
   void OnRegisterAidaClientEventRequest(
+      DispatchCallback callback,
       const std::string& request,
       absl::variant<network::ResourceRequest, std::string>
           resource_request_or_error);
+  void OnAidaClientResponse(
+      DispatchCallback callback,
+      std::unique_ptr<network::SimpleURLLoader> simple_url_loader,
+      std::optional<std::string> response_body);
 
   // Extensions support.
   void AddDevToolsExtensionsToClient();

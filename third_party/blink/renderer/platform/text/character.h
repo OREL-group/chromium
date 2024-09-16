@@ -37,7 +37,6 @@
 #include "base/containers/span.h"
 #include "base/gtest_prod_util.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/text/character_property.h"
 #include "third_party/blink/renderer/platform/text/han_kerning_char_type.h"
 #include "third_party/blink/renderer/platform/text/text_direction.h"
@@ -122,6 +121,8 @@ class PLATFORM_EXPORT Character {
 
   // http://unicode.org/reports/tr9/#Directional_Formatting_Characters
   static bool IsBidiControl(UChar32 character);
+  static bool MaybeBidiRtlUtf16(UChar);
+  static bool MaybeBidiRtl(const String&);
 
   static HanKerningCharType GetHanKerningCharType(UChar32 character);
   // Check the `HanKerningCharType` of a character without knowing the font.
@@ -161,21 +162,21 @@ class PLATFORM_EXPORT Character {
     return TreatAsZeroWidthSpaceInComplexScript(c) ||
            c == kZeroWidthNonJoinerCharacter || c == kZeroWidthJoinerCharacter;
   }
+  static bool TreatAsZeroWidthSpaceInComplexScriptLegacy(UChar32 c) {
+    return c == kFormFeedCharacter || c == kCarriageReturnCharacter ||
+           c == kSoftHyphenCharacter || c == kZeroWidthSpaceCharacter ||
+           (c >= kLeftToRightMarkCharacter && c <= kRightToLeftMarkCharacter) ||
+           (c >= kLeftToRightEmbedCharacter &&
+            c <= kRightToLeftOverrideCharacter) ||
+           c == kZeroWidthNoBreakSpaceCharacter ||
+           c == kObjectReplacementCharacter;
+  }
   static bool TreatAsZeroWidthSpaceInComplexScript(UChar32 c) {
     if (c == kFormFeedCharacter || c == kCarriageReturnCharacter ||
         c == kObjectReplacementCharacter) {
       return true;
     }
-    if (RuntimeEnabledFeatures::TextAlignJustifyBidiIsolateEnabled()) {
-      return IsDefaultIgnorable(c);
-    } else {
-      return c == kSoftHyphenCharacter || c == kZeroWidthSpaceCharacter ||
-             (c >= kLeftToRightMarkCharacter &&
-              c <= kRightToLeftMarkCharacter) ||
-             (c >= kLeftToRightEmbedCharacter &&
-              c <= kRightToLeftOverrideCharacter) ||
-             c == kZeroWidthNoBreakSpaceCharacter;
-    }
+    return IsDefaultIgnorable(c);
   }
   // https://unicode.org/reports/tr44/#Default_Ignorable_Code_Point
   static bool IsDefaultIgnorable(UChar32 c) {
@@ -262,6 +263,26 @@ class PLATFORM_EXPORT Character {
   static void ApplyPatternAndFreezeIfEmpty(icu::UnicodeSet* unicodeSet,
                                            const char* pattern);
 };
+
+// True if the character may need the Bidi reordering. If false, the
+// `Bidi_Class` of `ch` isn't `R`, `AL`, nor Bidi controls.
+// https://util.unicode.org/UnicodeJsps/list-unicodeset.jsp?a=%5B%5B%3Abc%3DR%3A%5D%5B%3Abc%3DAL%3A%5D%5D&g=bc
+// https://util.unicode.org/UnicodeJsps/list-unicodeset.jsp?a=[:Bidi_C:]
+inline bool Character::MaybeBidiRtlUtf16(UChar ch) {
+  return ch >= 0x0590 &&
+         // General Punctuation such as curly quotes.
+         !IsInRange(ch, 0x2010, 0x2029) &&
+         // CJK etc., up to Surrogate Pairs.
+         !IsInRange(ch, 0x206A, 0xD7FF) &&
+         // Common in CJK.
+         !IsInRange(ch, 0xFF00, 0xFFFF);
+}
+
+inline bool Character::MaybeBidiRtl(const String& text) {
+  return !text.Is8Bit() && !text.IsAllSpecialCharacters<[](UChar c) {
+    return !MaybeBidiRtlUtf16(c);
+  }>();
+}
 
 inline bool Character::IsEastAsianWidthFullwidth(UChar32 ch) {
   // All EAW=F characters are in the "Halfwidth and Fullwidth forms" block,

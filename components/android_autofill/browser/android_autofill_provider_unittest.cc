@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "components/android_autofill/browser/autofill_provider.h"
+#include "components/android_autofill/browser/android_autofill_provider.h"
 
 #include <memory>
 
@@ -16,22 +16,28 @@
 #include "components/android_autofill/browser/android_autofill_bridge_factory.h"
 #include "components/android_autofill/browser/android_autofill_features.h"
 #include "components/android_autofill/browser/android_autofill_manager.h"
-#include "components/android_autofill/browser/android_autofill_provider.h"
 #include "components/android_autofill/browser/android_autofill_provider_bridge.h"
 #include "components/android_autofill/browser/android_autofill_provider_test_api.h"
+#include "components/android_autofill/browser/autofill_provider.h"
 #include "components/android_autofill/browser/form_data_android.h"
 #include "components/android_autofill/browser/form_data_android_test_api.h"
 #include "components/android_autofill/browser/mock_form_field_data_android_bridge.h"
+#include "components/autofill/android/touch_to_fill_keyboard_suppressor.h"
 #include "components/autofill/content/browser/test_autofill_client_injector.h"
 #include "components/autofill/content/browser/test_autofill_driver_injector.h"
 #include "components/autofill/content/browser/test_autofill_manager_injector.h"
 #include "components/autofill/content/browser/test_content_autofill_client.h"
 #include "components/autofill/core/browser/autofill_form_test_utils.h"
+#include "components/autofill/core/browser/autofill_manager_test_api.h"
 #include "components/autofill/core/browser/test_autofill_manager_waiter.h"
 #include "components/autofill/core/common/autofill_test_utils.h"
+#include "components/autofill/core/common/form_data_test_api.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "components/autofill/core/common/signatures.h"
 #include "components/autofill/core/common/unique_ids.h"
+#include "components/webauthn/android/mock_webauthn_cred_man_delegate.h"
+#include "components/webauthn/android/webauthn_cred_man_delegate_factory.h"
+#include "components/webauthn/android/webauthn_cred_man_delegate_factory_test_api.h"
 #include "content/public/test/navigation_simulator.h"
 #include "content/public/test/test_renderer_host.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -39,7 +45,6 @@
 #include "url/origin.h"
 
 namespace autofill {
-
 namespace {
 
 using ::testing::_;
@@ -55,6 +60,8 @@ using ::testing::NiceMock;
 using ::testing::Optional;
 using ::testing::Property;
 using ::testing::ResultOf;
+using ::testing::Return;
+using ::testing::SaveArg;
 using ::testing::Truly;
 using ::testing::UnorderedElementsAre;
 using ::testing::WithArg;
@@ -63,6 +70,7 @@ using PrefillRequestState = AndroidAutofillProvider::PrefillRequestState;
 using test::CreateFormDataForFrame;
 using test::CreateTestCreditCardFormData;
 using test::CreateTestFormField;
+using test::CreateTestPasswordFormData;
 using test::CreateTestPersonalInformationFormData;
 
 auto EqualsFieldInfo(size_t index) {
@@ -109,32 +117,49 @@ auto SaveSessionId(SessionId* session_id) {
 
 FormData CreateTestBasicForm() {
   FormData form;
-  form.renderer_id = test::MakeFormRendererId();
-  form.url = GURL("https://foo.com/form.html");
-  form.action = GURL("https://foo.com/submit.html");
-  form.main_frame_origin = url::Origin::Create(form.url);
+  form.set_renderer_id(test::MakeFormRendererId());
+  form.set_url(GURL("https://foo.com/form.html"));
+  form.set_action(GURL("https://foo.com/submit.html"));
+  form.set_main_frame_origin(url::Origin::Create(form.url()));
   return form;
 }
 
 FormData CreateTestLoginForm() {
   FormData form = CreateTestBasicForm();
-  form.name = u"login_form";
-  form.fields = {
-      CreateTestFormField(/*label=*/"Username", /*name=*/"username",
-                          /*value=*/"", FormControlType::kInputText),
-      CreateTestFormField(/*label=*/"Password", /*name=*/"password",
-                          /*value=*/"", FormControlType::kInputPassword)};
+  form.set_name(u"login_form");
+  form.set_fields(
+      {CreateTestFormField(/*label=*/"Username", /*name=*/"username",
+                           /*value=*/"", FormControlType::kInputText),
+       CreateTestFormField(/*label=*/"Password", /*name=*/"password",
+                           /*value=*/"", FormControlType::kInputPassword)});
   return form;
 }
 
 FormData CreateTestChangePasswordForm() {
   FormData form = CreateTestBasicForm();
-  form.name = u"change_password_form";
-  form.fields = {
-      CreateTestFormField(/*label=*/"Password", /*name=*/"password1",
-                          /*value=*/"", FormControlType::kInputPassword),
-      CreateTestFormField(/*label=*/"Password", /*name=*/"password2",
-                          /*value=*/"", FormControlType::kInputPassword)};
+  form.set_name(u"change_password_form");
+  form.set_fields(
+      {CreateTestFormField(/*label=*/"Password", /*name=*/"password1",
+                           /*value=*/"", FormControlType::kInputPassword),
+       CreateTestFormField(/*label=*/"Password", /*name=*/"password2",
+                           /*value=*/"", FormControlType::kInputPassword)});
+  return form;
+}
+
+FormData CreateTestWebAuthnPasswordFormData() {
+  std::vector<FormFieldData> fields;
+  fields.push_back(CreateTestFormField(
+      /*label=*/"Username:", /*name=*/"username",
+      /*value=*/"", FormControlType::kInputText, /*autocomplete=*/"webauthn"));
+  fields.push_back(
+      CreateTestFormField(/*label=*/"Password:", /*name=*/"password",
+                          /*value=*/"", FormControlType::kInputPassword));
+  FormData form;
+  form.set_renderer_id(test::MakeFormRendererId());
+  form.set_url(GURL("https://foo.com/form.html"));
+  form.set_action(GURL("https://foo.com/submit.html"));
+  form.set_main_frame_origin(url::Origin::Create(form.url()));
+  form.set_fields(std::move(fields));
   return form;
 }
 
@@ -157,14 +182,16 @@ class TestAndroidAutofillManager : public AndroidAutofillManager {
 
   void SimulateOnAskForValuesToFill(const FormData& form,
                                     const FormFieldData& field) {
+    gfx::PointF p = field.bounds().origin();
+    gfx::Rect caret_bounds(gfx::Point(p.x(), p.y()), gfx::Size(0, 10));
     OnAskForValuesToFillImpl(
-        form, field, gfx::RectF(),
+        form, field.global_id(), caret_bounds,
         AutofillSuggestionTriggerSource::kTextFieldDidChange);
   }
 
   void SimulateOnFocusOnFormField(const FormData& form,
                                   const FormFieldData& field) {
-    OnFocusOnFormFieldImpl(form, field, gfx::RectF());
+    OnFocusOnFormFieldImpl(form, field.global_id());
   }
 
   void SimulateOnFormSubmitted(const FormData& form,
@@ -175,12 +202,12 @@ class TestAndroidAutofillManager : public AndroidAutofillManager {
 
   void SimulateOnTextFieldDidChange(const FormData& form,
                                     const FormFieldData& field) {
-    OnTextFieldDidChangeImpl(form, field, gfx::RectF(), base::TimeTicks::Now());
+    OnTextFieldDidChangeImpl(form, field.global_id(), base::TimeTicks::Now());
   }
 
   void SimulateOnTextFieldDidScroll(const FormData& form,
                                     const FormFieldData& field) {
-    OnTextFieldDidScrollImpl(form, field, gfx::RectF());
+    OnTextFieldDidScrollImpl(form, field.global_id());
   }
 };
 
@@ -229,9 +256,8 @@ content::RenderFrameHost* NavigateAndCommitFrame(content::RenderFrameHost* rfh,
   return simulator->GetFinalRenderFrameHost();
 }
 
-}  // namespace
-
-class AndroidAutofillProviderTest : public content::RenderViewHostTestHarness {
+class AndroidAutofillProviderTestBase
+    : public content::RenderViewHostTestHarness {
  public:
   void SetUp() override {
     content::RenderViewHostTestHarness::SetUp();
@@ -256,11 +282,6 @@ class AndroidAutofillProviderTest : public content::RenderViewHostTestHarness {
 
     // Create the provider.
     AndroidAutofillProvider::CreateForWebContents(web_contents());
-
-    // Navigation forces the creation of an AndroidAutofillManager for the main
-    // frame.
-    NavigateAndCommit(GURL("about:blank"));
-    FocusWebContentsOnMainFrame();
   }
 
   void TearDown() override {
@@ -302,8 +323,18 @@ class AndroidAutofillProviderTest : public content::RenderViewHostTestHarness {
   TestAutofillManagerInjector<TestAndroidAutofillManager>
       autofill_manager_injector_;
   raw_ptr<MockAndroidAutofillProviderBridge> provider_bridge_ = nullptr;
-  base::test::ScopedFeatureList feature_list_{
-      features::kAndroidAutofillCancelSessionOnNavigation};
+};
+
+class AndroidAutofillProviderTest : public AndroidAutofillProviderTestBase {
+ public:
+  void SetUp() override {
+    AndroidAutofillProviderTestBase::SetUp();
+
+    // Navigation forces the creation of an AndroidAutofillManager for the main
+    // frame.
+    NavigateAndCommit(GURL("about:blank"));
+    FocusWebContentsOnMainFrame();
+  }
 };
 
 // Tests that AndroidAutofillManager keeps track of the predictions it is
@@ -318,7 +349,7 @@ TEST_F(AndroidAutofillProviderTest, HasServerPrediction) {
       android_autofill_manager().has_server_prediction(form.global_id()));
 
   // Resetting removes prediction state.
-  android_autofill_manager().Reset();
+  test_api(android_autofill_manager()).Reset();
   EXPECT_FALSE(
       android_autofill_manager().has_server_prediction(form.global_id()));
 }
@@ -336,14 +367,8 @@ TEST_F(AndroidAutofillProviderTest, OnAskForValuesToFillStartsSession) {
       provider_bridge(),
       StartAutofillSession(EqualsFormData(form), EqualsFieldInfo(/*index=*/0),
                            /*has_server_predictions=*/false));
-  android_autofill_manager().SimulateOnAskForValuesToFill(form,
-                                                          form.fields.front());
-
-  // Since there was no previous Autofill session, no similarity check between
-  // the form of the previous session and the current session is executed and no
-  // metric is emitted.
-  histogram_tester.ExpectTotalCount(
-      AndroidAutofillProvider::kSimilarityCheckAskForValuesToFillUma, 0);
+  android_autofill_manager().SimulateOnAskForValuesToFill(
+      form, form.fields().front());
 }
 
 // Tests that a focus change within the form of an ongoing autofill session
@@ -354,8 +379,8 @@ TEST_F(AndroidAutofillProviderTest, OnFocusChangeInsideCurrentAutofillForm) {
   FormData form = CreateFormDataForFrame(
       CreateTestPersonalInformationFormData(), main_frame_token());
   android_autofill_manager().OnFormsSeen({form}, /*removed_forms=*/{});
-  android_autofill_manager().SimulateOnAskForValuesToFill(form,
-                                                          form.fields.front());
+  android_autofill_manager().SimulateOnAskForValuesToFill(
+      form, form.fields().front());
 
   MockFunction<void(int)> check;
   {
@@ -367,15 +392,10 @@ TEST_F(AndroidAutofillProviderTest, OnFocusChangeInsideCurrentAutofillForm) {
     EXPECT_CALL(check, Call(2));
   }
 
-  android_autofill_manager().SimulateOnFocusOnFormField(form, form.fields[1]);
+  android_autofill_manager().SimulateOnFocusOnFormField(form, form.fields()[1]);
   check.Call(1);
-  android_autofill_manager().OnFocusNoLongerOnFormImpl(
-      /*had_interacted_form=*/true);
+  android_autofill_manager().OnFocusOnNonFormFieldImpl();
   check.Call(2);
-
-  histogram_tester.ExpectUniqueSample(
-      AndroidAutofillProvider::kSimilarityCheckFocusOnFormFieldUma,
-      FormDataAndroid::kFormsAreSimilar.value(), 1);
 }
 
 // Tests that triggering `OnAskForValuesToFill` with a field results in an
@@ -389,15 +409,17 @@ TEST_F(AndroidAutofillProviderTest, OnAskForValuesToFillFindsCorrectFieldId) {
       CreateFormDataForFrame(CreateTestLoginForm(), main_frame_token());
   android_autofill_manager().OnFormsSeen({form}, /*removed_forms=*/{});
 
-  android_autofill_manager().SimulateOnAskForValuesToFill(form, form.fields[0]);
+  android_autofill_manager().SimulateOnAskForValuesToFill(form,
+                                                          form.fields()[0]);
 
   EXPECT_EQ(test_api(autofill_provider()).last_focused_field_id(),
-            form.fields[0].global_id());
+            form.fields()[0].global_id());
 
-  android_autofill_manager().SimulateOnAskForValuesToFill(form, form.fields[1]);
+  android_autofill_manager().SimulateOnAskForValuesToFill(form,
+                                                          form.fields()[1]);
 
   EXPECT_EQ(test_api(autofill_provider()).last_focused_field_id(),
-            form.fields[1].global_id());
+            form.fields()[1].global_id());
 }
 
 // Tests that Java is informed about visibility changes of form fields connected
@@ -406,20 +428,21 @@ TEST_F(AndroidAutofillProviderTest, NotifyAboutVisibilityChangeOnFocus) {
   FormData form = CreateFormDataForFrame(
       CreateTestPersonalInformationFormData(), main_frame_token());
   // For Android Autofill, focusability is the same as visibility.
-  form.fields[0].is_focusable = false;
-  form.fields[2].is_focusable = false;
+  test_api(form).field(0).set_is_focusable(false);
+  test_api(form).field(2).set_is_focusable(false);
 
   // Start an Autofill session.
-  android_autofill_manager().SimulateOnAskForValuesToFill(form, form.fields[1]);
+  android_autofill_manager().SimulateOnAskForValuesToFill(form,
+                                                          form.fields()[1]);
 
-  form.fields[0].is_focusable = true;
-  form.fields[2].is_focusable = true;
+  test_api(form).field(0).set_is_focusable(true);
+  test_api(form).field(2).set_is_focusable(true);
 
   EXPECT_CALL(provider_bridge(), OnFormFieldVisibilitiesDidChange(
                                      /*indices=*/UnorderedElementsAre(0, 2)));
   EXPECT_CALL(provider_bridge(),
               OnFocusChanged(Optional(EqualsFieldInfo(/*index=*/0))));
-  android_autofill_manager().SimulateOnFocusOnFormField(form, form.fields[0]);
+  android_autofill_manager().SimulateOnFocusOnFormField(form, form.fields()[0]);
 }
 
 // Tests that asking for values to fill for a different form than that of the
@@ -434,34 +457,27 @@ TEST_F(AndroidAutofillProviderTest, OnAskForValuesToFillOnOtherForm) {
       main_frame_token());
   android_autofill_manager().OnFormsSeen({form1, form2}, /*removed_forms=*/{});
 
-  MockFunction<void(int)> check;
+  MockFunction<void()> check;
   {
     InSequence s;
     EXPECT_CALL(provider_bridge(),
                 StartAutofillSession(EqualsFormData(form1),
                                      EqualsFieldInfo(/*index=*/1),
                                      /*has_server_predictions=*/false));
-    EXPECT_CALL(check, Call(1));
+    EXPECT_CALL(check, Call);
     EXPECT_CALL(provider_bridge(),
                 StartAutofillSession(EqualsFormData(form2),
                                      EqualsFieldInfo(/*index=*/0),
                                      /*has_server_predictions=*/false));
-    EXPECT_CALL(check, Call(2));
+    EXPECT_CALL(check, Call);
   }
 
   android_autofill_manager().SimulateOnAskForValuesToFill(form1,
-                                                          form1.fields[1]);
-  check.Call(1);
+                                                          form1.fields()[1]);
+  check.Call();
   android_autofill_manager().SimulateOnAskForValuesToFill(form2,
-                                                          form2.fields[0]);
-  check.Call(2);
-
-  // A metric was emitted that shows that the form similarity check between
-  // form1 and form2 failed due to differing ids.
-  histogram_tester.ExpectUniqueSample(
-      AndroidAutofillProvider::kSimilarityCheckAskForValuesToFillUma,
-      base::to_underlying(FormDataAndroid::SimilarityCheckComponent::kGlobalId),
-      1);
+                                                          form2.fields()[0]);
+  check.Call();
 }
 
 // Tests that asking for values to fill on the same form as that of the current
@@ -471,40 +487,33 @@ TEST_F(AndroidAutofillProviderTest, OnAskForValuesToFillOnChangedForm) {
 
   FormData form = CreateFormDataForFrame(
       CreateTestPersonalInformationFormData(), main_frame_token());
-  form.name_attribute = u"old_name";
+  form.set_name_attribute(u"old_name");
   FormData form_changed = form;
-  form_changed.name_attribute = u"changed_name";
+  form_changed.set_name_attribute(u"changed_name");
   android_autofill_manager().OnFormsSeen({form}, /*removed_forms=*/{});
 
-  MockFunction<void(int)> check;
+  MockFunction<void()> check;
   {
     InSequence s;
     EXPECT_CALL(
         provider_bridge(),
         StartAutofillSession(EqualsFormData(form), EqualsFieldInfo(/*index=*/1),
                              /*has_server_predictions=*/false));
-    EXPECT_CALL(check, Call(1));
+    EXPECT_CALL(check, Call);
     EXPECT_CALL(provider_bridge(),
                 StartAutofillSession(EqualsFormData(form_changed),
                                      EqualsFieldInfo(/*index=*/1),
                                      /*has_server_predictions=*/false));
-    EXPECT_CALL(check, Call(2));
+    EXPECT_CALL(check, Call);
   }
 
-  android_autofill_manager().SimulateOnAskForValuesToFill(form, form.fields[1]);
-  check.Call(1);
+  android_autofill_manager().SimulateOnAskForValuesToFill(form,
+                                                          form.fields()[1]);
+  check.Call();
   android_autofill_manager().OnFormsSeen({form_changed}, /*removed_forms=*/{});
   android_autofill_manager().SimulateOnAskForValuesToFill(
-      form_changed, form_changed.fields[1]);
-  check.Call(2);
-
-  // A metric was emitted that shows that the form similarity check between
-  // form and form_changed failed due to different name attributes.
-  histogram_tester.ExpectUniqueSample(
-      AndroidAutofillProvider::kSimilarityCheckAskForValuesToFillUma,
-      base::to_underlying(
-          FormDataAndroid::SimilarityCheckComponent::kNameAttribute),
-      1);
+      form_changed, form_changed.fields()[1]);
+  check.Call();
 }
 
 // Tests that asking for values to fill on the same form as that of the current
@@ -527,14 +536,11 @@ TEST_F(AndroidAutofillProviderTest, OnAskForValuesToFillOnSameForm) {
     EXPECT_CALL(check, Call);
   }
 
-  android_autofill_manager().SimulateOnAskForValuesToFill(form, form.fields[1]);
+  android_autofill_manager().SimulateOnAskForValuesToFill(form,
+                                                          form.fields()[1]);
   check.Call();
-  android_autofill_manager().SimulateOnAskForValuesToFill(form, form.fields[0]);
-
-  // A metric was emitted that shows that the form similarity succeeded.
-  histogram_tester.ExpectUniqueSample(
-      AndroidAutofillProvider::kSimilarityCheckAskForValuesToFillUma,
-      FormDataAndroid::kFormsAreSimilar.value(), 1);
+  android_autofill_manager().SimulateOnAskForValuesToFill(form,
+                                                          form.fields()[0]);
 }
 
 // Tests that value changes in the form of the Autofill session are propagated
@@ -545,17 +551,19 @@ TEST_F(AndroidAutofillProviderTest, OnTextFieldDidChange) {
   android_autofill_manager().OnFormsSeen({form}, /*removed_forms=*/{});
 
   // Start Autofill session.
-  android_autofill_manager().SimulateOnAskForValuesToFill(form, form.fields[1]);
+  android_autofill_manager().SimulateOnAskForValuesToFill(form,
+                                                          form.fields()[1]);
 
   // Simulate a value change.
   EXPECT_CALL(provider_bridge(),
               OnFormFieldDidChange(EqualsFieldInfo(/*index=*/1)));
-  form.fields[1].set_value(form.fields[1].value() + u"x");
-  android_autofill_manager().SimulateOnTextFieldDidChange(form, form.fields[1]);
+  test_api(form).field(1).set_value(form.fields()[1].value() + u"x");
+  android_autofill_manager().SimulateOnTextFieldDidChange(form,
+                                                          form.fields()[1]);
   // The `FormDataAndroid` object owned by the provider is also updated.
   ASSERT_TRUE(test_api(autofill_provider()).form());
-  EXPECT_EQ(test_api(autofill_provider()).form()->form().fields[1].value(),
-            form.fields[1].value());
+  EXPECT_EQ(test_api(autofill_provider()).form()->form().fields()[1].value(),
+            form.fields()[1].value());
 }
 
 // Tests that value changes in a form that is not part of the current Autofill
@@ -570,13 +578,13 @@ TEST_F(AndroidAutofillProviderTest, OnTextFieldDidChangeInUnrelatedForm) {
 
   // Start the Autofill session.
   android_autofill_manager().SimulateOnAskForValuesToFill(form1,
-                                                          form1.fields[1]);
+                                                          form1.fields()[1]);
 
   // Simulate a value change in a different form.
   EXPECT_CALL(provider_bridge(), OnFormFieldDidChange).Times(0);
-  form2.fields[1].set_value(form2.fields[1].value() + u"x");
+  test_api(form2).field(1).set_value(form2.fields()[1].value() + u"x");
   android_autofill_manager().SimulateOnTextFieldDidChange(form2,
-                                                          form2.fields[1]);
+                                                          form2.fields()[1]);
 }
 
 // Tests that scrolling events in the form of the Autofill session are
@@ -587,12 +595,14 @@ TEST_F(AndroidAutofillProviderTest, OnTextFieldDidScroll) {
   android_autofill_manager().OnFormsSeen({form}, /*removed_forms=*/{});
 
   // Start the Autofill session.
-  android_autofill_manager().SimulateOnAskForValuesToFill(form, form.fields[2]);
+  android_autofill_manager().SimulateOnAskForValuesToFill(form,
+                                                          form.fields()[2]);
 
   // Simulate scrolling.
   EXPECT_CALL(provider_bridge(),
               OnTextFieldDidScroll(EqualsFieldInfo(/*index=*/2)));
-  android_autofill_manager().SimulateOnTextFieldDidScroll(form, form.fields[2]);
+  android_autofill_manager().SimulateOnTextFieldDidScroll(form,
+                                                          form.fields()[2]);
 }
 
 // Tests that scrolling envets in a form that is not part of the current
@@ -607,12 +617,12 @@ TEST_F(AndroidAutofillProviderTest, OnTextFieldDidScrollInUnrelatedForm) {
 
   // Start the Autofill session.
   android_autofill_manager().SimulateOnAskForValuesToFill(form1,
-                                                          form1.fields[1]);
+                                                          form1.fields()[1]);
 
   // Simulate a scroll event in a different form.
   EXPECT_CALL(provider_bridge(), OnFormFieldDidChange).Times(0);
   android_autofill_manager().SimulateOnTextFieldDidScroll(form2,
-                                                          form2.fields[1]);
+                                                          form2.fields()[1]);
 }
 
 // Tests that a form submission of an ongoing Autofill session is propagated to
@@ -623,12 +633,67 @@ TEST_F(AndroidAutofillProviderTest, OnFormSubmittedWithKnownSuccess) {
   android_autofill_manager().OnFormsSeen({form}, /*removed_forms=*/{});
 
   // Start an Autofill session.
-  android_autofill_manager().SimulateOnAskForValuesToFill(form, form.fields[0]);
+  android_autofill_manager().SimulateOnAskForValuesToFill(form,
+                                                          form.fields()[0]);
 
   EXPECT_CALL(provider_bridge(),
               OnFormSubmitted(mojom::SubmissionSource::FORM_SUBMISSION));
   android_autofill_manager().SimulateOnFormSubmitted(
       form, /*known_success=*/true, mojom::SubmissionSource::FORM_SUBMISSION);
+}
+
+// Tests that a form submission of an ongoing Autofill session with source
+// DOM_MUTATION_AFTER_AUTOFILL is propagated to Java for password forms.
+TEST_F(AndroidAutofillProviderTest,
+       DomMutationAfterAutofillFormSubmission_PasswordForm) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures(
+      /*enabled_features=*/
+      {features::kAutofillUnifyAndFixFormTracking,
+       features::kAutofillAcceptDomMutationAfterAutofillSubmission},
+      /*disabled_features=*/{});
+  FormData form =
+      CreateFormDataForFrame(CreateTestPasswordFormData(), main_frame_token());
+  android_autofill_manager().OnFormsSeen({form}, /*removed_forms=*/{});
+
+  // Start an Autofill session.
+  android_autofill_manager().SimulateOnAskForValuesToFill(form,
+                                                          form.fields()[0]);
+
+  EXPECT_CALL(
+      provider_bridge(),
+      OnFormSubmitted(mojom::SubmissionSource::DOM_MUTATION_AFTER_AUTOFILL))
+      .Times(1);
+  android_autofill_manager().SimulateOnFormSubmitted(
+      form, /*known_success=*/true,
+      mojom::SubmissionSource::DOM_MUTATION_AFTER_AUTOFILL);
+}
+
+// Tests that a form submission of an ongoing Autofill session with source
+// DOM_MUTATION_AFTER_AUTOFILL is not propagated to Java for non-password forms.
+TEST_F(AndroidAutofillProviderTest,
+       DomMutationAfterAutofillFormSubmission_NonPasswordForm) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures(
+      /*enabled_features=*/
+      {features::kAutofillUnifyAndFixFormTracking,
+       features::kAutofillAcceptDomMutationAfterAutofillSubmission},
+      /*disabled_features=*/{});
+  FormData form = CreateFormDataForFrame(
+      CreateTestPersonalInformationFormData(), main_frame_token());
+  android_autofill_manager().OnFormsSeen({form}, /*removed_forms=*/{});
+
+  // Start an Autofill session.
+  android_autofill_manager().SimulateOnAskForValuesToFill(form,
+                                                          form.fields()[0]);
+
+  EXPECT_CALL(
+      provider_bridge(),
+      OnFormSubmitted(mojom::SubmissionSource::DOM_MUTATION_AFTER_AUTOFILL))
+      .Times(0);
+  android_autofill_manager().SimulateOnFormSubmitted(
+      form, /*known_success=*/true,
+      mojom::SubmissionSource::DOM_MUTATION_AFTER_AUTOFILL);
 }
 
 // Tests that a form submission of an ongoing Autofill session is propagated to
@@ -643,7 +708,8 @@ TEST_F(AndroidAutofillProviderTest, FormSubmissionHappensOnReset) {
   android_autofill_manager().OnFormsSeen({form}, /*removed_forms=*/{});
 
   // Start an Autofill session.
-  android_autofill_manager().SimulateOnAskForValuesToFill(form, form.fields[0]);
+  android_autofill_manager().SimulateOnAskForValuesToFill(form,
+                                                          form.fields()[0]);
 
   EXPECT_CALL(provider_bridge(), OnFormSubmitted).Times(0);
   android_autofill_manager().SimulateOnFormSubmitted(
@@ -654,7 +720,7 @@ TEST_F(AndroidAutofillProviderTest, FormSubmissionHappensOnReset) {
   EXPECT_CALL(
       provider_bridge(),
       OnFormSubmitted(mojom::SubmissionSource::PROBABLY_FORM_SUBMITTED));
-  android_autofill_manager().Reset();
+  test_api(android_autofill_manager()).Reset();
 }
 
 // Tests that a form submission of an ongoing Autofill session is propagated to
@@ -668,7 +734,8 @@ TEST_F(AndroidAutofillProviderTest, FormSubmissionHappensDirectly) {
   android_autofill_manager().OnFormsSeen({form}, /*removed_forms=*/{});
 
   // Start an Autofill session.
-  android_autofill_manager().SimulateOnAskForValuesToFill(form, form.fields[0]);
+  android_autofill_manager().SimulateOnAskForValuesToFill(form,
+                                                          form.fields()[0]);
 
   EXPECT_CALL(
       provider_bridge(),
@@ -689,8 +756,7 @@ TEST_F(AndroidAutofillProviderTest, FormSubmissionHappensOnFrameDestruction) {
       GURL("https://foo.bar"), child_rfh);
 
   // Force creation of driver.
-  ASSERT_TRUE(ContentAutofillDriverFactory::FromWebContents(web_contents())
-                  ->DriverForFrame(child_rfh));
+  ASSERT_TRUE(ContentAutofillDriver::GetForRenderFrameHost(child_rfh));
 
   FormData form = CreateFormDataForFrame(
       CreateTestPersonalInformationFormData(),
@@ -700,7 +766,7 @@ TEST_F(AndroidAutofillProviderTest, FormSubmissionHappensOnFrameDestruction) {
 
   // Start an Autofill session.
   android_autofill_manager(child_rfh).SimulateOnAskForValuesToFill(
-      form, form.fields[0]);
+      form, form.fields()[0]);
 
   EXPECT_CALL(provider_bridge(), OnFormSubmitted).Times(0);
   android_autofill_manager(child_rfh).SimulateOnFormSubmitted(
@@ -713,28 +779,6 @@ TEST_F(AndroidAutofillProviderTest, FormSubmissionHappensOnFrameDestruction) {
       ->Detach();
 }
 
-// Tests that no prefill request is sent if the feature is disabled.
-TEST_F(AndroidAutofillProviderTest, NoPrefillRequestWithoutFeature) {
-  if (base::android::BuildInfo::GetInstance()->sdk_int() <
-      base::android::SdkVersion::SDK_VERSION_U) {
-    GTEST_SKIP();
-  }
-
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndDisableFeature(
-      features::kAndroidAutofillPrefillRequestsForLoginForms);
-
-  FormData form =
-      CreateFormDataForFrame(CreateTestLoginForm(), main_frame_token());
-  android_autofill_manager().OnFormsSeen({form}, /*removed_forms=*/{});
-  ASSERT_TRUE(android_autofill_manager().FindCachedFormById(form.global_id()));
-
-  // Upon receiving server predictions a prefill request should be sent.
-  EXPECT_CALL(provider_bridge(), SendPrefillRequest).Times(0);
-  android_autofill_manager().SimulatePropagateAutofillPredictions(
-      form.global_id());
-}
-
 // Tests the predictions from `password_manager::FormDataParser` are used to
 // overwrite all type predictions of the respective `FormDataAndroidField`s.
 TEST_F(AndroidAutofillProviderTest,
@@ -743,13 +787,6 @@ TEST_F(AndroidAutofillProviderTest,
       base::android::SdkVersion::SDK_VERSION_U) {
     GTEST_SKIP();
   }
-
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitWithFeatures(
-      /*enabled_features=*/
-      {features::kAndroidAutofillPrefillRequestsForLoginForms,
-       features::kAndroidAutofillUsePwmPredictionsForOverrides},
-      /*disabled_features=*/{});
 
   FormData form =
       CreateFormDataForFrame(CreateTestLoginForm(), main_frame_token());
@@ -778,19 +815,13 @@ TEST_F(AndroidAutofillProviderTest,
     GTEST_SKIP();
   }
 
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitWithFeatures(
-      /*enabled_features=*/
-      {features::kAndroidAutofillPrefillRequestsForLoginForms,
-       features::kAndroidAutofillUsePwmPredictionsForOverrides},
-      /*disabled_features=*/{});
-
   FormData form =
       CreateFormDataForFrame(CreateTestLoginForm(), main_frame_token());
   android_autofill_manager().OnFormsSeen({form}, /*removed_forms=*/{});
   ASSERT_TRUE(android_autofill_manager().FindCachedFormById(form.global_id()));
   FormData changed_form = form;
-  changed_form.name_attribute += u"some-suffix";
+  changed_form.set_name_attribute(changed_form.name_attribute() +
+                                  u"some-suffix");
 
   SessionId cache_session_id = SessionId(0);
   MockFunction<void()> check;
@@ -821,16 +852,12 @@ TEST_F(AndroidAutofillProviderTest,
   ASSERT_EQ(CalculateFormSignature(form), CalculateFormSignature(changed_form));
   android_autofill_manager().OnFormsSeen({changed_form}, /*removed_forms=*/{});
   android_autofill_manager().SimulateOnAskForValuesToFill(
-      changed_form, changed_form.fields.front());
+      changed_form, changed_form.fields().front());
 }
 
 // Tests that new document navigation (manager reset) cancels the ongoing
 // autofill session
 TEST_F(AndroidAutofillProviderTest, CancelSessionOnNavigation) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(
-      features::kAndroidAutofillCancelSessionOnNavigation);
-
   FormData form = CreateFormDataForFrame(
       CreateTestPersonalInformationFormData(), main_frame_token());
   android_autofill_manager().OnFormsSeen({form}, /*removed_forms=*/{});
@@ -839,48 +866,156 @@ TEST_F(AndroidAutofillProviderTest, CancelSessionOnNavigation) {
       provider_bridge(),
       StartAutofillSession(EqualsFormData(form), EqualsFieldInfo(/*index=*/0),
                            /*has_server_predictions=*/false));
-  android_autofill_manager().SimulateOnAskForValuesToFill(form,
-                                                          form.fields.front());
+  android_autofill_manager().SimulateOnAskForValuesToFill(
+      form, form.fields().front());
 
   EXPECT_CALL(provider_bridge(), CancelSession());
-  android_autofill_manager().Reset();
+  test_api(android_autofill_manager()).Reset();
 }
 
-class AndroidAutofillProviderPrefillRequestTest
-    : public AndroidAutofillProviderTest,
-      public ::testing::WithParamInterface<bool> {
+class AndroidAutofillProviderWithCredManTest
+    : public AndroidAutofillProviderTestBase {
  public:
-  AndroidAutofillProviderPrefillRequestTest() {
-    if (GetParam()) {
-      param_feature_list_.InitAndEnableFeature(
-          features::kAndroidAutofillUsePwmPredictionsForOverrides);
-    } else {
-      param_feature_list_.InitAndDisableFeature(
-          features::kAndroidAutofillUsePwmPredictionsForOverrides);
-    }
+  void SetUp() override {
+    AndroidAutofillProviderTestBase::SetUp();
+
+    autofill_provider().MaybeInitKeyboardSuppressor();
+
+    // Navigation creates the AndroidAutofillManager for the main frame.
+    NavigateAndCommit(GURL("about:blank"));
+    FocusWebContentsOnMainFrame();
+
+    // Load a form with webuthn-annotated username and regular password fields.
+    test_webauthn_form_ = CreateFormDataForFrame(
+        CreateTestWebAuthnPasswordFormData(), main_frame_token());
+
+    InitializeWebAuthnFactoryWithMock();
   }
 
-  static std::string GetTextSuffix(
-      const ::testing::TestParamInfo<bool>& param_info) {
-    return param_info.param ? "WithPwmOverrides" : "WithoutPwmOverrides";
+  void InitializeWebAuthnFactoryWithMock() {
+    auto mock_cred_man_delegate =
+        std::make_unique<NiceMock<webauthn::MockWebAuthnCredManDelegate>>();
+    webauthn::test_api(web_authn_delegate_factory())
+        .EmplaceDelegateForFrame(main_frame(),
+                                 std::move(mock_cred_man_delegate));
+
+    ON_CALL(cred_man_delegate(), HasPasskeys())
+        .WillByDefault(
+            Return(webauthn::WebAuthnCredManDelegate::State::kHasPasskeys));
+  }
+
+  webauthn::WebAuthnCredManDelegateFactory* web_authn_delegate_factory() {
+    return webauthn::WebAuthnCredManDelegateFactory::GetFactory(web_contents());
+  }
+
+  const FormData& test_form() const { return test_webauthn_form_; }
+
+  const FormFieldData& webauthn_email_field() const {
+    return test_form().fields()[0];
+  }
+
+  const FormFieldData& non_webauthn_password_field() const {
+    return test_form().fields()[1];
+  }
+
+  void FocusFormField(const FormFieldData& field) {
+    keyboard_suppressor().OnBeforeAskForValuesToFill(
+        android_autofill_manager(), test_webauthn_form_.global_id(),
+        field.global_id(), test_webauthn_form_);
+    android_autofill_manager().SimulateOnAskForValuesToFill(test_webauthn_form_,
+                                                            field);
+    android_autofill_manager().SimulateOnFocusOnFormField(test_webauthn_form_,
+                                                          field);
+    keyboard_suppressor().OnAfterAskForValuesToFill(
+        android_autofill_manager(), test_webauthn_form_.global_id(),
+        field.global_id());
+  }
+
+  webauthn::MockWebAuthnCredManDelegate& cred_man_delegate() {
+    return *static_cast<webauthn::MockWebAuthnCredManDelegate*>(
+        web_authn_delegate_factory()->GetRequestDelegate(main_frame()));
+  }
+
+  TouchToFillKeyboardSuppressor& keyboard_suppressor() {
+    return test_api(autofill_provider()).keyboard_suppressor();
   }
 
  private:
-  base::test::ScopedFeatureList prefill_request_feature_list_{
-      features::kAndroidAutofillPrefillRequestsForLoginForms};
-  base::test::ScopedFeatureList param_feature_list_;
+  FormData test_webauthn_form_;
+  base::test::ScopedFeatureList scoped_feature_list_{
+      features::kAutofillVirtualViewStructureAndroid};
 };
 
+TEST_F(AndroidAutofillProviderWithCredManTest, CallsCredManOnlyOnce) {
+  EXPECT_CALL(cred_man_delegate(),
+              TriggerCredManUi(Eq(
+                  webauthn::WebAuthnCredManDelegate::RequestPasswords(false))));
+  FocusFormField(webauthn_email_field());
+
+  // No further call!
+  FocusFormField(non_webauthn_password_field());
+  FocusFormField(webauthn_email_field());
+}
+
+TEST_F(AndroidAutofillProviderWithCredManTest,
+       CallsCredManAgainAfterNavigation) {
+  EXPECT_CALL(cred_man_delegate(),
+              TriggerCredManUi(Eq(
+                  webauthn::WebAuthnCredManDelegate::RequestPasswords(false))));
+  FocusFormField(webauthn_email_field());
+
+  // Navigate which allows CredMan to be shown again.
+  NavigateAndCommit(GURL("about:to-do-stuff"));
+  EXPECT_CALL(cred_man_delegate(),
+              TriggerCredManUi(Eq(
+                  webauthn::WebAuthnCredManDelegate::RequestPasswords(false))));
+  FocusFormField(webauthn_email_field());
+}
+
+TEST_F(AndroidAutofillProviderWithCredManTest,
+       SuppressesKeyboardForCredManCall) {
+  EXPECT_CALL(cred_man_delegate(),
+              TriggerCredManUi(Eq(
+                  webauthn::WebAuthnCredManDelegate::RequestPasswords(false))));
+  base::RepeatingCallback<void(bool)> completed_callback;
+  EXPECT_CALL(cred_man_delegate(), SetRequestCompletionCallback)
+      .WillOnce(SaveArg<0>(&completed_callback));
+  FocusFormField(webauthn_email_field());
+
+  // Keyboard is suppressed while CredMan is showing.
+  EXPECT_TRUE(keyboard_suppressor().is_suppressing());
+  Mock::VerifyAndClearExpectations(&cred_man_delegate());
+
+  // After resetting CredMan, the keyboard suppressing stopped.
+  completed_callback.Run(/*success=*/true);
+  EXPECT_FALSE(keyboard_suppressor().is_suppressing());
+}
+
+TEST_F(AndroidAutofillProviderWithCredManTest, NoCredManWithoutAnnotation) {
+  EXPECT_CALL(cred_man_delegate(), TriggerCredManUi).Times(0);
+  FocusFormField(non_webauthn_password_field());
+
+  EXPECT_FALSE(keyboard_suppressor().is_suppressing());
+}
+
+TEST_F(AndroidAutofillProviderWithCredManTest, SkipsCredManCallBeforeReady) {
+  ON_CALL(cred_man_delegate(), HasPasskeys())
+      .WillByDefault(
+          Return(webauthn::WebAuthnCredManDelegate::State::kNotReady));
+
+  EXPECT_CALL(cred_man_delegate(), TriggerCredManUi).Times(0);
+  FocusFormField(webauthn_email_field());
+}
+
+using AndroidAutofillProviderPrefillRequestTest = AndroidAutofillProviderTest;
+
 // Tests that we can send another prefill request after navigation.
-TEST_P(AndroidAutofillProviderPrefillRequestTest,
+TEST_F(AndroidAutofillProviderPrefillRequestTest,
        MultiplePrefillRequestsOnNavigation) {
   if (base::android::BuildInfo::GetInstance()->sdk_int() <
       base::android::SdkVersion::SDK_VERSION_U) {
     GTEST_SKIP();
   }
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(
-      features::kAndroidAutofillCancelSessionOnNavigation);
 
   FormData form = test::GetFormData(
       {.fields = {{.autocomplete_attribute = "username"},
@@ -891,9 +1026,9 @@ TEST_P(AndroidAutofillProviderPrefillRequestTest,
   android_autofill_manager().OnFormsSeen({form}, /*removed_forms=*/{});
   android_autofill_manager().SimulatePropagateAutofillPredictions(
       form.global_id());
-  android_autofill_manager().SimulateOnAskForValuesToFill(form,
-                                                          form.fields.front());
-  android_autofill_manager().Reset();
+  android_autofill_manager().SimulateOnAskForValuesToFill(
+      form, form.fields().front());
+  test_api(android_autofill_manager()).Reset();
   android_autofill_manager().OnFormsSeen({form}, /*removed_forms=*/{});
   android_autofill_manager().SimulatePropagateAutofillPredictions(
       form.global_id());
@@ -901,7 +1036,7 @@ TEST_P(AndroidAutofillProviderPrefillRequestTest,
 
 // Tests that a metric is emitted if prefill requests are supported and there
 // was not enough time to send a prefill request.
-TEST_P(AndroidAutofillProviderPrefillRequestTest,
+TEST_F(AndroidAutofillProviderPrefillRequestTest,
        OnAskForValuesToFillRecordsPrefillRequestStateUmaMetric) {
   if (base::android::BuildInfo::GetInstance()->sdk_int() <
       base::android::SdkVersion::SDK_VERSION_U) {
@@ -912,8 +1047,8 @@ TEST_P(AndroidAutofillProviderPrefillRequestTest,
   FormData form =
       CreateFormDataForFrame(CreateTestLoginForm(), main_frame_token());
   android_autofill_manager().OnFormsSeen({form}, /*removed_forms=*/{});
-  android_autofill_manager().SimulateOnAskForValuesToFill(form,
-                                                          form.fields.front());
+  android_autofill_manager().SimulateOnAskForValuesToFill(
+      form, form.fields().front());
   histogram_tester.ExpectUniqueSample(
       AndroidAutofillProvider::kPrefillRequestStateUma,
       PrefillRequestState::kRequestNotSentNoTime, 1);
@@ -921,7 +1056,7 @@ TEST_P(AndroidAutofillProviderPrefillRequestTest,
 
 // Tests that no prefill requests are sent on Android versions prior to U even
 // if all other requirements are satisfied.
-TEST_P(AndroidAutofillProviderPrefillRequestTest,
+TEST_F(AndroidAutofillProviderPrefillRequestTest,
        NoPrefillRequestOnVersionsPriorToU) {
   // This test only makes sense on Android versions smaller than U.
   if (base::android::BuildInfo::GetInstance()->sdk_int() >=
@@ -942,7 +1077,7 @@ TEST_P(AndroidAutofillProviderPrefillRequestTest,
 
 // Tests that a prefill request is sent if all requirements for it are
 // satisfied.
-TEST_P(AndroidAutofillProviderPrefillRequestTest, SendPrefillRequest) {
+TEST_F(AndroidAutofillProviderPrefillRequestTest, SendPrefillRequest) {
   if (base::android::BuildInfo::GetInstance()->sdk_int() <
       base::android::SdkVersion::SDK_VERSION_U) {
     GTEST_SKIP();
@@ -961,7 +1096,7 @@ TEST_P(AndroidAutofillProviderPrefillRequestTest, SendPrefillRequest) {
 
 // Tests that no prefill request is sent if there is already an ongoing Autofill
 // session.
-TEST_P(AndroidAutofillProviderPrefillRequestTest,
+TEST_F(AndroidAutofillProviderPrefillRequestTest,
        NoPrefillRequestIfOngoingSession) {
   if (base::android::BuildInfo::GetInstance()->sdk_int() <
       base::android::SdkVersion::SDK_VERSION_U) {
@@ -974,7 +1109,7 @@ TEST_P(AndroidAutofillProviderPrefillRequestTest,
   android_autofill_manager().OnFormsSeen({login_form1}, /*removed_forms=*/{});
   EXPECT_CALL(provider_bridge(), StartAutofillSession);
   android_autofill_manager().SimulateOnAskForValuesToFill(
-      login_form1, login_form1.fields.front());
+      login_form1, login_form1.fields().front());
   histogram_tester.ExpectUniqueSample(
       AndroidAutofillProvider::kPrefillRequestStateUma,
       PrefillRequestState::kRequestNotSentNoTime, 1);
@@ -993,7 +1128,7 @@ TEST_P(AndroidAutofillProviderPrefillRequestTest,
 
 // Tests that no prefill request is sent if there has already been another
 // prefill request.
-TEST_P(AndroidAutofillProviderPrefillRequestTest, NoSecondPrefillRequest) {
+TEST_F(AndroidAutofillProviderPrefillRequestTest, NoSecondPrefillRequest) {
   if (base::android::BuildInfo::GetInstance()->sdk_int() <
       base::android::SdkVersion::SDK_VERSION_U) {
     GTEST_SKIP();
@@ -1025,17 +1160,15 @@ TEST_P(AndroidAutofillProviderPrefillRequestTest, NoSecondPrefillRequest) {
       login_form2.global_id());
 
   android_autofill_manager().SimulateOnAskForValuesToFill(
-      login_form2, login_form2.fields.front());
+      login_form2, login_form2.fields().front());
   histogram_tester.ExpectUniqueSample(
       AndroidAutofillProvider::kPrefillRequestStateUma,
       PrefillRequestState::kRequestNotSentMaxNumberReached, 1);
-  histogram_tester.ExpectTotalCount(
-      AndroidAutofillProvider::kSimilarityCheckCacheRequestUma, 0);
 }
 
 // Tests that the session id used in a prefill request is also used for starting
 // the Autofill session for that form.
-TEST_P(AndroidAutofillProviderPrefillRequestTest,
+TEST_F(AndroidAutofillProviderPrefillRequestTest,
        SessionIdIsReusedForCachedForms) {
   if (base::android::BuildInfo::GetInstance()->sdk_int() <
       base::android::SdkVersion::SDK_VERSION_U) {
@@ -1060,13 +1193,13 @@ TEST_P(AndroidAutofillProviderPrefillRequestTest,
       StartAutofillSession(EqualsFormDataWithSessionId(form, cache_session_id),
                            EqualsFieldInfo(/*index=*/0),
                            /*has_server_predictions=*/true));
-  android_autofill_manager().SimulateOnAskForValuesToFill(form,
-                                                          form.fields.front());
+  android_autofill_manager().SimulateOnAskForValuesToFill(
+      form, form.fields().front());
 }
 
 // Tests that the session id used in a prefill request is not reused when
 // starting a session on a form with the same id, but changed field content.
-TEST_P(AndroidAutofillProviderPrefillRequestTest,
+TEST_F(AndroidAutofillProviderPrefillRequestTest,
        SessionIdIsNotReusedForCachedFormsIfContentHasChanged) {
   if (base::android::BuildInfo::GetInstance()->sdk_int() <
       base::android::SdkVersion::SDK_VERSION_U) {
@@ -1087,7 +1220,7 @@ TEST_P(AndroidAutofillProviderPrefillRequestTest,
   Mock::VerifyAndClearExpectations(&provider_bridge());
 
   FormData changed_form = form;
-  changed_form.fields.pop_back();
+  test_api(changed_form).Remove(-1);
   android_autofill_manager().OnFormsSeen({changed_form},
                                          /*removed_forms=*/{});
   SessionId autofill_session_id = SessionId(0);
@@ -1097,7 +1230,7 @@ TEST_P(AndroidAutofillProviderPrefillRequestTest,
                                    /*has_server_predictions=*/true))
       .WillOnce(WithArg<0>(SaveSessionId(&autofill_session_id)));
   android_autofill_manager().SimulateOnAskForValuesToFill(
-      changed_form, changed_form.fields.front());
+      changed_form, changed_form.fields().front());
   Mock::VerifyAndClearExpectations(&provider_bridge());
 
   // A new session id is used to start the Autofill session.
@@ -1105,15 +1238,12 @@ TEST_P(AndroidAutofillProviderPrefillRequestTest,
   histogram_tester.ExpectUniqueSample(
       AndroidAutofillProvider::kPrefillRequestStateUma,
       PrefillRequestState::kRequestSentFormChanged, 1);
-  histogram_tester.ExpectTotalCount(
-      AndroidAutofillProvider::kSimilarityCheckCacheRequestUma,
-      GetParam() ? 0 : 1);
 }
 
 // Tests that the session id used in a prefill request is only used once to
 // start an Autofill session. If the user then focuses on a different form
 // before returning to the (formerly) cached form, a new session is started.
-TEST_P(AndroidAutofillProviderPrefillRequestTest,
+TEST_F(AndroidAutofillProviderPrefillRequestTest,
        SessionIdIsNotReusedMultipleAutofillSessions) {
   if (base::android::BuildInfo::GetInstance()->sdk_int() <
       base::android::SdkVersion::SDK_VERSION_U) {
@@ -1141,7 +1271,7 @@ TEST_P(AndroidAutofillProviderPrefillRequestTest,
                   EqualsFieldInfo(/*index=*/0),
                   /*has_server_predictions=*/true));
   android_autofill_manager().SimulateOnAskForValuesToFill(
-      pw_form, pw_form.fields.front());
+      pw_form, pw_form.fields().front());
   Mock::VerifyAndClearExpectations(&provider_bridge());
 
   // Now focus on a different form.
@@ -1152,7 +1282,7 @@ TEST_P(AndroidAutofillProviderPrefillRequestTest,
                                    /*has_server_predictions=*/false))
       .WillOnce(WithArg<0>(SaveSessionId(&pi_form_session_id)));
   android_autofill_manager().SimulateOnAskForValuesToFill(
-      pi_form, pi_form.fields.front());
+      pi_form, pi_form.fields().front());
   Mock::VerifyAndClearExpectations(&provider_bridge());
 
   // Unrelated forms should have different session ids.
@@ -1166,7 +1296,7 @@ TEST_P(AndroidAutofillProviderPrefillRequestTest,
                                    /*has_server_predictions=*/true))
       .WillOnce(WithArg<0>(SaveSessionId(&pw_form_second_session_id)));
   android_autofill_manager().SimulateOnAskForValuesToFill(
-      pw_form, pw_form.fields.front());
+      pw_form, pw_form.fields().front());
   Mock::VerifyAndClearExpectations(&provider_bridge());
   // The session id used when focusing back should be different from both those
   // before.
@@ -1174,8 +1304,8 @@ TEST_P(AndroidAutofillProviderPrefillRequestTest,
   EXPECT_NE(pi_form_session_id, pw_form_second_session_id);
 }
 
-// Tests that the prefill request can be sent for Change Password form.
-TEST_P(AndroidAutofillProviderPrefillRequestTest,
+// Tests that the prefill request is sent for a Change Password form.
+TEST_F(AndroidAutofillProviderPrefillRequestTest,
        PrefillRequestSentForChangePasswordForm) {
   if (base::android::BuildInfo::GetInstance()->sdk_int() <
       base::android::SdkVersion::SDK_VERSION_U) {
@@ -1195,8 +1325,42 @@ TEST_P(AndroidAutofillProviderPrefillRequestTest,
       form.global_id());
 }
 
+// Tests that starting an autofill session for a change password form works.
+TEST_F(AndroidAutofillProviderPrefillRequestTest,
+       SessionStartForChangePasswordForm) {
+  if (base::android::BuildInfo::GetInstance()->sdk_int() <
+      base::android::SdkVersion::SDK_VERSION_U) {
+    GTEST_SKIP();
+  }
+
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(
+      features::kAndroidAutofillPrefillRequestsForChangePassword);
+
+  FormData form = CreateFormDataForFrame(CreateTestChangePasswordForm(),
+                                         main_frame_token());
+  android_autofill_manager().OnFormsSeen({form}, /*removed_forms=*/{});
+  ASSERT_TRUE(android_autofill_manager().FindCachedFormById(form.global_id()));
+
+  // Upon receiving server predictions a prefill request should be sent.
+  SessionId cache_session_id = SessionId(0);
+  EXPECT_CALL(provider_bridge(), SendPrefillRequest(EqualsFormData(form)))
+      .WillOnce(SaveSessionId(&cache_session_id));
+  android_autofill_manager().SimulatePropagateAutofillPredictions(
+      form.global_id());
+  Mock::VerifyAndClearExpectations(&provider_bridge());
+
+  EXPECT_CALL(
+      provider_bridge(),
+      StartAutofillSession(EqualsFormDataWithSessionId(form, cache_session_id),
+                           EqualsFieldInfo(/*index=*/0),
+                           /*has_server_predictions=*/true));
+  android_autofill_manager().SimulateOnAskForValuesToFill(
+      form, form.fields().front());
+}
+
 // Tests that metrics are emitted when the bottom sheet is shown.
-TEST_P(AndroidAutofillProviderPrefillRequestTest,
+TEST_F(AndroidAutofillProviderPrefillRequestTest,
        PrefillRequestStateEmittedOnShowingBottomSheet) {
   if (base::android::BuildInfo::GetInstance()->sdk_int() <
       base::android::SdkVersion::SDK_VERSION_U) {
@@ -1204,9 +1368,6 @@ TEST_P(AndroidAutofillProviderPrefillRequestTest,
   }
 
   base::HistogramTester histogram_tester;
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(
-      features::kAndroidAutofillPrefillRequestsForLoginForms);
 
   FormData login_form =
       CreateFormDataForFrame(CreateTestLoginForm(), main_frame_token());
@@ -1216,7 +1377,7 @@ TEST_P(AndroidAutofillProviderPrefillRequestTest,
 
   EXPECT_CALL(provider_bridge(), StartAutofillSession);
   android_autofill_manager().SimulateOnAskForValuesToFill(
-      login_form, login_form.fields.front());
+      login_form, login_form.fields().front());
 
   // Simulate a successfully shown bottom sheet.
   provider_bridge_delegate().OnShowBottomSheetResult(
@@ -1228,7 +1389,7 @@ TEST_P(AndroidAutofillProviderPrefillRequestTest,
 
 // Tests that the correct metrics are emitted when the bottom sheet is not shown
 // and no view structure was provided to the Android framework.
-TEST_P(AndroidAutofillProviderPrefillRequestTest,
+TEST_F(AndroidAutofillProviderPrefillRequestTest,
        PrefillRequestStateEmittedOnNotShowingBottomSheetWithoutViewStructure) {
   if (base::android::BuildInfo::GetInstance()->sdk_int() <
       base::android::SdkVersion::SDK_VERSION_U) {
@@ -1242,7 +1403,7 @@ TEST_P(AndroidAutofillProviderPrefillRequestTest,
   android_autofill_manager().SimulatePropagateAutofillPredictions(
       login_form.global_id());
   android_autofill_manager().SimulateOnAskForValuesToFill(
-      login_form, login_form.fields.front());
+      login_form, login_form.fields().front());
 
   // Simulate a successfully shown bottom sheet.
   provider_bridge_delegate().OnShowBottomSheetResult(
@@ -1258,7 +1419,7 @@ TEST_P(AndroidAutofillProviderPrefillRequestTest,
 
 // Tests that the correct metrics are emitted when the bottom sheet is not shown
 // and a view structure was provided to the Android framework.
-TEST_P(AndroidAutofillProviderPrefillRequestTest,
+TEST_F(AndroidAutofillProviderPrefillRequestTest,
        PrefillRequestStateEmittedOnNotShowingBottomSheetWithViewStructure) {
   if (base::android::BuildInfo::GetInstance()->sdk_int() <
       base::android::SdkVersion::SDK_VERSION_U) {
@@ -1272,7 +1433,7 @@ TEST_P(AndroidAutofillProviderPrefillRequestTest,
   android_autofill_manager().SimulatePropagateAutofillPredictions(
       login_form.global_id());
   android_autofill_manager().SimulateOnAskForValuesToFill(
-      login_form, login_form.fields.front());
+      login_form, login_form.fields().front());
 
   // Simulate a successfully shown bottom sheet.
   provider_bridge_delegate().OnShowBottomSheetResult(
@@ -1281,12 +1442,6 @@ TEST_P(AndroidAutofillProviderPrefillRequestTest,
       AndroidAutofillProvider::kPrefillRequestStateUma,
       PrefillRequestState::kRequestSentStructureProvidedBottomSheetNotShown, 1);
 }
-
-INSTANTIATE_TEST_SUITE_P(
-    All,
-    AndroidAutofillProviderPrefillRequestTest,
-    ::testing::Bool(),
-    AndroidAutofillProviderPrefillRequestTest::GetTextSuffix);
 
 class AndroidAutofillProviderTestHidingLogic
     : public AndroidAutofillProviderTest {
@@ -1312,8 +1467,8 @@ class AndroidAutofillProviderTestHidingLogic
     android_autofill_manager(rfh).OnFormsSeen({form},
                                               /*removed_forms=*/{});
     // Start an Autofill session.
-    android_autofill_manager(rfh).SimulateOnAskForValuesToFill(form,
-                                                               form.fields[0]);
+    android_autofill_manager(rfh).SimulateOnAskForValuesToFill(
+        form, form.fields()[0]);
   }
 
  protected:
@@ -1372,7 +1527,7 @@ TEST_F(AndroidAutofillProviderTestHidingLogic,
 // Tests that if the popup is shown in the *sub frame*, a navigation in the
 // *sub frame* hides the popup.
 //
-// TODO(crbug.com/1488233): Disabled because AndroidAutofillProvider::Reset()
+// TODO(crbug.com/40283554): Disabled because AndroidAutofillProvider::Reset()
 // resets AndroidAutofillProvider::field_rfh_ before RenderFrameDeleted(), which
 // prevents OnPopupHidden().
 TEST_F(AndroidAutofillProviderTestHidingLogic,
@@ -1401,4 +1556,5 @@ TEST_F(AndroidAutofillProviderTestHidingLogic,
   NavigateAndCommitFrame(sub_frame_, GURL("https://bar.com/"));
 }
 
+}  // namespace
 }  // namespace autofill

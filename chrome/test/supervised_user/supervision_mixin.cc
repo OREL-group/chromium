@@ -6,11 +6,12 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include "base/check.h"
+#include "base/check_op.h"
 #include "base/functional/bind.h"
 #include "base/notreached.h"
-#include "base/strings/string_piece.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/signin/identity_test_environment_profile_adaptor.h"
@@ -20,6 +21,8 @@
 #include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/identity_manager/account_capabilities_test_mutator.h"
 #include "components/signin/public/identity_manager/account_info.h"
+#include "components/signin/public/identity_manager/accounts_in_cookie_jar_info.h"
+#include "components/signin/public/identity_manager/accounts_mutator.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/signin/public/identity_manager/identity_test_utils.h"
 #include "components/supervised_user/core/browser/supervised_user_preferences.h"
@@ -44,7 +47,7 @@ void OnWillCreateBrowserContextServices(content::BrowserContext* context) {
 
 bool IdentityManagerAlreadyHasPrimaryAccount(
     signin::IdentityManager* identity_manager,
-    base::StringPiece email,
+    std::string_view email,
     signin::ConsentLevel consent_level) {
   if (!identity_manager->HasPrimaryAccount(consent_level)) {
     return false;
@@ -132,7 +135,29 @@ void SupervisionMixin::SetParentalControlsAccountCapability(
 
   AccountCapabilitiesTestMutator mutator(&account.capabilities);
   mutator.set_is_subject_to_parental_controls(is_supervised_profile);
+  mutator.set_can_fetch_family_member_info(is_supervised_profile);
   signin::UpdateAccountInfoForAccount(identity_manager, account);
+}
+
+void SupervisionMixin::SetPendingStateForPrimaryAccount() {
+  CHECK_NE(sign_in_mode_, SignInMode::kSignedOut);
+
+  auto* identity_manager = GetIdentityTestEnvironment()->identity_manager();
+
+  // Invalidate refresh token and google auth cookie so that the supervised
+  // user is in pending state.
+  CoreAccountInfo account_info =
+      identity_manager->GetPrimaryAccountInfo(signin::ConsentLevel::kSignin);
+  GetIdentityTestEnvironment()->SetInvalidRefreshTokenForAccount(
+      account_info.account_id);
+  signin::SetFreshnessOfAccountsInGaiaCookie(identity_manager,
+                                             /*accounts_are_fresh=*/false);
+
+  signin::AccountsInCookieJarInfo cookie_jar =
+      identity_manager->GetAccountsInCookieJar();
+  CHECK(!identity_manager->GetAccountsInCookieJar().accounts_are_fresh);
+  CHECK(identity_manager->HasAccountWithRefreshTokenInPersistentErrorState(
+      identity_manager->GetPrimaryAccountId(signin::ConsentLevel::kSignin)));
 }
 
 void SupervisionMixin::ConfigureIdentityTestEnvironment() {
@@ -178,6 +203,7 @@ void SupervisionMixin::ConfigureIdentityTestEnvironment() {
   }
 
   GetIdentityTestEnvironment()->SetAutomaticIssueOfAccessTokens(true);
+  GetIdentityTestEnvironment()->SetFreshnessOfAccountsInGaiaCookie(true);
   ConfigureParentalControls(
       /*is_supervised_profile=*/sign_in_mode_ == SignInMode::kSupervised);
 }
@@ -204,27 +230,27 @@ void SupervisionMixin::SetNextReAuthStatus(
 
 void SupervisionMixin::SignIn(SignInMode mode) {
   CHECK_NE(mode, SignInMode::kSignedOut);
-  CHECK_EQ(sign_in_mode_, SignInMode::kSignedOut);
+
   sign_in_mode_ = mode;
   ConfigureIdentityTestEnvironment();
 }
 
 std::ostream& operator<<(std::ostream& stream,
-                         const SupervisionMixin::SignInMode& sign_in_mode) {
+                         SupervisionMixin::SignInMode sign_in_mode) {
+  stream << SignInModeAsString(sign_in_mode);
+  return stream;
+}
+std::string SignInModeAsString(SupervisionMixin::SignInMode sign_in_mode) {
   switch (sign_in_mode) {
     case SupervisionMixin::SignInMode::kSignedOut:
-      stream << "SignedOut";
-      break;
+      return "SignedOut";
     case SupervisionMixin::SignInMode::kRegular:
-      stream << "Regular";
-      break;
+      return "Regular";
     case SupervisionMixin::SignInMode::kSupervised:
-      stream << "Supervised";
-      break;
+      return "Supervised";
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
-  return stream;
 }
 
 }  // namespace supervised_user

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/credential_provider/gaiacp/gcp_utils.h"
 
 #include <windows.h>
@@ -938,7 +943,7 @@ std::wstring GetStringResource(UINT base_message_id) {
   if (image) {
     localized_string = std::wstring(image->achString, image->nLength);
   } else {
-    NOTREACHED() << "Unable to find resource id " << message_id;
+    NOTREACHED_IN_MIGRATION() << "Unable to find resource id " << message_id;
   }
 
   return localized_string;
@@ -991,7 +996,7 @@ void SecurelyClearBuffer(void* buffer, size_t length) {
 
 std::string SearchForKeyInStringDictUTF8(
     const std::string& json_string,
-    const std::initializer_list<base::StringPiece>& path) {
+    const std::initializer_list<std::string_view>& path) {
   DCHECK_GT(path.size(), 0UL);
 
   std::optional<base::Value::Dict> json_obj =
@@ -1020,7 +1025,7 @@ std::string GetDictStringUTF8(const base::Value::Dict& dict, const char* name) {
 HRESULT SearchForListInStringDictUTF8(
     const std::string& list_key,
     const std::string& json_string,
-    const std::initializer_list<base::StringPiece>& path,
+    const std::initializer_list<std::string_view>& path,
     std::vector<std::string>* output) {
   DCHECK_GT(path.size(), 0UL);
 

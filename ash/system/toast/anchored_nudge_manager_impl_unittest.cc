@@ -14,6 +14,7 @@
 #include "ash/shell.h"
 #include "ash/style/system_toast_style.h"
 #include "ash/system/toast/anchored_nudge.h"
+#include "ash/system/toast/nudge_constants.h"
 #include "ash/system/unified/unified_system_tray.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller_test_api.h"
@@ -25,6 +26,7 @@
 #include "ui/aura/window.h"
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
 #include "ui/display/manager/display_manager.h"
+#include "ui/gfx/geometry/vector2d.h"
 #include "ui/views/bubble/bubble_border.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/controls/button/label_button.h"
@@ -115,7 +117,7 @@ TEST_F(AnchoredNudgeManagerImplTest, ShowNudge_SingleNudge) {
   std::unique_ptr<views::Widget> widget = CreateFramelessTestWidget();
 
   // Set up nudge data contents.
-  const std::string id = "id";
+  const std::string id("id");
   const std::u16string body_text = u"Body text";
   auto* anchor_view = widget->SetContentsView(std::make_unique<views::View>());
   auto nudge_data = CreateBaseNudgeData(id, anchor_view, body_text);
@@ -144,12 +146,12 @@ TEST_F(AnchoredNudgeManagerImplTest, ShowNudge_TwoNudges) {
       widget->SetContentsView(std::make_unique<views::View>());
 
   // Set up nudge data contents.
-  const std::string id = "id";
+  const std::string id("id");
   auto* anchor_view =
       contents_view->AddChildView(std::make_unique<views::View>());
   auto nudge_data = CreateBaseNudgeData(id, anchor_view);
 
-  const std::string id_2 = "id_2";
+  const std::string id_2("id_2");
   auto* anchor_view_2 =
       contents_view->AddChildView(std::make_unique<views::View>());
   auto nudge_data_2 = CreateBaseNudgeData(id_2, anchor_view_2);
@@ -182,7 +184,7 @@ TEST_F(AnchoredNudgeManagerImplTest, ShowNudge_WithButtons) {
   std::unique_ptr<views::Widget> widget = CreateFramelessTestWidget();
 
   // Set up nudge data contents.
-  const std::string id = "id";
+  const std::string id("id");
   auto* anchor_view = widget->SetContentsView(std::make_unique<views::View>());
   const std::u16string primary_button_text = u"Primary";
   const std::u16string secondary_button_text = u"Secondary";
@@ -268,7 +270,7 @@ TEST_F(AnchoredNudgeManagerImplTest, DefaultLocation) {
   gfx::Rect nudge_bounds;
 
   // Show nudge on its default location by not providing an anchor view.
-  const std::string id = "id";
+  const std::string id("id");
   auto nudge_data = CreateBaseNudgeData(id, /*anchor_view=*/nullptr);
   GetAnchoredNudgeManager()->Show(nudge_data);
 
@@ -304,7 +306,7 @@ TEST_F(AnchoredNudgeManagerImplTest, DefaultLocation_WithRTL) {
   EXPECT_TRUE(base::i18n::IsRTL());
 
   // Show nudge on its default location by not providing an anchor view.
-  const std::string id = "id";
+  const std::string id("id");
   auto nudge_data = CreateBaseNudgeData(id, /*anchor_view=*/nullptr);
   GetAnchoredNudgeManager()->Show(nudge_data);
 
@@ -342,7 +344,7 @@ TEST_F(AnchoredNudgeManagerImplTest, DefaultLocation_WithHotseatShown) {
   gfx::Rect nudge_bounds;
 
   // Show nudge on its default location by not providing an anchor view.
-  const std::string id = "id";
+  const std::string id("id");
   auto nudge_data = CreateBaseNudgeData(id, /*anchor_view=*/nullptr);
   GetAnchoredNudgeManager()->Show(nudge_data);
 
@@ -368,7 +370,7 @@ TEST_F(AnchoredNudgeManagerImplTest, DefaultLocation_WithAutoHideShelf) {
   gfx::Rect nudge_bounds;
 
   // Show nudge on its default location by not providing an anchor view.
-  const std::string id = "id";
+  const std::string id("id");
   auto nudge_data = CreateBaseNudgeData(id, /*anchor_view=*/nullptr);
   GetAnchoredNudgeManager()->Show(nudge_data);
 
@@ -396,7 +398,7 @@ TEST_F(AnchoredNudgeManagerImplTest, DefaultLocation_Zoom) {
   gfx::Rect nudge_bounds;
 
   // Show nudge on its default location by not providing an anchor view.
-  const std::string id = "id";
+  const std::string id("id");
   auto nudge_data = CreateBaseNudgeData(id, /*anchor_view=*/nullptr);
   GetAnchoredNudgeManager()->Show(nudge_data);
 
@@ -435,7 +437,7 @@ TEST_F(AnchoredNudgeManagerImplTest, ShowNudge_NudgeWithIdAlreadyExists) {
       widget->SetContentsView(std::make_unique<views::View>());
 
   // Set up nudge data contents.
-  const std::string id = "id";
+  const std::string id("id");
 
   const std::u16string text = u"text";
   auto* anchor_view =
@@ -471,7 +473,7 @@ TEST_F(AnchoredNudgeManagerImplTest, ShowNudge_InvisibleAnchorView) {
   std::unique_ptr<views::Widget> widget = CreateFramelessTestWidget();
 
   // Set up nudge data contents.
-  const std::string id = "id";
+  const std::string id("id");
   auto* anchor_view = widget->SetContentsView(std::make_unique<views::View>());
   auto nudge_data = CreateBaseNudgeData(id, anchor_view);
 
@@ -488,7 +490,7 @@ TEST_F(AnchoredNudgeManagerImplTest, ShowNudge_InvisibleAnchorView) {
 // Tests that a nudge is not created if its anchor view doesn't have a widget.
 TEST_F(AnchoredNudgeManagerImplTest, ShowNudge_AnchorViewWithoutWidget) {
   // Set up nudge data contents.
-  const std::string id = "id";
+  const std::string id("id");
   auto contents_view = std::make_unique<views::View>();
   auto* anchor_view =
       contents_view->AddChildView(std::make_unique<views::View>());
@@ -506,7 +508,7 @@ TEST_F(AnchoredNudgeManagerImplTest, ShowNudge_DeletedAnchorView) {
   std::unique_ptr<views::Widget> widget = CreateFramelessTestWidget();
 
   // Set up nudge data contents.
-  const std::string id = "id";
+  const std::string id("id");
   auto contents_view = std::make_unique<views::View>();
   auto* anchor_view =
       contents_view->AddChildView(std::make_unique<views::View>());
@@ -531,7 +533,7 @@ TEST_F(AnchoredNudgeManagerImplTest, ShowNudge_ScopedNudgePause) {
   std::unique_ptr<views::Widget> widget = CreateFramelessTestWidget();
 
   // Set up nudge data contents.
-  const std::string id = "id";
+  const std::string id("id");
   auto* anchor_view = widget->SetContentsView(std::make_unique<views::View>());
   auto nudge_data = CreateBaseNudgeData(id, anchor_view);
 
@@ -556,7 +558,7 @@ TEST_F(AnchoredNudgeManagerImplTest, CancelNudge_ScopedNudgePause) {
   std::unique_ptr<views::Widget> widget = CreateFramelessTestWidget();
 
   // Set up nudge data contents.
-  const std::string id = "id";
+  const std::string id("id");
   auto* anchor_view = widget->SetContentsView(std::make_unique<views::View>());
   auto nudge_data = CreateBaseNudgeData(id, anchor_view);
 
@@ -576,7 +578,7 @@ TEST_F(AnchoredNudgeManagerImplTest, NudgeAnchoredToShelf) {
   std::unique_ptr<views::Widget> widget = CreateFramelessTestWidget();
 
   // Set up nudge data contents.
-  const std::string id = "id";
+  const std::string id("id");
   auto* anchor_view = widget->SetContentsView(std::make_unique<views::View>());
   auto nudge_data = CreateBaseNudgeData(id, anchor_view);
 
@@ -636,7 +638,7 @@ TEST_F(AnchoredNudgeManagerImplTest,
   Shelf* shelf = GetPrimaryShelf();
 
   // Set up nudge data contents.
-  const std::string id = "id";
+  const std::string id("id");
   auto* anchor_view = shelf->status_area_widget()->unified_system_tray();
   auto nudge_data = CreateBaseNudgeData(id, anchor_view);
 
@@ -666,7 +668,7 @@ TEST_F(AnchoredNudgeManagerImplTest, NudgeAnchoredToShelf_ShelfDoesNotHide) {
   std::unique_ptr<views::Widget> widget = CreateFramelessTestWidget();
 
   // Set up nudge data contents.
-  const std::string id = "id";
+  const std::string id("id");
   auto* anchor_view = widget->SetContentsView(std::make_unique<views::View>());
   auto nudge_data = CreateBaseNudgeData(id, anchor_view);
 
@@ -695,7 +697,7 @@ TEST_F(AnchoredNudgeManagerImplTest, NudgeCloses_WhenAnchorViewIsHiding) {
   std::unique_ptr<views::Widget> widget = CreateFramelessTestWidget();
 
   // Set up nudge data contents.
-  const std::string id = "id";
+  const std::string id("id");
   auto* anchor_view = widget->SetContentsView(std::make_unique<views::View>());
   auto nudge_data = CreateBaseNudgeData(id, anchor_view);
 
@@ -717,7 +719,7 @@ TEST_F(AnchoredNudgeManagerImplTest, NudgeCloses_WhenAnchorViewIsDeleting) {
   std::unique_ptr<views::Widget> widget = CreateFramelessTestWidget();
 
   // Set up nudge data contents.
-  const std::string id = "id";
+  const std::string id("id");
 
   auto* contents_view =
       widget->SetContentsView(std::make_unique<views::View>());
@@ -745,7 +747,7 @@ TEST_F(AnchoredNudgeManagerImplTest,
 
   // Set up nudge data contents. The anchor view is a child of the secondary
   // root window controller, so it will be deleted if the display is removed.
-  const std::string id = "id";
+  const std::string id("id");
   auto* anchor_view = secondary_root_window_controller->shelf()
                           ->status_area_widget()
                           ->unified_system_tray();
@@ -767,7 +769,7 @@ TEST_F(AnchoredNudgeManagerImplTest, NudgeCloses_WhenAnchorViewWidgetIsHiding) {
   std::unique_ptr<views::Widget> widget = CreateFramelessTestWidget();
 
   // Set up nudge data contents.
-  const std::string id = "id";
+  const std::string id("id");
   auto* anchor_view = widget->SetContentsView(std::make_unique<views::View>());
   auto nudge_data = CreateBaseNudgeData(id, anchor_view);
 
@@ -789,7 +791,7 @@ TEST_F(AnchoredNudgeManagerImplTest, NudgeCloses_OnShutdown) {
   std::unique_ptr<views::Widget> widget = CreateFramelessTestWidget();
 
   // Set up nudge data contents.
-  const std::string id = "id";
+  const std::string id("id");
   auto* anchor_view = widget->SetContentsView(std::make_unique<views::View>());
   auto nudge_data = CreateBaseNudgeData(id, anchor_view);
 
@@ -805,7 +807,7 @@ TEST_F(AnchoredNudgeManagerImplTest, NudgeCloses_WhenDismissTimerExpires) {
   std::unique_ptr<views::Widget> widget = CreateFramelessTestWidget();
 
   // Set up nudge data contents.
-  const std::string id = "id";
+  const std::string id("id");
   auto* anchor_view = widget->SetContentsView(std::make_unique<views::View>());
   auto nudge_data = CreateBaseNudgeData(id, anchor_view);
 
@@ -853,7 +855,7 @@ TEST_F(AnchoredNudgeManagerImplTest, NudgeDefaultDurationIsUpdated) {
   std::unique_ptr<views::Widget> widget = CreateFramelessTestWidget();
 
   // Set up nudge data contents.
-  const std::string id = "id";
+  const std::string id("id");
   const std::u16string long_body_text =
       u"This is just a body text that has more than sixty characters.";
   const std::u16string primary_button_text = u"first";
@@ -919,7 +921,7 @@ TEST_F(AnchoredNudgeManagerImplTest, NudgeCloses_OnSessionStateChanged) {
   std::unique_ptr<views::Widget> widget = CreateFramelessTestWidget();
 
   // Set up nudge data contents.
-  const std::string id = "id";
+  const std::string id("id");
   auto* anchor_view = widget->SetContentsView(std::make_unique<views::View>());
   auto nudge_data = CreateBaseNudgeData(id, anchor_view);
 
@@ -950,7 +952,7 @@ TEST_F(AnchoredNudgeManagerImplTest, NudgeCloses_OnHideAnimationComplete) {
   std::unique_ptr<views::Widget> widget = CreateFramelessTestWidget();
 
   // Set up nudge data contents.
-  const std::string id = "id";
+  const std::string id("id");
   auto* anchor_view = widget->SetContentsView(std::make_unique<views::View>());
   auto nudge_data = CreateBaseNudgeData(id, anchor_view);
 
@@ -980,7 +982,7 @@ TEST_F(AnchoredNudgeManagerImplTest, NudgeHideAnimationInterrupted_OnShutdown) {
   std::unique_ptr<views::Widget> widget = CreateFramelessTestWidget();
 
   // Set up nudge data contents.
-  const std::string id = "id";
+  const std::string id("id");
   auto* anchor_view = widget->SetContentsView(std::make_unique<views::View>());
   auto nudge_data = CreateBaseNudgeData(id, anchor_view);
 
@@ -1004,7 +1006,7 @@ TEST_F(AnchoredNudgeManagerImplTest,
   std::unique_ptr<views::Widget> widget = CreateFramelessTestWidget();
 
   // Set up nudge data contents.
-  const std::string id = "id";
+  const std::string id("id");
   auto* anchor_view = widget->SetContentsView(std::make_unique<views::View>());
   auto nudge_data = CreateBaseNudgeData(id, anchor_view);
 
@@ -1032,7 +1034,7 @@ TEST_F(AnchoredNudgeManagerImplTest,
   std::unique_ptr<views::Widget> widget = CreateFramelessTestWidget();
 
   // Set up nudge data contents.
-  const std::string id = "id";
+  const std::string id("id");
   auto* anchor_view = widget->SetContentsView(std::make_unique<views::View>());
   auto nudge_data = CreateBaseNudgeData(id, anchor_view);
 
@@ -1051,11 +1053,11 @@ TEST_F(AnchoredNudgeManagerImplTest,
 }
 
 // Tests that the dismiss timer is paused on hover so the nudge won't close.
-TEST_F(AnchoredNudgeManagerImplTest, NudgePersistsOnHover) {
+TEST_F(AnchoredNudgeManagerImplTest, NudgePersists_OnHover) {
   std::unique_ptr<views::Widget> widget = CreateFramelessTestWidget();
 
   // Set up nudge data contents.
-  const std::string id = "id";
+  const std::string id("id");
   auto* anchor_view = widget->SetContentsView(std::make_unique<views::View>());
   auto nudge_data = CreateBaseNudgeData(id, anchor_view);
 
@@ -1084,14 +1086,47 @@ TEST_F(AnchoredNudgeManagerImplTest, NudgePersistsOnHover) {
   EXPECT_FALSE(GetShownNudge(id));
 }
 
+// Tests that the dismiss timer is paused when one of the nudge's children is
+// focused so the nudge won't close.
+TEST_F(AnchoredNudgeManagerImplTest, NudgePersists_OnFocus) {
+  std::unique_ptr<views::Widget> widget = CreateFramelessTestWidget();
+
+  // Set up nudge with a button so the nudge has a focusable child.
+  const std::string id("id");
+  auto nudge_data = CreateBaseNudgeData(id, /*anchor_view=*/nullptr);
+  nudge_data.primary_button_text = u"button";
+
+  // Show a nudge with a button.
+  GetAnchoredNudgeManager()->Show(nudge_data);
+  ASSERT_TRUE(GetShownNudge(id));
+  auto* button = GetNudgePrimaryButton(id);
+  ASSERT_TRUE(button);
+
+  // Focus on the nudge's button and wait for its full duration times two. It
+  // should persist.
+  button->RequestFocus();
+  EXPECT_TRUE(button->HasFocus());
+  task_environment()->FastForwardBy(
+      AnchoredNudgeManagerImpl::kNudgeDefaultDuration * 2);
+  EXPECT_TRUE(GetShownNudge(id));
+
+  // Focus out of the nudge and wait its full duration times two. It should be
+  // dismissed.
+  button->GetFocusManager()->ClearFocus();
+  EXPECT_FALSE(button->HasFocus());
+  task_environment()->FastForwardBy(
+      AnchoredNudgeManagerImpl::kNudgeDefaultDuration * 2);
+  EXPECT_FALSE(GetShownNudge(id));
+}
+
 // Tests that attempting to cancel a nudge with an invalid `id` should not
 // have any effects.
 TEST_F(AnchoredNudgeManagerImplTest, CancelNudgeWhichDoesNotExist) {
   std::unique_ptr<views::Widget> widget = CreateFramelessTestWidget();
 
   // Set up nudge data contents.
-  const std::string id = "id";
-  const std::string id_2 = "id_2";
+  const std::string id("id");
+  const std::string id_2("id_2");
   auto* anchor_view = widget->SetContentsView(std::make_unique<views::View>());
   auto nudge_data = CreateBaseNudgeData(id, anchor_view);
 
@@ -1119,7 +1154,7 @@ TEST_F(AnchoredNudgeManagerImplTest, ShownCountMetric) {
   std::unique_ptr<views::Widget> widget = CreateFramelessTestWidget();
 
   // Set up nudge data contents.
-  const std::string id = "id";
+  const std::string id("id");
   auto* anchor_view = widget->SetContentsView(std::make_unique<views::View>());
   auto nudge_data = CreateBaseNudgeData(id, anchor_view);
 
@@ -1139,7 +1174,7 @@ TEST_F(AnchoredNudgeManagerImplTest, TimeToActionMetric) {
   std::unique_ptr<views::Widget> widget = CreateFramelessTestWidget();
 
   // Set up nudge data contents.
-  const std::string id = "id";
+  const std::string id("id");
   auto* anchor_view = widget->SetContentsView(std::make_unique<views::View>());
   auto nudge_data = CreateBaseNudgeData(id, anchor_view);
 
@@ -1195,7 +1230,7 @@ TEST_F(AnchoredNudgeManagerImplTest, SetParent_AnchorViewWithWidget) {
   std::unique_ptr<views::Widget> widget = CreateFramelessTestWidget();
 
   // Set up nudge data contents.
-  const std::string id = "id";
+  const std::string id("id");
   auto contents_view = std::make_unique<views::View>();
   auto* anchor_view =
       contents_view->AddChildView(std::make_unique<views::View>());
@@ -1217,7 +1252,7 @@ TEST_F(AnchoredNudgeManagerImplTest, NotSetParent_AnchorViewWithWidget) {
   std::unique_ptr<views::Widget> widget = CreateFramelessTestWidget();
 
   // Set up nudge data contents.
-  const std::string id = "id";
+  const std::string id("id");
   auto contents_view = std::make_unique<views::View>();
   auto* anchor_view =
       contents_view->AddChildView(std::make_unique<views::View>());
@@ -1237,7 +1272,7 @@ TEST_F(AnchoredNudgeManagerImplTest, NotSetParent_AnchorViewWithWidget) {
 // but `set_anchor_view_as_parent` is set to true.
 TEST_F(AnchoredNudgeManagerImplTest, SetParent_AnchorViewWithoutWidget) {
   // Set up nudge data contents.
-  const std::string id = "id";
+  const std::string id("id");
   auto contents_view = std::make_unique<views::View>();
   auto* anchor_view =
       contents_view->AddChildView(std::make_unique<views::View>());
@@ -1275,7 +1310,7 @@ TEST_F(AnchoredNudgeManagerImplTest, FocusTraversable) {
           .Build());
 
   // Setup a nudge without buttons and set `view2` as the anchor view.
-  const std::string id = "id";
+  const std::string id("id");
   auto nudge_data = CreateBaseNudgeData(id, view2);
   GetAnchoredNudgeManager()->Show(nudge_data);
 
@@ -1310,6 +1345,183 @@ TEST_F(AnchoredNudgeManagerImplTest, FocusTraversable) {
 
   GetAnchoredNudgeManager()->Cancel(id);
   EXPECT_EQ(widget->GetFocusManager()->GetFocusedView(), view2);
+}
+
+// Tests that a nudge is anchored at the bottom left corner of its anchor
+// widget.
+TEST_F(AnchoredNudgeManagerImplTest, AnchorInsideWidget_BottomLeft) {
+  std::unique_ptr<views::Widget> anchor_widget =
+      CreateTestWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
+  anchor_widget->SetBounds(
+      gfx::Rect(gfx::Point(100, 100), gfx::Size(300, 200)));
+
+  // Set up nudge data contents.
+  const std::string id("id");
+  auto nudge_data = CreateBaseNudgeData(id, /*anchor_view=*/nullptr);
+  nudge_data.anchor_widget = anchor_widget.get();
+  nudge_data.arrow = views::BubbleBorder::Arrow::BOTTOM_LEFT;
+
+  // `anchor_widget` exists, will anchor inside the widget.
+  GetAnchoredNudgeManager()->Show(nudge_data);
+  auto* nudge = GetShownNudge(id);
+  EXPECT_TRUE(nudge);
+
+  auto* nudge_widget = nudge->GetWidget();
+  EXPECT_TRUE(nudge_widget);
+
+  auto nudge_bounds = nudge_widget->GetWindowBoundsInScreen();
+  auto anchor_widget_bounds = anchor_widget->GetWindowBoundsInScreen();
+
+  // Compare the bounds alignment with the `kBubbleBorderInsets`.
+  EXPECT_EQ(nudge_bounds.bottom_left(),
+            anchor_widget_bounds.bottom_left() +
+                gfx::Vector2d(kBubbleBorderInsets.left(),
+                              -kBubbleBorderInsets.bottom()));
+}
+
+// Tests that a nudge is anchored at the bottom right corner of its anchor
+// widget.
+TEST_F(AnchoredNudgeManagerImplTest, AnchorInsideWidget_BottomRight) {
+  std::unique_ptr<views::Widget> anchor_widget =
+      CreateTestWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
+  anchor_widget->SetBounds(
+      gfx::Rect(gfx::Point(100, 100), gfx::Size(300, 200)));
+
+  // Set up nudge data contents.
+  const std::string id("id");
+  auto nudge_data = CreateBaseNudgeData(id, /*anchor_view=*/nullptr);
+  nudge_data.anchor_widget = anchor_widget.get();
+  nudge_data.arrow = views::BubbleBorder::Arrow::BOTTOM_RIGHT;
+
+  // `anchor_widget` exists, will anchor inside the widget.
+  GetAnchoredNudgeManager()->Show(nudge_data);
+  auto* nudge = GetShownNudge(id);
+  EXPECT_TRUE(nudge);
+
+  auto* nudge_widget = nudge->GetWidget();
+  EXPECT_TRUE(nudge_widget);
+
+  auto nudge_bounds = nudge_widget->GetWindowBoundsInScreen();
+  auto anchor_widget_bounds = anchor_widget->GetWindowBoundsInScreen();
+
+  // Compare the bounds alignment with the `kBubbleBorderInsets`.
+  EXPECT_EQ(nudge_bounds.bottom_right(),
+            anchor_widget_bounds.bottom_right() +
+                gfx::Vector2d(-kBubbleBorderInsets.right(),
+                              -kBubbleBorderInsets.bottom()));
+}
+
+// Tests that a nudge with an anchor widget is placed on the right on RTL.
+TEST_F(AnchoredNudgeManagerImplTest, AnchorInsideWidget_WithRTL) {
+  // Turn on RTL mode.
+  base::i18n::SetRTLForTesting(true);
+  base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(base::i18n::IsRTL());
+
+  std::unique_ptr<views::Widget> anchor_widget =
+      CreateTestWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
+  anchor_widget->SetBounds(
+      gfx::Rect(gfx::Point(100, 100), gfx::Size(300, 200)));
+
+  // Set up nudge data contents.
+  const std::string id("id");
+  auto nudge_data = CreateBaseNudgeData(id, /*anchor_view=*/nullptr);
+  nudge_data.anchor_widget = anchor_widget.get();
+  nudge_data.arrow = views::BubbleBorder::Arrow::BOTTOM_LEFT;
+
+  // `anchor_widget` exists, will anchor inside the widget.
+  GetAnchoredNudgeManager()->Show(nudge_data);
+  auto* nudge = GetShownNudge(id);
+  EXPECT_TRUE(nudge);
+
+  auto* nudge_widget = nudge->GetWidget();
+  EXPECT_TRUE(nudge_widget);
+
+  auto nudge_bounds = nudge_widget->GetWindowBoundsInScreen();
+  auto anchor_widget_bounds = anchor_widget->GetWindowBoundsInScreen();
+
+  // Compare the bounds alignment with the `kBubbleBorderInsets`.
+  // The nudge should be shown on the leading bottom corner of the
+  // `anchor_widget`, which for RTL languages is the bottom-right.
+  EXPECT_EQ(nudge_bounds.bottom_right(),
+            anchor_widget_bounds.bottom_right() +
+                gfx::Vector2d(-kBubbleBorderInsets.right(),
+                              -kBubbleBorderInsets.bottom()));
+
+  // Turn off RTL mode.
+  base::i18n::SetRTLForTesting(false);
+  base::RunLoop().RunUntilIdle();
+  EXPECT_FALSE(base::i18n::IsRTL());
+}
+
+// Tests that a nudge is anchored at the bottom left corner of its anchor
+// widget in the tablet mode.
+TEST_F(AnchoredNudgeManagerImplTest, AnchorInsideWidget_TabletMode) {
+  ash::TabletModeControllerTestApi().EnterTabletMode();
+
+  std::unique_ptr<views::Widget> anchor_widget =
+      CreateTestWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
+  anchor_widget->SetBounds(
+      gfx::Rect(gfx::Point(100, 100), gfx::Size(300, 200)));
+
+  // Set up nudge data contents.
+  const std::string id("id");
+  auto nudge_data = CreateBaseNudgeData(id, /*anchor_view=*/nullptr);
+  nudge_data.anchor_widget = anchor_widget.get();
+  nudge_data.arrow = views::BubbleBorder::Arrow::BOTTOM_LEFT;
+
+  // `anchor_widget` exists, will anchor inside the widget.
+  GetAnchoredNudgeManager()->Show(nudge_data);
+  auto* nudge = GetShownNudge(id);
+  EXPECT_TRUE(nudge);
+
+  auto* nudge_widget = nudge->GetWidget();
+  EXPECT_TRUE(nudge_widget);
+
+  auto nudge_bounds = nudge_widget->GetWindowBoundsInScreen();
+  auto anchor_widget_bounds = anchor_widget->GetWindowBoundsInScreen();
+
+  // Compare the bounds alignment with the `kBubbleBorderInsets`.
+  EXPECT_EQ(nudge_bounds.bottom_left(),
+            anchor_widget_bounds.bottom_left() +
+                gfx::Vector2d(kBubbleBorderInsets.left(),
+                              -kBubbleBorderInsets.bottom()));
+}
+
+// Tests that the nudge is closed when the anchor widget is closed.
+TEST_F(AnchoredNudgeManagerImplTest, NudgeClosedWhenAnchorWidgetClosed) {
+  std::unique_ptr<views::Widget> anchor_widget =
+      CreateTestWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
+  anchor_widget->SetBounds(
+      gfx::Rect(gfx::Point(100, 100), gfx::Size(300, 200)));
+
+  // Set up nudge data contents.
+  const std::string id("id");
+  auto nudge_data = CreateBaseNudgeData(id, /*anchor_view=*/nullptr);
+  nudge_data.anchor_widget = anchor_widget.get();
+  nudge_data.arrow = views::BubbleBorder::Arrow::BOTTOM_LEFT;
+
+  // `anchor_widget` exists, will anchor inside the widget.
+  GetAnchoredNudgeManager()->Show(nudge_data);
+  auto* nudge = GetShownNudge(id);
+  EXPECT_TRUE(nudge);
+
+  auto* nudge_widget = nudge->GetWidget();
+  EXPECT_TRUE(nudge_widget);
+
+  auto nudge_bounds = nudge_widget->GetWindowBoundsInScreen();
+  auto anchor_widget_bounds = anchor_widget->GetWindowBoundsInScreen();
+
+  // Compare the bounds alignment with the `kBubbleBorderInsets`.
+  EXPECT_EQ(nudge_bounds.bottom_left(),
+            anchor_widget_bounds.bottom_left() +
+                gfx::Vector2d(kBubbleBorderInsets.left(),
+                              -kBubbleBorderInsets.bottom()));
+
+  // Close the `anchor_widget` should close the nudge as well.
+  anchor_widget->CloseNow();
+  nudge = GetShownNudge(id);
+  EXPECT_FALSE(nudge);
 }
 
 }  // namespace ash

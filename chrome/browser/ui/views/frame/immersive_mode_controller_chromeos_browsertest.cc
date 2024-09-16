@@ -27,7 +27,6 @@
 #include "chromeos/ui/frame/caption_buttons/frame_caption_button_container_view.h"
 #include "chromeos/ui/frame/immersive/immersive_fullscreen_controller_test_api.h"
 #include "components/permissions/request_type.h"
-#include "content/public/browser/notification_service.h"
 #include "content/public/test/browser_test.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/events/base_event_utils.h"
@@ -56,8 +55,8 @@ class ImmersiveModeControllerChromeosWebAppBrowserTest
     ASSERT_TRUE(https_server_.Start());
 
     const GURL app_url = GetAppUrl();
-    auto web_app_info = std::make_unique<web_app::WebAppInstallInfo>();
-    web_app_info->start_url = app_url;
+    auto web_app_info =
+        web_app::WebAppInstallInfo::CreateWithStartUrlForTesting(app_url);
     web_app_info->scope = app_url.GetWithoutFilename();
     web_app_info->theme_color = SK_ColorBLUE;
 
@@ -67,8 +66,7 @@ class ImmersiveModeControllerChromeosWebAppBrowserTest
   GURL GetAppUrl() { return https_server_.GetURL("/simple.html"); }
 
   void LaunchAppBrowser(bool wait = true) {
-    ui_test_utils::UrlLoadObserver url_observer(
-        GetAppUrl(), content::NotificationService::AllSources());
+    ui_test_utils::UrlLoadObserver url_observer(GetAppUrl());
     browser_ = LaunchWebAppBrowser(app_id);
 
     if (wait) {
@@ -336,7 +334,7 @@ IN_PROC_BROWSER_TEST_F(ImmersiveModeControllerChromeosWebAppBrowserTest,
 
   // The permission prompt is shown asynchronously. Without immersive mode
   // enabled the anchor should exist.
-  // TODO(https://crbug.com/1317865): Change from RunUntilIdle to a more
+  // TODO(crbug.com/40835018): Change from RunUntilIdle to a more
   // explicit notification.
   base::RunLoop().RunUntilIdle();
 
@@ -363,7 +361,7 @@ IN_PROC_BROWSER_TEST_F(ImmersiveModeControllerChromeosWebAppBrowserTest,
 
   // Make sure the old permission prompt fully goes away before opening a new
   // prompt.
-  // TODO(https://crbug.com/1317865): Change from RunUntilIdle to a more
+  // TODO(crbug.com/40835018): Change from RunUntilIdle to a more
   // explicit notification.
   base::RunLoop().RunUntilIdle();
   ASSERT_FALSE(test_api->GetPromptWindow());
@@ -376,7 +374,7 @@ IN_PROC_BROWSER_TEST_F(ImmersiveModeControllerChromeosWebAppBrowserTest,
                              permissions::RequestType::kMicStream);
 
   // The permission prompt is shown asynchronously.
-  // TODO(https://crbug.com/1317865): Change from RunUntilIdle to a more
+  // TODO(crbug.com/40835018): Change from RunUntilIdle to a more
   // explicit notification.
   base::RunLoop().RunUntilIdle();
   prompt_widget = test_api->GetPromptWindow();

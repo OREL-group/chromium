@@ -2,23 +2,36 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ash/app_mode/app_launch_utils.h"
 
+#include <cstddef>
+#include <iterator>
+#include <optional>
+#include <string>
+#include <vector>
+
 #include "ash/constants/ash_switches.h"
+#include "base/check.h"
 #include "base/check_deref.h"
 #include "base/command_line.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
-#include "chrome/browser/ash/app_mode/crash_recovery_launcher.h"
+#include "base/values.h"
 #include "chrome/browser/ash/app_mode/kiosk_app_launch_error.h"
 #include "chrome/browser/ash/app_mode/kiosk_app_types.h"
 #include "chrome/browser/ash/app_mode/kiosk_chrome_app_manager.h"
 #include "chrome/browser/ash/app_mode/kiosk_controller.h"
-#include "chrome/browser/ash/app_mode/web_app/web_kiosk_app_manager.h"
 #include "chrome/browser/ash/login/startup_utils.h"
-#include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/pref_names.h"
+#include "components/account_id/account_id.h"
 #include "components/prefs/pref_service.h"
+#include "components/prefs/scoped_user_pref_update.h"
 #include "components/user_manager/user_manager.h"
 
 namespace ash {
@@ -42,29 +55,12 @@ const char* const kOneTimeAutoLaunchChromeAppId =
 std::vector<std::string>* test_prefs_to_reset = nullptr;
 
 AccountId ToAccountId(const std::string* account_id_string) {
-  AccountId account_id;
-  CHECK(AccountId::Deserialize(CHECK_DEREF(account_id_string), &account_id));
-  return account_id;
+  auto account_id = AccountId::Deserialize(CHECK_DEREF(account_id_string));
+  CHECK(account_id.has_value());
+  return *account_id;
 }
 
 }  // namespace
-
-void LaunchAppOrDie(Profile* profile, const KioskAppId& kiosk_app_id) {
-  auto* launcher =
-      new CrashRecoveryLauncher(CHECK_DEREF(profile), kiosk_app_id);
-  launcher->Start(base::BindOnce(
-      [](CrashRecoveryLauncher* launcher, const KioskAppId& kiosk_app_id,
-         Profile* profile, bool success,
-         const std::optional<std::string>& app_name) {
-        delete launcher;
-        if (success) {
-          CreateKioskSystemSession(kiosk_app_id, profile, app_name);
-        } else {
-          chrome::AttemptUserExit();
-        }
-      },
-      launcher, kiosk_app_id, profile));
-}
 
 void ResetEphemeralKioskPreferences(PrefService* prefs) {
   CHECK(prefs);
@@ -112,24 +108,6 @@ bool ShouldAutoLaunchKioskApp(const base::CommandLine& command_line,
          StartupUtils::IsOobeCompleted();
 }
 
-void CreateKioskSystemSession(const KioskAppId& kiosk_app_id,
-                              Profile* profile,
-                              const std::optional<std::string>& app_name) {
-  switch (kiosk_app_id.type) {
-    case KioskAppType::kWebApp:
-      WebKioskAppManager::Get()->InitKioskSystemSession(profile, kiosk_app_id,
-                                                        app_name);
-      return;
-    case KioskAppType::kChromeApp:
-      KioskChromeAppManager::Get()->InitKioskSystemSession(profile,
-                                                           kiosk_app_id);
-      return;
-    case KioskAppType::kArcApp:
-      // Do not create a `KioskBrowserSession` for ARC kiosk
-      return;
-  }
-}
-
 bool ShouldOneTimeAutoLaunchKioskApp(const base::CommandLine& command_line,
                                      const PrefService& local_state) {
   return command_line.HasSwitch(switches::kLoginManager) &&
@@ -175,9 +153,6 @@ void SetOneTimeAutoLaunchKioskAppId(PrefService& local_state,
                                    KioskChromeAppManager::kKioskDictionaryName);
 
   switch (kiosk_app_id.type) {
-    case KioskAppType::kArcApp:
-      NOTREACHED();
-      return;
     case KioskAppType::kChromeApp:
       dict_update->Set(kOneTimeAutoLaunchChromeAppAccountId,
                        kiosk_app_id.account_id.Serialize());
@@ -190,8 +165,12 @@ void SetOneTimeAutoLaunchKioskAppId(PrefService& local_state,
                        kiosk_app_id.account_id.Serialize());
       local_state.CommitPendingWrite();
       return;
+    case KioskAppType::kIsolatedWebApp:
+      // TODO(crbug.com/361016399): implement Kiosk IWA autolaunch.
+      NOTIMPLEMENTED();
+      return;
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 }  // namespace ash

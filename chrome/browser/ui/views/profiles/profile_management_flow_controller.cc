@@ -113,7 +113,7 @@ void ProfileManagementFlowController::FinishFlowAndRunInBrowser(
 
   // Start by opening the browser window, to ensure that we have another
   // KeepAlive for `profile` by the time we clear the flow and its host.
-  // TODO(crbug.com/1374315): Make sure we do something or log an error if
+  // TODO(crbug.com/40242414): Make sure we do something or log an error if
   // opening a browser window was not possible.
   profiles::OpenBrowserWindowForProfile(
       std::move(post_browser_open_callback),
@@ -147,4 +147,15 @@ void ProfileManagementFlowController::CreateSignedOutFlowWebContents(
 content::WebContents*
 ProfileManagementFlowController::GetSignedOutFlowWebContents() const {
   return signed_out_flow_web_contents_.get();
+}
+
+void ProfileManagementFlowController::Reset(
+    StepSwitchFinishedCallback callback) {
+  Step previous_step = current_step_;
+
+  // Activate the initial step.
+  SwitchToStep(Step::kProfilePicker, /*reset_state=*/true,
+               /*step_switch_finished_callback=*/std::move(callback));
+  // Unregister the previous active step.
+  UnregisterStep(previous_step);
 }

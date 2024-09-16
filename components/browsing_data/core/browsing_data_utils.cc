@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/no_destructor.h"
@@ -22,6 +23,9 @@
 #include "ui/base/l10n/l10n_util.h"
 
 namespace browsing_data {
+
+const char kDeleteBrowsingDataDialogHistogram[] =
+    "Privacy.DeleteBrowsingData.Dialog";
 
 // Creates a string like "for a.com, b.com, and 4 more".
 std::u16string CreateDomainExamples(
@@ -119,30 +123,51 @@ void RecordTimePeriodChange(TimePeriod period) {
     case TimePeriod::LAST_15_MINUTES:
       base::RecordAction(base::UserMetricsAction(
           "ClearBrowsingData_TimePeriodChanged_Last15Minutes"));
+      base::UmaHistogramEnumeration(
+          browsing_data::kDeleteBrowsingDataDialogHistogram,
+          DeleteBrowsingDataDialogAction::kLast15MinutesSelected);
       break;
     case TimePeriod::LAST_HOUR:
       base::RecordAction(base::UserMetricsAction(
           "ClearBrowsingData_TimePeriodChanged_LastHour"));
+      base::UmaHistogramEnumeration(
+          browsing_data::kDeleteBrowsingDataDialogHistogram,
+          DeleteBrowsingDataDialogAction::kLastHourSelected);
       break;
     case TimePeriod::LAST_DAY:
       base::RecordAction(base::UserMetricsAction(
           "ClearBrowsingData_TimePeriodChanged_LastDay"));
+      base::UmaHistogramEnumeration(
+          browsing_data::kDeleteBrowsingDataDialogHistogram,
+          DeleteBrowsingDataDialogAction::kLastDaySelected);
       break;
     case TimePeriod::LAST_WEEK:
       base::RecordAction(base::UserMetricsAction(
           "ClearBrowsingData_TimePeriodChanged_LastWeek"));
+      base::UmaHistogramEnumeration(
+          browsing_data::kDeleteBrowsingDataDialogHistogram,
+          DeleteBrowsingDataDialogAction::kLastWeekSelected);
       break;
     case TimePeriod::FOUR_WEEKS:
       base::RecordAction(base::UserMetricsAction(
           "ClearBrowsingData_TimePeriodChanged_LastMonth"));
+      base::UmaHistogramEnumeration(
+          browsing_data::kDeleteBrowsingDataDialogHistogram,
+          DeleteBrowsingDataDialogAction::kLastFourWeeksSelected);
       break;
     case TimePeriod::ALL_TIME:
       base::RecordAction(base::UserMetricsAction(
           "ClearBrowsingData_TimePeriodChanged_Everything"));
+      base::UmaHistogramEnumeration(
+          browsing_data::kDeleteBrowsingDataDialogHistogram,
+          DeleteBrowsingDataDialogAction::kAllTimeSelected);
       break;
     case TimePeriod::OLDER_THAN_30_DAYS:
       base::RecordAction(base::UserMetricsAction(
           "ClearBrowsingData_TimePeriodChanged_OlderThan30Days"));
+      base::UmaHistogramEnumeration(
+          browsing_data::kDeleteBrowsingDataDialogHistogram,
+          DeleteBrowsingDataDialogAction::kOlderThan30DaysSelected);
       break;
   }
 }
@@ -200,7 +225,7 @@ std::u16string GetCounterTextFromResult(
             IDS_DEL_PASSWORDS_AND_SIGNIN_DATA_COUNTER_COMBINATION, parts[0],
             parts[1]);
       default:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
     }
   }
 
@@ -221,7 +246,7 @@ std::u16string GetCounterTextFromResult(
 
   if (pref_name == prefs::kDeleteBrowsingHistoryBasic) {
     // The basic tab doesn't show history counter results.
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
   }
 
   if (pref_name == prefs::kDeleteBrowsingHistory) {
@@ -273,7 +298,7 @@ std::u16string GetCounterTextFromResult(
               IDS_DEL_AUTOFILL_COUNTER_SUGGESTIONS_SHORT, num_suggestions));
           break;
         default:
-          NOTREACHED();
+          NOTREACHED_IN_MIGRATION();
       }
     }
 
@@ -299,11 +324,11 @@ std::u16string GetCounterTextFromResult(
                    : IDS_DEL_AUTOFILL_COUNTER_THREE_TYPES,
             displayed_strings[0], displayed_strings[1], displayed_strings[2]);
       default:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
     }
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return std::u16string();
 }
 
@@ -367,7 +392,7 @@ bool GetDeletionPreferenceFromDataType(
       *out_pref = prefs::kCloseTabs;
       return true;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return false;
 }
 

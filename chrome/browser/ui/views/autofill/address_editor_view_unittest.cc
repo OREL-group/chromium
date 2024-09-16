@@ -28,7 +28,7 @@ using ::testing::NiceMock;
 using ::testing::Return;
 using ::testing::ReturnRef;
 
-// TODO(crbug.com/1470459): write interactive UI tests instead of unit tests.
+// TODO(crbug.com/40277889): write interactive UI tests instead of unit tests.
 class AddressEditorViewTest : public ChromeViewsTestBase {
  public:
   AddressEditorViewTest() = default;
@@ -186,7 +186,8 @@ TEST_F(AddressEditorViewTest, InitialFocusViewPointsToCountryCombobox) {
 
 TEST_F(AddressEditorViewTest, FocusIsNotLostAfterEditorContentChange) {
   // The view is temporarily added into a Widget to have a FocusManager.
-  std::unique_ptr<views::Widget> widget = CreateTestWidget();
+  std::unique_ptr<views::Widget> widget =
+      CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   widget->SetContentsView(view_.get());
   widget->Show();
   EXPECT_NE(view_->initial_focus_view(), nullptr);

@@ -10,7 +10,7 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/lens/lens_overlay_controller.h"
 #include "chrome/browser/ui/permission_bubble/permission_prompt.h"
-#include "chrome/browser/ui/tabs/tab_features.h"
+#include "chrome/browser/ui/tabs/public/tab_features.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
 #include "chrome/browser/ui/views/permissions/embedded_permission_prompt.h"
@@ -25,8 +25,8 @@
 #include "components/permissions/permission_uma_util.h"
 #include "components/permissions/request_type.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
+#include "third_party/blink/public/common/features_generated.h"
 
 #if BUILDFLAG(IS_MAC)
 #include "chrome/browser/ui/views/permissions/permission_prompt_notifications_mac.h"
@@ -133,9 +133,7 @@ bool ShouldCurrentRequestUseQuietChip(
 
 bool ShouldCurrentRequestUsePermissionElementSecondaryUI(
     permissions::PermissionPrompt::Delegate* delegate) {
-  if (!base::FeatureList::IsEnabled(features::kPermissionElement) &&
-      !base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableExperimentalWebPlatformFeatures)) {
+  if (!base::FeatureList::IsEnabled(blink::features::kPermissionElement)) {
     return false;
   }
 
@@ -145,6 +143,8 @@ bool ShouldCurrentRequestUsePermissionElementSecondaryUI(
       requests, [](permissions::PermissionRequest* request) {
         return (request->request_type() ==
                     permissions::RequestType::kCameraStream ||
+                request->request_type() ==
+                    permissions::RequestType::kGeolocation ||
                 request->request_type() ==
                     permissions::RequestType::kMicStream) &&
                request->IsEmbeddedPermissionElementInitiated();
@@ -168,7 +168,10 @@ std::unique_ptr<permissions::PermissionPrompt> CreatePwaPrompt(
     Browser* browser,
     content::WebContents* web_contents,
     permissions::PermissionPrompt::Delegate* delegate) {
-  if (delegate->ShouldCurrentRequestUseQuietUI()) {
+  if (ShouldCurrentRequestUsePermissionElementSecondaryUI(delegate)) {
+    return std::make_unique<EmbeddedPermissionPrompt>(browser, web_contents,
+                                                      delegate);
+  } else if (delegate->ShouldCurrentRequestUseQuietUI()) {
     return std::make_unique<PermissionPromptQuietIcon>(browser, web_contents,
                                                        delegate);
   } else {

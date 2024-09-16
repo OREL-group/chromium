@@ -20,13 +20,13 @@
 #include "chrome/browser/ash/arc/session/arc_session_manager.h"
 #include "chrome/browser/ash/login/demo_mode/demo_session.h"
 #include "chrome/browser/ash/login/oobe_configuration.h"
-#include "chrome/browser/ash/login/ui/fake_login_display_host.h"
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/ash/login/wizard_controller.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/ash/login/fake_login_display_host.h"
 #include "chrome/browser/ui/webui/ash/login/consolidated_consent_screen_handler.h"
 #include "chrome/browser/ui/webui/ash/login/demo_preferences_screen_handler.h"
 #include "chrome/test/base/testing_browser_process.h"
@@ -100,11 +100,8 @@ class ScopedLogIn {
       case user_manager::UserType::kPublicAccount:
         LogInAsPublicAccount();
         break;
-      case user_manager::UserType::kArcKioskApp:
-        LogInArcKioskApp();
-        break;
       default:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
     }
   }
 
@@ -121,11 +118,6 @@ class ScopedLogIn {
 
   void LogInAsPublicAccount() {
     fake_user_manager_->AddPublicAccountUser(account_id_);
-    fake_user_manager_->LoginUser(account_id_);
-  }
-
-  void LogInArcKioskApp() {
-    fake_user_manager_->AddArcKioskAppUser(account_id_);
     fake_user_manager_->LoginUser(account_id_);
   }
 
@@ -161,7 +153,7 @@ class ChromeArcUtilTest : public testing::Test {
 
     ASSERT_TRUE(data_dir_.CreateUniqueTempDir());
     profile_manager_ = std::make_unique<TestingProfileManager>(
-        TestingBrowserProcess::GetGlobal());
+        TestingBrowserProcess::GetGlobal(), &local_state_);
     ASSERT_TRUE(profile_manager_->SetUp());
 
     profile_ = profile_manager_->CreateTestingProfile(kTestProfileName);
@@ -194,6 +186,7 @@ class ChromeArcUtilTest : public testing::Test {
   ash::ScopedCrosSettingsTestHelper cros_settings_test_helper_;
 
  private:
+  ScopedTestingLocalState local_state_{TestingBrowserProcess::GetGlobal()};
   std::unique_ptr<base::test::ScopedCommandLine> command_line_;
   base::test::ScopedFeatureList feature_list_;
   content::BrowserTaskEnvironment task_environment_;
@@ -266,38 +259,6 @@ TEST_F(ChromeArcUtilTest, IsArcAllowedForProfile_PublicAccount) {
   EXPECT_TRUE(IsArcAllowedForProfile(profile()));
 }
 
-TEST_F(ChromeArcUtilTest, IsArcAllowedForProfile_KioskArcNotAvailable) {
-  base::CommandLine::ForCurrentProcess()->InitFromArgv({""});
-  ScopedLogIn login(GetFakeUserManager(),
-                    AccountId::FromUserEmail(profile()->GetProfileUserName()),
-                    user_manager::UserType::kArcKioskApp);
-  EXPECT_FALSE(
-      ash::ProfileHelper::Get()->GetUserByProfile(profile())->HasGaiaAccount());
-  EXPECT_FALSE(IsArcAllowedForProfileOnFirstCall(profile()));
-}
-
-TEST_F(ChromeArcUtilTest, IsArcAllowedForProfile_KioskArcInstalled) {
-  base::CommandLine::ForCurrentProcess()->InitFromArgv(
-      {"", "--arc-availability=installed"});
-  ScopedLogIn login(GetFakeUserManager(),
-                    AccountId::FromUserEmail(profile()->GetProfileUserName()),
-                    user_manager::UserType::kArcKioskApp);
-  EXPECT_FALSE(
-      ash::ProfileHelper::Get()->GetUserByProfile(profile())->HasGaiaAccount());
-  EXPECT_TRUE(IsArcAllowedForProfileOnFirstCall(profile()));
-}
-
-TEST_F(ChromeArcUtilTest, IsArcAllowedForProfile_KioskArcSupported) {
-  base::CommandLine::ForCurrentProcess()->InitFromArgv(
-      {"", "--arc-availability=officially-supported"});
-  ScopedLogIn login(GetFakeUserManager(),
-                    AccountId::FromUserEmail(profile()->GetProfileUserName()),
-                    user_manager::UserType::kArcKioskApp);
-  EXPECT_FALSE(
-      ash::ProfileHelper::Get()->GetUserByProfile(profile())->HasGaiaAccount());
-  EXPECT_TRUE(IsArcAllowedForProfileOnFirstCall(profile()));
-}
-
 // Guest account is interpreted as EphemeralDataUser.
 TEST_F(ChromeArcUtilTest, IsArcAllowedForProfile_GuestAccount) {
   base::CommandLine::ForCurrentProcess()->InitFromArgv(
@@ -329,13 +290,6 @@ TEST_F(ChromeArcUtilTest, IsArcBlockedDueToIncompatibleFileSystem) {
     ScopedLogIn login(GetFakeUserManager(), user_id,
                       user_manager::UserType::kRegular);
     EXPECT_TRUE(IsArcBlockedDueToIncompatibleFileSystem(profile()));
-  }
-
-  // Never blocked for an ARC kiosk.
-  {
-    ScopedLogIn login(GetFakeUserManager(), robot_id,
-                      user_manager::UserType::kArcKioskApp);
-    EXPECT_FALSE(IsArcBlockedDueToIncompatibleFileSystem(profile()));
   }
 
   // Never blocked for a public session.
@@ -864,9 +818,6 @@ using ChromeUnaffiliatedDevicesArcRestrictionTest = ChromeArcUtilTest;
 
 TEST_F(ChromeUnaffiliatedDevicesArcRestrictionTest,
        ArcAllowedForAffiliatedUser_WhenPolicyValueTrue) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      arc::kUnaffiliatedDeviceArcRestriction);
   base::CommandLine::ForCurrentProcess()->InitFromArgv(
       {"", "--arc-availability=officially-supported"});
   ScopedLogIn login(true, GetFakeUserManager(),
@@ -881,9 +832,6 @@ TEST_F(ChromeUnaffiliatedDevicesArcRestrictionTest,
 
 TEST_F(ChromeUnaffiliatedDevicesArcRestrictionTest,
        ArcAllowedForUnAffiliatedUser_WhenPolicyValueTrue) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      arc::kUnaffiliatedDeviceArcRestriction);
   base::CommandLine::ForCurrentProcess()->InitFromArgv(
       {"", "--arc-availability=officially-supported"});
   ScopedLogIn login(false, GetFakeUserManager(),
@@ -898,9 +846,6 @@ TEST_F(ChromeUnaffiliatedDevicesArcRestrictionTest,
 
 TEST_F(ChromeUnaffiliatedDevicesArcRestrictionTest,
        ArcAllowedForNonEnterpriseAccount_WhenPolicyValueTrue) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      arc::kUnaffiliatedDeviceArcRestriction);
   base::CommandLine::ForCurrentProcess()->InitFromArgv(
       {"", "--arc-availability=officially-supported"});
   ScopedLogIn login(false, GetFakeUserManager(),
@@ -914,9 +859,6 @@ TEST_F(ChromeUnaffiliatedDevicesArcRestrictionTest,
 
 TEST_F(ChromeUnaffiliatedDevicesArcRestrictionTest,
        ArcAllowedForAffiliatedUser_WhenPolicyValueFalse) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      arc::kUnaffiliatedDeviceArcRestriction);
   base::CommandLine::ForCurrentProcess()->InitFromArgv(
       {"", "--arc-availability=officially-supported"});
   ScopedLogIn login(true, GetFakeUserManager(),
@@ -931,9 +873,6 @@ TEST_F(ChromeUnaffiliatedDevicesArcRestrictionTest,
 
 TEST_F(ChromeUnaffiliatedDevicesArcRestrictionTest,
        ArcNotAllowedForUnAffiliatedUser_WhenPolicyValueFalse) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      arc::kUnaffiliatedDeviceArcRestriction);
   base::CommandLine::ForCurrentProcess()->InitFromArgv(
       {"", "--arc-availability=officially-supported"});
   ScopedLogIn login(false, GetFakeUserManager(),
@@ -948,9 +887,6 @@ TEST_F(ChromeUnaffiliatedDevicesArcRestrictionTest,
 
 TEST_F(ChromeUnaffiliatedDevicesArcRestrictionTest,
        ArcAllowedForNonEnterpriseAccount_WhenPolicyValueFalse) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      arc::kUnaffiliatedDeviceArcRestriction);
   base::CommandLine::ForCurrentProcess()->InitFromArgv(
       {"", "--arc-availability=officially-supported"});
   ScopedLogIn login(false, GetFakeUserManager(),
@@ -965,8 +901,6 @@ TEST_F(ChromeUnaffiliatedDevicesArcRestrictionTest,
 TEST_F(ChromeUnaffiliatedDevicesArcRestrictionTest,
        ReportArcAllowedForAffiliatedUser_WhenPolicyValueFalse) {
   base::HistogramTester tester;
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(arc::kUnaffiliatedDeviceArcRestriction);
   base::CommandLine::ForCurrentProcess()->InitFromArgv(
       {"", "--arc-availability=officially-supported"});
   ScopedLogIn login(true, GetFakeUserManager(),
@@ -985,8 +919,6 @@ TEST_F(ChromeUnaffiliatedDevicesArcRestrictionTest,
 TEST_F(ChromeUnaffiliatedDevicesArcRestrictionTest,
        ReportArcAllowedForUnAffiliatedUser_WhenPolicyValueTrue) {
   base::HistogramTester tester;
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(arc::kUnaffiliatedDeviceArcRestriction);
   base::CommandLine::ForCurrentProcess()->InitFromArgv(
       {"", "--arc-availability=officially-supported"});
   ScopedLogIn login(false, GetFakeUserManager(),
@@ -1003,8 +935,6 @@ TEST_F(ChromeUnaffiliatedDevicesArcRestrictionTest,
 TEST_F(ChromeUnaffiliatedDevicesArcRestrictionTest,
        ReportArcNotAllowedForUnAffiliatedUser_WhenPolicyValueFalse) {
   base::HistogramTester tester;
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(arc::kUnaffiliatedDeviceArcRestriction);
   base::CommandLine::ForCurrentProcess()->InitFromArgv(
       {"", "--arc-availability=officially-supported"});
   profile()->GetTestingPrefService()->SetManagedPref(

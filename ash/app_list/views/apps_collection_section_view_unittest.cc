@@ -22,9 +22,12 @@
 #include "ash/public/cpp/app_list/app_list_features.h"
 #include "ash/public/cpp/app_list/app_list_types.h"
 #include "ash/shell.h"
+#include "ash/strings/grit/ash_strings.h"
 #include "ash/test/ash_test_base.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
+#include "ui/base/l10n/l10n_util.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/view_utils.h"
 
@@ -155,6 +158,26 @@ TEST_F(AppsCollectionSectionViewTest, ClickOrTapOnCollectionApp) {
   // The item was activated.
   EXPECT_EQ(1, GetTestAppListClient()->activate_item_count());
   EXPECT_EQ("id1", GetTestAppListClient()->activate_item_last_id());
+}
+
+TEST_F(AppsCollectionSectionViewTest, AccessibleDescription) {
+  AddAppListItemWithCollection("id1", AppCollection::kEntertainment);
+  AddAppListItemWithCollection("id2", AppCollection::kEntertainment);
+  AddAppListItemWithCollection("id3", AppCollection::kEntertainment);
+  AddAppListItemWithCollection("id4", AppCollection::kEntertainment);
+
+  ShowAppList();
+
+  AppsCollectionSectionView* collection =
+      GetViewForCollection(AppCollection::kEntertainment);
+  ASSERT_TRUE(collection);
+  ASSERT_GT(collection->GetItemViewCount(), 0u);
+
+  views::View* view = GetAppItemAtIndex(collection, 0);
+
+  EXPECT_EQ(view->GetViewAccessibility().GetCachedDescription(),
+            l10n_util::GetStringUTF16(
+                IDS_ASH_LAUNCHER_APPS_COLLECTIONS_ENTERTAINMENT_NAME));
 }
 
 TEST_F(AppsCollectionSectionViewTest, AttemptTouchDragApp) {
@@ -342,7 +365,7 @@ TEST_F(AppsCollectionSectionViewTest, RecordMetricsForAppLaunchByCategory) {
   ASSERT_EQ(unknown_collection->GetItemViewCount(), 1u);
 
   histograms.ExpectTotalCount(
-      "Apps.AppList.AppsCollections.AppLaunchesByCategory", 0);
+      "Apps.AppListBubble.AppsCollectionsPage.AppLaunchesByCategory", 0);
 
   // TODO(anasalazar): Investigate why after adding margin to the
   // AppsCollections apps container, this tests fails to click on apps unless we
@@ -351,46 +374,46 @@ TEST_F(AppsCollectionSectionViewTest, RecordMetricsForAppLaunchByCategory) {
 
   LeftClickOn(GetAppItemAtIndex(entertainment_collection, 0));
   histograms.ExpectBucketCount(
-      "Apps.AppList.AppsCollections.AppLaunchesByCategory",
+      "Apps.AppListBubble.AppsCollectionsPage.AppLaunchesByCategory",
       AppCollection::kEntertainment, 1);
   histograms.ExpectBucketCount(
-      "Apps.AppList.AppsCollections.AppLaunchesByCategory",
+      "Apps.AppListBubble.AppsCollectionsPage.AppLaunchesByCategory",
       AppCollection::kProductivity, 0);
   histograms.ExpectBucketCount(
-      "Apps.AppList.AppsCollections.AppLaunchesByCategory",
+      "Apps.AppListBubble.AppsCollectionsPage.AppLaunchesByCategory",
       AppCollection::kUnknown, 0);
 
   LeftClickOn(GetAppItemAtIndex(productivity_collection, 0));
   histograms.ExpectBucketCount(
-      "Apps.AppList.AppsCollections.AppLaunchesByCategory",
+      "Apps.AppListBubble.AppsCollectionsPage.AppLaunchesByCategory",
       AppCollection::kEntertainment, 1);
   histograms.ExpectBucketCount(
-      "Apps.AppList.AppsCollections.AppLaunchesByCategory",
+      "Apps.AppListBubble.AppsCollectionsPage.AppLaunchesByCategory",
       AppCollection::kProductivity, 1);
   histograms.ExpectBucketCount(
-      "Apps.AppList.AppsCollections.AppLaunchesByCategory",
+      "Apps.AppListBubble.AppsCollectionsPage.AppLaunchesByCategory",
       AppCollection::kUnknown, 0);
 
   LeftClickOn(GetAppItemAtIndex(unknown_collection, 0));
   histograms.ExpectBucketCount(
-      "Apps.AppList.AppsCollections.AppLaunchesByCategory",
+      "Apps.AppListBubble.AppsCollectionsPage.AppLaunchesByCategory",
       AppCollection::kEntertainment, 1);
   histograms.ExpectBucketCount(
-      "Apps.AppList.AppsCollections.AppLaunchesByCategory",
+      "Apps.AppListBubble.AppsCollectionsPage.AppLaunchesByCategory",
       AppCollection::kProductivity, 1);
   histograms.ExpectBucketCount(
-      "Apps.AppList.AppsCollections.AppLaunchesByCategory",
+      "Apps.AppListBubble.AppsCollectionsPage.AppLaunchesByCategory",
       AppCollection::kUnknown, 1);
 
   LeftClickOn(GetAppItemAtIndex(productivity_collection, 1));
   histograms.ExpectBucketCount(
-      "Apps.AppList.AppsCollections.AppLaunchesByCategory",
+      "Apps.AppListBubble.AppsCollectionsPage.AppLaunchesByCategory",
       AppCollection::kEntertainment, 1);
   histograms.ExpectBucketCount(
-      "Apps.AppList.AppsCollections.AppLaunchesByCategory",
+      "Apps.AppListBubble.AppsCollectionsPage.AppLaunchesByCategory",
       AppCollection::kProductivity, 2);
   histograms.ExpectBucketCount(
-      "Apps.AppList.AppsCollections.AppLaunchesByCategory",
+      "Apps.AppListBubble.AppsCollectionsPage.AppLaunchesByCategory",
       AppCollection::kUnknown, 1);
 }
 

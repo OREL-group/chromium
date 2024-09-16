@@ -20,17 +20,19 @@ class GPU;
 class GPUAdapterInfo;
 class GPUDevice;
 class GPUDeviceDescriptor;
+class GPURequestAdapterOptions;
 class GPUSupportedFeatures;
 class GPUSupportedLimits;
 class GPUMemoryHeapInfo;
 
-class GPUAdapter final : public ScriptWrappable, DawnObject<WGPUAdapter> {
+class GPUAdapter final : public ScriptWrappable, DawnObject<wgpu::Adapter> {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
   GPUAdapter(GPU* gpu,
-             WGPUAdapter handle,
-             scoped_refptr<DawnControlClientHolder> dawn_control_client);
+             wgpu::Adapter handle,
+             scoped_refptr<DawnControlClientHolder> dawn_control_client,
+             const GPURequestAdapterOptions* options);
 
   GPUAdapter(const GPUAdapter&) = delete;
   GPUAdapter& operator=(const GPUAdapter&) = delete;
@@ -40,8 +42,9 @@ class GPUAdapter final : public ScriptWrappable, DawnObject<WGPUAdapter> {
   GPU* gpu() const { return gpu_.Get(); }
   GPUSupportedFeatures* features() const;
   GPUSupportedLimits* limits() const { return limits_.Get(); }
+  GPUAdapterInfo* info() const;
   bool isFallbackAdapter() const;
-  WGPUBackendType backendType() const;
+  wgpu::BackendType backendType() const;
   bool SupportsMultiPlanarFormats() const;
   bool isCompatibilityMode() const;
 
@@ -57,12 +60,14 @@ class GPUAdapter final : public ScriptWrappable, DawnObject<WGPUAdapter> {
   void AddConsoleWarning(ExecutionContext* execution_context,
                          const char* message);
 
+  bool isXRCompatible() const { return is_xr_compatible_; }
+
  private:
   void OnRequestDeviceCallback(ScriptState* script_state,
                                const GPUDeviceDescriptor* descriptor,
                                ScriptPromiseResolver<GPUDevice>* resolver,
-                               WGPURequestDeviceStatus status,
-                               WGPUDevice dawn_device,
+                               wgpu::RequestDeviceStatus status,
+                               wgpu::Device dawn_device,
                                const char* error_message);
 
   void setLabelImpl(const String&) override {
@@ -71,12 +76,14 @@ class GPUAdapter final : public ScriptWrappable, DawnObject<WGPUAdapter> {
 
   Member<GPU> gpu_;
   bool is_fallback_adapter_;
-  WGPUBackendType backend_type_;
-  WGPUAdapterType adapter_type_;
+  wgpu::BackendType backend_type_;
+  wgpu::AdapterType adapter_type_;
   bool is_consumed_ = false;
   bool is_compatibility_mode_;
+  bool is_xr_compatible_ = false;
   Member<GPUSupportedLimits> limits_;
   Member<GPUSupportedFeatures> features_;
+  Member<GPUAdapterInfo> info_;
 
   String vendor_;
   String architecture_;

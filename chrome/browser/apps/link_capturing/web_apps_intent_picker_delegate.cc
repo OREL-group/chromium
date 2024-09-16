@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/containers/flat_map.h"
+#include "base/feature_list.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
@@ -22,6 +23,7 @@
 #include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/browser/web_applications/web_app_ui_manager.h"
 #include "chrome/browser/web_applications/web_app_utils.h"
+#include "chrome/common/chrome_features.h"
 #include "components/webapps/common/web_app_id.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/models/image_model.h"
@@ -125,7 +127,7 @@ void WebAppsIntentPickerDelegate::LoadSingleAppIcon(
     }
     std::move(icon_loaded_callback).Run(mac_app_icon);
 #else
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
 #endif  // BUILDFLAG(IS_MAC)
   }
 }
@@ -150,9 +152,12 @@ bool WebAppsIntentPickerDelegate::ShouldLaunchAppDirectly(
   }
   if (entry_type == PickerEntryType::kWeb) {
     // Launch app directly only if |url| is in the scope of |app_id|.
-    // TODO(b/294079334): Use `IsUrlInAppExtendedScope` to support scope
-    // extensions for user link capturing on desktop platforms.
-    return provider_->registrar_unsafe().IsUrlInAppScope(url, app_id);
+    if (base::FeatureList::IsEnabled(
+            ::features::kPwaNavigationCapturingWithScopeExtensions)) {
+      return provider_->registrar_unsafe().IsUrlInAppExtendedScope(url, app_id);
+    } else {
+      return provider_->registrar_unsafe().IsUrlInAppScope(url, app_id);
+    }
   }
 
   // This is only reached on MacOS if there is one app available and the picker
@@ -187,7 +192,7 @@ void WebAppsIntentPickerDelegate::RecordOutputMetrics(
     case apps::IntentPickerCloseReason::PREFERRED_APP_FOUND:
       break;
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -196,7 +201,7 @@ void WebAppsIntentPickerDelegate::RecordOutputMetrics(
 void WebAppsIntentPickerDelegate::PersistIntentPreferencesForApp(
     PickerEntryType entry_type,
     const std::string& app_id) {
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 void WebAppsIntentPickerDelegate::LaunchApp(content::WebContents* web_contents,
@@ -212,13 +217,13 @@ void WebAppsIntentPickerDelegate::LaunchApp(content::WebContents* web_contents,
       provider_->ui_manager().MaybeCreateEnableSupportedLinksInfobar(
           web_contents, launch_name);
       provider_->ui_manager().MaybeShowIPHPromoForAppsLaunchedViaLinkCapturing(
-          web_contents, &profile_.get(), launch_name);
+          /*browser=*/nullptr, &profile_.get(), launch_name);
     }
   } else if (entry_type == apps::PickerEntryType::kMacOs) {
 #if BUILDFLAG(IS_MAC)
     LaunchMacApp(url, launch_name);
 #else
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
 #endif  // BUILDFLAG(IS_MAC)
   }
 }

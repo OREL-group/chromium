@@ -76,10 +76,6 @@ class CORE_EXPORT LayoutText : public LayoutObject {
 
   static LayoutText* CreateEmptyAnonymous(Document&, const ComputedStyle*);
 
-  static LayoutText* CreateAnonymousForFormattedText(Document&,
-                                                     const ComputedStyle*,
-                                                     String);
-
   const char* GetName() const override {
     NOT_DESTROYED();
     return "LayoutText";
@@ -144,8 +140,9 @@ class CORE_EXPORT LayoutText : public LayoutObject {
     return nullptr;
   }
 
-  void AbsoluteQuads(Vector<gfx::QuadF>&,
-                     MapCoordinatesFlags mode = 0) const final;
+  void QuadsInAncestorInternal(Vector<gfx::QuadF>&,
+                               const LayoutBoxModelObject* ancestor,
+                               MapCoordinatesFlags) const final;
   void AbsoluteQuadsForRange(Vector<gfx::QuadF>&,
                              unsigned start_offset = 0,
                              unsigned end_offset = INT_MAX) const;
@@ -234,6 +231,12 @@ class CORE_EXPORT LayoutText : public LayoutObject {
     NOT_DESTROYED();
     return StyleRef().TextSecurity() != ETextSecurity::kNone;
   }
+
+  bool HasTextTransform() const {
+    NOT_DESTROYED();
+    return StyleRef().TextTransform() != ETextTransform::kNone;
+  }
+
   void MomentarilyRevealLastTypedCharacter(
       unsigned last_typed_character_offset);
 
@@ -295,6 +298,18 @@ class CORE_EXPORT LayoutText : public LayoutObject {
     valid_ng_items_ = false;
   }
 
+  bool HasNoControlItems() const {
+    NOT_DESTROYED();
+    return has_no_control_items_;
+  }
+  void SetHasNoControlItems() {
+    NOT_DESTROYED();
+    has_no_control_items_ = true;
+  }
+  void ClearHasNoControlItems() {
+    NOT_DESTROYED();
+    has_no_control_items_ = false;
+  }
   bool HasBidiControlInlineItems() const {
     NOT_DESTROYED();
     return has_bidi_control_items_;
@@ -383,14 +398,14 @@ class CORE_EXPORT LayoutText : public LayoutObject {
   // See the class comment as to why we shouldn't call this function directly.
   void Paint(const PaintInfo&) const final {
     NOT_DESTROYED();
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
   }
   bool NodeAtPoint(HitTestResult&,
                    const HitTestLocation&,
                    const PhysicalOffset&,
                    HitTestPhase) final {
     NOT_DESTROYED();
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return false;
   }
 
@@ -415,6 +430,10 @@ class CORE_EXPORT LayoutText : public LayoutObject {
   // Whether the InlineItems associated with this object are valid. Set after
   // layout and cleared whenever the LayoutText is modified.
   unsigned valid_ng_items_ : 1;
+
+  // Caches if there are no `IsControlItemCharacter()` characters. Set in
+  // `InlineItemsBuilder` only for preserved whitespace.
+  unsigned has_no_control_items_ : 1 = false;
 
   // Whether there is any BidiControl type InlineItem associated with this
   // object. Set after layout when associating items.
@@ -457,8 +476,9 @@ inline wtf_size_t LayoutText::FirstInlineFragmentItemIndex() const {
 }
 
 inline void LayoutText::DetachAbstractInlineTextBoxesIfNeeded() {
-  if (UNLIKELY(has_abstract_inline_text_box_))
+  if (has_abstract_inline_text_box_) [[unlikely]] {
     DetachAbstractInlineTextBoxes();
+  }
 }
 
 template <>

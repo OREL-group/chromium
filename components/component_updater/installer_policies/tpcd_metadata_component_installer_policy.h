@@ -13,7 +13,7 @@
 #include "base/functional/callback.h"
 #include "base/values.h"
 #include "components/component_updater/component_installer.h"
-#include "components/tpcd/metadata/parser.h"
+#include "components/tpcd/metadata/browser/parser.h"
 #include "components/update_client/update_client.h"
 
 namespace base {
@@ -21,7 +21,6 @@ class FilePath;
 }  // namespace base
 
 namespace component_updater {
-using Parser = tpcd::metadata::Parser;
 
 inline constexpr base::FilePath::CharType kTpcdMetadataComponentFileName[] =
     FILE_PATH_LITERAL("metadata.pb");

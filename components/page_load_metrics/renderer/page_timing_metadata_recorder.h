@@ -7,10 +7,10 @@
 
 #include <cstdint>
 #include <optional>
+#include <string_view>
 
 #include "base/profiler/sample_metadata.h"
 #include "base/time/time.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace page_load_metrics {
 
@@ -74,7 +74,7 @@ class PageTimingMetadataRecorder {
   // To be overridden by test class.
   virtual void ApplyMetadataToPastSamples(base::TimeTicks period_start,
                                           base::TimeTicks period_end,
-                                          base::StringPiece name,
+                                          std::string_view name,
                                           int64_t key,
                                           int64_t value,
                                           base::SampleMetadataScope scope);

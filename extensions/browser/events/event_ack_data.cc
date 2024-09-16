@@ -32,7 +32,7 @@ void EmitLateAckedEventTaskMetrics(const EventAckData::EventInfo& event_info) {
       event_info.histogram_value, events::ENUM_BOUNDARY);
 
   base::UmaHistogramBoolean(
-      "Extensions.Events.DidDispatchToAckSucceed.ExtensionServiceWorker2",
+      "Extensions.Events.ServiceWorkerDispatchFailed.StartExternalRequestOk",
       event_info.start_ok);
   if (!event_info.start_ok) {
     base::UmaHistogramEnumeration(
@@ -123,7 +123,7 @@ void EventAckData::EmitLateAckedEventTask(int event_id) {
   // `EventAckData::DecrementInflightEvent()`.
   if (auto* value = base::FindOrNull(unacked_events_, event_id)) {
     base::UmaHistogramBoolean(
-        "Extensions.Events.DidDispatchToAckSucceed.ExtensionServiceWorker2",
+        "Extensions.Events.DidDispatchToAckSucceed.ExtensionServiceWorker3",
         false);
     EmitLateAckedEventTaskMetrics(*value);
   }
@@ -144,9 +144,9 @@ void EventAckData::EmitDispatchTimeMetrics(EventInfo& event_info) {
     const char* active_metric_name =
         event_info.lazy_background_active_on_dispatch
             ? "Extensions.Events.DispatchToAckTime.ExtensionServiceWorker2."
-              "Active2"
+              "Active3"
             : "Extensions.Events.DispatchToAckTime.ExtensionServiceWorker2."
-              "Inactive2";
+              "Inactive3";
     base::UmaHistogramCustomMicrosecondsTimes(
         active_metric_name,
         /*sample=*/base::TimeTicks::Now() - event_info.dispatch_start_time,
@@ -165,7 +165,7 @@ void EventAckData::EmitDispatchTimeMetrics(EventInfo& event_info) {
                     kEventAckMetricTimeLimit;
     if (!late_ack) {
       base::UmaHistogramBoolean(
-          "Extensions.Events.DidDispatchToAckSucceed.ExtensionServiceWorker2",
+          "Extensions.Events.DidDispatchToAckSucceed.ExtensionServiceWorker3",
           true);
     }
   }
@@ -202,8 +202,9 @@ void EventAckData::DecrementInflightEvent(
       result);
   // If the worker was already stopped or StartExternalRequest didn't succeed,
   // the FinishedExternalRequest will legitimately fail.
-  if (worker_stopped || !start_ok)
+  if (worker_stopped || !start_ok) {
     return;
+  }
 
   base::UmaHistogramEnumeration(
       "Extensions.ServiceWorkerBackground.FinishedExternalRequest_Result_"
@@ -220,7 +221,7 @@ void EventAckData::DecrementInflightEvent(
     // torn down when EventRouter + BrowserContext are still alive and an
     // event happens to be acked here.
     case content::ServiceWorkerExternalRequestResult::kNullContext:
-      // TODO(crbug.com/1521084): Perform more graceful shutdown when
+      // TODO(crbug.com/41494056): Perform more graceful shutdown when
       // ServiceWorkerContextCore is torn down.
 
     // kBadRequestId can expectedly happen if a new instance of a worker starts

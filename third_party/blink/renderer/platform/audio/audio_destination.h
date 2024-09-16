@@ -38,6 +38,7 @@
 #include "base/synchronization/waitable_event.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
+#include "media/base/audio_glitch_info.h"
 #include "media/base/audio_renderer_sink.h"
 #include "third_party/blink/public/platform/web_audio_device.h"
 #include "third_party/blink/public/platform/web_vector.h"
@@ -48,6 +49,10 @@
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/thread_safe_ref_counted.h"
+
+namespace media {
+struct AudioGlitchInfo;
+}
 
 namespace blink {
 
@@ -98,8 +103,8 @@ class PLATFORM_EXPORT AudioDestination final
              const media::AudioGlitchInfo& glitch_info,
              media::AudioBus* dest) override;
 
-  // This callback method may be called from either the main thread or non-main
-  // threads.
+  // Although it implements AudioRendererSink::RenderCallback, this method
+  // only gets executed from the main thread.
   void OnRenderError() override;
 
   void Start();
@@ -130,18 +135,16 @@ class PLATFORM_EXPORT AudioDestination final
   base::TimeDelta GetPlatformBufferDuration() const;
 
   // The maximum channel count of the current audio sink device.
-  uint32_t MaxChannelCount();
+  uint32_t MaxChannelCount() const;
 
   // Sets the detect silence flag for `web_audio_device_`.
   void SetDetectSilence(bool detect_silence);
 
-  unsigned RenderQuantumFrames() const;
-
-  // Creates a new sink and return its device status. If the status is OK,
-  // replace the existing sink with the new one. This function is called in
+  // Creates a new sink if one hasn't been created yet, and returns the sink
+  // status.  This function is called in
   // RealtimeAudioDestinationHandler::SetSinkDescriptor, which can be invoked
   // from the constructor of AudioContext and AudioContext.setSinkId() method.
-  media::OutputDeviceStatus CreateSinkAndGetDeviceStatus();
+  media::OutputDeviceStatus MaybeCreateSinkAndGetStatus();
 
  private:
   explicit AudioDestination(AudioIOCallback&,
@@ -158,16 +161,23 @@ class PLATFORM_EXPORT AudioDestination final
   // AudioWorkletThread (dual-thread rendering).
   void RequestRenderWait(size_t frames_requested,
                          size_t frames_to_render,
-                         double delay,
-                         double delay_timestamp);
+                         base::TimeDelta delay,
+                         base::TimeTicks delay_timestamp,
+                         const media::AudioGlitchInfo& glitch_info);
   void RequestRender(size_t frames_requested,
                      size_t frames_to_render,
-                     double delay,
-                     double delay_timestamp);
+                     base::TimeDelta delay,
+                     base::TimeTicks delay_timestamp,
+                     const media::AudioGlitchInfo& glitch_info);
 
   // Provide input to the resampler (if used).
   void ProvideResamplerInput(int resampler_frame_delay, AudioBus* dest);
 
+  // Pulls audio from `callback_` and delivers the latest glitch and delay info
+  // into it.
+  void PullFromCallback(AudioBus* destination_bus, base::TimeDelta delay);
+
+  // https://chromium.googlesource.com/chromium/src/+/refs/heads/main/docs/media/capture/README.md#logs
   void SendLogMessage(const String& message) const;
 
   // Accessed by the main thread.
@@ -207,6 +217,12 @@ class PLATFORM_EXPORT AudioDestination final
 
   // Required for RequestRender and also in the resampling callback (if used).
   AudioIOPosition output_position_;
+
+  // Recent gltich information to be reported to `callback_`.
+  media::AudioGlitchInfo::Accumulator glitch_info_to_report_;
+
+  // Recent delay information to be reported to `callback_`.
+  base::TimeDelta delay_to_report_;
 
   // The task runner for AudioWorklet operation. This is only valid when
   // the AudioWorklet is activated.

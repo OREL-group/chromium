@@ -21,7 +21,7 @@ import './privacy_guide_welcome_fragment.js';
 import './step_indicator.js';
 
 import type {SyncBrowserProxy, SyncStatus} from '/shared/settings/people_page/sync_browser_proxy.js';
-import {SyncBrowserProxyImpl} from '/shared/settings/people_page/sync_browser_proxy.js';
+import {SignedInState, SyncBrowserProxyImpl} from '/shared/settings/people_page/sync_browser_proxy.js';
 import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
 import {CrSettingsPrefs} from '/shared/settings/prefs/prefs_types.js';
 import type {CrViewManagerElement} from 'chrome://resources/cr_elements/cr_view_manager/cr_view_manager.js';
@@ -30,7 +30,6 @@ import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener
 import {assert, assertNotReached} from 'chrome://resources/js/assert.js';
 import {afterNextRender, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
-import {HatsBrowserProxyImpl, TrustSafetyInteraction} from '../../hats_browser_proxy.js';
 import {loadTimeData} from '../../i18n_setup.js';
 import type {MetricsBrowserProxy} from '../../metrics_browser_proxy.js';
 import {MetricsBrowserProxyImpl, PrivacyGuideInteractions, PrivacyGuideStepsEligibleAndReached} from '../../metrics_browser_proxy.js';
@@ -38,18 +37,20 @@ import {SafeBrowsingSetting} from '../../privacy_page/security_page.js';
 import {routes} from '../../route.js';
 import type {Route} from '../../router.js';
 import {RouteObserverMixin, Router} from '../../router.js';
-import {CookiePrimarySetting} from '../../site_settings/site_settings_prefs_browser_proxy.js';
+import {ContentSetting, CookieControlsMode} from '../../site_settings/constants.js';
 
 import {PrivacyGuideStep} from './constants.js';
 import {PrivacyGuideAvailabilityMixin} from './privacy_guide_availability_mixin.js';
+import type {PrivacyGuideBrowserProxy} from './privacy_guide_browser_proxy.js';
+import {PrivacyGuideBrowserProxyImpl} from './privacy_guide_browser_proxy.js';
 import {getTemplate} from './privacy_guide_page.html.js';
 import type {StepIndicatorModel} from './step_indicator.js';
 
 interface PrivacyGuideStepComponents {
   nextStep?: PrivacyGuideStep;
-  onForwardNavigation?(): void;
+  recordForwardNavigationMetrics?(): void;
   previousStep?: PrivacyGuideStep;
-  onBackwardNavigation?(): void;
+  recordBackwardNavigationMetrics?(): void;
   isAvailable(): boolean;
 }
 
@@ -64,6 +65,8 @@ function eligibilityToRecord(step: PrivacyGuideStep):
       return PrivacyGuideStepsEligibleAndReached.COOKIES_ELIGIBLE;
     case PrivacyGuideStep.SAFE_BROWSING:
       return PrivacyGuideStepsEligibleAndReached.SAFE_BROWSING_ELIGIBLE;
+    case PrivacyGuideStep.AD_TOPICS:
+      return PrivacyGuideStepsEligibleAndReached.AD_TOPICS_ELIGIBLE;
     case PrivacyGuideStep.COMPLETION:
       return PrivacyGuideStepsEligibleAndReached.COMPLETION_ELIGIBLE;
     default:
@@ -132,7 +135,12 @@ export class SettingsPrivacyGuidePageElement extends PrivacyGuideBase {
       stepIndicatorModel_: {
         type: Object,
         computed:
-            'computeStepIndicatorModel(privacyGuideStep_, prefs.generated.cookie_primary_setting, prefs.generated.safe_browsing, prefs.net.network_prediction_options)',
+            'computeStepIndicatorModel(privacyGuideStep_, prefs.profile.cookie_controls_mode, prefs.generated.cookie_default_content_setting, prefs.generated.safe_browsing, prefs.net.network_prediction_options)',
+      },
+
+      shouldShowAdTopicsCard_: {
+        type: Boolean,
+        value: false,
       },
 
       syncStatus_: Object,
@@ -141,7 +149,7 @@ export class SettingsPrivacyGuidePageElement extends PrivacyGuideBase {
 
   static get observers() {
     return [
-      'onPrefsChanged_(prefs.generated.cookie_primary_setting, prefs.generated.safe_browsing, prefs.net.network_prediction_options)',
+      'onPrefsChanged_(prefs.profile.cookie_controls_mode, prefs.generated.cookie_default_content_setting, prefs.generated.safe_browsing, prefs.net.network_prediction_options)',
       'exitIfNecessary(isPrivacyGuideAvailable)',
     ];
   }
@@ -157,6 +165,9 @@ export class SettingsPrivacyGuidePageElement extends PrivacyGuideBase {
   private translateMultiplier_: number;
   private metricsBrowserProxy_: MetricsBrowserProxy =
       MetricsBrowserProxyImpl.getInstance();
+  private privacyGuideBrowserProxy_: PrivacyGuideBrowserProxy =
+      PrivacyGuideBrowserProxyImpl.getInstance();
+  private shouldShowAdTopicsCard_: boolean;
 
   constructor() {
     super();
@@ -173,6 +184,11 @@ export class SettingsPrivacyGuidePageElement extends PrivacyGuideBase {
         (syncStatus: SyncStatus) => this.onSyncStatusChanged_(syncStatus));
     this.syncBrowserProxy_.getSyncStatus().then(
         (syncStatus: SyncStatus) => this.onSyncStatusChanged_(syncStatus));
+    this.privacyGuideBrowserProxy_
+        .privacySandboxPrivacyGuideShouldShowAdTopicsCard()
+        .then(state => {
+          this.shouldShowAdTopicsCard_ = state;
+        });
   }
 
   disableAnimationsForTesting() {
@@ -198,7 +214,7 @@ export class SettingsPrivacyGuidePageElement extends PrivacyGuideBase {
         {
           nextStep: PrivacyGuideStep.MSBB,
           isAvailable: () => true,
-          onForwardNavigation: () => {
+          recordForwardNavigationMetrics: () => {
             this.metricsBrowserProxy_.recordPrivacyGuideNextNavigationHistogram(
                 PrivacyGuideInteractions.WELCOME_NEXT_BUTTON);
             this.metricsBrowserProxy_.recordAction(
@@ -214,13 +230,13 @@ export class SettingsPrivacyGuidePageElement extends PrivacyGuideBase {
         {
           nextStep: PrivacyGuideStep.HISTORY_SYNC,
           previousStep: PrivacyGuideStep.WELCOME,
-          onForwardNavigation: () => {
+          recordForwardNavigationMetrics: () => {
             this.metricsBrowserProxy_.recordPrivacyGuideNextNavigationHistogram(
                 PrivacyGuideInteractions.MSBB_NEXT_BUTTON);
             this.metricsBrowserProxy_.recordAction(
                 'Settings.PrivacyGuide.NextClickMSBB');
           },
-          onBackwardNavigation: () => {
+          recordBackwardNavigationMetrics: () => {
             this.metricsBrowserProxy_.recordAction(
                 'Settings.PrivacyGuide.BackClickMSBB');
           },
@@ -232,13 +248,13 @@ export class SettingsPrivacyGuidePageElement extends PrivacyGuideBase {
         {
           nextStep: PrivacyGuideStep.SAFE_BROWSING,
           previousStep: PrivacyGuideStep.MSBB,
-          onForwardNavigation: () => {
+          recordForwardNavigationMetrics: () => {
             this.metricsBrowserProxy_.recordPrivacyGuideNextNavigationHistogram(
                 PrivacyGuideInteractions.HISTORY_SYNC_NEXT_BUTTON);
             this.metricsBrowserProxy_.recordAction(
                 'Settings.PrivacyGuide.NextClickHistorySync');
           },
-          onBackwardNavigation: () => {
+          recordBackwardNavigationMetrics: () => {
             this.metricsBrowserProxy_.recordAction(
                 'Settings.PrivacyGuide.BackClickHistorySync');
           },
@@ -254,13 +270,13 @@ export class SettingsPrivacyGuidePageElement extends PrivacyGuideBase {
         {
           nextStep: PrivacyGuideStep.COOKIES,
           previousStep: PrivacyGuideStep.HISTORY_SYNC,
-          onForwardNavigation: () => {
+          recordForwardNavigationMetrics: () => {
             this.metricsBrowserProxy_.recordPrivacyGuideNextNavigationHistogram(
                 PrivacyGuideInteractions.SAFE_BROWSING_NEXT_BUTTON);
             this.metricsBrowserProxy_.recordAction(
                 'Settings.PrivacyGuide.NextClickSafeBrowsing');
           },
-          onBackwardNavigation: () => {
+          recordBackwardNavigationMetrics: () => {
             this.metricsBrowserProxy_.recordAction(
                 'Settings.PrivacyGuide.BackClickSafeBrowsing');
           },
@@ -270,16 +286,14 @@ export class SettingsPrivacyGuidePageElement extends PrivacyGuideBase {
       [
         PrivacyGuideStep.COOKIES,
         {
-          nextStep: PrivacyGuideStep.COMPLETION,
-          onForwardNavigation: () => {
-            HatsBrowserProxyImpl.getInstance().trustSafetyInteractionOccurred(
-                TrustSafetyInteraction.COMPLETED_PRIVACY_GUIDE);
+          nextStep: PrivacyGuideStep.AD_TOPICS,
+          recordForwardNavigationMetrics: () => {
             this.metricsBrowserProxy_.recordPrivacyGuideNextNavigationHistogram(
                 PrivacyGuideInteractions.COOKIES_NEXT_BUTTON);
             this.metricsBrowserProxy_.recordAction(
                 'Settings.PrivacyGuide.NextClickCookies');
           },
-          onBackwardNavigation: () => {
+          recordBackwardNavigationMetrics: () => {
             this.metricsBrowserProxy_.recordAction(
                 'Settings.PrivacyGuide.BackClickCookies');
           },
@@ -288,13 +302,31 @@ export class SettingsPrivacyGuidePageElement extends PrivacyGuideBase {
         },
       ],
       [
+        PrivacyGuideStep.AD_TOPICS,
+        {
+          nextStep: PrivacyGuideStep.COMPLETION,
+          recordForwardNavigationMetrics: () => {
+            this.metricsBrowserProxy_.recordPrivacyGuideNextNavigationHistogram(
+                PrivacyGuideInteractions.AD_TOPICS_NEXT_BUTTON);
+            this.metricsBrowserProxy_.recordAction(
+                'Settings.PrivacyGuide.NextClickAdTopics');
+          },
+          recordBackwardNavigationMetrics: () => {
+            this.metricsBrowserProxy_.recordAction(
+                'Settings.PrivacyGuide.BackClickAdTopics');
+          },
+          previousStep: PrivacyGuideStep.COOKIES,
+          isAvailable: () => this.shouldShowAdTopicsCard_,
+        },
+      ],
+      [
         PrivacyGuideStep.COMPLETION,
         {
-          onBackwardNavigation: () => {
+          recordBackwardNavigationMetrics: () => {
             this.metricsBrowserProxy_.recordAction(
                 'Settings.PrivacyGuide.BackClickCompletion');
           },
-          previousStep: PrivacyGuideStep.COOKIES,
+          previousStep: PrivacyGuideStep.AD_TOPICS,
           isAvailable: () => true,
         },
       ],
@@ -389,8 +421,8 @@ export class SettingsPrivacyGuidePageElement extends PrivacyGuideBase {
   private navigateForward_() {
     const components =
         this.privacyGuideStepToComponentsMap_.get(this.privacyGuideStep_)!;
-    if (components.onForwardNavigation) {
-      components.onForwardNavigation();
+    if (components.isAvailable() && components.recordForwardNavigationMetrics) {
+      components.recordForwardNavigationMetrics();
     }
     if (components.nextStep) {
       this.navigateToCard_(components.nextStep, false, false);
@@ -404,8 +436,9 @@ export class SettingsPrivacyGuidePageElement extends PrivacyGuideBase {
   private navigateBackward_() {
     const components =
         this.privacyGuideStepToComponentsMap_.get(this.privacyGuideStep_)!;
-    if (components.onBackwardNavigation) {
-      components.onBackwardNavigation();
+    if (components.isAvailable() &&
+        components.recordBackwardNavigationMetrics) {
+      components.recordBackwardNavigationMetrics();
     }
     if (components.previousStep) {
       this.navigateToCard_(components.previousStep, true, false);
@@ -496,7 +529,8 @@ export class SettingsPrivacyGuidePageElement extends PrivacyGuideBase {
 
   private isSyncOn_(): boolean {
     assert(this.syncStatus_);
-    return !!this.syncStatus_.signedIn && !this.syncStatus_.hasError;
+    return this.syncStatus_.signedInState === SignedInState.SYNCING &&
+        !this.syncStatus_.hasError;
   }
 
   private shouldShowCookiesCard_(): boolean {
@@ -507,11 +541,12 @@ export class SettingsPrivacyGuidePageElement extends PrivacyGuideBase {
     if (loadTimeData.getBoolean('is3pcdCookieSettingsRedesignEnabled')) {
       return false;
     }
-    const currentCookieSetting =
-        this.getPref('generated.cookie_primary_setting').value;
-    return currentCookieSetting === CookiePrimarySetting.BLOCK_THIRD_PARTY ||
-        currentCookieSetting ===
-        CookiePrimarySetting.BLOCK_THIRD_PARTY_INCOGNITO;
+    // Don't show the 3PC card if the user has chosen to allow 3PCs or block
+    // 1PCs.
+    return this.getPref('profile.cookie_controls_mode').value !==
+        CookieControlsMode.OFF &&
+        this.getPref('generated.cookie_default_content_setting').value !==
+        ContentSetting.BLOCK;
   }
 
   private shouldShowSafeBrowsingCard_(): boolean {

@@ -18,8 +18,7 @@
 #include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-namespace ash {
-namespace on_device_controls {
+namespace ash::on_device_controls {
 
 // This test class is testing all possible feature configurations for on-device
 // apps controls. It is parametrized with three booleans:
@@ -71,9 +70,9 @@ TEST_P(AppControlsServiceFactoryTest, IsFeatureEnabledForRegularUser) {
   TestingProfile::Builder builder;
   std::unique_ptr<Profile> profile = builder.Build();
 
-  if (IsOnDeviceAppControlsEnabled() &&
-      (IsOnDeviceAppControlsAvailableInRegion() ||
-       IsOnDeviceAppControlsForceEnabled())) {
+  if ((IsOnDeviceAppControlsAvailableInRegion() &&
+       IsOnDeviceAppControlsEnabled()) ||
+      IsOnDeviceAppControlsForceEnabled()) {
     EXPECT_TRUE(AppControlsServiceFactory::IsOnDeviceAppControlsAvailable(
         profile.get()));
   } else {
@@ -106,5 +105,4 @@ INSTANTIATE_TEST_SUITE_P(,
                                           testing::Bool(),
                                           testing::Bool()));
 
-}  // namespace on_device_controls
-}  // namespace ash
+}  // namespace ash::on_device_controls

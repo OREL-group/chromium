@@ -9,7 +9,9 @@
 
 import '../cr_button/cr_button.js';
 import '../cr_grid/cr_grid.js';
-import '//resources/polymer/v3_0/paper-tooltip/paper-tooltip.js';
+import '../cr_icon/cr_icon.js';
+import '../cr_tooltip/cr_tooltip.js';
+import '../icons_lit.html.js';
 
 import {assert} from '//resources/js/assert.js';
 import {CrLitElement} from '//resources/lit/v3_0/lit.rollup.js';
@@ -70,7 +72,7 @@ export class CrProfileAvatarSelectorElement extends CrLitElement {
   }
 
   avatars: AvatarIcon[] = [];
-  selectedAvatar: AvatarIcon|null;
+  selectedAvatar: AvatarIcon|null = null;
   ignoreModifiedKeyEvents: boolean = false;
   columns: number = 6;
   private tabFocusableAvatar_: number = -1;
@@ -119,7 +121,7 @@ export class CrProfileAvatarSelectorElement extends CrLitElement {
     // component.
     const target = e.currentTarget as HTMLElement;
     const index = Number(target.dataset['index']);
-    this.selectedAvatar = this.avatars[index];
+    this.selectedAvatar = this.avatars[index]!;
 
     // Autoscroll to selected avatar if it is not completely visible.
     const avatarList =

@@ -4,12 +4,12 @@
 
 #include "sql/transaction.h"
 
-#include "base/files/file_util.h"
+#include <memory>
+
 #include "base/files/scoped_temp_dir.h"
 #include "sql/database.h"
 #include "sql/statement.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/sqlite/sqlite3.h"
 
 namespace sql {
 

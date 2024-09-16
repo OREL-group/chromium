@@ -13,6 +13,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/memory/weak_ptr.h"
@@ -73,7 +74,9 @@ class WebStateImpl final : public WebState {
   explicit WebStateImpl(const CreateParams& params);
 
   // Constructor for WebStateImpls created for deserialized sessions
-  WebStateImpl(const CreateParams& params, CRWSessionStorage* session_storage);
+  WebStateImpl(const CreateParams& params,
+               CRWSessionStorage* session_storage,
+               NativeSessionFetcher session_fetcher);
 
   // Constructor for WebStateImpls created for deserialized sessions. The
   // callbacks are used to load the complete serialized data from disk when
@@ -141,6 +144,9 @@ class WebStateImpl final : public WebState {
   // changed.
   void OnStateChangedForPermission(Permission permission);
 
+  // Notifies the observers that the under pagebackground color was changed.
+  void OnUnderPageBackgroundColorChanged();
+
   // Returns the NavigationManager for this WebState.
   NavigationManagerImpl& GetNavigationManagerImpl();
 
@@ -167,7 +173,7 @@ class WebStateImpl final : public WebState {
   // Forwards the parameters to the current web ui page controller. Called when
   // a message is received from the web ui JavaScript via `chrome.send` API.
   void HandleWebUIMessage(const GURL& source_url,
-                          base::StringPiece message,
+                          std::string_view message,
                           const base::Value::List& args);
 
   // Explicitly sets the MIME type, overwriting any MIME type that was set by

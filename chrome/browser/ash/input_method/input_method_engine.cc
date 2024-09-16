@@ -12,7 +12,7 @@
 #include "ash/constants/ash_pref_names.h"
 #include "ash/constants/notifier_catalogs.h"
 #include "ash/keyboard/ui/keyboard_ui_controller.h"
-#include "ash/system/tray/system_nudge_controller.h"
+#include "ash/public/cpp/system/anchored_nudge_manager.h"
 #include "base/check.h"
 #include "base/i18n/char_iterator.h"
 #include "base/logging.h"
@@ -22,8 +22,8 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/ash/input_method/ui/input_method_menu_item.h"
-#include "chrome/browser/ash/input_method/ui/input_method_menu_manager.h"
+#include "chrome/browser/ui/ash/input_method/input_method_menu_item.h"
+#include "chrome/browser/ui/ash/input_method/input_method_menu_manager.h"
 #include "chrome/browser/ui/ash/keyboard/chrome_keyboard_controller_client.h"
 #include "chrome/common/pref_names.h"
 #include "components/prefs/pref_service.h"
@@ -141,7 +141,7 @@ void InputMethodEngine::DiacriticsSettingsChanged() {
   const bool new_value =
       profile_->GetPrefs()->GetBoolean(ash::prefs::kLongPressDiacriticsEnabled);
   if (!new_value) {
-    SystemNudgeController::MaybeRecordNudgeAction(
+    AnchoredNudgeManager::Get()->MaybeRecordNudgeAction(
         NudgeCatalogName::kDisableDiacritics);
   }
 }

@@ -220,7 +220,7 @@ void FirstPartySetsHandlerImplInstance::SetPublicFirstPartySets(
     return;
   }
 
-  // TODO(crbug.com/1219656): Use the version to compute sets diff.
+  // TODO(crbug.com/40186153): Use the version to compute sets diff.
   sets_loader_->SetComponentSets(version, std::move(sets_file));
 }
 
@@ -510,7 +510,7 @@ void FirstPartySetsHandlerImplInstance::ComputeFirstPartySetMetadataInternal(
   CHECK(global_sets_.has_value());
 
   base::UmaHistogramTimes(
-      "Cookie.FirstPartySets.EnqueueingDelay.ComputeMetadata2",
+      "Cookie.FirstPartySets.EnqueueingDelay.ComputeMetadata3",
       timer.Elapsed());
 
   std::move(callback).Run(global_sets_->ComputeMetadata(

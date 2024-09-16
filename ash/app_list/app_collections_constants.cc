@@ -44,7 +44,6 @@ std::u16string GetAppCollectionName(ash::AppCollection collection) {
           IDS_ASH_LAUNCHER_APPS_COLLECTIONS_YOUR_APPS_NAME);
     case ash::AppCollection::kOem:
       NOTREACHED();
-      return u"";
   }
 }
 

@@ -26,7 +26,7 @@
 
 #if BUILDFLAG(IS_ANDROID)
 #include "base/android/scoped_hardware_buffer_handle.h"
-#include "gpu/ipc/common/gpu_memory_buffer_impl_android_hardware_buffer.h"
+#include "device/vr/android/local_texture.h"
 #include "ui/gl/scoped_egl_image.h"
 #endif
 
@@ -45,7 +45,7 @@ class ContextProvider;
 namespace device {
 class OpenXrViewConfiguration;
 
-// TODO(https://crbug.com/1441072): Refactor this class.
+// TODO(crbug.com/40909689): Refactor this class.
 struct SwapChainInfo {
  public:
 #if BUILDFLAG(IS_WIN)
@@ -74,7 +74,7 @@ struct SwapChainInfo {
   // depending on *how* you want to use it; so we can't use it at the moment.
   uint32_t openxr_texture;
 
-  uint32_t shared_buffer_texture;
+  LocalTexture shared_buffer_texture;
 
   // The size of the texture used for the shared buffer; which may be different
   // than the size of the actual swapchain image, as this size is influenced by
@@ -120,7 +120,7 @@ class OpenXrGraphicsBinding {
 
   // Returns a list of mutable SwapChainInfo objects. While the items themselves
   // are mutable, the list is not.
-  // TODO(https://crbug.com/1441072): Make SwapChainInfo internal to the child
+  // TODO(crbug.com/40909689): Make SwapChainInfo internal to the child
   // classes.
   virtual base::span<SwapChainInfo> GetSwapChainImages() = 0;
 
@@ -135,7 +135,7 @@ class OpenXrGraphicsBinding {
   // Returns the currently active swapchain image. This is only valid between
   // calls to ActivateSwapchainImage and ReleaseSwapchainImage, which happens
   // after BeginFrame and before EndFrame.
-  // TODO(https://crbug.com/1441072): Make SwapChainInfo internal to the child
+  // TODO(crbug.com/40909689): Make SwapChainInfo internal to the child
   // classes.
   virtual const SwapChainInfo& GetActiveSwapchainImage() = 0;
 

@@ -6,6 +6,7 @@
 #define COMPONENTS_EXO_BUFFER_H_
 
 #include <memory>
+#include <string_view>
 
 #include "base/cancelable_callback.h"
 #include "base/containers/flat_map.h"
@@ -54,7 +55,7 @@ class Buffer {
       gfx::Size buffer_size,
       gfx::BufferFormat buffer_format,
       gfx::BufferUsage buffer_usage,
-      base::StringPiece debug_label,
+      std::string_view debug_label,
       gpu::SurfaceHandle surface_handle,
       base::WaitableEvent* shutdown_event,
       bool is_overlay_candidate = false);
@@ -125,7 +126,7 @@ class Buffer {
 
  protected:
   // Currently only derived class access this constructor.
-  explicit Buffer(std::unique_ptr<gfx::GpuMemoryBuffer> gpu_memory_buffer);
+  Buffer();
 
  private:
   // TODO(vikassoni): Once MappableSI is fully landed, these clients do not need
@@ -136,11 +137,6 @@ class Buffer {
 
   class Texture;
 
-  Buffer(std::unique_ptr<gfx::GpuMemoryBuffer> gpu_memory_buffer,
-         unsigned query_type,
-         bool use_zero_copy,
-         bool is_overlay_candidate,
-         bool y_invert);
   Buffer(gfx::GpuMemoryBufferHandle gpu_memory_buffer_handle,
          gfx::BufferFormat buffer_format,
          gfx::Size size,
@@ -208,9 +204,6 @@ class Buffer {
   void OnIsProtectedNativePixmapHandle(bool is_protected);
 #endif  // BUILDFLAG(USE_ARC_PROTECTED_MEDIA)
 
-  // The GPU memory buffer that contains the contents of this buffer.
-  std::unique_ptr<gfx::GpuMemoryBuffer> gpu_memory_buffer_;
-
   // Contains the content of this buffer instead of |gpu_memory_buffer_| when
   // MappableSI is enabled.
   gfx::GpuMemoryBufferHandle gpu_memory_buffer_handle_;
@@ -270,8 +263,6 @@ class Buffer {
 #if BUILDFLAG(USE_ARC_PROTECTED_MEDIA)
   ProtectedBufferState protected_buffer_state_ = ProtectedBufferState::UNKNOWN;
 #endif  // BUILDFLAG(USE_ARC_PROTECTED_MEDIA)
-
-  const bool is_mappable_si_enabled_;
 
   base::WeakPtrFactory<Buffer> weak_ptr_factory_{this};
 };

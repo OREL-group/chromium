@@ -8,6 +8,12 @@
 #include "build/build_config.h"
 #include "ui/base/ui_base_features.h"
 
+#if BUILDFLAG(IS_ANDROID)
+#include "base/android/feature_map.h"
+#include "base/no_destructor.h"
+#include "components/omnibox/common/jni_headers/OmniboxFeatureMap_jni.h"
+#endif
+
 namespace omnibox {
 
 constexpr auto enabled_by_default_desktop_only =
@@ -38,13 +44,6 @@ constexpr auto enabled_by_default_desktop_ios =
     base::FEATURE_ENABLED_BY_DEFAULT;
 #endif
 
-const auto enabled_by_default_android_ios =
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
-    base::FEATURE_ENABLED_BY_DEFAULT;
-#else
-    base::FEATURE_DISABLED_BY_DEFAULT;
-#endif
-
 // Feature to enable showing thumbnail in front of the Omnibox clipboard image
 // search suggestion.
 BASE_FEATURE(kImageSearchSuggestionThumbnail,
@@ -60,7 +59,7 @@ BASE_FEATURE(kOmniboxRemoveSuggestionsFromClipboard,
 // autocomplete_grouper_sections.h) to limit and group (but not sort) matches.
 BASE_FEATURE(kGroupingFrameworkForNonZPS,
              "OmniboxGroupingFrameworkForNonZPS",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             enabled_by_default_android_only);
 
 // Demotes the relevance scores when comparing suggestions based on the
 // suggestion's |AutocompleteMatchType| and the user's |PageClassification|.
@@ -164,6 +163,13 @@ BASE_FEATURE(kZeroSuggestInMemoryCaching,
              "ZeroSuggestInMemoryCaching",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
+// Enables the use of a request debouncer to throttle the number of ZPS prefetch
+// requests initiated over a given period of time (to help minimize the
+// performance impact of ZPS prefetching on the remote Suggest service).
+BASE_FEATURE(kZeroSuggestPrefetchDebouncing,
+             "ZeroSuggestPrefetchDebouncing",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 // Enables prefetching of the zero prefix suggestions for eligible users on NTP.
 BASE_FEATURE(kZeroSuggestPrefetching,
              "ZeroSuggestPrefetching",
@@ -179,13 +185,6 @@ BASE_FEATURE(kZeroSuggestPrefetchingOnSRP,
 BASE_FEATURE(kZeroSuggestPrefetchingOnWeb,
              "ZeroSuggestPrefetchingOnWeb",
              base::FEATURE_DISABLED_BY_DEFAULT);
-
-// Enables storing successful query/match in the shortcut database.
-// Desktop will populate db regardless of this feature.
-// Android will not populate db regardless of this feature.
-BASE_FEATURE(kOmniboxPopulateShortcutsDatabase,
-             "OmniboxPopulateShortcutsDatabase",
-             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Features to provide head and tail non personalized search suggestion from
 // compact on device models. More specifically, feature name with suffix
@@ -242,23 +241,11 @@ BASE_FEATURE(kPrefBasedDataCollectionConsentHelper,
              "PrefBasedDataCollectionConsentHelper",
              enabled_by_default_desktop_ios);
 
-// Allows Omnibox to dynamically adjust number of offered suggestions to fill in
-// the space between Omnibox and the soft keyboard. The number of suggestions
-// shown will be no less than minimum for the platform (eg. 5 for Android).
-BASE_FEATURE(kAdaptiveSuggestionsCount,
-             "OmniboxAdaptiveSuggestionsCount",
-             enabled_by_default_android_ios);
-
 // If enabled, clipboard suggestion will not show the clipboard content until
 // the user clicks the reveal button.
 BASE_FEATURE(kClipboardSuggestionContentHidden,
              "ClipboardSuggestionContentHidden",
              enabled_by_default_android_only);
-
-// If enabled, company entity icons may be replaced by a search loupe.
-BASE_FEATURE(kCompanyEntityIconAdjustment,
-             "CompanyEntityIconAdjustment",
-             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // If enabled, uses the Chrome Refresh 2023 design's shape for action chips in
 // the omnibox suggestion popup.
@@ -271,14 +258,6 @@ BASE_FEATURE(kCr2023ActionChips,
 BASE_FEATURE(kCr2023ActionChipsIcons,
              "Cr2023ActionChipsIcons",
              base::FEATURE_DISABLED_BY_DEFAULT);
-
-// If enabled, finance ticker answer from omnibox will reverse the color for
-// stock ticker. only colors being swapped are those that represent "growth" and
-// "loss" to represent colors red and green in a way that is appropriate for a
-// given country/culture
-BASE_FEATURE(kSuggestionAnswersColorReverse,
-             "SuggestionAnswersColorReverse",
-             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // If enabled, makes Most Visited Tiles a Horizontal render group.
 // Horizontal render group decomposes aggregate suggestions (such as old Most
@@ -294,28 +273,12 @@ BASE_FEATURE(kMostVisitedTilesHorizontalRenderGroup,
 // accommodate the autocompletions.
 BASE_FEATURE(kRichAutocompletion,
              "OmniboxRichAutocompletion",
-             enabled_by_default_desktop_only);
+             enabled_by_default_desktop_ios);
 
 // Feature used to enable Pedals in the NTP Realbox.
 BASE_FEATURE(kNtpRealboxPedals,
              "NtpRealboxPedals",
              base::FEATURE_ENABLED_BY_DEFAULT);
-
-// Feature used to synchronize the toolbar's and status bar's color.
-BASE_FEATURE(kOmniboxMatchToolbarAndStatusBarColor,
-             "OmniboxMatchToolbarAndStatusBarColor",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
-// If enabled, allows Search Ready Omnibox to populate original search query
-// when the user presses the <edit> button on EditUrl suggestion.
-BASE_FEATURE(kSearchReadyOmniboxAllowQueryEdit,
-             "SearchReadyOmniboxAllowQueryEdit",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
-// If enabled, appends Query Tiles to the Omnibox ZPS on New Tab Page.
-BASE_FEATURE(kQueryTilesInZPSOnNTP,
-             "OmniboxQueryTilesInZPSOnNTP",
-             base::FEATURE_DISABLED_BY_DEFAULT);
 
 // If enabled, adds a grey square background to search icons, and makes answer
 // icon square instead of round.
@@ -411,11 +374,6 @@ BASE_FEATURE(kOmniboxSteadyStateTextColor,
              "OmniboxSteadyStateTextColor",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-// Enable new Omnibox & Suggestions visual style.
-BASE_FEATURE(kOmniboxModernizeVisualUpdate,
-             "OmniboxModernizeVisualUpdate",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 // Android only flag that controls whether the new security indicator should be
 // used, on non-Android platforms this is controlled through the
 // ChromeRefresh2023 flag.
@@ -433,6 +391,12 @@ BASE_FEATURE(kDefaultTypedNavigationsToHttps,
              "OmniboxDefaultTypedNavigationsToHttps",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
+// Override the delay to create a spare renderer when the omnibox is focused
+// on Android.
+BASE_FEATURE(kOverrideAndroidOmniboxSpareRendererDelay,
+             "OverrideAndroidOmniboxSpareRendererDelay",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 // Parameter name used to look up the delay before falling back to the HTTP URL
 // while trying an HTTPS URL. The parameter is treated as a TimeDelta, so the
 // unit must be included in the value as well (e.g. 3s for 3 seconds).
@@ -447,11 +411,25 @@ BASE_FEATURE(kLogUrlScoringSignals,
              "LogUrlScoringSignals",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
+// If true, enables history scoring signal annotator for populating history
+// scoring signals associated with Search suggestions. These signals will be
+// empty for Search suggestions otherwise.
+BASE_FEATURE(kEnableHistoryScoringSignalsAnnotatorForSearches,
+             "EnableHistoryScoringSignalsAnnotatorForSearches",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// If enabled, (floating-point) ML model scores are mapped to (integral)
+// relevance scores by means of a piecewise function. This allows for the
+// integration of URL model scores with search traditional scores.
+BASE_FEATURE(kMlUrlPiecewiseMappedSearchBlending,
+             "MlUrlPiecewiseMappedSearchBlending",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 // If enabled, the ML scoring service will make use of an in-memory ML score
 // cache in order to speed up the overall scoring process.
 BASE_FEATURE(kMlUrlScoreCaching,
              "MlUrlScoreCaching",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             enabled_by_default_desktop_only);
 
 // If enabled, runs the ML scoring model to assign new relevance scores to the
 // URL suggestions and reranks them.
@@ -498,18 +476,6 @@ BASE_FEATURE(kCategoricalSuggestions,
 // effects beyond the categorical suggestions.
 BASE_FEATURE(kMergeSubtypes, "MergeSubtypes", base::FEATURE_ENABLED_BY_DEFAULT);
 
-bool IsOmniboxCr23CustomizeGuardedFeatureEnabled(const base::Feature& feature) {
-  if (!features::CustomizeChromeSupportsChromeRefresh2023()) {
-    // Bail before checking any other feature flags so that associated studies
-    // don't get activated.
-    return false;
-  }
-
-  return features::GetChromeRefresh2023Level() ==
-             features::ChromeRefresh2023Level::kLevel2 ||
-         base::FeatureList::IsEnabled(feature);
-}
-
 // If enabled, sends a signal when a user touches down on a search suggestion to
 // |SearchPrefetchService|. |SearchPrefetchService| will then prefetch
 // suggestion iff the SearchNavigationPrefetch feature and "touch_down" param
@@ -518,23 +484,34 @@ BASE_FEATURE(kOmniboxTouchDownTriggerForPrefetch,
              "OmniboxTouchDownTriggerForPrefetch",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
+// If enabled, site search engines featured by policy are shown on @ state in
+// the omnibox above starter pack suggestions.
+BASE_FEATURE(kShowFeaturedEnterpriseSiteSearch,
+             "ShowFeaturedEnterpriseSiteSearch",
+             enabled_by_default_desktop_only);
+
+// Enables an informational IPH message at the bottom of the Omnibox directing
+// users to featured Enterprise search engines created by policy.
+BASE_FEATURE(kShowFeaturedEnterpriseSiteSearchIPH,
+             "ShowFeaturedEnterpriseSiteSearchIPH",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 // If enabled, site search engines defined by policy are saved into prefs and
 // committed to the keyword database, so that they can be accessed from the
 // Omnibox and the Settings page.
+// This feature only has any effect if the policy is set by the administrator,
+// so it's safe to keep it enabled by default - in case of errors, disabling
+// the policy should be enough.
+// Keeping the feature as a kill switch in case we identify any major regression
+// in the implementation.
 BASE_FEATURE(kSiteSearchSettingsPolicy,
              "SiteSearchSettingsPolicy",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
-// If enabled, shows the policy indicator for Default Search Provider set by
-// Enterprise policy chrome://settings.
-BASE_FEATURE(kPolicyIndicationForManagedDefaultSearch,
-             "PolicyIndicationForManagedDefaultSearch",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+             enabled_by_default_desktop_only);
 
 // Enables additional site search providers for the Site search Starter Pack.
 BASE_FEATURE(kStarterPackExpansion,
              "StarterPackExpansion",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             enabled_by_default_desktop_only);
 
 // Enables an informational IPH message at the bottom of the Omnibox directing
 // users to certain starter pack engines.
@@ -547,14 +524,80 @@ BASE_FEATURE(kAblateSearchProviderWarmup,
              "AblateSearchProviderWarmup",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
+// When enabled, removes unrecognized TemplateURL parameters, rather than
+// keeping them verbatim. This feature will ensure that the new versions of
+// Chrome will properly behave when supplied with Template URLs featuring
+// unknown parameters; rather than inlining the verbatim unexpanded placeholder,
+// the placeholder will be replaced with an empty string.
+BASE_FEATURE(kDropUnrecognizedTemplateUrlParameters,
+             "DropUnrecognizedTemplateUrlParameters",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 // If enabled, hl= is reported in search requests (applicable to iOS only).
 BASE_FEATURE(kReportApplicationLanguageInSearchRequest,
              "ReportApplicationLanguageInSearchRequest",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
+// Enable asynchronous Omnibox/Suggest view inflation.
+BASE_FEATURE(kOmniboxAsyncViewInflation,
+             "OmniboxAsyncViewInflation",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Use FusedLocationProvider on Android to fetch device location.
+BASE_FEATURE(kUseFusedLocationProvider,
+             "UseFusedLocationProvider",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 // Enables storing successful query/match in the shortcut database On Android.
 BASE_FEATURE(kOmniboxShortcutsAndroid,
              "OmniboxShortcutsAndroid",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+// Enables deletion of old shortcuts on profile load.
+BASE_FEATURE(kOmniboxDeleteOldShortcuts,
+             "OmniboxDeleteOldShortcuts",
              base::FEATURE_DISABLED_BY_DEFAULT);
+
+#if BUILDFLAG(IS_ANDROID)
+// Enable the Elegant Text Height attribute on the UrlBar.
+// This attribute increases line height by up to 60% to accommodate certain
+// scripts (e.g. Burmese).
+BASE_FEATURE(kOmniboxElegantTextHeight,
+             "OmniboxElegantTextHeight",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kOmniboxAblateVisibleNetworks,
+             "OmniboxAblateVisibleNetworks",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Whether the contents of the omnibox should be retained on focus as opposed to
+// being cleared. When this feature flag is enabled and the omnibox contents are
+// retained, focus events will also result in the omnibox contents being fully
+// selected so as to allow for easy replacement by the user. Note that even with
+// this feature flag enabled, only large screen devices with an attached
+// keyboard and precision pointer will exhibit a change in behavior.
+BASE_FEATURE(kRetainOmniboxOnFocus,
+             "RetainOmniboxOnFocus",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+namespace android {
+static jlong JNI_OmniboxFeatureMap_GetNativeMap(JNIEnv* env) {
+  static base::NoDestructor<base::android::FeatureMap> kFeatureMap(
+      std::vector<const base::Feature*>{{
+          &kOmniboxAnswerActions,
+          &kAnimateSuggestionsListAppearance,
+          &kOmniboxTouchDownTriggerForPrefetch,
+          &kOmniboxAsyncViewInflation,
+          &kRichAutocompletion,
+          &kUseFusedLocationProvider,
+          &kOmniboxElegantTextHeight,
+          &kOmniboxAblateVisibleNetworks,
+          &kRetainOmniboxOnFocus,
+      }});
+
+  return reinterpret_cast<jlong>(kFeatureMap.get());
+}
+}  // namespace android
+#endif  // BUILDFLAG(IS_ANDROID)
 
 }  // namespace omnibox

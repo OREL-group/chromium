@@ -61,14 +61,13 @@ class VIEWS_EXPORT ClientView : public View {
   virtual void UpdateWindowRoundedCorners(int corner_radius);
 
   // Overridden from View:
-  gfx::Size CalculatePreferredSize() const override;
-  int GetHeightForWidth(int width) const override;
+  gfx::Size CalculatePreferredSize(
+      const SizeBounds& available_size) const override;
   gfx::Size GetMinimumSize() const override;
   gfx::Size GetMaximumSize() const override;
 
  protected:
   // Overridden from View:
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   void OnBoundsChanged(const gfx::Rect& previous_bounds) override;
   void ViewHierarchyChanged(
       const ViewHierarchyChangedDetails& details) override;

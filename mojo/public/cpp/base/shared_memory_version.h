@@ -5,28 +5,33 @@
 #ifndef MOJO_PUBLIC_CPP_BASE_SHARED_MEMORY_VERSION_H_
 #define MOJO_PUBLIC_CPP_BASE_SHARED_MEMORY_VERSION_H_
 
+#include <stdint.h>
+
 #include <atomic>
-#include <cstdint>
 
 #include "base/component_export.h"
-
 #include "base/memory/read_only_shared_memory_region.h"
+#include "base/memory/structured_shared_memory.h"
 
 namespace mojo {
 
 class SharedMemoryVersionClient;
 
 using VersionType = uint64_t;
-using SharedVersionType = std::atomic<VersionType>;
-static_assert(SharedVersionType::is_always_lock_free,
-              "Usage of SharedVersionType across processes might be unsafe");
 
 // This file contains classes to share a version between processes through
 // shared memory. A version is a nonzero monotonically increasing integer. A
 // controller has read and write access to the version and one or many clients
 // have read access only. Controllers should only be created in privileged
-// processes. Clients can avoid issuing IPCs depending on the version stored in
-// shared memory.
+// processes.
+//
+// Clients can avoid issuing IPCs depending on the version stored in shared
+// memory. However this should only be used as a hint to avoid redundant IPC's,
+// not to version other objects stored in shared memory: if the version
+// increases, the client's copy of an object is out of date and it must fetch a
+// fresh copy. But it couldn't use a copy of the object in shared memory and
+// assume that it matches the updated version, because writes to the object and
+// the version number can be reordered.
 //
 // Example:
 //
@@ -87,7 +92,7 @@ static constexpr VersionType kInitialVersion = 1ULL;
 class COMPONENT_EXPORT(MOJO_BASE) SharedMemoryVersionController {
  public:
   SharedMemoryVersionController();
-  ~SharedMemoryVersionController() = default;
+  ~SharedMemoryVersionController();
 
   // Not copyable or movable
   SharedMemoryVersionController(const SharedMemoryVersionController&) = delete;
@@ -96,9 +101,9 @@ class COMPONENT_EXPORT(MOJO_BASE) SharedMemoryVersionController {
 
   // Get a shared memory region to be sent to a different process. It will be
   // used to instantiate a SharedMemoryVersionClient.
-  base::ReadOnlySharedMemoryRegion GetSharedMemoryRegion();
+  base::ReadOnlySharedMemoryRegion GetSharedMemoryRegion() const;
 
-  VersionType GetSharedVersion();
+  VersionType GetSharedVersion() const;
 
   // Increment shared version. This is not expected to cause a wrap of the value
   // during normal operation. This invariant is guaranteed with a CHECK.
@@ -110,7 +115,7 @@ class COMPONENT_EXPORT(MOJO_BASE) SharedMemoryVersionController {
   void SetVersion(VersionType version);
 
  private:
-  base::MappedReadOnlyRegion mapped_region_;
+  const base::AtomicSharedMemory<VersionType> mapped_region_;
 };
 
 // Used to keep track of a remote version number and compare it to a
@@ -119,7 +124,7 @@ class COMPONENT_EXPORT(MOJO_BASE) SharedMemoryVersionClient {
  public:
   explicit SharedMemoryVersionClient(
       base::ReadOnlySharedMemoryRegion shared_region);
-  ~SharedMemoryVersionClient() = default;
+  ~SharedMemoryVersionClient();
 
   // Not copyable or movable
   SharedMemoryVersionClient(const SharedMemoryVersionClient&) = delete;
@@ -127,16 +132,18 @@ class COMPONENT_EXPORT(MOJO_BASE) SharedMemoryVersionClient {
       delete;
 
   // These functions can be used to form statements such as:
-  // "Skip the IPC if `SharedVersionIsLessThan()` returns true. "
+  // "Skip the IPC if `SharedVersionIsLessThan()` returns true."
   // The functions err on the side of caution and return true if the comparison
   // is impossible since issuing an IPC should always be an option.
-  bool SharedVersionIsLessThan(VersionType version);
-  bool SharedVersionIsGreaterThan(VersionType version);
+  bool SharedVersionIsLessThan(VersionType version) const;
+  bool SharedVersionIsGreaterThan(VersionType version) const;
 
  private:
-  VersionType GetSharedVersion();
-  base::ReadOnlySharedMemoryRegion shared_region_;
-  base::ReadOnlySharedMemoryMapping read_only_mapping_;
+  // Returns the current value in shared memory.
+  VersionType GetSharedVersion() const;
+
+  const base::AtomicSharedMemory<VersionType>::ReadOnlyMapping
+      read_only_mapping_;
 };
 
 }  // namespace mojo

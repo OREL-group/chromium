@@ -453,7 +453,7 @@ class CastRunnerIntegrationTest : public testing::Test {
   base::test::SingleThreadTaskEnvironment task_environment_{
       base::test::SingleThreadTaskEnvironment::MainThreadType::IO};
 
-  // TODO(https://crbug.com/1168538): Override the RunLoop timeout set by
+  // TODO(crbug.com/42050227): Override the RunLoop timeout set by
   // |task_environment_| to allow for the very high variability in web.Context
   // launch times.
   const base::test::ScopedRunLoopTimeout scoped_timeout_{
@@ -480,7 +480,7 @@ TEST_F(CastRunnerIntegrationTest, BasicRequest) {
 
 // Verify that the Runner can continue to be used even after its Context has
 // crashed. Regression test for https://crbug.com/1066826.
-// TODO(crbug.com/1066833): Replace this with a WebRunner test, ideally a
+// TODO(crbug.com/40682680): Replace this with a WebRunner test, ideally a
 //   unit-test, which can simulate Context disconnection more simply.
 TEST_F(CastRunnerIntegrationTest, CanRecreateContext) {
   TestCastComponent component(test_realm_services());
@@ -974,8 +974,8 @@ TEST_F(CastRunnerIntegrationTest, MissingCorsExemptHeaderProvider) {
 // Verifies that CastRunner offers a chromium.cast.DataReset service.
 // Verifies that after the DeletePersistentData() API is invoked, no further
 // component-start requests are honoured.
-// TODO(crbug.com/1146474): Expand the test to verify that the persisted data is
-// correctly cleared (e.g. using a custom test HTML app that uses persisted
+// TODO(crbug.com/40730094): Expand the test to verify that the persisted data
+// is correctly cleared (e.g. using a custom test HTML app that uses persisted
 // data).
 TEST_F(CastRunnerIntegrationTest, DataReset_Service) {
   base::RunLoop loop;
@@ -1088,7 +1088,7 @@ TEST_F(CastRunnerIntegrationTest, FrameHostDebugging) {
 }
 
 #if defined(ARCH_CPU_ARM_FAMILY)
-// TODO(crbug.com/1377994): Enable on ARM64 when bots support Vulkan.
+// TODO(crbug.com/42050537): Enable on ARM64 when bots support Vulkan.
 #define MAYBE_VulkanCastRunnerIntegrationTest \
   DISABLED_VulkanCastRunnerIntegrationTest
 #else

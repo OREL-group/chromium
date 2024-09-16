@@ -87,12 +87,12 @@ class AlphaVideoEncoderWrapperTest
     uint32_t y = color & 0xFF;
     uint32_t u = (color >> 8) & 0xFF;
     uint32_t v = (color >> 16) & 0xFF;
-    libyuv::I420Rect(frame->writable_data(VideoFrame::kYPlane),
-                     frame->stride(VideoFrame::kYPlane),
-                     frame->writable_data(VideoFrame::kUPlane),
-                     frame->stride(VideoFrame::kUPlane),
-                     frame->writable_data(VideoFrame::kVPlane),
-                     frame->stride(VideoFrame::kVPlane),
+    libyuv::I420Rect(frame->writable_data(VideoFrame::Plane::kY),
+                     frame->stride(VideoFrame::Plane::kY),
+                     frame->writable_data(VideoFrame::Plane::kU),
+                     frame->stride(VideoFrame::Plane::kU),
+                     frame->writable_data(VideoFrame::Plane::kV),
+                     frame->stride(VideoFrame::Plane::kV),
                      frame->visible_rect().x(),       // x
                      frame->visible_rect().y(),       // y
                      frame->visible_rect().width(),   // width
@@ -100,8 +100,8 @@ class AlphaVideoEncoderWrapperTest
                      y,                               // Y color
                      u,                               // U color
                      v);                              // V color
-    libyuv::SetPlane(frame->writable_data(VideoFrame::kAPlane),
-                     frame->stride(VideoFrame::kAPlane),
+    libyuv::SetPlane(frame->writable_data(VideoFrame::Plane::kA),
+                     frame->stride(VideoFrame::Plane::kA),
                      frame->visible_rect().width(),   // width
                      frame->visible_rect().height(),  // height
                      color);
@@ -224,9 +224,7 @@ TEST_P(AlphaVideoEncoderWrapperTest, OutputCountEqualsFrameCount) {
       [&](VideoEncoderOutput output,
           std::optional<VideoEncoder::CodecDescription> desc) {
         EXPECT_FALSE(output.data.empty());
-        EXPECT_GT(output.size, 0u);
         EXPECT_FALSE(output.alpha_data.empty());
-        EXPECT_GT(output.alpha_size, 0u);
         EXPECT_EQ(output.timestamp, frame_duration * outputs_count);
         outputs_count++;
       });
@@ -265,8 +263,7 @@ TEST_P(AlphaVideoEncoderWrapperTest, EncodeAndDecode) {
   VideoEncoder::OutputCB encoder_output_cb = base::BindLambdaForTesting(
       [&, this](VideoEncoderOutput output,
                 std::optional<VideoEncoder::CodecDescription> desc) {
-        auto buffer =
-            DecoderBuffer::FromArray(std::move(output.data), output.size);
+        auto buffer = DecoderBuffer::FromArray(std::move(output.data));
         buffer->set_timestamp(output.timestamp);
         buffer->set_is_key_frame(output.key_frame);
         EXPECT_FALSE(output.alpha_data.empty());

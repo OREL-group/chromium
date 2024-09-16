@@ -2,11 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "ui/ozone/platform/drm/gpu/screen_manager.h"
+
 #include <drm_fourcc.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <xf86drm.h>
 #include <xf86drmMode.h>
+
 #include <memory>
 #include <utility>
 
@@ -14,6 +17,7 @@
 #include "build/chromeos_buildflags.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/display/manager/test/fake_display_snapshot.h"
 #include "ui/display/types/display_constants.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/gpu_fence.h"
@@ -27,15 +31,17 @@
 #include "ui/ozone/platform/drm/gpu/drm_window.h"
 #include "ui/ozone/platform/drm/gpu/fake_drm_device.h"
 #include "ui/ozone/platform/drm/gpu/hardware_display_controller.h"
-#include "ui/ozone/platform/drm/gpu/screen_manager.h"
 
 namespace ui {
 namespace {
 
+using ::testing::AllOf;
 using ::testing::Eq;
+using ::testing::Field;
 using ::testing::Matcher;
 using ::testing::Pointee;
 using ::testing::Property;
+using ::testing::SizeIs;
 using ::testing::UnorderedElementsAre;
 
 constexpr drmModeModeInfo ConstructMode(uint16_t hdisplay, uint16_t vdisplay) {
@@ -52,6 +58,52 @@ Matcher<const CrtcController&> EqualsCrtcConnectorIds(uint32_t crtc,
                                                       uint32_t connector) {
   return AllOf(Property(&CrtcController::crtc, Eq(crtc)),
                Property(&CrtcController::connector, Eq(connector)));
+}
+
+// TODO(b/364634013): Create a test util file for ozone/drm and de-deuplicate
+// EqTileProperty().
+testing::Matcher<TileProperty> EqTileProperty(const TileProperty& expected) {
+  return AllOf(Field(&TileProperty::group_id, Eq(expected.group_id)),
+               Field(&TileProperty::scale_to_fit_display,
+                     Eq(expected.scale_to_fit_display)),
+               Field(&TileProperty::tile_size, Eq(expected.tile_size)),
+               Field(&TileProperty::tile_layout, Eq(expected.tile_layout)),
+               Field(&TileProperty::location, Eq(expected.location)));
+}
+
+std::unique_ptr<HardwareDisplayControllerInfo> GetDisplayInfo(
+    uint32_t connector_id,
+    uint32_t crtc_id,
+    uint8_t index,
+    const std::optional<TileProperty>& tile_property = std::nullopt) {
+  // Initialize a list of display modes.
+  constexpr size_t kNumModes = 5;
+  drmModeModeInfo modes[kNumModes] = {
+      {.hdisplay = 640, .vdisplay = 400},
+      {.hdisplay = 640, .vdisplay = 480},
+      {.hdisplay = 800, .vdisplay = 600},
+      {.hdisplay = 1024, .vdisplay = 768},
+      // Last mode, which should be the largest, is the native mode.
+      {.hdisplay = 1920, .vdisplay = 1080}};
+
+  // Initialize a connector.
+  ScopedDrmConnectorPtr connector(DrmAllocator<drmModeConnector>());
+  connector->connector_id = connector_id;
+  connector->connection = DRM_MODE_CONNECTED;
+  connector->count_props = 0;
+  connector->count_modes = kNumModes;
+  connector->modes = DrmAllocator<drmModeModeInfo>(kNumModes);
+  std::memcpy(connector->modes, &modes[0], kNumModes * sizeof(drmModeModeInfo));
+
+  // Initialize a CRTC.
+  ScopedDrmCrtcPtr crtc(DrmAllocator<drmModeCrtc>());
+  crtc->crtc_id = crtc_id;
+  crtc->mode_valid = 1;
+  crtc->mode = connector->modes[kNumModes - 1];
+
+  return std::make_unique<HardwareDisplayControllerInfo>(
+      std::move(connector), std::move(crtc), index,
+      /*edid_parser=*/std::nullopt, tile_property);
 }
 
 }  // namespace
@@ -102,50 +154,40 @@ class ScreenManagerTest : public testing::Test {
             {.formats = 1, .offset = 0, .pad = 0, .modifier = modifier});
       }
     }
-
-    auto drm_state =
-        FakeDrmDevice::MockDrmState::CreateStateWithAllProperties();
-
-    // Set up the default format property ID for the cursor planes:
-    drm->SetPropertyBlob(FakeDrmDevice::AllocateInFormatsBlob(
-        kInFormatsBlobIdBase, {DRM_FORMAT_XRGB8888}, drm_format_modifiers));
+    drm->ResetStateWithAllProperties();
 
     std::vector<uint32_t> crtc_ids;
-    uint32_t blob_id = kInFormatsBlobIdBase + 1;
     for (const auto& crtc_state : crtc_states) {
-      const auto& crtc = drm_state.AddCrtcAndConnector().first;
-      crtc_ids.push_back(crtc.id);
+      uint32_t crtc_id = drm->AddCrtcAndConnector().first.id;
+      crtc_ids.push_back(crtc_id);
 
       for (size_t i = 0; i < crtc_state.planes.size(); ++i) {
-        uint32_t new_blob_id = blob_id++;
-        drm->SetPropertyBlob(FakeDrmDevice::AllocateInFormatsBlob(
-            new_blob_id, crtc_state.planes[i].formats, drm_format_modifiers));
+        auto in_formats_blob = drm->CreateInFormatsBlob(
+            crtc_state.planes[i].formats, drm_format_modifiers);
 
-        auto& plane = drm_state.AddPlane(
-            crtc.id, i == 0 ? DRM_PLANE_TYPE_PRIMARY : DRM_PLANE_TYPE_OVERLAY);
-        plane.SetProp(kInFormatsPropId, new_blob_id);
+        auto& plane = drm->AddPlane(
+            crtc_id, i == 0 ? DRM_PLANE_TYPE_PRIMARY : DRM_PLANE_TYPE_OVERLAY);
+        drm->AddProperty(
+            plane.id, {.id = kInFormatsPropId, .value = in_formats_blob->id()});
       }
     }
     for (const auto& movable_plane : movable_planes) {
-      uint32_t new_blob_id = blob_id++;
-      drm->SetPropertyBlob(FakeDrmDevice::AllocateInFormatsBlob(
-          new_blob_id, movable_plane.formats, drm_format_modifiers));
-      auto& plane = drm_state.AddPlane(crtc_ids, DRM_PLANE_TYPE_OVERLAY);
-      plane.SetProp(kInFormatsPropId, new_blob_id);
+      auto in_formats_blob =
+          drm->CreateInFormatsBlob(movable_plane.formats, drm_format_modifiers);
+      auto& plane = drm->AddPlane(crtc_ids, DRM_PLANE_TYPE_OVERLAY);
+      drm->AddProperty(
+          plane.id, {.id = kInFormatsPropId, .value = in_formats_blob->id()});
     }
 
     drm->SetModifiersOverhead(modifiers_overhead_);
-    drm->InitializeState(drm_state, is_atomic);
+    drm->InitializeState(is_atomic);
   }
 
-  void AddPlaneToCrtc(uint32_t crtc_id,
-                      uint32_t plane_type,
-                      uint32_t blob_id,
-                      FakeDrmDevice::MockDrmState& drm_state) {
-    drm_->SetPropertyBlob(FakeDrmDevice::AllocateInFormatsBlob(
-        blob_id, {DRM_FORMAT_XRGB8888}, {}));
-    auto& plane = drm_state.AddPlane(crtc_id, plane_type);
-    plane.SetProp(kInFormatsPropId, blob_id);
+  void AddPlaneToCrtc(uint32_t crtc_id, uint32_t plane_type) {
+    auto in_formats_blob = drm_->CreateInFormatsBlob({DRM_FORMAT_XRGB8888}, {});
+    auto& plane = drm_->AddPlane(crtc_id, plane_type);
+    drm_->AddProperty(plane.id,
+                      {.id = kInFormatsPropId, .value = in_formats_blob->id()});
   }
 
   void InitializeDrmStateWithDefault(FakeDrmDevice* drm,
@@ -185,8 +227,9 @@ class ScreenManagerTest : public testing::Test {
       uint64_t format_modifier,
       const gfx::Size& size) {
     std::vector<uint64_t> modifiers;
-    if (format_modifier != DRM_FORMAT_MOD_NONE)
+    if (format_modifier != DRM_FORMAT_MOD_NONE) {
       modifiers.push_back(format_modifier);
+    }
     auto buffer = drm_->gbm_device()->CreateBufferWithModifiers(
         format, size, GBM_BO_USE_SCANOUT, modifiers);
     return DrmFramebuffer::AddFramebuffer(drm_, buffer.get(), size, modifiers);
@@ -822,7 +865,7 @@ TEST_F(ScreenManagerTest, CheckMirrorModeModesettingWithDisplaysMode) {
     else if (crtc->crtc() == secondary_crtc_id)
       EXPECT_EQ(secondary_mode.clock, crtc->mode().clock);
     else
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 }
 
@@ -2135,46 +2178,41 @@ TEST_F(ScreenManagerTest, ReplaceDisplayControllersCrtcsComplex) {
   // Original state: {crtc_1 - connector_1}, {crtc_2 - connector_2}
   // After replacement: {crtc_2 - connector_1}, {crtc_3 - connector_2}
 
-  auto drm_state = FakeDrmDevice::MockDrmState::CreateStateWithAllProperties();
-
-  // Set up the default format property ID for the cursor planes:
-  drm_->SetPropertyBlob(FakeDrmDevice::AllocateInFormatsBlob(
-      kInFormatsBlobIdBase, {DRM_FORMAT_XRGB8888}, {}));
-  uint32_t blob_id = kInFormatsBlobIdBase + 1;
+  drm_->ResetStateWithAllProperties();
 
   // Create 3 CRTCs
-  uint32_t crtc_1 = drm_state.AddCrtc().id;
-  AddPlaneToCrtc(crtc_1, DRM_PLANE_TYPE_PRIMARY, blob_id++, drm_state);
-  AddPlaneToCrtc(crtc_1, DRM_PLANE_TYPE_OVERLAY, blob_id++, drm_state);
-  uint32_t crtc_2 = drm_state.AddCrtc().id;
-  AddPlaneToCrtc(crtc_2, DRM_PLANE_TYPE_PRIMARY, blob_id++, drm_state);
-  AddPlaneToCrtc(crtc_2, DRM_PLANE_TYPE_OVERLAY, blob_id++, drm_state);
-  uint32_t crtc_3 = drm_state.AddCrtc().id;
-  AddPlaneToCrtc(crtc_3, DRM_PLANE_TYPE_PRIMARY, blob_id++, drm_state);
-  AddPlaneToCrtc(crtc_3, DRM_PLANE_TYPE_OVERLAY, blob_id++, drm_state);
+  uint32_t crtc_1 = drm_->AddCrtc().id;
+  AddPlaneToCrtc(crtc_1, DRM_PLANE_TYPE_PRIMARY);
+  AddPlaneToCrtc(crtc_1, DRM_PLANE_TYPE_OVERLAY);
+  uint32_t crtc_2 = drm_->AddCrtc().id;
+  AddPlaneToCrtc(crtc_2, DRM_PLANE_TYPE_PRIMARY);
+  AddPlaneToCrtc(crtc_2, DRM_PLANE_TYPE_OVERLAY);
+  uint32_t crtc_3 = drm_->AddCrtc().id;
+  AddPlaneToCrtc(crtc_3, DRM_PLANE_TYPE_PRIMARY);
+  AddPlaneToCrtc(crtc_3, DRM_PLANE_TYPE_OVERLAY);
 
   // Create 2 Connectors that can use all 3 CRTCs.
   uint32_t connector_1, connector_2;
   {
-    FakeDrmDevice::EncoderProperties& encoder = drm_state.AddEncoder();
+    FakeDrmDevice::EncoderProperties& encoder = drm_->AddEncoder();
     encoder.possible_crtcs = 0b111;
     const uint32_t encoder_id = encoder.id;
-    FakeDrmDevice::ConnectorProperties& connector = drm_state.AddConnector();
+    FakeDrmDevice::ConnectorProperties& connector = drm_->AddConnector();
     connector.connection = true;
     connector.encoders = std::vector<uint32_t>{encoder_id};
     connector_1 = connector.id;
   }
   {
-    FakeDrmDevice::EncoderProperties& encoder = drm_state.AddEncoder();
+    FakeDrmDevice::EncoderProperties& encoder = drm_->AddEncoder();
     encoder.possible_crtcs = 0b111;
     const uint32_t encoder_id = encoder.id;
-    FakeDrmDevice::ConnectorProperties& connector = drm_state.AddConnector();
+    FakeDrmDevice::ConnectorProperties& connector = drm_->AddConnector();
     connector.connection = true;
     connector.encoders = std::vector<uint32_t>{encoder_id};
     connector_2 = connector.id;
   }
 
-  drm_->InitializeState(drm_state, /*is_atomic=*/true);
+  drm_->InitializeState(/*is_atomic=*/true);
 
   // Configure to {crtc_1 - connector_1}, {crtc_2 - connector_2}.
   screen_manager_->AddDisplayController(drm_, crtc_1, connector_1);
@@ -2220,5 +2258,75 @@ TEST_F(ScreenManagerTest, ReplaceDisplayControllersCrtcsComplex) {
   EXPECT_THAT(controller_2->crtc_controllers(),
               UnorderedElementsAre(
                   Pointee(EqualsCrtcConnectorIds(crtc_3, connector_2))));
+}
+
+TEST_F(ScreenManagerTest, TileDisplay) {
+  std::vector<CrtcState> crtc_states = {
+      {.planes = {{.formats = {DRM_FORMAT_XRGB8888}}}},
+      {.planes = {{.formats = {DRM_FORMAT_XRGB8888}}}}};
+  InitializeDrmState(drm_.get(), crtc_states, /*is_atomic=*/true);
+
+  uint32_t crtc_id_1 = drm_->crtc_property(0).id;
+  uint32_t connector_id_1 = drm_->connector_property(0).id;
+  uint32_t crtc_id_2 = drm_->crtc_property(1).id;
+  uint32_t connector_id_2 = drm_->connector_property(1).id;
+
+  TileProperty primary_tile_prop = {.group_id = 1,
+                                    .scale_to_fit_display = true,
+                                    .tile_size = gfx::Size(3840, 4320),
+                                    .tile_layout = gfx::Size(2, 1),
+                                    .location = gfx::Point(0, 0)};
+  std::unique_ptr<ui::HardwareDisplayControllerInfo> primary_info =
+      GetDisplayInfo(connector_id_1, crtc_id_1, /*index=*/1, primary_tile_prop);
+
+  TileProperty nonprimary_tile_prop = primary_tile_prop;
+  nonprimary_tile_prop.location = gfx::Point(1, 0);
+  primary_info->AcquireNonprimaryTileInfo(GetDisplayInfo(
+      connector_id_2, crtc_id_2, /*index=*/2, nonprimary_tile_prop));
+
+  std::unique_ptr<display::FakeDisplaySnapshot> snapshot =
+      display::FakeDisplaySnapshot::Builder()
+          .SetId(kPrimaryDisplayId)
+          .SetBaseConnectorId(primary_info->connector()->connector_id)
+          .SetNativeMode(gfx::Size(3840, 4320))
+          .SetCurrentMode(gfx::Size(3840, 4320))
+          .Build();
+
+  DrmDisplay drm_display(drm_.get(), primary_info.get(), *snapshot);
+
+  screen_manager_->AddDisplayControllersForDisplay(drm_display);
+
+  std::vector<ControllerConfigParams> controllers_to_enable;
+  controllers_to_enable.emplace_back(
+      kPrimaryDisplayId, drm_, crtc_id_1, connector_id_1, gfx::Point(0, 0),
+      std::make_unique<drmModeModeInfo>(
+          drmModeModeInfo{.hdisplay = 3840, .vdisplay = 4320}));
+  ASSERT_TRUE(screen_manager_->ConfigureDisplayControllers(
+      controllers_to_enable, {display::ModesetFlag::kTestModeset,
+                              display::ModesetFlag::kCommitModeset}));
+
+  HardwareDisplayController* hdc = screen_manager_->GetDisplayController(
+      // This is the full tile composited size.
+      gfx::Rect(0, 0, 3840 * 2, 4320));
+  ASSERT_NE(hdc, nullptr);
+  ASSERT_TRUE(hdc->IsTiled());
+  EXPECT_THAT(hdc->GetTileProperty(),
+              Optional(EqTileProperty(primary_tile_prop)));
+
+  EXPECT_THAT(
+      hdc->crtc_controllers(),
+      UnorderedElementsAre(
+          Pointee(
+              AllOf(Property(&CrtcController::crtc, Eq(crtc_id_1)),
+                    Property(&CrtcController::connector, Eq(connector_id_1)),
+                    Property(&CrtcController::is_tiled, Eq(true)),
+                    Property(&CrtcController::tile_property,
+                             Optional(EqTileProperty(primary_tile_prop))))),
+          Pointee(AllOf(
+              Property(&CrtcController::crtc, Eq(crtc_id_2)),
+              Property(&CrtcController::connector, Eq(connector_id_2)),
+              Property(&CrtcController::is_tiled, Eq(true)),
+              Property(&CrtcController::tile_property,
+                       Optional(EqTileProperty(nonprimary_tile_prop)))))));
 }
 }  // namespace ui

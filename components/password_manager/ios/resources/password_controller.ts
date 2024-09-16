@@ -12,8 +12,34 @@ import {gCrWeb} from '//ios/web/public/js_messaging/resources/gcrweb.js';
  * It scans the DOM, extracting and storing password forms and returns a JSON
  * string representing an array of objects, each of which represents an Password
  * form with information about a form to be filled and/or submitted and it can
- * be translated to struct FormData for further processing.
+ * be translated to class FormData for further processing.
  */
+
+/**
+ * Container that holds the result from password filling.
+ */
+interface FillResult {
+  // True when the username was actually filled. Set to false if the username
+  // field isn't editable at the the time of filling, if the provided render ID
+  // is 0, if the username won't change or if the fill attempt aborted.
+  didFillUsername: boolean;
+  // True when the password was actually filled. this will be set to false, if
+  // the provided renderer ID is 0, if the password won't change, or if the fill
+  // attempt aborted.
+  didFillPassword: boolean;
+  // True if there was an attempt to fill the form but without necessarily
+  // filling the field. If one of the fields to fill isn't available at the time
+  // of filling, this will be false. If the fields that had to be filled were
+  // there but couldn't be filled, this will be set to true.
+  didAttemptFill: boolean;
+}
+
+// Represents the FillResult when filling failed.
+const kFillResultForFailure: FillResult = {
+  didFillUsername: false,
+  didFillPassword: false,
+  didAttemptFill: false,
+};
 
 /**
  * Finds all password forms in the frame and returns form data as a JSON
@@ -124,28 +150,24 @@ function getPasswordFormDataAsString(identifier: number): string {
  * @param formData Form data.
  * @param username The username to fill.
  * @param password The password to fill.
- * @return Whether a form field has been filled.
+ * @return {FillResult} The result of filling the password fields.
  */
 function fillPasswordForm(
-    formData: AutofillFormData, username: string, password: string): boolean {
-  let filled = false;
-
+    formData: AutofillFormData, username: string,
+    password: string): FillResult {
   const form = gCrWeb.form.getFormElementFromRendererId(formData.renderer_id);
   if (form) {
     const inputs = getFormInputElements(form);
-    if (fillUsernameAndPassword(inputs, formData, username, password)) {
-      filled = true;
-    }
+    return fillUsernameAndPassword(inputs, formData, username, password);
   }
 
   // Check fields that are not inside any <form> tag.
   const unownedInputs =
       gCrWeb.fill.getUnownedAutofillableFormFieldElements(document.all, []);
-  if (fillUsernameAndPassword(unownedInputs, formData, username, password)) {
-    filled = true;
+  if (unownedInputs.length > 0) {
+    return fillUsernameAndPassword(unownedInputs, formData, username, password);
   }
-
-  return filled;
+  return kFillResultForFailure;
 }
 
 /**
@@ -265,48 +287,53 @@ function getPasswordInputElementForFill(
  * @param formData Form data.
  * @param username The username to fill.
  * @param password The password to fill.
- * @return Whether the form has been correctly filled in respect of
- *   form data.
+ * @return {FillResult} The result of filling the password fields.
  */
 function fillUsernameAndPassword(
     inputs: HTMLInputElement[], formData: AutofillFormData, username: string,
-    password: string): boolean {
-  const usernameRendererId: number =
-        Number(formData.fields[0]!.renderer_id);
+    password: string): FillResult {
+  const usernameRendererId: number = Number(formData.fields[0]!.renderer_id);
   let usernameInput;
   if (usernameRendererId !== Number(fillConstants.RENDERER_ID_NOT_SET)) {
     usernameInput = getUsernameInputElementForFill(inputs, usernameRendererId);
-    if (!usernameInput || !gCrWeb.common.isTextField(usernameInput)) {
+    if (!usernameInput) {
       // Don't fill anything if the username can't be filled when it should be
       // filled.
-      return false;
+      return kFillResultForFailure;
     }
   }
 
-  const passwordRendererId: number =
-      Number(formData.fields[1]!.renderer_id);
+  const passwordRendererId: number = Number(formData.fields[1]!.renderer_id);
   let passwordInput;
   if (passwordRendererId !== Number(fillConstants.RENDERER_ID_NOT_SET)) {
     passwordInput = getPasswordInputElementForFill(inputs, passwordRendererId);
     if (!passwordInput) {
       // Don't fill anything if the password can't be filled when it should be
       // filled.
-      return false;
+      return kFillResultForFailure;
     }
   }
 
+  const isUsernameEditable: boolean = Boolean(
+      !!usernameInput && !usernameInput.readOnly && !usernameInput.disabled);
+
   // Fill the username if needed and if it doesn't look like it was already
   // pre-filled by the website.
-  if (usernameInput && !usernameInput.readOnly && !usernameInput.disabled) {
-    gCrWeb.fill.setInputElementValue(username, usernameInput);
-  }
+  const didFillUsername: boolean =
+      (isUsernameEditable &&
+       gCrWeb.fill.setInputElementValue(username, usernameInput)) as boolean;
 
   // Fill the password if needed.
-  if (passwordInput) {
-    gCrWeb.fill.setInputElementValue(password, passwordInput);
-  }
+  const didFillPassword: boolean =
+      Boolean(
+          !!passwordInput &&
+          gCrWeb.fill.setInputElementValue(password, passwordInput)) as boolean;
 
-  return true;
+  return {
+    didFillUsername,
+    didFillPassword,
+    didAttemptFill: true,
+  };
 }
 
 /**
@@ -350,7 +377,6 @@ function getPasswordFormDataList(formDataList: AutofillFormData[]) {
  * @return Object of data from formElement.
  */
 function getPasswordFormDataFromUnownedElements(): object|void {
-  const extractMask = fillConstants.EXTRACT_MASK_VALUE;
   const fieldsets: fillConstants.FormControlElement[] = [];
   const unownedControlElements =
       gCrWeb.fill.getUnownedAutofillableFormFieldElements(
@@ -359,10 +385,9 @@ function getPasswordFormDataFromUnownedElements(): object|void {
     return;
   }
   const unownedForm = new gCrWeb['common'].JSONSafeObject();
-  const hasUnownedForm =
-      gCrWeb.fill.unownedFormElementsAndFieldSetsToFormData(
-          window, fieldsets, unownedControlElements, extractMask, false,
-          unownedForm);
+  const hasUnownedForm = gCrWeb.fill.unownedFormElementsAndFieldSetsToFormData(
+      window, fieldsets, unownedControlElements, /* iframeElements= */[], false,
+      unownedForm);
   return hasUnownedForm ? unownedForm : null;
 }
 
@@ -373,11 +398,10 @@ function getPasswordFormDataFromUnownedElements(): object|void {
  */
 function getPasswordFormData(
     formElement: HTMLFormElement): AutofillFormData|null {
-  const extractMask = fillConstants.EXTRACT_MASK_VALUE;
   const formData = {} as AutofillFormData;
   const ok = gCrWeb.fill.webFormElementToFormData(
-      window, formElement, /* formControlElement=*/null, extractMask, formData,
-      /* field=*/null);
+      window, formElement, /*formControlElement=*/ null, formData,
+      /*field=*/ null);
   return ok ? formData : null;
 }
 

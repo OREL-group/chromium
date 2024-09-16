@@ -184,6 +184,11 @@ class MODULES_EXPORT ManifestParser {
                            Enum (*parse_enum)(const std::string&),
                            Enum invalid_value);
 
+  // Parses the 'dir' field of the manifest, as defined in:
+  // https://w3c.github.io/manifest/#dfn-process-the-dir-member
+  // Returns the parsed TextDirection.
+  mojom::blink::Manifest::TextDirection ParseDir(const JSONObject* object);
+
   // Parses the 'name' field of the manifest, as defined in:
   // https://w3c.github.io/manifest/#dfn-steps-for-processing-the-name-member
   // Returns the parsed string if any, a null string if the parsing failed.
@@ -552,24 +557,6 @@ class MODULES_EXPORT ManifestParser {
   // Returns empty map if parsing fails.
   HashMap<String, mojom::blink::ManifestTranslationItemPtr> ParseTranslations(
       const JSONObject* object);
-
-  // Parses individual preferences from the 'user_preferences' field.
-  // Returns nullptr if not present or parsing failed.
-  mojom::blink::ManifestUserPreferenceOverridesPtr ParsePreferenceOverrides(
-      const JSONObject* object,
-      const String& preference);
-
-  // Parse the 'user_preferences' field of the manifest as defined in:
-  // https://github.com/WICG/manifest-incubations/blob/gh-pages/user-preferences-explainer.md
-  // Returns nullptr if parsing fails.
-  mojom::blink::ManifestUserPreferencesPtr ParseUserPreferences(
-      const JSONObject* object);
-
-  // Parse the override fields for theme_color and background_color as defined
-  // in: https://github.com/w3c/manifest/issues/1045
-  // Returns the dark mode color if any, or a null optional otherwise.
-  std::optional<RGBA32> ParseDarkColorOverride(const JSONObject* object,
-                                               const String& key);
 
   // Parses the 'tab_strip' field of the manifest as defined in:
   // https://github.com/WICG/manifest-incubations/blob/gh-pages/tabbed-mode-explainer.md

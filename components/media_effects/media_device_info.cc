@@ -26,6 +26,18 @@ std::optional<std::string> GetRealDefaultDeviceId(
   return std::nullopt;
 }
 
+std::optional<std::string> GetRealCommunicationsDeviceId(
+    const std::vector<media::AudioDeviceDescription>& infos) {
+  for (const auto& info : infos) {
+    if (info.is_communications_device &&
+        !media::AudioDeviceDescription::IsCommunicationsDevice(
+            info.unique_id)) {
+      return info.unique_id;
+    }
+  }
+  return std::nullopt;
+}
+
 std::vector<std::string> GetRealAudioDeviceNames(
     const std::vector<media::AudioDeviceDescription>& infos) {
   std::vector<std::string> real_names;
@@ -137,6 +149,16 @@ MediaDeviceInfo::GetVideoDeviceInfos() const {
   return video_device_infos_;
 }
 
+void MediaDeviceInfo::GetAudioInputStreamParameters(
+    const std::string& device_id,
+    audio::mojom::SystemInfo::GetInputStreamParametersCallback callback) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  if (audio_system_info_) {
+    audio_system_info_->GetInputStreamParameters(device_id,
+                                                 std::move(callback));
+  }
+}
+
 void MediaDeviceInfo::AddObserver(Observer* observer) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   if (!observers_.HasObserver(observer)) {
@@ -156,7 +178,12 @@ void MediaDeviceInfo::OnDevicesChanged(
     // Unretained is safe here because the `video_source_provider_` remote will
     // be destroyed before `this`.
     video_source_provider_->GetSourceInfos(base::BindOnce(
-        &MediaDeviceInfo::OnVideoDeviceInfosReceived, base::Unretained(this)));
+        [](MediaDeviceInfo* mdi,
+           video_capture::mojom::VideoSourceProvider::GetSourceInfosResult,
+           const std::vector<media::VideoCaptureDeviceInfo>& device_infos) {
+          mdi->OnVideoDeviceInfosReceived(device_infos);
+        },
+        base::Unretained(this)));
   } else if (device_type == base::SystemMonitor::DEVTYPE_AUDIO &&
              audio_system_info_) {
     // Unretained is safe here because the `audio_system_info_` remote will

@@ -15,22 +15,24 @@
 #include "base/notreached.h"
 #include "chrome/browser/flags/android/chrome_feature_list.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/profiles/profile_android.h"
 #include "chrome/browser/signin/chrome_signin_client_factory.h"
 #include "chrome/browser/signin/identity_test_environment_profile_adaptor.h"
 #include "chrome/browser/signin/test_signin_client_builder.h"
 #include "chrome/browser/supervised_user/supervised_user_service_factory.h"
-#include "chrome/test/test_support_jni_headers/FamilyInfoFeedbackSourceTestBridge_jni.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
 #include "components/supervised_user/core/browser/proto/families_common.pb.h"
 #include "components/supervised_user/core/browser/proto/kidsmanagement_messages.pb.h"
-#include "components/supervised_user/core/browser/proto_fetcher.h"
+#include "components/supervised_user/core/browser/proto_fetcher_status.h"
 #include "components/supervised_user/core/browser/supervised_user_service.h"
 #include "components/supervised_user/core/browser/supervised_user_url_filter.h"
 #include "components/supervised_user/core/browser/supervised_user_utils.h"
+#include "components/supervised_user/core/common/supervised_user_constants.h"
 #include "content/public/test/browser_task_environment.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "chrome/test/test_support_jni_headers/FamilyInfoFeedbackSourceTestBridge_jni.h"
 
 using base::android::ConvertUTF8ToJavaString;
 using base::android::ScopedJavaLocalRef;
@@ -39,7 +41,6 @@ namespace chrome::android {
 namespace {
 
 const char kTestEmail[] = "test@gmail.com";
-const char kFeedbackTagFamilyMemberRole[] = "Family_Member_Role";
 const char kFeedbackTagParentalControlSitesChild[] =
     "Parental_Control_Sites_Child";
 
@@ -119,11 +120,8 @@ class FamilyInfoFeedbackSourceForChildFilterBehaviorTest
  private:
   // Creates a Java instance of FamilyInfoFeedbackSource.
   base::android::ScopedJavaLocalRef<jobject> CreateJavaObjectForTesting() {
-    ProfileAndroid* profile_android =
-        ProfileAndroid::FromProfile(profile_.get());
     return Java_FamilyInfoFeedbackSourceTestBridge_createFamilyInfoFeedbackSource(
-        env_, base::android::JavaParamRef<jobject>(
-                  env_, profile_android->GetJavaObject().Release()));
+        env_, profile_.get()->GetJavaObject());
   }
 
   content::BrowserTaskEnvironment task_environment_;
@@ -165,7 +163,7 @@ TEST_P(FamilyInfoFeedbackSourceForChildFilterBehaviorTest,
       break;
     default:
       // Remaining combinations are not tested.
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 
@@ -217,7 +215,7 @@ class FamilyInfoFeedbackSourceTest
             base::android::JavaParamRef<jobject>(env_,
                                                  j_feedback_source_.obj()),
             base::android::ConvertUTF8ToJavaString(
-                env_, kFeedbackTagFamilyMemberRole));
+                env_, supervised_user::kFamilyMemberRoleFeedbackTag));
     return base::android::ConvertJavaStringToUTF8(env_, j_value);
   }
 
@@ -251,11 +249,8 @@ class FamilyInfoFeedbackSourceTest
  private:
   // Creates a Java instance of FamilyInfoFeedbackSource.
   base::android::ScopedJavaLocalRef<jobject> CreateJavaObjectForTesting() {
-    ProfileAndroid* profile_android =
-        ProfileAndroid::FromProfile(profile_.get());
     return Java_FamilyInfoFeedbackSourceTestBridge_createFamilyInfoFeedbackSource(
-        env_, base::android::JavaParamRef<jobject>(
-                  env_, profile_android->GetJavaObject().Release()));
+        env_, profile_.get()->GetJavaObject());
   }
 
   content::BrowserTaskEnvironment task_environment_;
@@ -306,7 +301,7 @@ TEST_P(FamilyInfoFeedbackSourceTest, GetFamilyMembersSignedIn) {
       EXPECT_EQ("child", GetFeedbackValue());
       break;
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 }
 

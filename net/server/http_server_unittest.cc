@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "net/server/http_server.h"
 
 #include <stdint.h>
@@ -216,11 +221,11 @@ class HttpServerTest : public TestWithTaskEnvironment,
 
   void OnWebSocketRequest(int connection_id,
                           const HttpServerRequestInfo& info) override {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
   }
 
   void OnWebSocketMessage(int connection_id, std::string data) override {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
   }
 
   void OnClose(int connection_id) override {
@@ -292,7 +297,7 @@ namespace {
 class WebSocketTest : public HttpServerTest {
   void OnHttpRequest(int connection_id,
                      const HttpServerRequestInfo& info) override {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
   }
 
   void OnWebSocketRequest(int connection_id,
@@ -334,12 +339,13 @@ std::string EncodeFrame(std::string message,
   frame_header.resize(header_size);
   if (mask) {
     WebSocketMaskingKey masking_key = GenerateWebSocketMaskingKey();
-    WriteWebSocketFrameHeader(header, &masking_key, &frame_header[0],
-                              base::checked_cast<int>(header_size));
-    MaskWebSocketFramePayload(masking_key, 0, &message[0], message.size());
+    WriteWebSocketFrameHeader(header, &masking_key,
+                              base::as_writable_byte_span(frame_header));
+    MaskWebSocketFramePayload(masking_key, 0,
+                              base::as_writable_byte_span(message));
   } else {
-    WriteWebSocketFrameHeader(header, nullptr, &frame_header[0],
-                              base::checked_cast<int>(header_size));
+    WriteWebSocketFrameHeader(header, nullptr,
+                              base::as_writable_byte_span(frame_header));
   }
   return frame_header + message;
 }

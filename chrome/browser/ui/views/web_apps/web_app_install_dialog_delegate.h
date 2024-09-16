@@ -10,6 +10,8 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "chrome/browser/picture_in_picture/picture_in_picture_occlusion_observer.h"
+#include "chrome/browser/picture_in_picture/scoped_picture_in_picture_occlusion_observation.h"
 #include "chrome/browser/ui/web_applications/web_app_dialogs.h"
 #include "chrome/browser/web_applications/web_app_install_info.h"
 #include "content/public/browser/web_contents_observer.h"
@@ -21,9 +23,9 @@
 class PrefService;
 
 namespace content {
-class NavigationHandle;
+class Page;
 class WebContents;
-}
+}  // namespace content
 
 namespace feature_engagement {
 class Tracker;
@@ -32,6 +34,10 @@ class Tracker;
 namespace webapps {
 class MlInstallOperationTracker;
 }  // namespace webapps
+
+namespace views {
+class Widget;
+}  // namespace views
 
 namespace web_app {
 
@@ -55,9 +61,9 @@ inline constexpr int kIconSize = 32;
 // result in a weird filename), it only restricts what we suggest as titles.
 std::u16string NormalizeSuggestedAppTitle(const std::u16string& title);
 
-class WebAppInstallDialogDelegate
-    : public ui::DialogModelDelegate,
-      public content::WebContentsObserver {
+class WebAppInstallDialogDelegate : public ui::DialogModelDelegate,
+                                    public content::WebContentsObserver,
+                                    public PictureInPictureOcclusionObserver {
  public:
   DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kDiyAppsDialogOkButtonId);
 
@@ -73,9 +79,18 @@ class WebAppInstallDialogDelegate
 
   ~WebAppInstallDialogDelegate() override;
 
+  // Starts observing the install dialog's widget for picture in picture
+  // occlusion if any.
+  void StartObservingForPictureInPictureOcclusion(
+      views::Widget* install_dialog_widget);
+
   void OnAccept();
   void OnCancel();
   void OnClose();
+
+  // This is called when the dialog has been either accepted, cancelled, closed
+  // or destroyed without an user-action.
+  void OnDestroyed();
 
   // Takes care of enabling or disabling the dialog model's OK button for DIY
   // apps based on changes in the text field, and also keeps track of the text
@@ -87,11 +102,13 @@ class WebAppInstallDialogDelegate
     return weak_ptr_factory_.GetWeakPtr();
   }
 
-  // content::WebContentsObserver:
+  // content::WebContentsObserver overrides:
   void OnVisibilityChanged(content::Visibility visibility) override;
   void WebContentsDestroyed() override;
-  void DidFinishNavigation(
-      content::NavigationHandle* navigation_handle) override;
+  void PrimaryPageChanged(content::Page& page) override;
+
+  // PictureInPictureOcclusionObserver overrides:
+  void OnOcclusionStateChanged(bool occluded) override;
 
  private:
   void CloseDialogAsIgnored();
@@ -108,9 +125,10 @@ class WebAppInstallDialogDelegate
   raw_ptr<feature_engagement::Tracker> tracker_;
   InstallDialogType dialog_type_;
   std::u16string text_field_contents_;
+  bool received_user_response_ = false;
+  ScopedPictureInPictureOcclusionObservation occlusion_observation_{this};
 
-  base::WeakPtrFactory<WebAppInstallDialogDelegate> weak_ptr_factory_{
-      this};
+  base::WeakPtrFactory<WebAppInstallDialogDelegate> weak_ptr_factory_{this};
 };
 
 }  // namespace web_app

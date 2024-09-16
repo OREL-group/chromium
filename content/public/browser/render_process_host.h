@@ -88,6 +88,7 @@ class ChannelProxy;
 
 namespace network {
 struct CrossOriginEmbedderPolicy;
+struct DocumentIsolationPolicy;
 }  // namespace network
 
 namespace storage {
@@ -213,6 +214,12 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   virtual void OnForegroundServiceWorkerAdded() = 0;
   virtual void OnForegroundServiceWorkerRemoved() = 0;
 
+  // This is an experimental code that keeps the renderer process foregrounded
+  // from CommitNavigation to DOMContentLoaded (crbug/351953350). This is used
+  // to determine if the process should be backgrounded or not.
+  virtual void OnBoostForLoadingAdded() = 0;
+  virtual void OnBoostForLoadingRemoved() = 0;
+
   // Indicates whether the current RenderProcessHost is exclusively hosting
   // guest RenderFrames. Not all guest RenderFrames are created equal.  A guest,
   // as indicated by BrowserPluginGuest::IsGuest, may coexist with other
@@ -222,6 +229,13 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   // Indicates whether the current RenderProcessHost is running with JavaScript
   // JIT disabled.
   virtual bool IsJitDisabled() = 0;
+
+  // Indicates whether the current RenderProcessHost is running with v8
+  // optimizations disabled. This is distinct from IsJitDisabled() -
+  // IsJitDisabled() disables all JIT compilation in the renderer, while
+  // AreV8OptimizationsDisabled() only disables the higher-tier V8 optimizers,
+  // leaving the basic JIT compiler in V8 (and the wasm JIT compiler) enabled.
+  virtual bool AreV8OptimizationsDisabled() = 0;
 
   // Indicates whether the current RenderProcessHost exclusively hosts PDF
   // content.
@@ -345,11 +359,14 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   virtual void RemovePriorityClient(
       RenderProcessHostPriorityClient* priority_client) = 0;
 
+#if !BUILDFLAG(IS_ANDROID)
   // Sets a process priority override. This overrides the entire built-in
   // priority setting mechanism for the process.
-  virtual void SetPriorityOverride(bool foreground) = 0;
+  // TODO(pmonette): Make this work well on Android.
+  virtual void SetPriorityOverride(base::Process::Priority priority) = 0;
   virtual bool HasPriorityOverride() = 0;
   virtual void ClearPriorityOverride() = 0;
+#endif
 
 #if BUILDFLAG(IS_ANDROID)
   // Return the highest importance of all widgets in this process.
@@ -438,8 +455,8 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   // a crash.
   virtual const base::TimeTicks& GetLastInitTime() = 0;
 
-  // Returns true if this process currently has backgrounded priority.
-  virtual bool IsProcessBackgrounded() = 0;
+  // Returns the priority of this process.
+  virtual base::Process::Priority GetPriority() = 0;
 
   // Returns a list of durations for active KeepAlive requests.
   // For debugging only. TODO(wjmaclean): Remove once the causes behind
@@ -467,9 +484,11 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   // process. RegisterRenderFrameHost and UnregisterRenderFrameHost are the
   // implementation details and should be called only from within //content.
   virtual void RegisterRenderFrameHost(
-      const GlobalRenderFrameHostId& render_frame_host_id) = 0;
+      const GlobalRenderFrameHostId& render_frame_host_id,
+      bool is_outermost_main_frame) = 0;
   virtual void UnregisterRenderFrameHost(
-      const GlobalRenderFrameHostId& render_frame_host_id) = 0;
+      const GlobalRenderFrameHostId& render_frame_host_id,
+      bool is_outermost_main_frame) = 0;
 
   // "Worker ref count" is similar to "Keep alive ref count", but is specific to
   // workers since they do not have pre-defined timeouts. Also affected by
@@ -587,6 +606,7 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
       const network::CrossOriginEmbedderPolicy& cross_origin_embedder_policy,
       mojo::PendingRemote<network::mojom::CrossOriginEmbedderPolicyReporter>
           coep_reporter_remote,
+      const network::DocumentIsolationPolicy& document_isolation_policy,
       const storage::BucketLocator& bucket_locator,
       mojo::PendingReceiver<blink::mojom::CacheStorage> receiver) = 0;
   virtual void BindFileSystemManager(
@@ -598,11 +618,12 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
           receiver) = 0;
   virtual void GetSandboxedFileSystemForBucket(
       const storage::BucketLocator& bucket_locator,
+      const std::vector<std::string>& directory_path_components,
       blink::mojom::FileSystemAccessManager::GetSandboxedFileSystemCallback
           callback) = 0;
   virtual void BindIndexedDB(
       const blink::StorageKey& storage_key,
-      const GlobalRenderFrameHostId& rfh_id,
+      BucketContext& bucket_context,
       mojo::PendingReceiver<blink::mojom::IDBFactory> receiver) = 0;
   virtual void BindBucketManagerHost(
       base::WeakPtr<BucketContext> bucket_context,
@@ -663,18 +684,13 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
 
   // Returns the cross-origin isolation mode used by content in this process.
   //
-  // This returns the kMaybe* enum values because it can't take Permissions
-  // Policy into account. A frame's isolation capability may be kNotIsolated
-  // even if it is running in a kMaybeIsolated process if the
-  // "cross-origin-isolated" feature was not delegated to the frame. Because
-  // of this, not all frames or workers in the same process will share the same
-  // isolation capability.
-  //
-  // Additionally, unlike WebExposedIsolationInfo, this is not guaranteed to be
-  // the same for all processes in a BrowsingInstance; content that is
-  // cross-origin to a kMaybeIsolatedApplication main frame will return
-  // kMaybeIsolated, as the application isolation level cannot be inherited
-  // cross-origin.
+  // Unlike WebExposedIsolationInfo, this is not guaranteed to be the same for
+  // all processes in a BrowsingInstance; frames that are not delegated the
+  // "cross-origin-isolated" permissions policy will have a kNotIsolated
+  // isolation level, even if their WebExposedIsolationInfo is isolated.
+  // Additionally, content that is cross-origin to a kIsolatedApplication main
+  // frame will return kIsolated, as the application isolation level cannot be
+  // inherited cross-origin.
   //
   // RenderFrameHost::GetWebExposedIsolationLevel() should typically be used
   // instead of this function if running in the context a frame so that
@@ -684,10 +700,9 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   // API to access isolation capability may need to be introduced which should
   // be used instead of this.
   //
-  // Note that this function doesn't account for API availability for certain
-  // documents and URLs that might be force-enabled by the embedder even if they
-  // lack the necessary privilege; in order for this matter to be taken into
-  // consideration, use content::IsIsolatedContext(RenderProcessHost*).
+  // Note that the embedder can force-enable APIs in frames even if they
+  // lack the necessary privilege. This function doesn't account for that;
+  // use content::IsIsolatedContext(RenderProcessHost*) to handle this case.
   WebExposedIsolationLevel GetWebExposedIsolationLevel();
 
   // Posts |task|, if this RenderProcessHost is ready or when it becomes ready
@@ -730,6 +745,12 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   // to the different components to figure out.
   virtual void SetBatterySaverMode(bool battery_saver_mode_enabled) = 0;
 
+  // Return the memory usage of this process. On Android this value is
+  // provided by the renderer periodically. On other platforms this value is
+  // read from the OS but is cached for a short duration so we don't incur
+  // a cost on every call.
+  virtual uint64_t GetPrivateMemoryFootprint() = 0;
+
   // Static management functions -----------------------------------------------
 
   // Possibly start an unbound, spare RenderProcessHost. A subsequent creation
@@ -753,7 +774,7 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
 
   // Return the spare RenderProcessHost, if it exists. There is at most one
   // globally-used spare RenderProcessHost at any time.
-  // TODO(crbug.com/1519190): remove the non-test method once the performance
+  // TODO(crbug.com/41492171): remove the non-test method once the performance
   // investigation is finished.
   static RenderProcessHost* GetSpareRenderProcessHost();
   static RenderProcessHost* GetSpareRenderProcessHostForTesting();

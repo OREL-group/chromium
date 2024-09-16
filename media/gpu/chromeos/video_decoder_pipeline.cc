@@ -38,7 +38,6 @@
 #include <drm_fourcc.h>
 #include "media/gpu/vaapi/vaapi_video_decoder.h"
 #elif BUILDFLAG(USE_V4L2_CODEC)
-#include "media/gpu/v4l2/stateless/v4l2_stateless_video_decoder.h"
 #include "media/gpu/v4l2/v4l2_stateful_video_decoder.h"
 #include "media/gpu/v4l2/v4l2_video_decoder.h"
 #else
@@ -73,20 +72,37 @@ std::optional<Fourcc> PickRenderableFourcc(
 // Estimates the number of buffers needed in the output frame pool to fill the
 // Renderer pipeline (this pool may provide buffers to the VideoDecoder
 // directly or to the ImageProcessor, when this is instantiated).
-size_t EstimateRequiredRendererPipelineBuffers(bool low_delay) {
+size_t EstimateRequiredRendererPipelineBuffers(bool low_delay,
+                                               bool use_protected) {
   // kMaxVideoFrames is meant to be the number of VideoFrames needed to populate
   // the whole Renderer playback pipeline when there's no smoothing playback
   // queue, i.e. in low latency scenarios such as WebRTC etc. For non-low
   // latency scenarios, a large smoothing playback is used in the Renderer
   // process. Heuristically, the extra depth needed is in the range of 15 or
   // so, so we need to add a few extra buffers.
+  // For V4L2 secure playback, we need to limit the pipeline depth or we will
+  // run out of memory. We are going further than we are with the test because
+  // the memory consequences of using more are too great and so far have yielded
+  // no problems in testing.
   constexpr size_t kExpectedNonLatencyPipelineDepth = 16;
+#if BUILDFLAG(USE_V4L2_CODEC)
+  constexpr size_t kExpectedNonLatencyPipelineDepthSecure = 6;
+#endif
   static_assert(kExpectedNonLatencyPipelineDepth > limits::kMaxVideoFrames,
                 "kMaxVideoFrames is expected to be relatively small");
-  if (low_delay)
+  constexpr size_t kReducedNonLatencyPipelineDepth = 8;
+
+  if (low_delay) {
     return limits::kMaxVideoFrames + 1;
-  else
+#if BUILDFLAG(USE_V4L2_CODEC)
+  } else if (use_protected) {
+    return kExpectedNonLatencyPipelineDepthSecure;
+#endif
+  } else if (base::FeatureList::IsEnabled(kReduceHardwareVideoDecoderBuffers)) {
+    return kReducedNonLatencyPipelineDepth;
+  } else {
     return kExpectedNonLatencyPipelineDepth;
+  }
 }
 
 scoped_refptr<base::SequencedTaskRunner> GetDecoderTaskRunner(
@@ -105,6 +121,46 @@ scoped_refptr<base::SequencedTaskRunner> GetDecoderTaskRunner(
        base::MayBlock()},
       base::SingleThreadTaskRunnerThreadMode::DEDICATED);
 }
+
+// DefaultFrameConverter uses the FrameResource built-in converters to handle
+// conversion to VideoFrame objects. It is used by VideoDecoderPipeline when a
+// client doesn't specify a FrameConverter.
+class DefaultFrameConverter : public FrameResourceConverter {
+ public:
+  static std::unique_ptr<FrameResourceConverter> Create() {
+    return base::WrapUnique<FrameResourceConverter>(
+        new DefaultFrameConverter());
+  }
+
+  DefaultFrameConverter(const DefaultFrameConverter&) = delete;
+  DefaultFrameConverter& operator=(const DefaultFrameConverter&) = delete;
+
+ private:
+  DefaultFrameConverter() = default;
+  ~DefaultFrameConverter() override = default;
+
+  // FrameConverter overrides.
+  void ConvertFrameImpl(scoped_refptr<FrameResource> frame) override {
+    DVLOGF(4);
+
+    if (!frame) {
+      return OnError(FROM_HERE, "Invalid frame.");
+    }
+    LOG_ASSERT(frame->AsVideoFrameResource() ||
+               frame->AsNativePixmapFrameResource())
+        << "|frame| is expected to be a VideoFrameResource or "
+           "NativePixmapFrameResource";
+    scoped_refptr<VideoFrame> video_frame =
+        frame->AsVideoFrameResource()
+            ? frame->AsVideoFrameResource()->GetMutableVideoFrame()
+            : frame->AsNativePixmapFrameResource()->CreateVideoFrame();
+    if (!video_frame) {
+      return OnError(FROM_HERE,
+                     "Failed to convert FrameResource to VideoFrame.");
+    }
+    Output(std::move(video_frame));
+  }
+};
 }  //  namespace
 
 VideoDecoderMixin::VideoDecoderMixin(
@@ -132,7 +188,8 @@ void VideoDecoderMixin::Initialize(const VideoDecoderConfig& config,
                                    InitCB init_cb,
                                    const OutputCB& output_cb,
                                    const WaitingCB& waiting_cb) {
-  NOTREACHED() << "FrameResource version of Initialize is used instead";
+  NOTREACHED_IN_MIGRATION()
+      << "FrameResource version of Initialize is used instead";
 }
 
 void VideoDecoderMixin::ReleaseSecureBuffer(uint64_t secure_handle) {}
@@ -154,7 +211,7 @@ std::unique_ptr<VideoDecoder> VideoDecoderPipeline::Create(
     const gpu::GpuDriverBugWorkarounds& workarounds,
     scoped_refptr<base::SequencedTaskRunner> client_task_runner,
     std::unique_ptr<DmabufVideoFramePool> frame_pool,
-    std::unique_ptr<MailboxVideoFrameConverter> frame_converter,
+    std::unique_ptr<FrameResourceConverter> frame_converter,
     std::vector<Fourcc> renderable_fourccs,
     std::unique_ptr<MediaLog> media_log,
     mojo::PendingRemote<stable::mojom::StableVideoDecoder> oop_video_decoder,
@@ -173,15 +230,10 @@ std::unique_ptr<VideoDecoder> VideoDecoderPipeline::Create(
 #if BUILDFLAG(USE_VAAPI)
     create_decoder_function_cb = base::BindOnce(&VaapiVideoDecoder::Create);
 #elif BUILDFLAG(USE_V4L2_CODEC)
-    if (base::FeatureList::IsEnabled(kV4L2FlatVideoDecoder) ||
-        base::FeatureList::IsEnabled(kV4L2FlatStatefulVideoDecoder)) {
-      if (IsV4L2DecoderStateful()) {
-        create_decoder_function_cb =
-            base::BindOnce(&V4L2StatefulVideoDecoder::Create);
-      } else {
-        create_decoder_function_cb =
-            base::BindOnce(&V4L2StatelessVideoDecoder::Create);
-      }
+    if (base::FeatureList::IsEnabled(kV4L2FlatStatefulVideoDecoder) &&
+        IsV4L2DecoderStateful()) {
+      create_decoder_function_cb =
+          base::BindOnce(&V4L2StatefulVideoDecoder::Create);
     } else {
       create_decoder_function_cb = base::BindOnce(&V4L2VideoDecoder::Create);
     }
@@ -213,13 +265,7 @@ std::unique_ptr<VideoDecoder> VideoDecoderPipeline::CreateForVDAAdapterForARC(
 #if BUILDFLAG(USE_VAAPI)
   create_decoder_function_cb = base::BindOnce(&VaapiVideoDecoder::Create);
 #elif BUILDFLAG(USE_V4L2_CODEC)
-  if (base::FeatureList::IsEnabled(kV4L2FlatVideoDecoder) &&
-      !IsV4L2DecoderStateful()) {
-    create_decoder_function_cb =
-        base::BindOnce(&V4L2StatelessVideoDecoder::Create);
-  } else {
-    create_decoder_function_cb = base::BindOnce(&V4L2VideoDecoder::Create);
-  }
+  create_decoder_function_cb = base::BindOnce(&V4L2VideoDecoder::Create);
 #else
   return nullptr;
 #endif
@@ -244,15 +290,10 @@ std::unique_ptr<VideoDecoder> VideoDecoderPipeline::CreateForTesting(
 #if BUILDFLAG(USE_VAAPI)
   create_decoder_function_cb = base::BindOnce(&VaapiVideoDecoder::Create);
 #elif BUILDFLAG(USE_V4L2_CODEC)
-  if (base::FeatureList::IsEnabled(kV4L2FlatVideoDecoder) ||
-      base::FeatureList::IsEnabled(kV4L2FlatStatefulVideoDecoder)) {
-    if (IsV4L2DecoderStateful()) {
-      create_decoder_function_cb =
-          base::BindOnce(&V4L2StatefulVideoDecoder::Create);
-    } else {
-      create_decoder_function_cb =
-          base::BindOnce(&V4L2StatelessVideoDecoder::Create);
-    }
+  if (base::FeatureList::IsEnabled(kV4L2FlatStatefulVideoDecoder) &&
+      IsV4L2DecoderStateful()) {
+    create_decoder_function_cb =
+        base::BindOnce(&V4L2StatefulVideoDecoder::Create);
   } else {
     create_decoder_function_cb = base::BindOnce(&V4L2VideoDecoder::Create);
   }
@@ -367,7 +408,7 @@ VideoDecoderPipeline::VideoDecoderPipeline(
     const gpu::GpuDriverBugWorkarounds& gpu_workarounds,
     scoped_refptr<base::SequencedTaskRunner> client_task_runner,
     std::unique_ptr<DmabufVideoFramePool> frame_pool,
-    std::unique_ptr<MailboxVideoFrameConverter> frame_converter,
+    std::unique_ptr<FrameResourceConverter> frame_converter,
     std::vector<Fourcc> renderable_fourccs,
     std::unique_ptr<MediaLog> media_log,
     CreateDecoderFunctionCB create_decoder_function_cb,
@@ -380,7 +421,8 @@ VideoDecoderPipeline::VideoDecoderPipeline(
               ? client_task_runner_
               : GetDecoderTaskRunner(in_video_decoder_process)),
       main_frame_pool_(std::move(frame_pool)),
-      frame_converter_(std::move(frame_converter)),
+      frame_converter_(frame_converter ? std::move(frame_converter)
+                                       : DefaultFrameConverter::Create()),
       renderable_fourccs_(std::move(renderable_fourccs)),
       media_log_(std::move(media_log)),
       create_decoder_function_cb_(std::move(create_decoder_function_cb)),
@@ -395,8 +437,6 @@ VideoDecoderPipeline::VideoDecoderPipeline(
   decoder_weak_this_ = decoder_weak_this_factory_.GetWeakPtr();
 
   main_frame_pool_->set_parent_task_runner(decoder_task_runner_);
-  if (!frame_converter_)
-    return;
   frame_converter_->Initialize(
       decoder_task_runner_,
       base::BindRepeating(&VideoDecoderPipeline::OnFrameConverted,
@@ -595,8 +635,8 @@ void VideoDecoderPipeline::InitializeTask(const VideoDecoderConfig& config,
     return;
   }
 
-  if (frame_converter_) {
-    MailboxVideoFrameConverter::GetOriginalFrameCB get_original_frame_cb;
+  if (frame_converter_->UsesGetOriginalFrameCB()) {
+    FrameResourceConverter::GetOriginalFrameCB get_original_frame_cb;
 
     if (uses_oop_video_decoder_) {
       // Note: base::Unretained() is safe because either a) |decoder_| outlives
@@ -610,8 +650,9 @@ void VideoDecoderPipeline::InitializeTask(const VideoDecoderConfig& config,
       CHECK(main_frame_pool_);
       PlatformVideoFramePool* platform_video_frame_pool =
           main_frame_pool_->AsPlatformVideoFramePool();
-      // When a |frame_converter_| is used, the |main_frame_pool_| should always
-      // be a PlatformVideoFramePool.
+      // The only |frame_converter_| that needs the GetOriginalFrameCB callback
+      // is the MailboxVideoFrameConverter. When it is used, the
+      // |main_frame_pool_| should always be a PlatformVideoFramePool.
       CHECK(platform_video_frame_pool);
 
       // Note: base::Unretained() is safe because either a) the
@@ -628,7 +669,12 @@ void VideoDecoderPipeline::InitializeTask(const VideoDecoderConfig& config,
   }
 
   estimated_num_buffers_for_renderer_ =
-      EstimateRequiredRendererPipelineBuffers(low_delay);
+      EstimateRequiredRendererPipelineBuffers(low_delay, config.is_encrypted());
+
+#if BUILDFLAG(USE_V4L2_CODEC)
+  decryption_needs_vp9_superframe_splitting_ =
+      config.codec() == VideoCodec::kVP9;
+#endif
 
 #if BUILDFLAG(USE_VAAPI)
   if (ignore_resolution_changes_to_smaller_for_testing_) {
@@ -658,9 +704,7 @@ void VideoDecoderPipeline::OnInitializeDone(InitCB init_cb,
     MEDIA_LOG(ERROR, media_log_)
         << "VideoDecoderPipeline |decoder_| Initialize() failed, status: "
         << static_cast<int>(status.code());
-    if (frame_converter_) {
-      frame_converter_->set_get_original_frame_cb(base::NullCallback());
-    }
+    frame_converter_->set_get_original_frame_cb(base::NullCallback());
 #if BUILDFLAG(IS_CHROMEOS)
     // We always need to destroy |buffer_transcryptor_| if it exists before
     // |decoder_|.
@@ -676,9 +720,7 @@ void VideoDecoderPipeline::OnInitializeDone(InitCB init_cb,
   if (decoder_ && decoder_->NeedsTranscryption()) {
     if (!cdm_context) {
       VLOGF(1) << "CdmContext required for transcryption";
-      if (frame_converter_) {
-        frame_converter_->set_get_original_frame_cb(base::NullCallback());
-      }
+      frame_converter_->set_get_original_frame_cb(base::NullCallback());
       // We always need to destroy |buffer_transcryptor_| if it exists before
       // |decoder_|.
       buffer_transcryptor_.reset();
@@ -687,7 +729,7 @@ void VideoDecoderPipeline::OnInitializeDone(InitCB init_cb,
     } else {
       // We need to enable transcryption for protected content.
       buffer_transcryptor_ = std::make_unique<DecoderBufferTranscryptor>(
-          cdm_context, *decoder_,
+          cdm_context, *decoder_, decryption_needs_vp9_superframe_splitting_,
           base::BindRepeating(&VideoDecoderPipeline::OnBufferTranscrypted,
                               decoder_weak_this_),
           base::BindRepeating(&VideoDecoderPipeline::OnDecoderWaiting,
@@ -730,8 +772,7 @@ void VideoDecoderPipeline::OnResetDone(base::OnceClosure reset_cb) {
 
   if (image_processor_)
     image_processor_->Reset();
-  if (frame_converter_)
-    frame_converter_->AbortPendingFrames();
+  frame_converter_->AbortPendingFrames();
 
 #if BUILDFLAG(IS_CHROMEOS)
   if (buffer_transcryptor_)
@@ -847,11 +888,8 @@ void VideoDecoderPipeline::OnFrameDecoded(scoped_refptr<FrameResource> frame) {
                        decoder_weak_this_));
     return;
   }
-  if (frame_converter_) {
-    frame_converter_->ConvertFrame(std::move(frame));
-  } else {
-    OnFrameConverted(std::move(frame));
-  }
+
+  frame_converter_->ConvertFrame(std::move(frame));
 }
 
 void VideoDecoderPipeline::OnFrameProcessed(
@@ -860,39 +898,23 @@ void VideoDecoderPipeline::OnFrameProcessed(
   DVLOGF(4);
   TRACE_EVENT1("media,gpu", "VideoDecoderPipeline::OnFrameProcessed",
                "timestamp", (frame ? frame->timestamp().InMicroseconds() : 0));
-  if (frame_converter_) {
-    frame_converter_->ConvertFrame(std::move(frame));
-  } else {
-    OnFrameConverted(std::move(frame));
-  }
+  frame_converter_->ConvertFrame(std::move(frame));
 }
 
 void VideoDecoderPipeline::OnFrameConverted(
-    scoped_refptr<FrameResource> frame) {
+    scoped_refptr<VideoFrame> video_frame) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(decoder_sequence_checker_);
   DVLOGF(4);
   TRACE_EVENT1("media,gpu", "VideoDecoderPipeline::OnFrameConverted",
-               "timestamp", (frame ? frame->timestamp().InMicroseconds() : 0));
-  if (!frame)
+               "timestamp",
+               (video_frame ? video_frame->timestamp().InMicroseconds() : 0));
+  if (!video_frame) {
     return OnError("Frame converter returns null frame.");
+  }
   if (has_error_) {
     DVLOGF(2) << "Skip returning frames after error occurs.";
     return;
   }
-
-  // Gets or creates a VideoFrame from |frame|.
-  LOG_ASSERT(frame->AsVideoFrameResource() ||
-             frame->AsNativePixmapFrameResource())
-      << "frame is expected to be a VideoFrameResource or "
-         "NativePixmapFrameResource";
-  scoped_refptr<VideoFrame> video_frame =
-      frame->AsVideoFrameResource()
-          ? frame->AsVideoFrameResource()->GetMutableVideoFrame()
-          : frame->AsNativePixmapFrameResource()->CreateVideoFrame();
-
-  // Invalidates |frame| to avoid accidental usage. |video_frame| is what will
-  // be output.
-  frame.reset();
 
   // Flag that the video frame was decoded in a power efficient way.
   video_frame->metadata().power_efficient = true;
@@ -922,7 +944,7 @@ void VideoDecoderPipeline::OnDecoderWaiting(WaitingReason reason) {
 bool VideoDecoderPipeline::HasPendingFrames() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(decoder_sequence_checker_);
   const bool frame_converter_has_pending_frames_ =
-      frame_converter_ && frame_converter_->HasPendingFrames();
+      frame_converter_->HasPendingFrames();
   const bool image_processor_has_pending_frames_ =
       image_processor_ && image_processor_->HasPendingFrames();
 
@@ -943,8 +965,7 @@ void VideoDecoderPipeline::OnError(const std::string& msg) {
 
   if (image_processor_)
     image_processor_->Reset();
-  if (frame_converter_)
-    frame_converter_->AbortPendingFrames();
+  frame_converter_->AbortPendingFrames();
 
 #if BUILDFLAG(IS_CHROMEOS)
   if (buffer_transcryptor_)
@@ -1094,13 +1115,7 @@ VideoDecoderPipeline::PickDecoderOutputFormat(
     // to the preferred formats. There's no need to allocate frames.
     // This is not compatible with VdVideoDecodeAccelerator, which
     // expects GPU buffers in VdVideoDecodeAccelerator::GetPicture()
-    //
-    // frame_converter_ is only expected to be nullptr when running tests.
-    // Currently this is because the frame converter doesn't work, and since
-    // the tests don't need to render the frame, it can be bypassed.
-    if (frame_converter_) {
-      frame_converter_->set_get_original_frame_cb(base::NullCallback());
-    }
+    frame_converter_->set_get_original_frame_cb(base::NullCallback());
     main_frame_pool_.reset();
     return *viable_candidate;
   }
@@ -1136,6 +1151,35 @@ VideoDecoderPipeline::PickDecoderOutputFormat(
         num_codec_reference_frames + 1 + estimated_num_buffers_for_renderer_);
     VLOGF(1) << "Initializing frame pool with up to " << num_pictures
              << " VideoFrames. No ImageProcessor needed.";
+
+#if BUILDFLAG(USE_V4L2_CODEC)
+    if (use_protected) {
+      // Check to make sure we aren't going to blow our memory budget for V4L2
+      // secure playback. We have 210MB reserved for the frame pool we allocate
+      // here.
+      constexpr size_t kMaxV4L2ProtectedMemory = 210 * 1024 * 1024;
+      // Resolution
+      size_t mem_required =
+          viable_candidate->size.width() * viable_candidate->size.height();
+      // YUV 4:2:0
+      mem_required = mem_required * 3 / 2;
+      if (viable_candidate->fourcc == Fourcc(Fourcc::MT2T)) {
+        // 10-bit
+        mem_required = mem_required * 5 / 4;
+      }
+      // For each picture
+      mem_required *= num_pictures;
+      VLOGF(1) << "V4L2 secure memory requirement is "
+               << (mem_required / (1024 * 1024)) << "MB";
+      if (mem_required > kMaxV4L2ProtectedMemory) {
+        LOG(ERROR) << "Exceeded max memory for secure V4L2: "
+                   << (mem_required / (1024 * 1024)) << "MB of "
+                   << (kMaxV4L2ProtectedMemory / (1024 * 1024)) << "MB";
+        return CroStatus::Codes::kUnableToAllocateSecureBuffer;
+      }
+    }
+#endif  // BUILDFLAG(USE_V4L2_CODEC)
+
     CroStatus::Or<GpuBufferLayout> status_or_layout =
         main_frame_pool_->Initialize(viable_candidate->fourcc,
                                      viable_candidate->size,
@@ -1216,7 +1260,8 @@ VideoDecoderPipeline::PickDecoderOutputFormat(
 
   if (!image_processor) {
     DVLOGF(2) << "Unable to find ImageProcessor to convert format";
-    // TODO(crbug/1103510): Make CreateWithInputCandidates return an Or type.
+    // TODO(crbug.com/40139291): Make CreateWithInputCandidates return an Or
+    // type.
     return CroStatus::Codes::kFailedToCreateImageProcessor;
   }
 

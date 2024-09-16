@@ -59,13 +59,15 @@ source_set("base") {
     "cpu_utils.h",
     "directory_service_client.cc",
     "directory_service_client.h",
-    "hostname.cc",
-    "hostname.h",
+    "fqdn.cc",
+    "fqdn.h",
     "internal_headers.h",
     "is_google_email.cc",
     "is_google_email.h",
     "leaky_bucket.cc",
     "leaky_bucket.h",
+    "local_session_policies_provider.cc",
+    "local_session_policies_provider.h",
     "logging_service_client.h",
     "protobuf_http_client.cc",
     "protobuf_http_client.h",
@@ -135,9 +137,12 @@ source_set("base") {
     ":name_value_map",
     ":protobuf_http_client_messages_proto",
     ":remoting_base_version",
+    ":session_policies",
     "//build:chromeos_buildflags",
     "//google_apis",
+    "//google_apis/common:request_util",
     "//remoting/proto:internal_structs",
+    "//remoting/proto/google/internal/remoting/cloud/v1alpha:messages",
     "//remoting/proto/remoting/v1:cloud_proto",
     "//remoting/proto/remoting/v1:directory_proto",
     "//remoting/proto/remoting/v1:telemetry_messages",
@@ -190,6 +195,18 @@ source_set("errors") {
   ]
 }
 
+source_set("session_policies") {
+  public = [
+    "port_range.h",
+    "session_policies.h",
+  ]
+  sources = [
+    "port_range.cc",
+    "session_policies.cc",
+  ]
+  deps = [ "//base" ]
+}
+
 source_set("authorization") {
   sources = [
     "gaia_oauth_client.cc",
@@ -223,31 +240,33 @@ source_set("authorization") {
 }
 
 source_set("breakpad") {
-  sources = [ "breakpad.h" ]
+  sources = [
+    "breakpad.h",
+    "breakpad_utils.cc",
+    "breakpad_utils.h",
+  ]
 
   configs += [ "//build/config/compiler:wexit_time_destructors" ]
 
-  deps = [ "//base" ]
+  deps = [
+    ":remoting_base_version",
+    "//base",
+  ]
 
   if (is_linux || is_chromeos) {
+    sources += [ "breakpad_linux.cc" ]
+    deps += [ "//third_party/breakpad:client" ]
+  } else if (is_mac) {
+    sources += [ "breakpad_mac.mm" ]
+  } else if (is_win) {
     sources += [
-      "breakpad_linux.cc",
-      "breakpad_utils_linux.cc",
-      "breakpad_utils_linux.h",
+      "breakpad_server.cc",
+      "breakpad_win.cc",
     ]
     deps += [
-      ":remoting_base_version",
-      "//third_party/breakpad:client",
+      ":logging",
+      "//third_party/breakpad:breakpad_handler",
     ]
-  }
-
-  if (is_mac) {
-    sources += [ "breakpad_mac.mm" ]
-  }
-
-  if (is_win) {
-    sources += [ "breakpad_win.cc" ]
-    deps += [ "//third_party/breakpad:breakpad_handler" ]
   }
 }
 
@@ -397,7 +416,9 @@ source_set("unit_tests") {
     "capabilities_unittest.cc",
     "compound_buffer_unittest.cc",
     "leaky_bucket_unittest.cc",
+    "local_session_policies_provider_unittest.cc",
     "oauth_token_getter_proxy_unittest.cc",
+    "port_range_unittest.cc",
     "protobuf_http_client_unittest.cc",
     "protobuf_http_stream_parser_unittest.cc",
     "queued_task_poster_unittest.cc",
@@ -406,6 +427,7 @@ source_set("unit_tests") {
     "rsa_key_pair_unittest.cc",
     "running_samples_unittest.cc",
     "session_options_unittest.cc",
+    "session_policies_unittest.cc",
     "telemetry_log_writer_unittest.cc",
     "typed_buffer_unittest.cc",
     "util_unittest.cc",
@@ -416,6 +438,7 @@ source_set("unit_tests") {
     ":logging",
     ":protobuf_http_client_messages_proto",
     ":run_all_unittests",
+    ":session_policies",
     ":test_proto",
     ":test_support",
     "//base",
@@ -429,12 +452,6 @@ source_set("unit_tests") {
 
   if (is_win || is_chromeos_ash) {
     deps += [ "//third_party/breakpad:client" ]
-  }
-
-  if (is_win) {
-    sources += [ "breakpad_win_unittest.cc" ]
-    deps += [ "//third_party/breakpad:breakpad_handler" ]
-    libs = [ "rpcrt4.lib" ]  # For UuidCreate in breakpad_win_unittest.cc.
   }
 }
 

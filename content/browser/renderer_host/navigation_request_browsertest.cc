@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "content/browser/renderer_host/navigation_request.h"
+
 #include <memory>
 
 #include "base/command_line.h"
@@ -18,15 +20,14 @@
 #include "content/browser/process_lock.h"
 #include "content/browser/renderer_host/debug_urls.h"
 #include "content/browser/renderer_host/navigation_controller_impl.h"
-#include "content/browser/renderer_host/navigation_request.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
-#include "content/browser/runtime_feature_state/runtime_feature_state_document_data.h"
 #include "content/browser/site_instance_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/common/content_navigation_policy.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_throttle.h"
+#include "content/public/browser/runtime_feature_state/runtime_feature_state_document_data.h"
 #include "content/public/browser/site_isolation_policy.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
@@ -569,6 +570,19 @@ class NavigationRequestBrowserTest : public ContentBrowserTest {
     content::RenderFrameHost* rfh =
         shell()->web_contents()->GetPrimaryMainFrame();
     EXPECT_EQ(kBodyTextContent, EvalJs(rfh, "document.body.textContent"));
+  }
+};
+
+// A test class that calls IsolateAllSitesForTesting() early enough in the setup
+// that we get consistent results for AreOriginKeyedProcessesEnabledByDefault()
+// if kOriginKeyedProcessesByDefault is enabled. Specifically, make sure the
+// initial shell's main frame's BrowsingInstance gets the correct default
+// isolation state, which depends on AreOriginKeyedProcessesEnabledByDefault().
+class NavigationRequestBrowserTest_IsolateAllSites
+    : public NavigationRequestBrowserTest {
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    NavigationRequestBrowserTest::SetUpCommandLine(command_line);
+    IsolateAllSitesForTesting(command_line);
   }
 };
 
@@ -2655,11 +2669,11 @@ IN_PROC_BROWSER_TEST_F(NavigationRequestBrowserTest, BlockedRequestAfterWebUI) {
   WebContents* web_contents = shell()->web_contents();
 
   // Navigate to the initial page.
-  EXPECT_FALSE(web_contents->GetPrimaryMainFrame()->GetEnabledBindings() &
-               BINDINGS_POLICY_WEB_UI);
+  EXPECT_FALSE(web_contents->GetPrimaryMainFrame()->GetEnabledBindings().Has(
+      BindingsPolicyValue::kWebUi));
   EXPECT_TRUE(NavigateToURL(shell(), web_ui_url));
-  EXPECT_TRUE(web_contents->GetPrimaryMainFrame()->GetEnabledBindings() &
-              BINDINGS_POLICY_WEB_UI);
+  EXPECT_TRUE(web_contents->GetPrimaryMainFrame()->GetEnabledBindings().Has(
+      BindingsPolicyValue::kWebUi));
   scoped_refptr<SiteInstance> web_ui_process = web_contents->GetSiteInstance();
 
   // Start a new, non-webUI navigation that will be blocked by a
@@ -2730,7 +2744,7 @@ IN_PROC_BROWSER_TEST_F(NavigationRequestBrowserTest,
 
 // Check that iframe with embedded credentials are blocked.
 // See https://crbug.com/755892.
-// TODO(crbug.com/1262910): Enable the test again.
+// TODO(crbug.com/40799853): Enable the test again.
 IN_PROC_BROWSER_TEST_F(NavigationRequestBrowserTest,
                        DISABLED_BlockCredentialedSubresources) {
   const struct {
@@ -2833,7 +2847,8 @@ IN_PROC_BROWSER_TEST_F(NavigationRequestBrowserTest,
   }
 }
 
-IN_PROC_BROWSER_TEST_F(NavigationRequestBrowserTest, StartToCommitMetrics) {
+IN_PROC_BROWSER_TEST_F(NavigationRequestBrowserTest_IsolateAllSites,
+                       StartToCommitMetrics) {
   enum class FrameType {
     kMain,
     kSub,
@@ -2897,7 +2912,6 @@ IN_PROC_BROWSER_TEST_F(NavigationRequestBrowserTest, StartToCommitMetrics) {
   };
 
   // Main frame tests.
-  IsolateAllSitesForTesting(base::CommandLine::ForCurrentProcess());
   EXPECT_TRUE(
       NavigateToURL(shell(), embedded_test_server()->GetURL("/hello.html")));
   {
@@ -4324,7 +4338,7 @@ IN_PROC_BROWSER_TEST_F(NavigationRequestPrerenderBrowserTest,
             primary_main_frame->cross_origin_embedder_policy().value);
 
   // Add a prerender.
-  int host_id = prerender_helper().AddPrerender(
+  FrameTreeNodeId host_id = prerender_helper().AddPrerender(
       https_server()->GetURL("a.test", "/title1.html?prerendering"));
   content::RenderFrameHostImpl* prerender_main_frame =
       static_cast<content::RenderFrameHostImpl*>(

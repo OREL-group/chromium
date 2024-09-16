@@ -17,7 +17,7 @@ import {WebUiListenerMixin} from '//resources/cr_elements/web_ui_listener_mixin.
 import {assert} from '//resources/js/assert.js';
 import {PolymerElement} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 import type {SyncBrowserProxy, SyncPrefs, SyncStatus} from '/shared/settings/people_page/sync_browser_proxy.js';
-import {StatusAction, SyncBrowserProxyImpl, syncPrefsIndividualDataTypes} from '/shared/settings/people_page/sync_browser_proxy.js';
+import {SignedInState, StatusAction, SyncBrowserProxyImpl, syncPrefsIndividualDataTypes} from '/shared/settings/people_page/sync_browser_proxy.js';
 // <if expr="chromeos_lacros">
 import {OpenWindowProxyImpl} from 'chrome://resources/js/open_window_proxy.js';
 
@@ -208,6 +208,13 @@ export class SettingsSyncControlsElement extends
     return syncAllDataTypes || dataTypeManaged;
   }
 
+  // <if expr="chromeos_ash">
+  private hideCookieItem_(
+      syncCookiesSupported: boolean, cookiesRegistered: boolean): boolean {
+    return !syncCookiesSupported || !cookiesRegistered;
+  }
+  // </if>
+
   private syncStatusChanged_() {
     const router = Router.getInstance();
     const routes = router.getRoutes() as {SYNC: Route, SYNC_ADVANCED: Route};
@@ -226,7 +233,8 @@ export class SettingsSyncControlsElement extends
       return false;
     }
 
-    if (!this.syncStatus.signedIn || this.syncStatus.disabled) {
+    if (this.syncStatus.signedInState !== SignedInState.SYNCING ||
+        this.syncStatus.disabled) {
       return true;
     }
 

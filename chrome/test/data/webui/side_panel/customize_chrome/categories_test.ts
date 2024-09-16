@@ -15,9 +15,8 @@ import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {assertDeepEquals, assertEquals, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import type {MetricsTracker} from 'chrome://webui-test/metrics_test_support.js';
 import {fakeMetricsPrivate} from 'chrome://webui-test/metrics_test_support.js';
-import {waitAfterNextRender} from 'chrome://webui-test/polymer_test_util.js';
 import type {TestMock} from 'chrome://webui-test/test_mock.js';
-import {eventToPromise} from 'chrome://webui-test/test_util.js';
+import {eventToPromise, microtasksFinished} from 'chrome://webui-test/test_util.js';
 
 import {$$, createBackgroundImage, createTheme, installMock} from './test_support.js';
 
@@ -107,8 +106,9 @@ suite('CategoriesTest', () => {
     await setInitialSettings(1);
 
     const eventPromise = eventToPromise('collection-select', categoriesElement);
-    const category = categoriesElement.shadowRoot!.querySelector(
-                         '.collection')! as HTMLButtonElement;
+    const category =
+        categoriesElement.shadowRoot!.querySelector<HTMLElement>('.collection');
+    assertTrue(!!category);
     category.click();
     const event = (await eventPromise) as CustomEvent<BackgroundCollection>;
     assertTrue(!!event);
@@ -130,20 +130,36 @@ suite('CategoriesTest', () => {
     assertEquals(1, handler.getCallCount('setDefaultColor'));
   });
 
-  test('clicking upload image creates dialog and sends event', async () => {
-    await setInitialSettings(0);
-    handler.setResultFor('chooseLocalCustomBackground', Promise.resolve({
-      success: true,
-    }));
+  test(
+      'clicking upload image creates dialog, sends event, and announces',
+      async () => {
+        // Arrange.
+        loadTimeData.overrideValues({
+          updatedToUploadedImage: 'Theme updated to uploaded image',
+        });
+        await setInitialSettings(0);
+        handler.setResultFor('chooseLocalCustomBackground', Promise.resolve({
+          success: true,
+        }));
+        const eventPromise =
+            eventToPromise('local-image-upload', categoriesElement);
+        const announcementPromise =
+            eventToPromise('cr-a11y-announcer-messages-sent', document.body);
 
-    const eventPromise =
-        eventToPromise('local-image-upload', categoriesElement);
-    categoriesElement.$.uploadImageTile.click();
-    const event = await eventPromise;
-    assertTrue(!!event);
-    assertEquals(1, handler.getCallCount('chooseLocalCustomBackground'));
-    assertEquals(1, metrics.count('NTPRicherPicker.Backgrounds.UploadClicked'));
-  });
+        // Act.
+        categoriesElement.$.uploadImageTile.click();
+        const event = await eventPromise;
+        const announcement = await announcementPromise;
+
+        // Assert.
+        assertTrue(!!event);
+        assertTrue(!!announcement);
+        assertTrue(announcement.detail.messages.includes(
+            'Theme updated to uploaded image'));
+        assertEquals(1, handler.getCallCount('chooseLocalCustomBackground'));
+        assertEquals(
+            1, metrics.count('NTPRicherPicker.Backgrounds.UploadClicked'));
+      });
 
   test('clicking Chrome Web Store tile opens Chrome Web Store', async () => {
     await setInitialSettings(0);
@@ -159,7 +175,7 @@ suite('CategoriesTest', () => {
     const theme = createTheme();
     callbackRouterRemote.setTheme(theme);
     await callbackRouterRemote.$.flushForTesting();
-    await waitAfterNextRender(categoriesElement);
+    await microtasksFinished();
 
     // Check that classic chrome is selected.
     let checkedCategories =
@@ -176,7 +192,7 @@ suite('CategoriesTest', () => {
     theme.backgroundImage = backgroundImage;
     callbackRouterRemote.setTheme(theme);
     await callbackRouterRemote.$.flushForTesting();
-    await waitAfterNextRender(categoriesElement);
+    await microtasksFinished();
 
     // Check that upload image is selected.
     checkedCategories =
@@ -193,7 +209,7 @@ suite('CategoriesTest', () => {
     theme.backgroundImage = backgroundImage;
     callbackRouterRemote.setTheme(theme);
     await callbackRouterRemote.$.flushForTesting();
-    await waitAfterNextRender(categoriesElement);
+    await microtasksFinished();
 
     // Check that collection is selected.
     checkedCategories =
@@ -212,7 +228,7 @@ suite('CategoriesTest', () => {
     };
     callbackRouterRemote.setTheme(theme);
     await callbackRouterRemote.$.flushForTesting();
-    await waitAfterNextRender(categoriesElement);
+    await microtasksFinished();
 
     // Check that no category is selected.
     checkedCategories =
@@ -239,7 +255,7 @@ suite('CategoriesTest', () => {
             categoriesElement,
             '#classicChromeTile #cornerNewTabPageTile #cornerNewTabPage')!.src,
         'chrome://customize-chrome-side-panel.top-chrome/icons/' +
-            'gm3_corner_new_tab_page.svg');
+            'corner_new_tab_page.svg');
   });
 
   [true, false].forEach((flagEnabled) => {
@@ -271,7 +287,7 @@ suite('CategoriesTest', () => {
         theme.backgroundImage = backgroundImage;
         callbackRouterRemote.setTheme(theme);
         await callbackRouterRemote.$.flushForTesting();
-        await waitAfterNextRender(categoriesElement);
+        await microtasksFinished();
 
         // Check that wallpaper search is selected if flag is enabled and
         // nothing is selected if flag is disabled.

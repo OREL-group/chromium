@@ -19,6 +19,7 @@
 #include "base/scoped_observation.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
+#include "ui/base/class_property.h"
 #include "ui/base/dragdrop/mojom/drag_drop_types.mojom-forward.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/metadata/metadata_types.h"
@@ -58,7 +59,7 @@ class ThemeProvider;
 }  // namespace ui
 
 namespace ui_devtools {
-class PageAgentViews;
+class BubbleLocking;
 }
 
 namespace views {
@@ -110,6 +111,7 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
                             public FocusTraversable,
                             public ui::NativeThemeObserver,
                             public ui::ColorProviderSource,
+                            public ui::PropertyHandler,
                             public ui::metadata::MetaDataProvider {
   // Do not remove this macro!
   // The macro is maintained by the memory safety team.
@@ -226,10 +228,16 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
       // e.g. a scoped_ptr in tests. Production use is discouraged because the
       // Widget API might become unsafe after the platform window is closed.
       WIDGET_OWNS_NATIVE_WIDGET,
-      // NOT READY FOR PRODUCTION USE.
-      // This is intended to be a safe replacement for
-      // WIDGET_OWNS_NATIVE_WIDGET.
-      // The NativeWidget will be closed along with the platform window.
+      // Preferred Ownership mode. This is intended to be a safe replacement for
+      // WIDGET_OWNS_NATIVE_WIDGET. The NativeWidget will be closed along with
+      // the platform window.
+      // The above "default" reflects the behavior of various platforms in which
+      // the NativeWidget is effectively "owned" by the platform itself. It is
+      // possible that the NativeWidget is destroyed at the behest of the plat-
+      // form, leaving the associated Widget reference dangling.
+      // Using this ownership mode allows for the Widget being resilient to the
+      // NativeWidget being destroyed out from under the Widget while being
+      // able to manage the Widget independently.
       CLIENT_OWNS_WIDGET
     };
 
@@ -242,11 +250,15 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
                  // relationship to other windows.
     };
 
-    // Default initialization with |type| set to TYPE_WINDOW.
-    InitParams();
-
-    // Initialization for other |type| types.
+    // TODO(crbug.com/339619005): Remove this constructor once call sites
+    //                            have been migrated to always specifying
+    //                            the ownership mode as well as the type.
     explicit InitParams(Type type);
+
+    // The preferred constructor. Must specify the ownership mode. The ownership
+    // mode will eventually go away and will implicitly be CLIENT_OWNS_WIDGET.
+    // This is here for migration purposes.
+    explicit InitParams(Ownership ownership, Type type = TYPE_WINDOW);
 
     InitParams(InitParams&& other);
     ~InitParams();
@@ -266,7 +278,7 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
     // are set.
     bool ShouldInitAsHeadless() const;
 
-    Type type = TYPE_WINDOW;
+    Type type;
 
     // If null, a default implementation will be constructed. The default
     // implementation deletes itself when the Widget closes.
@@ -279,7 +291,7 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
     // top-level widget has its own focus and IME state, independent of any
     // other widget. A widget for which child is true should have a parent; if
     // it doesn't, it will not handle keyboard events or IME input at all.
-    // TODO(https://crbug.com/1057758): DCHECK(parent || !child)
+    // TODO(crbug.com/40120838): DCHECK(parent || !child)
     bool child = false;
 
     // If kTranslucent, the widget may be fully or partially transparent.
@@ -306,7 +318,7 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
     bool visible_on_all_workspaces = false;
 
     // See Widget class comment above.
-    Ownership ownership = NATIVE_WIDGET_OWNS_WIDGET;
+    Ownership ownership;
 
     bool mirror_origin_in_rtl = false;
 
@@ -323,10 +335,6 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
     // rendered, and that the client area should be equivalent to the window
     // area. Only used on some platforms (Windows and Linux).
     bool remove_standard_frame = false;
-
-    // Only used by ShellWindow on Windows. Specifies that the default icon of
-    // packaged app should be the system default icon.
-    bool use_system_default_icon = false;
 
     // Whether the widget should be maximized or minimized.
     ui::WindowShowState show_state = ui::SHOW_STATE_DEFAULT;
@@ -348,7 +356,7 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
     // windows instead need a "context". On Aura systems, if a widget has no
     // parent set, its backing aura::Window is parented to the Aura root window.
     //
-    // TODO(https://crbug.com/1057758): It makes no sense that this is a
+    // TODO(crbug.com/40120838): It makes no sense that this is a
     // NativeView instead of a NativeWindow. On Aura, NativeView and
     // NativeWindow are synonyms, and NativeWidgetAura immediately treats the
     // provided NativeView as an aura::Window; on Mac, the NativeView is
@@ -467,6 +475,13 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
     // notifications of theme changes.
     // A value of null results in the default theme being used.
     raw_ptr<ui::NativeTheme> native_theme = nullptr;
+
+#if BUILDFLAG(IS_MAC)
+    // If set to true, tags the widget as an invisible overlay widget that
+    // allows the Views tree to be broken up into distinct NSViews for use by
+    // immersive fullscreen. Not for general use.
+    bool is_overlay = false;
+#endif
   };
 
   // Represents a lock held on the widget's ShouldPaintAsActive() state. As
@@ -889,7 +904,7 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   // If the view is non-NULL it can be accessed during the drag by calling
   // dragged_view(). If the view has not been deleted during the drag,
   // OnDragDone() is called on it. |location| is in the widget's coordinate
-  // system.
+  // system. |view| must be hosted by this widget.
   void RunShellDrag(View* view,
                     std::unique_ptr<ui::OSExchangeData> data,
                     const gfx::Point& location,
@@ -1216,6 +1231,10 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
 
   bool native_widget_active() const { return native_widget_active_; }
 
+  // Called to enable or disable screenshots of this widget.
+  void SetAllowScreenshots(bool allow);
+  bool AreScreenshotsAllowed();
+
  protected:
   // Creates the RootView to be used within this Widget. Subclasses may override
   // to create custom RootViews that do specialized event processing.
@@ -1269,7 +1288,7 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   friend class PaintAsActiveLockImpl;
   friend class TextfieldTest;
   friend class ViewAuraTest;
-  friend class ui_devtools::PageAgentViews;
+  friend class ui_devtools::BubbleLocking;
   friend void DisableActivationChangeHandlingForTests();
 
   // Sets/gets the type of disabling widget activation change handling.
@@ -1316,6 +1335,11 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   // the native widget asynchronously invokes OnNativeWidgetVisibilityChanged().
   void HandleShowRequested();
 
+  // This holds the logic for handling of the destroying and destroyed
+  // notifications.
+  void HandleWidgetDestroying();
+  void HandleWidgetDestroyed();
+
   static DisableActivationChangeHandlingType
       g_disable_activation_change_handling_;
 
@@ -1341,6 +1365,11 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   // For a desktop widget with a non-desktop parent, this value might be nullptr
   // during shutdown.
   base::WeakPtr<Widget> parent_ = nullptr;
+
+  // This boolean is true when the widget tree is being traversed for
+  // WidgetObserver event broadcasting. It is used to CHECK that the widget tree
+  // is not modified during the traversal.
+  bool is_traversing_widget_tree_ = false;
 
   // The root of the View hierarchy attached to this window.
   // WARNING: see warning in tooltip_manager_ for ordering dependencies with
@@ -1399,6 +1428,9 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
 
   // Set to true if the widget is in the process of closing.
   bool widget_closed_ = false;
+
+  // Set to true after OnWidgetDestroyed called.
+  bool native_widget_destroyed_ = false;
 
   // The reason the widget was closed.
   // Note that this may be ClosedReason::kUnspecified if the deprecated Close()

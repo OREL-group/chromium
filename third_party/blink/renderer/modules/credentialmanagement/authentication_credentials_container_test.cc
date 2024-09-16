@@ -12,8 +12,9 @@
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/mojom/credentialmanagement/credential_manager.mojom-blink.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
+#include "third_party/blink/renderer/bindings/core/v8/script_promise_tester.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_gc_controller.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_union_arraybuffer_arraybufferview.h"
@@ -39,7 +40,6 @@
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/wrapper_type_info.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
@@ -82,7 +82,6 @@ class MockCredentialManager : public mojom::blink::CredentialManager {
 
     auto info = blink::mojom::blink::CredentialInfo::New();
     info->type = blink::mojom::blink::CredentialType::EMPTY;
-    info->federation = SecurityOrigin::CreateUniqueOpaque();
     std::move(get_callback_)
         .Run(blink::mojom::blink::CredentialManagerError::SUCCESS,
              std::move(info));
@@ -207,6 +206,110 @@ TEST(AuthenticationCredentialsContainerTest, RejectPublicKeyCredentialStoreOpera
                              IGNORE_EXCEPTION_FOR_TESTING);
 
   EXPECT_EQ(v8::Promise::kRejected, promise.V8Promise()->State());
+}
+
+TEST(AuthenticationCredentialsContainerTest,
+     GetPasswordAndFederatedCredentialUseCounters) {
+  test::TaskEnvironment task_environment;
+  {
+    // Password only.
+    MockCredentialManager mock_credential_manager;
+    CredentialManagerTestingContext context(&mock_credential_manager);
+    context.DomWindow().document()->ClearUseCounterForTesting(
+        WebFeature::kCredentialManagerGetPasswordCredential);
+    context.DomWindow().document()->ClearUseCounterForTesting(
+        WebFeature::kCredentialManagerGetLegacyFederatedCredential);
+    auto* request_options = CredentialRequestOptions::Create();
+    request_options->setPassword(true);
+    auto promise = AuthenticationCredentialsContainer::credentials(
+                       *context.DomWindow().navigator())
+                       ->get(context.GetScriptState(), request_options,
+                             IGNORE_EXCEPTION_FOR_TESTING);
+    mock_credential_manager.WaitForCallToGet();
+    EXPECT_TRUE(context.DomWindow().document()->IsUseCounted(
+        WebFeature::kCredentialManagerGetPasswordCredential));
+    EXPECT_FALSE(context.DomWindow().document()->IsUseCounted(
+        WebFeature::kCredentialManagerGetLegacyFederatedCredential));
+
+    mock_credential_manager.InvokeGetCallback();
+  }
+
+  {
+    // Federated only.
+    MockCredentialManager mock_credential_manager;
+    CredentialManagerTestingContext context(&mock_credential_manager);
+    context.DomWindow().document()->ClearUseCounterForTesting(
+        WebFeature::kCredentialManagerGetPasswordCredential);
+    context.DomWindow().document()->ClearUseCounterForTesting(
+        WebFeature::kCredentialManagerGetLegacyFederatedCredential);
+    auto* request_options = CredentialRequestOptions::Create();
+    auto* federated_cred_options = FederatedCredentialRequestOptions::Create();
+    federated_cred_options->setProviders({"idp.example"});
+    request_options->setFederated(federated_cred_options);
+    auto promise = AuthenticationCredentialsContainer::credentials(
+                       *context.DomWindow().navigator())
+                       ->get(context.GetScriptState(), request_options,
+                             IGNORE_EXCEPTION_FOR_TESTING);
+    mock_credential_manager.WaitForCallToGet();
+    EXPECT_FALSE(context.DomWindow().document()->IsUseCounted(
+        WebFeature::kCredentialManagerGetPasswordCredential));
+    EXPECT_TRUE(context.DomWindow().document()->IsUseCounted(
+        WebFeature::kCredentialManagerGetLegacyFederatedCredential));
+
+    mock_credential_manager.InvokeGetCallback();
+  }
+
+  {
+    // Federated and Password.
+    MockCredentialManager mock_credential_manager;
+    CredentialManagerTestingContext context(&mock_credential_manager);
+    context.DomWindow().document()->ClearUseCounterForTesting(
+        WebFeature::kCredentialManagerGetPasswordCredential);
+    context.DomWindow().document()->ClearUseCounterForTesting(
+        WebFeature::kCredentialManagerGetLegacyFederatedCredential);
+    auto* request_options = CredentialRequestOptions::Create();
+    auto* federated_cred_options = FederatedCredentialRequestOptions::Create();
+    federated_cred_options->setProviders({"idp.example"});
+    request_options->setFederated(federated_cred_options);
+    request_options->setPassword(true);
+    auto promise = AuthenticationCredentialsContainer::credentials(
+                       *context.DomWindow().navigator())
+                       ->get(context.GetScriptState(), request_options,
+                             IGNORE_EXCEPTION_FOR_TESTING);
+    mock_credential_manager.WaitForCallToGet();
+    EXPECT_TRUE(context.DomWindow().document()->IsUseCounted(
+        WebFeature::kCredentialManagerGetPasswordCredential));
+    EXPECT_TRUE(context.DomWindow().document()->IsUseCounted(
+        WebFeature::kCredentialManagerGetLegacyFederatedCredential));
+
+    mock_credential_manager.InvokeGetCallback();
+  }
+
+  {
+    // Federated and Password but empty federated providers.
+    MockCredentialManager mock_credential_manager;
+    CredentialManagerTestingContext context(&mock_credential_manager);
+    context.DomWindow().document()->ClearUseCounterForTesting(
+        WebFeature::kCredentialManagerGetPasswordCredential);
+    context.DomWindow().document()->ClearUseCounterForTesting(
+        WebFeature::kCredentialManagerGetLegacyFederatedCredential);
+    auto* request_options = CredentialRequestOptions::Create();
+    auto* federated_cred_options = FederatedCredentialRequestOptions::Create();
+    federated_cred_options->setProviders({});
+    request_options->setFederated(federated_cred_options);
+    request_options->setPassword(true);
+    auto promise = AuthenticationCredentialsContainer::credentials(
+                       *context.DomWindow().navigator())
+                       ->get(context.GetScriptState(), request_options,
+                             IGNORE_EXCEPTION_FOR_TESTING);
+    mock_credential_manager.WaitForCallToGet();
+    EXPECT_TRUE(context.DomWindow().document()->IsUseCounted(
+        WebFeature::kCredentialManagerGetPasswordCredential));
+    EXPECT_FALSE(context.DomWindow().document()->IsUseCounted(
+        WebFeature::kCredentialManagerGetLegacyFederatedCredential));
+
+    mock_credential_manager.InvokeGetCallback();
+  }
 }
 
 class AuthenticationCredentialsContainerButtonModeMultiIdpTest

@@ -9,8 +9,10 @@
 
 #include "ash/constants/ash_features.h"
 #include "ash/constants/ash_pref_names.h"
+#include "ash/constants/ash_switches.h"
 #include "ash/keyboard/keyboard_controller_impl.h"
 #include "ash/public/mojom/input_device_settings.mojom.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "ash/system/input_device_settings/input_device_settings_controller_impl.h"
 #include "ash/test/ash_test_base.h"
@@ -117,6 +119,42 @@ class AcceleratorAliasConverterTest : public AshTestBase {
     scoped_feature_list_.Reset();
   }
 
+  void CheckFKeyAddToSixPackKeyAlias() {
+    for (auto entry : ui::kSixPackKeyToFnKeyMap) {
+      AcceleratorAliasConverter accelerator_alias_converter_;
+      const ui::Accelerator accelerator{entry.first, ui::EF_ALT_DOWN};
+      std::vector<ui::Accelerator> accelerator_aliases =
+          accelerator_alias_converter_.CreateAcceleratorAlias(accelerator);
+
+      EXPECT_EQ(1u, accelerator_aliases.size());
+      const ui::Accelerator expected_accelerator{
+          entry.second, ui::EF_ALT_DOWN | ui::EF_FUNCTION_DOWN,
+          accelerator.key_state()};
+      EXPECT_EQ(expected_accelerator, accelerator_aliases[0]);
+    }
+
+    AcceleratorAliasConverter accelerator_alias_converter_;
+    const ui::Accelerator accelerator{ui::KeyboardCode::VKEY_INSERT,
+                                      ui::EF_ALT_DOWN};
+    std::vector<ui::Accelerator> accelerator_aliases =
+        accelerator_alias_converter_.CreateAcceleratorAlias(accelerator);
+
+    EXPECT_EQ(0u, accelerator_aliases.size());
+  }
+
+  std::optional<ui::KeyboardCode> GetActionVKey(
+      ui::KeyboardDevice& keyboard,
+      const ui::Accelerator accelerator) {
+    std::optional<ui::TopRowActionKey> action_key =
+        Shell::Get()->keyboard_capability()->GetCorrespondingActionKeyForFKey(
+            keyboard, accelerator.key_code());
+
+    // Convert the `ui::TopRowActionKey` to the corresponding `ui::KeyboardCode`
+    std::optional<ui::KeyboardCode> action_vkey =
+        ui::KeyboardCapability::ConvertToKeyboardCode(*action_key);
+    return action_vkey;
+  }
+
   void SetTopRowAsFKeysForKeyboard(const ui::InputDevice& keyboard,
                                    bool enabled) {
     if (!features::IsInputDeviceSettingsSplitEnabled()) {
@@ -178,6 +216,110 @@ class AcceleratorAliasConverterTest : public AshTestBase {
  protected:
   base::test::ScopedFeatureList scoped_feature_list_;
 };
+
+TEST_F(AcceleratorAliasConverterTest, UpdateSixPackKeyAliasWithFkey) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(features::kModifierSplit);
+  auto ignore_modifier_split_secret_key =
+      ash::switches::SetIgnoreModifierSplitSecretKeyForTest();
+  Shell::Get()
+      ->keyboard_capability()
+      ->ResetModifierSplitDogfoodControllerForTesting();
+
+  std::unique_ptr<FakeDeviceManager> fake_keyboard_manager_ =
+      std::make_unique<FakeDeviceManager>();
+  ui::KeyboardDevice fake_keyboard(
+      /*id=*/1, /*type=*/ui::InputDeviceType::INPUT_DEVICE_INTERNAL,
+      /*name=*/kKbdTopRowLayout1Tag, /*has_assistant_key=*/true,
+      /*has_function_key=*/true);
+  fake_keyboard.sys_path = base::FilePath("path");
+  fake_keyboard_manager_->AddFakeKeyboard(fake_keyboard, kKbdTopRowLayout1Tag);
+
+  CheckFKeyAddToSixPackKeyAlias();
+}
+
+TEST_F(AcceleratorAliasConverterTest, UpdateTopRowKeysAliasWithFkey) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(features::kModifierSplit);
+  auto ignore_modifier_split_secret_key =
+      ash::switches::SetIgnoreModifierSplitSecretKeyForTest();
+  Shell::Get()
+      ->keyboard_capability()
+      ->ResetModifierSplitDogfoodControllerForTesting();
+
+  std::unique_ptr<FakeDeviceManager> fake_keyboard_manager_ =
+      std::make_unique<FakeDeviceManager>();
+  ui::KeyboardDevice fake_keyboard(
+      /*id=*/1, /*type=*/ui::InputDeviceType::INPUT_DEVICE_INTERNAL,
+      /*name=*/kKbdTopRowLayout1Tag, /*has_assistant_key=*/true,
+      /*has_function_key=*/true);
+  fake_keyboard.sys_path = base::FilePath("path");
+  fake_keyboard_manager_->AddFakeKeyboard(fake_keyboard, kKbdTopRowLayout1Tag);
+
+  AcceleratorAliasConverter accelerator_alias_converter_;
+  const ui::Accelerator accelerator{ui::VKEY_ZOOM, ui::EF_NONE};
+  SetTopRowAsFKeysForKeyboard(fake_keyboard, /*enabled=*/true);
+  std::vector<ui::Accelerator> accelerator_aliases =
+      accelerator_alias_converter_.CreateAcceleratorAlias(accelerator);
+
+  EXPECT_EQ(1u, accelerator_aliases.size());
+  const ui::Accelerator expected_accelerator{
+      ui::VKEY_ZOOM, ui::EF_FUNCTION_DOWN, accelerator.key_state()};
+  EXPECT_EQ(expected_accelerator, accelerator_aliases[0]);
+
+  SetTopRowAsFKeysForKeyboard(fake_keyboard, /*enabled=*/false);
+  std::vector<ui::Accelerator> updated_accelerator_aliases =
+      accelerator_alias_converter_.CreateAcceleratorAlias(accelerator);
+
+  EXPECT_EQ(1u, updated_accelerator_aliases.size());
+  const ui::Accelerator updated_expected_accelerator{ui::VKEY_ZOOM, ui::EF_NONE,
+                                                     accelerator.key_state()};
+  EXPECT_EQ(updated_expected_accelerator, updated_accelerator_aliases[0]);
+}
+
+TEST_F(AcceleratorAliasConverterTest, UpdateFunctionAlias) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(features::kModifierSplit);
+  auto ignore_modifier_split_secret_key =
+      ash::switches::SetIgnoreModifierSplitSecretKeyForTest();
+  Shell::Get()
+      ->keyboard_capability()
+      ->ResetModifierSplitDogfoodControllerForTesting();
+
+  std::unique_ptr<FakeDeviceManager> fake_keyboard_manager_ =
+      std::make_unique<FakeDeviceManager>();
+  ui::KeyboardDevice fake_keyboard(
+      /*id=*/1, /*type=*/ui::InputDeviceType::INPUT_DEVICE_INTERNAL,
+      /*name=*/kKbdTopRowLayout1Tag, /*has_assistant_key=*/true,
+      /*has_function_key=*/true);
+  fake_keyboard.sys_path = base::FilePath("path");
+  fake_keyboard_manager_->AddFakeKeyboard(fake_keyboard, kKbdTopRowLayout1Tag);
+
+  AcceleratorAliasConverter accelerator_alias_converter_;
+  const ui::Accelerator accelerator{ui::VKEY_F1, ui::EF_NONE};
+  SetTopRowAsFKeysForKeyboard(fake_keyboard, /*enabled=*/false);
+  std::vector<ui::Accelerator> accelerator_aliases =
+      accelerator_alias_converter_.CreateAcceleratorAlias(accelerator);
+
+  auto action_vkey_1 = GetActionVKey(fake_keyboard, accelerator);
+  ASSERT_TRUE(action_vkey_1);
+  EXPECT_EQ(1u, accelerator_aliases.size());
+  const ui::Accelerator expected_accelerator{
+      action_vkey_1.value(), ui::EF_FUNCTION_DOWN, accelerator.key_state()};
+  EXPECT_EQ(expected_accelerator, accelerator_aliases[0]);
+
+  SetTopRowAsFKeysForKeyboard(fake_keyboard, /*enabled=*/true);
+  std::vector<ui::Accelerator> updated_accelerator_aliases =
+      accelerator_alias_converter_.CreateAcceleratorAlias(accelerator);
+
+  auto action_vkey_2 = GetActionVKey(fake_keyboard, accelerator);
+  ASSERT_TRUE(action_vkey_2);
+  EXPECT_EQ(1u, accelerator_aliases.size());
+  EXPECT_EQ(1u, updated_accelerator_aliases.size());
+  const ui::Accelerator updated_expected_accelerator{
+      action_vkey_2.value(), ui::EF_NONE, accelerator.key_state()};
+  EXPECT_EQ(updated_expected_accelerator, updated_accelerator_aliases[0]);
+}
 
 TEST_F(AcceleratorAliasConverterTest, CheckTopRowAliasNoAlias) {
   std::unique_ptr<FakeDeviceManager> fake_keyboard_manager_ =
@@ -354,6 +496,68 @@ TEST_F(AcceleratorAliasConverterTest, CheckSettingsKeyAlias) {
   EXPECT_EQ(accelerator, accelerator_aliases[0]);
 }
 
+TEST_F(AcceleratorAliasConverterTest, SplitModifierKeyboardCapsLockAlias) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(features::kModifierSplit);
+  auto ignore_modifier_split_secret_key =
+      ash::switches::SetIgnoreModifierSplitSecretKeyForTest();
+  Shell::Get()
+      ->keyboard_capability()
+      ->ResetModifierSplitDogfoodControllerForTesting();
+
+  std::unique_ptr<FakeDeviceManager> fake_keyboard_manager_ =
+      std::make_unique<FakeDeviceManager>();
+  ui::KeyboardDevice split_modifier_keyboard(
+      /*id=*/1, /*type=*/ui::InputDeviceType::INPUT_DEVICE_INTERNAL,
+      /*name=*/kKbdTopRowLayout1Tag, /*has_assistant_key=*/true,
+      /*has_function_key=*/true);
+  split_modifier_keyboard.sys_path = base::FilePath("path");
+  fake_keyboard_manager_->AddFakeKeyboard(split_modifier_keyboard,
+                                          kKbdTopRowLayout1Tag);
+
+  AcceleratorAliasConverter accelerator_alias_converter_;
+  const ui::Accelerator capslock_accelerator{ui::VKEY_CAPITAL, ui::EF_NONE};
+  std::vector<ui::Accelerator> accelerator_aliases =
+      accelerator_alias_converter_.CreateAcceleratorAlias(capslock_accelerator);
+  EXPECT_EQ(1u, accelerator_aliases.size());
+  EXPECT_EQ(ui::Accelerator(ui::VKEY_RIGHT_ALT, ui::EF_FUNCTION_DOWN),
+            accelerator_aliases[0]);
+  const ui::Accelerator capslock_accelerator_2{ui::VKEY_LWIN, ui::EF_ALT_DOWN};
+  std::vector<ui::Accelerator> new_accelerator_aliases =
+      accelerator_alias_converter_.CreateAcceleratorAlias(
+          capslock_accelerator_2);
+  EXPECT_EQ(0u, new_accelerator_aliases.size());
+}
+
+TEST_F(AcceleratorAliasConverterTest, ExternalKeyboardCapsLockAlias) {
+  std::unique_ptr<FakeDeviceManager> fake_keyboard_manager_ =
+      std::make_unique<FakeDeviceManager>();
+
+  ui::KeyboardDevice external_keyboard(
+      /*id=*/1, /*type=*/ui::InputDeviceType::INPUT_DEVICE_BLUETOOTH,
+      /*name=*/kKbdTopRowLayout1Tag);
+  SetKeyboardInfo(
+      external_keyboard,
+      ui::KeyboardCapability::DeviceType::kDeviceExternalUnknown,
+      ui::KeyboardCapability::KeyboardTopRowLayout::kKbdTopRowLayout1);
+  external_keyboard.sys_path = base::FilePath("path");
+  fake_keyboard_manager_->AddFakeKeyboard(external_keyboard,
+                                          kKbdTopRowLayout1Tag);
+
+  AcceleratorAliasConverter accelerator_alias_converter_;
+  const ui::Accelerator capslock_accelerator{ui::VKEY_CAPITAL, ui::EF_NONE};
+  std::vector<ui::Accelerator> accelerator_aliases =
+      accelerator_alias_converter_.CreateAcceleratorAlias(capslock_accelerator);
+  EXPECT_EQ(1u, accelerator_aliases.size());
+  EXPECT_EQ(capslock_accelerator, accelerator_aliases[0]);
+  const ui::Accelerator capslock_accelerator_2{ui::VKEY_LWIN, ui::EF_ALT_DOWN};
+  std::vector<ui::Accelerator> new_accelerator_aliases =
+      accelerator_alias_converter_.CreateAcceleratorAlias(
+          capslock_accelerator_2);
+  EXPECT_EQ(1u, new_accelerator_aliases.size());
+  EXPECT_EQ(capslock_accelerator_2, new_accelerator_aliases[0]);
+}
+
 TEST_F(AcceleratorAliasConverterTest, CheckCapsLockAlias) {
   std::unique_ptr<FakeDeviceManager> fake_keyboard_manager_ =
       std::make_unique<FakeDeviceManager>();
@@ -375,6 +579,58 @@ TEST_F(AcceleratorAliasConverterTest, CheckCapsLockAlias) {
   accelerator_aliases =
       accelerator_alias_converter_.CreateAcceleratorAlias(bad_accelerator);
   EXPECT_EQ(0u, accelerator_aliases.size());
+}
+
+TEST_F(AcceleratorAliasConverterTest, CheckRightAltInList) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(features::kModifierSplit);
+  auto ignore_modifier_split_secret_key =
+      ash::switches::SetIgnoreModifierSplitSecretKeyForTest();
+  Shell::Get()
+      ->keyboard_capability()
+      ->ResetModifierSplitDogfoodControllerForTesting();
+
+  std::unique_ptr<FakeDeviceManager> fake_keyboard_manager_ =
+      std::make_unique<FakeDeviceManager>();
+  ui::KeyboardDevice fake_keyboard(
+      /*id=*/1, /*type=*/ui::InputDeviceType::INPUT_DEVICE_INTERNAL,
+      /*name=*/kKbdTopRowLayout1Tag, /*has_assistant_key=*/true,
+      /*has_function_key=*/true);
+  fake_keyboard.sys_path = base::FilePath("path");
+  fake_keyboard_manager_->AddFakeKeyboard(fake_keyboard, kKbdTopRowLayout1Tag);
+
+  const ui::Accelerator right_alt_accelerator{ui::VKEY_RIGHT_ALT, ui::EF_NONE};
+
+  AcceleratorAliasConverter accelerator_alias_converter;
+
+  EXPECT_EQ(std::vector<ui::Accelerator>{right_alt_accelerator},
+            accelerator_alias_converter.CreateAcceleratorAlias(
+                right_alt_accelerator));
+}
+
+TEST_F(AcceleratorAliasConverterTest, CheckRightAltNotInList) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(features::kModifierSplit);
+  auto ignore_modifier_split_secret_key =
+      ash::switches::SetIgnoreModifierSplitSecretKeyForTest();
+  Shell::Get()
+      ->keyboard_capability()
+      ->ResetModifierSplitDogfoodControllerForTesting();
+
+  std::unique_ptr<FakeDeviceManager> fake_keyboard_manager_ =
+      std::make_unique<FakeDeviceManager>();
+  ui::KeyboardDevice fake_keyboard(
+      /*id=*/1, /*type=*/ui::InputDeviceType::INPUT_DEVICE_INTERNAL,
+      /*name=*/kKbdTopRowLayout1Tag);
+  fake_keyboard.sys_path = base::FilePath("path");
+  fake_keyboard_manager_->AddFakeKeyboard(fake_keyboard, kKbdTopRowLayout1Tag);
+
+  const ui::Accelerator right_alt_accelerator{ui::VKEY_RIGHT_ALT, ui::EF_NONE};
+
+  AcceleratorAliasConverter accelerator_alias_converter;
+  EXPECT_TRUE(
+      accelerator_alias_converter.CreateAcceleratorAlias(right_alt_accelerator)
+          .empty());
 }
 
 TEST_F(AcceleratorAliasConverterTest, MetaFKeyRewritesSuppressed) {

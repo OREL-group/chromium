@@ -28,6 +28,7 @@
               "legacy_gclient_config": {
                 "apply_configs": [
                   "android",
+                  "chromium_with_telemetry_dependencies",
                   "enable_wpr_tests"
                 ],
                 "config": "chromium"
@@ -57,7 +58,6 @@
   },
   "$build/reclient": {
     "instance": "rbe-chromium-trusted",
-    "jobs": 500,
     "metrics_project": "chromium-reclient-metrics",
     "scandeps_server": true
   },
@@ -79,6 +79,9 @@
     ]
   },
   "builder_group": "chromium.android",
+  "gardener_rotations": [
+    "android"
+  ],
   "recipe": "chromium",
   "sheriff_rotations": [
     "android"

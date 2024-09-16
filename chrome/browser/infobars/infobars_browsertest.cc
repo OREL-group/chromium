@@ -67,7 +67,7 @@
 #endif
 
 #if !BUILDFLAG(IS_CHROMEOS_ASH)
-#include "chrome/browser/ui/startup/default_browser_infobar_delegate.h"
+#include "chrome/browser/ui/startup/default_browser_prompt/default_browser_infobar_delegate.h"
 #endif
 
 #if BUILDFLAG(IS_MAC) && BUILDFLAG(ENABLE_UPDATER)
@@ -392,7 +392,14 @@ bool InfoBarUiTest::VerifyUi() {
                         test_info->name()) != ui::test::ActionResult::kFailed);
 }
 
-IN_PROC_BROWSER_TEST_F(InfoBarUiTest, InvokeUi_dev_tools) {
+#if BUILDFLAG(IS_WIN)
+// TODO(crbug.com/40261456): This test case has been frequently failing on
+// "Win10 Tests x64" since 2024-05-08.
+#define MAYBE_InvokeUi_dev_tools DISABLED_InvokeUi_dev_tools
+#else
+#define MAYBE_InvokeUi_dev_tools InvokeUi_dev_tools
+#endif
+IN_PROC_BROWSER_TEST_F(InfoBarUiTest, MAYBE_InvokeUi_dev_tools) {
   ShowAndVerifyUi();
 }
 
@@ -474,7 +481,14 @@ IN_PROC_BROWSER_TEST_F(InfoBarUiTest, InvokeUi_translate) {
 }
 #endif
 
-IN_PROC_BROWSER_TEST_F(InfoBarUiTest, InvokeUi_automation) {
+#if BUILDFLAG(IS_WIN)
+// TODO(crbug.com/40261456): This test case has been frequently failing on
+// "Win10 Tests x64" since 2024-05-08.
+#define MAYBE_InvokeUi_automation DISABLED_InvokeUi_automation
+#else
+#define MAYBE_InvokeUi_automation InvokeUi_automation
+#endif
+IN_PROC_BROWSER_TEST_F(InfoBarUiTest, MAYBE_InvokeUi_automation) {
   ShowAndVerifyUi();
 }
 

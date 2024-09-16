@@ -4,269 +4,124 @@
 
 package org.chromium.chrome.browser.tasks.tab_management;
 
-import android.app.Activity;
+import android.content.Context;
 import android.text.TextUtils;
-import android.view.LayoutInflater;
-import android.view.View;
-import android.view.WindowManager;
-import android.widget.LinearLayout;
 
-import androidx.activity.ComponentDialog;
 import androidx.annotation.NonNull;
-import androidx.appcompat.widget.AppCompatEditText;
+import androidx.annotation.Nullable;
 
-import org.chromium.base.lifetime.Destroyable;
-import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.tabmodel.TabModelFilterProvider;
-import org.chromium.chrome.browser.tabmodel.TabModelSelector;
-import org.chromium.chrome.browser.tasks.tab_groups.TabGroupColorUtils;
+import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.tasks.tab_groups.TabGroupModelFilter;
-import org.chromium.chrome.browser.tasks.tab_groups.TabGroupModelFilterObserver;
-import org.chromium.chrome.browser.tasks.tab_management.ColorPickerCoordinator.ColorPickerLayoutType;
 import org.chromium.chrome.browser.tasks.tab_management.TabUiMetricsHelper.TabGroupCreationDialogResultAction;
 import org.chromium.chrome.browser.tasks.tab_management.TabUiMetricsHelper.TabGroupCreationFinalSelections;
 import org.chromium.chrome.tab_ui.R;
+import org.chromium.components.feature_engagement.FeatureConstants;
 import org.chromium.components.tab_groups.TabGroupColorId;
 import org.chromium.ui.modaldialog.DialogDismissalCause;
 import org.chromium.ui.modaldialog.ModalDialogManager;
-import org.chromium.ui.modaldialog.ModalDialogManager.ModalDialogManagerObserver;
-import org.chromium.ui.modaldialog.ModalDialogManager.ModalDialogType;
 import org.chromium.ui.modaldialog.ModalDialogProperties;
 import org.chromium.ui.modelutil.PropertyModel;
 
-import java.util.List;
 import java.util.Objects;
 
 /** Manager of the observers that trigger a modal dialog on new tab group creation. */
-public class TabGroupCreationDialogManager implements Destroyable {
-    /** The delegate for showing the dialog. */
-    protected class ShowDialogDelegate {
-        /**
-         * Attempt to show the tab group creation dialog to the user.
-         *
-         * @param rootId The destination root id when creating a new tab group.
-         * @param filter The current TabGroupModelFilter that this group is created on.
-         */
-        protected void showDialog(int rootId, TabGroupModelFilter filter) {
-            // If the model is not null, it indicates a chained double show attempt is occurring.
-            // Early exit the second attempt so that we don't show another dialog and cause the
-            // dialog controller and user actions to freeze when attempting to navigate out.
-            if (mModel != null) {
-                TabUiMetricsHelper.recordTabGroupCreationDialogResultActionMetrics(
-                        TabGroupCreationDialogResultAction.DISMISSED_OTHER);
+public class TabGroupCreationDialogManager {
+    private class TabGroupCreationDialogController implements ModalDialogProperties.Controller {
+        private int mRootId;
+        private TabGroupModelFilter mTabGroupModelFilter;
+
+        private TabGroupCreationDialogController(
+                int rootId, TabGroupModelFilter tabGroupModelFilter) {
+            mRootId = rootId;
+            mTabGroupModelFilter = tabGroupModelFilter;
+        }
+
+        @Override
+        public void onClick(PropertyModel model, int buttonType) {
+            if (buttonType == ModalDialogProperties.ButtonType.POSITIVE
+                    && !mTabGroupVisualDataDialogManager.validateCurrentGroupTitle()) {
+                mTabGroupVisualDataDialogManager.focusCurrentGroupTitle();
                 return;
             }
 
-            int tabCount = filter.getRelatedTabCountForRootId(rootId);
-            String defaultGroupTitle =
-                    mActivity
-                            .getResources()
-                            .getQuantityString(
-                                    R.plurals.bottom_tab_grid_title_placeholder,
-                                    tabCount,
-                                    tabCount);
+            if (buttonType == ModalDialogProperties.ButtonType.POSITIVE) {
+                mModalDialogManager.dismissDialog(
+                        model, DialogDismissalCause.POSITIVE_BUTTON_CLICKED);
+            }
+        }
 
-            View customView =
-                    LayoutInflater.from(mActivity)
-                            .inflate(R.layout.tab_group_creation_dialog, null);
-            AppCompatEditText editTextView = customView.findViewById(R.id.title_input_text);
-            editTextView.setText(defaultGroupTitle);
+        @Override
+        public void onDismiss(PropertyModel model, @DialogDismissalCause int dismissalCause) {
+            final @TabGroupColorId int defaultColorId =
+                    mTabGroupVisualDataDialogManager.getDefaultColorId();
+            final @TabGroupColorId int currentColorId =
+                    mTabGroupVisualDataDialogManager.getCurrentColorId();
+            boolean didChangeColor = currentColorId != defaultColorId;
+            mTabGroupModelFilter.setTabGroupColor(mRootId, currentColorId);
 
-            List<Integer> colors = ColorPickerUtils.getTabGroupColorIdList();
-            // TODO(b/330597857): Allow a dynamic incognito setting for the color picker.
-            // Force a false incognito value for the color picker as this modal dialog does not
-            // support incognito color themes and should just follow the system theme.
-            ColorPickerCoordinator colorPickerCoordinator =
-                    new ColorPickerCoordinator(
-                            mActivity,
-                            colors,
-                            R.layout.tab_group_color_picker_container,
-                            ColorPickerType.TAB_GROUP,
-                            /* isIncognito= */ false,
-                            ColorPickerLayoutType.DYNAMIC,
-                            null);
-            final @TabGroupColorId int defaultColorId = filter.getTabGroupColor(rootId);
-            colorPickerCoordinator.setSelectedColorItem(defaultColorId);
+            // Only save the group title input text if it has been changed from the suggested
+            // default title and if it is not empty.
+            String defaultGroupTitle = mTabGroupVisualDataDialogManager.getDefaultGroupTitle();
+            String inputGroupTitle = mTabGroupVisualDataDialogManager.getCurrentGroupTitle();
+            boolean didChangeTitle = !Objects.equals(defaultGroupTitle, inputGroupTitle);
+            if (didChangeTitle && !TextUtils.isEmpty(inputGroupTitle)) {
+                mTabGroupModelFilter.setTabGroupTitle(mRootId, inputGroupTitle);
+            }
 
-            LinearLayout linearLayout = customView.findViewById(R.id.creation_dialog_layout);
-            linearLayout.addView(colorPickerCoordinator.getContainerView());
+            recordDialogSelectionHistogram(didChangeColor, didChangeTitle);
 
-            TabGroupCreationTextInputLayout groupTitle =
-                    customView.findViewById(R.id.tab_group_title);
-            ModalDialogProperties.Controller dialogController =
-                    new ModalDialogProperties.Controller() {
-                        @Override
-                        public void onClick(PropertyModel model, int buttonType) {
-                            if (buttonType == ModalDialogProperties.ButtonType.POSITIVE
-                                    && !groupTitle.validate()) {
-                                groupTitle.requestFocus();
-                                return;
-                            }
+            if (dismissalCause == DialogDismissalCause.NAVIGATE_BACK_OR_TOUCH_OUTSIDE) {
+                TabUiMetricsHelper.recordTabGroupCreationDialogResultActionMetrics(
+                        TabGroupCreationDialogResultAction.DISMISSED_SCRIM_OR_BACKPRESS);
+            } else if (dismissalCause == DialogDismissalCause.POSITIVE_BUTTON_CLICKED) {
+                TabUiMetricsHelper.recordTabGroupCreationDialogResultActionMetrics(
+                        TabGroupCreationDialogResultAction.ACCEPTED);
+            } else {
+                TabUiMetricsHelper.recordTabGroupCreationDialogResultActionMetrics(
+                        TabGroupCreationDialogResultAction.DISMISSED_OTHER);
+            }
 
-                            if (buttonType == ModalDialogProperties.ButtonType.POSITIVE) {
-                                mModalDialogManager.dismissDialog(
-                                        model, DialogDismissalCause.POSITIVE_BUTTON_CLICKED);
-                            }
-                        }
+            TrackerFactory.getTrackerForProfile(mTabGroupModelFilter.getTabModel().getProfile())
+                    .dismissed(FeatureConstants.TAB_GROUP_CREATION_DIALOG_SYNC_TEXT_FEATURE);
 
-                        @Override
-                        public void onDismiss(PropertyModel model, int dismissalCause) {
-                            if (dismissalCause == DialogDismissalCause.POSITIVE_BUTTON_CLICKED
-                                    || dismissalCause
-                                            == DialogDismissalCause
-                                                    .NAVIGATE_BACK_OR_TOUCH_OUTSIDE) {
-                                final @TabGroupColorId int currentColorId =
-                                        colorPickerCoordinator.getSelectedColorSupplier().get();
-                                boolean didChangeColor = currentColorId != defaultColorId;
-                                filter.setTabGroupColor(rootId, currentColorId);
-
-                                // Only save the group title input text if it has been changed from
-                                // the suggested default title and if it is not empty.
-                                String inputGroupTitle = groupTitle.getTrimmedText();
-                                boolean didChangeTitle =
-                                        !Objects.equals(defaultGroupTitle, inputGroupTitle);
-                                if (didChangeTitle && !TextUtils.isEmpty(inputGroupTitle)) {
-                                    filter.setTabGroupTitle(rootId, groupTitle.getTrimmedText());
-                                }
-
-                                // Refresh the GTS tab list with the newly set color and title.
-                                mOnDialogAcceptedRunnable.run();
-                                recordDialogSelectionHistogram(didChangeColor, didChangeTitle);
-
-                                if (dismissalCause
-                                        == DialogDismissalCause.NAVIGATE_BACK_OR_TOUCH_OUTSIDE) {
-                                    TabUiMetricsHelper
-                                            .recordTabGroupCreationDialogResultActionMetrics(
-                                                    TabGroupCreationDialogResultAction
-                                                            .DISMISSED_SCRIM_OR_BACKPRESS);
-                                } else {
-                                    TabUiMetricsHelper
-                                            .recordTabGroupCreationDialogResultActionMetrics(
-                                                    TabGroupCreationDialogResultAction.ACCEPTED);
-                                }
-                            } else {
-                                TabUiMetricsHelper.recordTabGroupCreationDialogResultActionMetrics(
-                                        TabGroupCreationDialogResultAction.DISMISSED_OTHER);
-                            }
-
-                            mModalDialogManager.removeObserver(mModalDialogManagerObserver);
-                            // Reset the model to null after each usage.
-                            mModel = null;
-                        }
-                    };
-
-            mModel =
-                    new PropertyModel.Builder(ModalDialogProperties.ALL_KEYS)
-                            .with(ModalDialogProperties.CONTROLLER, dialogController)
-                            .with(
-                                    ModalDialogProperties.POSITIVE_BUTTON_TEXT,
-                                    mActivity
-                                            .getResources()
-                                            .getString(
-                                                    R.string
-                                                            .tab_group_creation_positive_button_text))
-                            .with(ModalDialogProperties.CANCEL_ON_TOUCH_OUTSIDE, true)
-                            .with(
-                                    ModalDialogProperties.BUTTON_STYLES,
-                                    ModalDialogProperties.ButtonStyles.PRIMARY_FILLED_NO_NEGATIVE)
-                            .with(ModalDialogProperties.CUSTOM_VIEW, customView)
-                            .build();
-
-            mModalDialogManagerObserver =
-                    new ModalDialogManagerObserver() {
-                        @Override
-                        public void onDialogCreated(PropertyModel model, ComponentDialog dialog) {
-                            // Ensure that this dialog's model is the one that's being acted upon.
-                            if (model == mModel) {
-                                // Focus the edit text and display the keyboard on dialog showing.
-                                editTextView.requestFocus();
-                                dialog.getWindow()
-                                        .setSoftInputMode(
-                                                WindowManager.LayoutParams
-                                                        .SOFT_INPUT_STATE_VISIBLE);
-                            }
-                        }
-                    };
-            mModalDialogManager.addObserver(mModalDialogManagerObserver);
-            mModalDialogManager.showDialog(mModel, ModalDialogType.APP);
+            mTabGroupVisualDataDialogManager.hideDialog();
+            if (mOnTabGroupCreation != null) {
+                mOnTabGroupCreation.run();
+            }
         }
     }
 
-    private static final int INVALID_COLOR_ID = -1;
-
-    private final Activity mActivity;
-    private final ModalDialogManager mModalDialogManager;
-    private TabModelSelector mTabModelSelector;
-    private TabGroupModelFilterObserver mFilterObserver;
-    // TODO(b/333921547): This class uses a member model rather than an instanced model in the
-    // #showDialog call due to the possibility of a double show call being triggered for the
-    // didCreateNewGroup observer and a fix that tackles that. Once the root cause has been fixed,
-    // revert this to an instanced model within the function call for a proper lifecycle.
-    private PropertyModel mModel;
-    private ShowDialogDelegate mShowDialogDelegate;
-    private Runnable mOnDialogAcceptedRunnable;
-    private ModalDialogManagerObserver mModalDialogManagerObserver;
+    @NonNull private final ModalDialogManager mModalDialogManager;
+    @Nullable private final Runnable mOnTabGroupCreation;
+    private TabGroupVisualDataDialogManager mTabGroupVisualDataDialogManager;
+    private ModalDialogProperties.Controller mTabGroupCreationDialogController;
 
     public TabGroupCreationDialogManager(
-            @NonNull Activity activity,
+            @NonNull Context context,
             @NonNull ModalDialogManager modalDialogManager,
-            @NonNull TabModelSelector tabModelSelector,
-            @NonNull Runnable onDialogAccepted) {
-        mActivity = activity;
+            @Nullable Runnable onTabGroupCreation) {
         mModalDialogManager = modalDialogManager;
-        mTabModelSelector = tabModelSelector;
-        mShowDialogDelegate = createShowDialogDelegate();
-        mOnDialogAcceptedRunnable = onDialogAccepted;
-
-        TabModelFilterProvider tabModelFilterProvider =
-                mTabModelSelector.getTabModelFilterProvider();
-
-        mFilterObserver =
-                new TabGroupModelFilterObserver() {
-                    // Handles the tab selection editor group action, longpressing a link for a
-                    // context menu to create a group and the drag and dropping of single tabs.
-                    @Override
-                    public void didCreateNewGroup(Tab destinationTab, TabGroupModelFilter filter) {
-                        // The creation dialog gets shown in certain situations when it should not
-                        // be called, such as undoing group closure or unmerge when the group still
-                        // technically exists. Check that the group does not already have an
-                        // existing color to make sure it is truly a new group.
-                        boolean isNewGroup =
-                                TabGroupColorUtils.getTabGroupColor(destinationTab.getRootId())
-                                        == INVALID_COLOR_ID;
-                        if (isNewGroup) {
-                            mShowDialogDelegate.showDialog(destinationTab.getRootId(), filter);
-                        }
-                    }
-                };
-
-        ((TabGroupModelFilter) tabModelFilterProvider.getTabModelFilter(false))
-                .addTabGroupObserver(mFilterObserver);
-        ((TabGroupModelFilter) tabModelFilterProvider.getTabModelFilter(true))
-                .addTabGroupObserver(mFilterObserver);
+        mOnTabGroupCreation = onTabGroupCreation;
+        mTabGroupVisualDataDialogManager =
+                new TabGroupVisualDataDialogManager(
+                        context,
+                        modalDialogManager,
+                        TabGroupVisualDataDialogManager.DialogType.TAB_GROUP_CREATION,
+                        R.string.tab_group_creation_dialog_title);
     }
 
-    /** Destroy any members that need clean up. */
-    @Override
-    public void destroy() {
-        TabModelFilterProvider tabModelFilterProvider =
-                mTabModelSelector.getTabModelFilterProvider();
-
-        if (mFilterObserver != null) {
-            ((TabGroupModelFilter) tabModelFilterProvider.getTabModelFilter(false))
-                    .removeTabGroupObserver(mFilterObserver);
-            ((TabGroupModelFilter) tabModelFilterProvider.getTabModelFilter(true))
-                    .removeTabGroupObserver(mFilterObserver);
-            mFilterObserver = null;
-        }
-
-        if (mModalDialogManagerObserver != null) {
-            mModalDialogManager.removeObserver(mModalDialogManagerObserver);
-        }
-    }
-
-    private ShowDialogDelegate createShowDialogDelegate() {
-        return new ShowDialogDelegate();
+    /**
+     * Attempt to show the tab group creation dialog to the user. The current use case for this
+     * dialog means that it is shown after the group has already been merged.
+     *
+     * @param rootId The destination root id of the new tab group that has been created.
+     * @param filter The current TabGroupModelFilter that this group is created on.
+     */
+    public void showDialog(int rootId, TabGroupModelFilter filter) {
+        mTabGroupCreationDialogController = new TabGroupCreationDialogController(rootId, filter);
+        mTabGroupVisualDataDialogManager.showDialog(
+                rootId, filter, mTabGroupCreationDialogController);
     }
 
     private void recordDialogSelectionHistogram(boolean didChangeColor, boolean didChangeTitle) {
@@ -287,11 +142,35 @@ public class TabGroupCreationDialogManager implements Destroyable {
         }
     }
 
-    void setShowDialogDelegateForTesting(ShowDialogDelegate delegate) {
-        mShowDialogDelegate = delegate;
+    void setDialogManagerForTesting(TabGroupVisualDataDialogManager manager) {
+        mTabGroupVisualDataDialogManager = manager;
     }
 
-    ShowDialogDelegate getShowDialogDelegateForTesting() {
-        return mShowDialogDelegate;
+    ModalDialogProperties.Controller getDialogControllerForTesting() {
+        return mTabGroupCreationDialogController;
+    }
+
+    /**
+     * Returns whether the group creation dialog will be skipped based on current flags.
+     *
+     * @param shouldShow Whether the creation dialog should show if TabGroupCreationDialogAndroid is
+     *     enabled. Currently it should only show for drag and drop merge and bulk selection editor
+     *     merge. It should not show for context menu group creations.
+     */
+    public static boolean shouldSkipGroupCreationDialog(boolean shouldShow) {
+        if (ChromeFeatureList.sTabGroupCreationDialogAndroid.isEnabled()) {
+            return !shouldShow;
+        } else {
+            return TabGroupModelFilter.SKIP_TAB_GROUP_CREATION_DIALOG.getValue();
+        }
+    }
+
+    /**
+     * Returns whether the group creation dialog should be shown based on the setting switch for
+     * auto showing under tab settings. If it is not enabled, return true since that is the default
+     * case for all callsites.
+     */
+    public static boolean shouldShowGroupCreationDialogViaSettingsSwitch() {
+        return TabGroupModelFilter.shouldShowGroupCreationDialogViaSettingsSwitch();
     }
 }

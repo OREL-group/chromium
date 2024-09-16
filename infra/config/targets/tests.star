@@ -20,6 +20,13 @@ targets.tests.gtest_test(
     name = "accessibility_unittests",
 )
 
+targets.tests.isolated_script_test(
+    name = "android_blink_wpt_tests",
+    args = [
+    ],
+    binary = "chrome_public_wpt",
+)
+
 targets.tests.gtest_test(
     name = "android_browsertests",
 )
@@ -309,6 +316,21 @@ targets.tests.isolated_script_test(
     binary = "blink_wpt_tests",
 )
 
+targets.tests.isolated_script_test(
+    name = "brfetch_headless_shell_wpt_tests",
+    mixins = [
+        "has_native_resultdb_integration",
+        "blink_tests_write_run_histories",
+    ],
+    args = [
+        "--flag-specific=background-resource-fetch",
+        "--skipped=always",
+        "--inverted-test-launcher-filter-file=../../third_party/blink/web_tests/TestLists/chrome.filter",
+        "--test-launcher-filter-file=../../third_party/blink/web_tests/TestLists/headless_shell.filter",
+    ],
+    binary = "headless_shell_wpt",
+)
+
 targets.tests.gtest_test(
     name = "browser_tests",
 )
@@ -467,10 +489,6 @@ targets.tests.gtest_test(
 )
 
 targets.tests.gtest_test(
-    name = "cq_medium_tast_tests",
-)
-
-targets.tests.gtest_test(
     name = "chrome_elf_unittests",
 )
 
@@ -557,6 +575,9 @@ targets.tests.isolated_script_test(
     mixins = [
         "has_native_resultdb_integration",
     ],
+    args = [
+        "--test-launcher-filter-file=../../third_party/blink/web_tests/TestLists/chrome.filter",
+    ],
 )
 
 targets.tests.isolated_script_test(
@@ -568,11 +589,31 @@ targets.tests.isolated_script_test(
 )
 
 targets.tests.isolated_script_test(
-    name = "chrome_wpt_tests_old_headless",
+    name = "headless_shell_wpt_tests",
     mixins = [
         "has_native_resultdb_integration",
     ],
-    binary = "chrome_wpt_tests",
+    args = [
+        "--test-type",
+        "testharness",
+        "reftest",
+        "crashtest",
+        "print-reftest",
+        "--inverted-test-launcher-filter-file=../../third_party/blink/web_tests/TestLists/chrome.filter",
+        "--test-launcher-filter-file=../../third_party/blink/web_tests/TestLists/headless_shell.filter",
+    ],
+    binary = "headless_shell_wpt",
+)
+
+targets.tests.isolated_script_test(
+    name = "headless_shell_wpt_tests_include_all",
+    mixins = [
+        "has_native_resultdb_integration",
+    ],
+    args = [
+        "--inverted-test-launcher-filter-file=../../third_party/blink/web_tests/TestLists/chrome.filter",
+    ],
+    binary = "headless_shell_wpt",
 )
 
 targets.tests.gtest_test(
@@ -728,15 +769,19 @@ targets.tests.gpu_telemetry_test(
 )
 
 targets.tests.gpu_telemetry_test(
-    name = "context_lost_validating_tests",
+    name = "context_lost_passthrough_graphite_tests",
     telemetry_test_name = "context_lost",
     mixins = [
         "has_native_resultdb_integration",
     ],
 )
 
-targets.tests.gtest_test(
-    name = "courgette_unittests",
+targets.tests.gpu_telemetry_test(
+    name = "context_lost_validating_tests",
+    telemetry_test_name = "context_lost",
+    mixins = [
+        "has_native_resultdb_integration",
+    ],
 )
 
 targets.tests.gtest_test(
@@ -834,6 +879,14 @@ targets.tests.gtest_test(
 )
 
 targets.tests.gtest_test(
+    name = "enterprise_companion_integration_tests",
+)
+
+targets.tests.gtest_test(
+    name = "enterprise_companion_tests",
+)
+
+targets.tests.gtest_test(
     name = "env_chromium_unittests",
 )
 
@@ -894,7 +947,6 @@ targets.tests.gpu_telemetry_test(
     name = "expected_color_pixel_validating_test",
     telemetry_test_name = "expected_color",
     mixins = [
-        "skia_gold_test",
         "has_native_resultdb_integration",
     ],
 )
@@ -936,6 +988,28 @@ targets.tests.gtest_test(
         "--env-var",
         "LIBVA_DRIVER_NAME",
         "libfake",
+        "../../media/test/data/test-25fps.vp9",
+        "../../media/test/data/test-25fps.vp9.json",
+    ],
+    binary = "video_decode_accelerator_tests",
+)
+
+targets.tests.gtest_test(
+    name = "video_decode_accelerator_tests_v4l2_vp8",
+    args = [
+        "--as-root",
+        "--validator_type=none",
+        "../../media/test/data/test-25fps.vp8",
+        "../../media/test/data/test-25fps.vp8.json",
+    ],
+    binary = "video_decode_accelerator_tests",
+)
+
+targets.tests.gtest_test(
+    name = "video_decode_accelerator_tests_v4l2_vp9",
+    args = [
+        "--as-root",
+        "--validator_type=none",
         "../../media/test/data/test-25fps.vp9",
         "../../media/test/data/test-25fps.vp9.json",
     ],
@@ -1006,22 +1080,8 @@ targets.tests.gtest_test(
 )
 
 targets.tests.gtest_test(
-    name = "gles2_conform_d3d9_test",
-    binary = "gles2_conform_test",
-)
-
-targets.tests.gtest_test(
     name = "gpu_memory_buffer_impl_tests",
     binary = "gpu_unittests",
-)
-
-targets.tests.gtest_test(
-    name = "gles2_conform_test",
-)
-
-targets.tests.gtest_test(
-    name = "gles2_conform_gl_test",
-    binary = "gles2_conform_test",
 )
 
 targets.tests.isolated_script_test(
@@ -1109,6 +1169,21 @@ targets.tests.gtest_test(
     binary = "dawn_end2end_tests",
 )
 
+targets.tests.gtest_test(
+    name = "dawn_end2end_use_tint_ir_tests",
+    mixins = [
+        "dawn_end2end_gpu_test",
+    ],
+    args = [
+        "--enable-toggles=use_tint_ir",
+    ],
+    binary = "dawn_end2end_tests",
+)
+
+targets.tests.gtest_test(
+    name = "fuzzing_unittests",
+)
+
 targets.tests.gpu_telemetry_test(
     name = "gpu_process_launch_tests",
     telemetry_test_name = "gpu_process",
@@ -1141,7 +1216,7 @@ targets.tests.isolated_script_test(
         "--skipped=always",
         # Since there are random timeouts, we have to increase the timeout
         # threshold for now.
-        # TODO(https://crbug.com/1517847): Remove this once we resolve the timeouts.
+        # TODO(crbug.com/41490824): Remove this once we resolve the timeouts.
         "--timeout-ms=20000",
         # layout test failures are retried 3 times when '--test-list' is not
         # passed, but 0 times when '--test-list' is passed. We want to always
@@ -1164,7 +1239,7 @@ targets.tests.isolated_script_test(
         "--skipped=always",
         # Since there are random timeouts, we have to increase the timeout
         # threshold for now.
-        # TODO(https://crbug.com/1517847): Remove this once we resolve the timeouts.
+        # TODO(crbug.com/41490824): Remove this once we resolve the timeouts.
         "--timeout-ms=20000",
         # layout test failures are retried 3 times when '--test-list' is not
         # passed, but 0 times when '--test-list' is passed. We want to always
@@ -1172,6 +1247,27 @@ targets.tests.isolated_script_test(
         "--num-retries=3",
     ],
     binary = "blink_wpt_tests",
+)
+
+targets.tests.isolated_script_test(
+    # graphite_enabled_headless_shell_wpt_tests provides coverage for
+    # running web platform tests with Skia Graphite.
+    name = "graphite_enabled_headless_shell_wpt_tests",
+    mixins = [
+        "has_native_resultdb_integration",
+        "blink_tests_write_run_histories",
+    ],
+    args = [
+        "--flag-specific=enable-skia-graphite",
+        "--skipped=always",
+        # Since there are random timeouts, we have to increase the timeout
+        # threshold for now.
+        # TODO(crbug.com/41490824): Remove this once we resolve the timeouts.
+        "--timeout-multiplier=2",
+        "--inverted-test-launcher-filter-file=../../third_party/blink/web_tests/TestLists/chrome.filter",
+        "--test-launcher-filter-file=../../third_party/blink/web_tests/TestLists/headless_shell.filter",
+    ],
+    binary = "headless_shell_wpt",
 )
 
 targets.tests.isolated_script_test(
@@ -1230,6 +1326,21 @@ targets.tests.isolated_script_test(
         "--num-retries=3",
     ],
     binary = "blink_wpt_tests",
+)
+
+targets.tests.isolated_script_test(
+    name = "high_dpi_headless_shell_wpt_tests",
+    mixins = [
+        "has_native_resultdb_integration",
+        "blink_tests_write_run_histories",
+    ],
+    args = [
+        "--flag-specific=highdpi",
+        "--skipped=always",
+        "--inverted-test-launcher-filter-file=../../third_party/blink/web_tests/TestLists/chrome.filter",
+        "--test-launcher-filter-file=../../third_party/blink/web_tests/TestLists/headless_shell.filter",
+    ],
+    binary = "headless_shell_wpt",
 )
 
 targets.tests.gpu_telemetry_test(
@@ -1313,10 +1424,6 @@ targets.tests.isolated_script_test(
 )
 
 targets.tests.isolated_script_test(
-    name = "ios_remoting_unittests",
-)
-
-targets.tests.isolated_script_test(
     name = "ios_testing_unittests",
 )
 
@@ -1360,10 +1467,6 @@ targets.tests.junit_test(
 
 targets.tests.gtest_test(
     name = "keyboard_unittests",
-)
-
-targets.tests.gtest_test(
-    name = "lacros_all_tast_tests",
 )
 
 targets.tests.gtest_test(
@@ -1468,6 +1571,10 @@ targets.tests.gtest_test(
 
 targets.tests.isolated_script_test(
     name = "model_validation_tests",
+)
+
+targets.tests.isolated_script_test(
+    name = "model_validation_tests_light",
 )
 
 targets.tests.isolated_script_test(
@@ -1580,6 +1687,20 @@ targets.tests.isolated_script_test(
     binary = "blink_wpt_tests",
 )
 
+targets.tests.isolated_script_test(
+    name = "not_site_per_process_headless_shell_wpt_tests",
+    mixins = [
+        "has_native_resultdb_integration",
+        "blink_tests_write_run_histories",
+    ],
+    args = [
+        "--flag-specific=disable-site-isolation-trials",
+        "--inverted-test-launcher-filter-file=../../third_party/blink/web_tests/TestLists/chrome.filter",
+        "--test-launcher-filter-file=../../third_party/blink/web_tests/TestLists/headless_shell.filter",
+    ],
+    binary = "headless_shell_wpt",
+)
+
 targets.tests.gtest_test(
     name = "notification_helper_unittests",
 )
@@ -1590,6 +1711,14 @@ targets.tests.isolated_script_test(
 
 targets.tests.isolated_script_test(
     name = "ondevice_stability_tests",
+)
+
+targets.tests.isolated_script_test(
+    name = "ondevice_stability_tests_light",
+)
+
+targets.tests.isolated_script_test(
+    name = "chrome_ai_wpt_tests",
 )
 
 targets.tests.gtest_test(
@@ -1754,7 +1883,6 @@ targets.tests.gpu_telemetry_test(
     name = "pixel_skia_gold_validating_test",
     telemetry_test_name = "pixel",
     mixins = [
-        "skia_gold_test",
         "has_native_resultdb_integration",
     ],
 )
@@ -2040,6 +2168,17 @@ targets.tests.gtest_test(
     binary = "browser_tests",
 )
 
+targets.tests.gtest_test(
+    name = "tablet_sensitive_chrome_public_test_apk",
+    mixins = [
+        "skia_gold_test",
+    ],
+    args = [
+        "--annotation=Restriction=Tablet",
+    ],
+    binary = "chrome_public_test_apk",
+)
+
 targets.tests.isolated_script_test(
     name = "telemetry_chromium_minidump_unittests",
     args = [
@@ -2110,6 +2249,9 @@ targets.tests.gtest_test(
 targets.tests.script_test(
     name = "test_traffic_annotation_auditor",
     script = "test_traffic_annotation_auditor.py",
+    precommit_args = [
+        "--no-update-sheet",
+    ],
 )
 
 targets.tests.isolated_script_test(
@@ -2326,7 +2468,6 @@ targets.tests.gpu_telemetry_test(
     ],
     args = [
         "--extra-browser-args=--use-cmd-decoder=passthrough --use-gl=angle --use-angle=gl --disable-features=SkiaGraphite",
-        "$$MAGIC_SUBSTITUTION_GPUParallelJobs",
     ],
 )
 
@@ -2338,7 +2479,6 @@ targets.tests.gpu_telemetry_test(
     ],
     args = [
         "--extra-browser-args=--use-cmd-decoder=passthrough --use-gl=angle --use-angle=metal --disable-features=SkiaGraphite",
-        "$$MAGIC_SUBSTITUTION_GPUParallelJobs",
     ],
 )
 
@@ -2350,7 +2490,6 @@ targets.tests.gpu_telemetry_test(
     ],
     args = [
         "--extra-browser-args=--use-cmd-decoder=passthrough --use-gl=angle --use-angle=metal --enable-features=SkiaGraphite",
-        "$$MAGIC_SUBSTITUTION_GPUParallelJobs",
     ],
 )
 
@@ -2389,10 +2528,9 @@ targets.tests.gpu_telemetry_test(
     ],
     args = [
         "--webgl-conformance-version=2.0.1",
-        "$$MAGIC_SUBSTITUTION_GPUWebGLRuntimeFile",
+        targets.magic_args.GPU_WEBGL_RUNTIME_FILE,
         # On dual-GPU devices we want the high-performance GPU to be active
         "--extra-browser-args=--use-gl=angle --use-angle=gl --use-cmd-decoder=passthrough --force_high_performance_gpu --disable-features=SkiaGraphite",
-        "$$MAGIC_SUBSTITUTION_GPUParallelJobs",
     ],
 )
 
@@ -2404,10 +2542,9 @@ targets.tests.gpu_telemetry_test(
     ],
     args = [
         "--webgl-conformance-version=2.0.1",
-        "$$MAGIC_SUBSTITUTION_GPUWebGLRuntimeFile",
+        targets.magic_args.GPU_WEBGL_RUNTIME_FILE,
         # On dual-GPU devices we want the high-performance GPU to be active
         "--extra-browser-args=--use-gl=angle --use-angle=gl --use-cmd-decoder=passthrough --force_high_performance_gpu",
-        "$$MAGIC_SUBSTITUTION_GPUParallelJobs",
     ],
 )
 
@@ -2435,10 +2572,9 @@ targets.tests.gpu_telemetry_test(
     ],
     args = [
         "--webgl-conformance-version=2.0.1",
-        "$$MAGIC_SUBSTITUTION_GPUWebGLRuntimeFile",
+        targets.magic_args.GPU_WEBGL_RUNTIME_FILE,
         # On dual-GPU devices we want the high-performance GPU to be active
         "--extra-browser-args=--use-gl=angle --use-angle=metal --use-cmd-decoder=passthrough --enable-features=EGLDualGPURendering,ForceHighPerformanceGPUForWebGL,SkiaGraphite",
-        "$$MAGIC_SUBSTITUTION_GPUParallelJobs",
         "--enable-metal-debug-layers",
     ],
 )
@@ -2476,8 +2612,7 @@ targets.tests.gpu_telemetry_test(
     args = [
         # On dual-GPU devices we want the high-performance GPU to be active
         "--extra-browser-args=--use-gl=angle --use-angle=gl --use-cmd-decoder=passthrough --force_high_performance_gpu --disable-features=SkiaGraphite",
-        "$$MAGIC_SUBSTITUTION_GPUWebGLRuntimeFile",
-        "$$MAGIC_SUBSTITUTION_GPUParallelJobs",
+        targets.magic_args.GPU_WEBGL_RUNTIME_FILE,
     ],
 )
 
@@ -2498,6 +2633,14 @@ targets.tests.gpu_telemetry_test(
 )
 
 targets.tests.gpu_telemetry_test(
+    name = "webgl_conformance_gles_passthrough_graphite_tests",
+    telemetry_test_name = "webgl1_conformance",
+    mixins = [
+        "has_native_resultdb_integration",
+    ],
+)
+
+targets.tests.gpu_telemetry_test(
     name = "webgl_conformance_metal_passthrough_ganesh_tests",
     telemetry_test_name = "webgl1_conformance",
     mixins = [
@@ -2506,8 +2649,7 @@ targets.tests.gpu_telemetry_test(
     args = [
         # On dual-GPU devices we want the high-performance GPU to be active
         "--extra-browser-args=--use-gl=angle --use-angle=metal --use-cmd-decoder=passthrough --enable-features=EGLDualGPURendering,ForceHighPerformanceGPUForWebGL --disable-features=SkiaGraphite",
-        "$$MAGIC_SUBSTITUTION_GPUWebGLRuntimeFile",
-        "$$MAGIC_SUBSTITUTION_GPUParallelJobs",
+        targets.magic_args.GPU_WEBGL_RUNTIME_FILE,
         "--enable-metal-debug-layers",
     ],
 )
@@ -2521,8 +2663,7 @@ targets.tests.gpu_telemetry_test(
     args = [
         # On dual-GPU devices we want the high-performance GPU to be active
         "--extra-browser-args=--use-gl=angle --use-angle=metal --use-cmd-decoder=passthrough --enable-features=EGLDualGPURendering,ForceHighPerformanceGPUForWebGL,SkiaGraphite",
-        "$$MAGIC_SUBSTITUTION_GPUWebGLRuntimeFile",
-        "$$MAGIC_SUBSTITUTION_GPUParallelJobs",
+        targets.magic_args.GPU_WEBGL_RUNTIME_FILE,
         "--enable-metal-debug-layers",
     ],
 )
@@ -2697,11 +2838,30 @@ targets.tests.gtest_test(
     binary = "blink_unittests",
 )
 
+targets.tests.isolated_script_test(
+    name = "webview_blink_wpt_tests",
+    args = [
+    ],
+    binary = "trichrome_webview_wpt_64",
+)
+
 targets.tests.gtest_test(
     name = "webview_cts_tests",
     mixins = [
         "webview_cts_archive",
     ],
+)
+
+targets.tests.gtest_test(
+    name = "webview_cts_tests_bfcache_mutations",
+    mixins = [
+        "webview_cts_archive",
+    ],
+    args = [
+        "--use-apk-under-test-flags-file",
+        "--enable-features=WebViewBackForwardCache",
+    ],
+    binary = "webview_cts_tests",
 )
 
 targets.tests.gtest_test(
@@ -2758,11 +2918,37 @@ targets.tests.gtest_test(
     name = "webview_instrumentation_test_apk",
 )
 
+# This target is only to run on Android versions <= Android Q (10).
+targets.tests.gtest_test(
+    name = "webview_instrumentation_test_apk_single_process_mode",
+    args = [
+        "--webview-process-mode=single",
+    ],
+    binary = "webview_instrumentation_test_apk",
+)
+
+targets.tests.gtest_test(
+    name = "webview_instrumentation_test_apk_multiple_process_mode",
+    args = [
+        "--webview-process-mode=multiple",
+    ],
+    binary = "webview_instrumentation_test_apk",
+)
+
 targets.tests.gtest_test(
     name = "webview_instrumentation_test_apk_mutations",
     args = [
         "--use-apk-under-test-flags-file",
         "--webview-mutations-enabled",
+    ],
+    binary = "webview_instrumentation_test_apk",
+)
+
+targets.tests.gtest_test(
+    name = "webview_instrumentation_test_apk_bfcache_mutations",
+    args = [
+        "--use-apk-under-test-flags-file",
+        "--enable-features=WebViewBackForwardCache",
     ],
     binary = "webview_instrumentation_test_apk",
 )
@@ -2794,30 +2980,6 @@ targets.tests.gtest_test(
 targets.tests.isolated_script_test(
     name = "wpt_tests_ios",
     binary = "chrome_ios_wpt",
-)
-
-targets.tests.isolated_script_test(
-    name = "wpt_tests_suite",
-    binary = "content_shell_wpt",
-)
-
-targets.tests.isolated_script_test(
-    name = "wpt_tests_suite_highdpi",
-    args = [
-        "--flag-specific",
-        "highdpi",
-    ],
-    binary = "content_shell_wpt",
-)
-
-targets.tests.isolated_script_test(
-    name = "wpt_tests_suite_not_site_per_process",
-    args = [
-        "--child-processes=8",
-        "--flag-specific",
-        "disable-site-isolation-trials",
-    ],
-    binary = "content_shell_wpt",
 )
 
 targets.tests.gtest_test(

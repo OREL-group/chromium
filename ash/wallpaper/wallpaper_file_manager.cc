@@ -182,7 +182,6 @@ base::FilePath SaveWallpaperPerType(const WallpaperType type,
       return SaveWallpaperToPath(type, wallpaper_dir, file_name, layout, image);
     default:
       NOTREACHED() << "Invalid wallpaper type.";
-      return base::FilePath();
   }
 }
 

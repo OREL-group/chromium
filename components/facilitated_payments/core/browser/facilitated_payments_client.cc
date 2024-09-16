@@ -11,8 +11,15 @@ namespace payments::facilitated {
 FacilitatedPaymentsClient::~FacilitatedPaymentsClient() = default;
 
 bool FacilitatedPaymentsClient::ShowPixPaymentPrompt(
+    base::span<const autofill::BankAccount> bank_account_suggestions,
     base::OnceCallback<void(bool, int64_t)> on_user_decision_callback) {
   return false;
 }
+
+void FacilitatedPaymentsClient::ShowProgressScreen() {}
+
+void FacilitatedPaymentsClient::ShowErrorScreen() {}
+
+void FacilitatedPaymentsClient::DismissPrompt() {}
 
 }  // namespace payments::facilitated

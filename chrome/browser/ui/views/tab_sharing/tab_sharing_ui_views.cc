@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/ui/views/tab_sharing/tab_sharing_ui_views.h"
 
 #include <string>
@@ -581,7 +586,7 @@ void TabSharingUIViews::MaybeUpdateFavicon(
   const uint32_t hash = GetHash(favicon);
   if (*current_hash != hash) {
     *current_hash = hash;
-    // TODO(crbug.com/1224363): Update favicons without recreating infobars.
+    // TODO(crbug.com/40188004): Update favicons without recreating infobars.
     // To do so cleanly requires that |infobars_| map to |ConfirmInfoBar|.
     CreateInfobarForWebContents(infobar_owner);
   }

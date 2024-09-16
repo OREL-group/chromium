@@ -216,8 +216,10 @@ class CrossOriginOpenerPolicyBrowserTest
             base::Unretained(this))),
         https_server_(net::EmbeddedTestServer::TYPE_HTTPS) {
     // Enable COOP/COEP:
-    feature_list_.InitAndEnableFeature(
-        network::features::kCrossOriginOpenerPolicy);
+    feature_list_.InitWithFeatures(
+        {network::features::kCrossOriginOpenerPolicy,
+         network::features::kCoopNoopenerAllowPopups},
+        {});
 
     // Enable RenderDocument:
     InitAndEnableRenderDocumentFeature(&feature_list_for_render_document_,
@@ -232,6 +234,13 @@ class CrossOriginOpenerPolicyBrowserTest
       feature_list_for_back_forward_cache_.InitWithFeatures(
           {}, {features::kBackForwardCache});
     }
+
+    // Set the speculative RFH creation delay to 0 so that the speculative RFH
+    // is always created before receiving the response. Otherwise the RFH will
+    // always be created with the correct COOP header.
+    feature_list_for_defer_speculative_rfh_.InitAndEnableFeatureWithParameters(
+        features::kDeferSpeculativeRFHCreation,
+        {{"create_speculative_rfh_delay_ms", "0"}});
   }
 
   // Provides meaningful param names instead of /0, /1, ...
@@ -297,7 +306,6 @@ class CrossOriginOpenerPolicyBrowserTest
 
  private:
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    ContentBrowserTest::SetUpCommandLine(command_line);
     mock_cert_verifier_.SetUpCommandLine(command_line);
   }
 
@@ -325,6 +333,7 @@ class CrossOriginOpenerPolicyBrowserTest
   base::test::ScopedFeatureList feature_list_;
   base::test::ScopedFeatureList feature_list_for_render_document_;
   base::test::ScopedFeatureList feature_list_for_back_forward_cache_;
+  base::test::ScopedFeatureList feature_list_for_defer_speculative_rfh_;
   net::EmbeddedTestServer https_server_;
 };
 
@@ -1283,7 +1292,7 @@ IN_PROC_BROWSER_TEST_P(CrossOriginOpenerPolicyBrowserTest,
 
   // COOP and COEP inherited from Blob creator (initial window) and not the
   // initiator (first popup)
-  // TODO(https://crbug.com/1059300) COOP should be inherited from creator and
+  // TODO(crbug.com/40051710) COOP should be inherited from creator and
   // be same-origin-allow-popups, instead of inheriting from initiator.
   EXPECT_EQ(
       second_popup_rfh->cross_origin_opener_policy(),
@@ -1854,7 +1863,11 @@ IN_PROC_BROWSER_TEST_P(CrossOriginOpenerPolicyBrowserTest,
     // Start navigating to a COOP page.
     TestNavigationManager coop_navigation(web_contents(), coop_page);
     shell()->LoadURL(coop_page);
-    EXPECT_TRUE(coop_navigation.WaitForRequestStart());
+    if (ShouldCreateNewHostForAllFrames()) {
+      coop_navigation.WaitForSpeculativeRenderFrameHostCreation();
+    } else {
+      EXPECT_TRUE(coop_navigation.WaitForRequestStart());
+    }
 
     // Simulate the renderer process crashing.
     RenderProcessHost* process = initial_site_instance->GetProcess();
@@ -1873,7 +1886,7 @@ IN_PROC_BROWSER_TEST_P(CrossOriginOpenerPolicyBrowserTest,
     // started (instead of only when the response started), because the renderer
     // process will crash and trigger deletion of the speculative RFH and the
     // navigation using that speculative RFH.
-    // TODO(https://crbug.com/1426413): If the final RenderFrameHost picked for
+    // TODO(crbug.com/40261276): If the final RenderFrameHost picked for
     // the navigation doesn't use the same process as the crashed process, we
     // can crash the process after the final RenderFrameHost has been picked
     // instead, and the navigation will commit normally.
@@ -1965,7 +1978,11 @@ IN_PROC_BROWSER_TEST_P(CrossOriginOpenerPolicyBrowserTest,
     // Start navigating to a non COOP page.
     TestNavigationManager non_coop_navigation(web_contents(), non_coop_page);
     shell()->LoadURL(non_coop_page);
-    EXPECT_TRUE(non_coop_navigation.WaitForRequestStart());
+    if (ShouldCreateNewHostForAllFrames()) {
+      non_coop_navigation.WaitForSpeculativeRenderFrameHostCreation();
+    } else {
+      EXPECT_TRUE(non_coop_navigation.WaitForRequestStart());
+    }
 
     // Simulate the renderer process crashing.
     RenderProcessHost* process = initial_site_instance->GetProcess();
@@ -1984,7 +2001,7 @@ IN_PROC_BROWSER_TEST_P(CrossOriginOpenerPolicyBrowserTest,
     // started (instead of only when the response started), because the renderer
     // process will crash and trigger deletion of the speculative RFH and the
     // navigation using that speculative RFH.
-    // TODO(https://crbug.com/1426413): If the final RenderFrameHost picked for
+    // TODO(crbug.com/40261276): If the final RenderFrameHost picked for
     // the navigation doesn't use the same process as the crashed process, we
     // can crash the process after the final RenderFrameHost has been picked
     // instead, and the navigation will commit normally.
@@ -2080,7 +2097,11 @@ IN_PROC_BROWSER_TEST_P(CrossOriginOpenerPolicyBrowserTest,
     TestNavigationManager coop_navigation(web_contents(),
                                           coop_allow_popups_page);
     shell()->LoadURL(coop_allow_popups_page);
-    EXPECT_TRUE(coop_navigation.WaitForRequestStart());
+    if (ShouldCreateNewHostForAllFrames()) {
+      coop_navigation.WaitForSpeculativeRenderFrameHostCreation();
+    } else {
+      EXPECT_TRUE(coop_navigation.WaitForRequestStart());
+    }
 
     // Simulate the renderer process crashing.
     RenderProcessHost* process = initial_site_instance->GetProcess();
@@ -2099,7 +2120,7 @@ IN_PROC_BROWSER_TEST_P(CrossOriginOpenerPolicyBrowserTest,
     // started (instead of only when the response started), because the renderer
     // process will crash and trigger deletion of the speculative RFH and the
     // navigation using that speculative RFH.
-    // TODO(https://crbug.com/1426413): If the final RenderFrameHost picked for
+    // TODO(crbug.com/40261276): If the final RenderFrameHost picked for
     // the navigation doesn't use the same process as the crashed process, we
     // can crash the process after the final RenderFrameHost has been picked
     // instead, and the navigation will commit normally.
@@ -2330,7 +2351,11 @@ IN_PROC_BROWSER_TEST_P(CrossOriginOpenerPolicyBrowserTest,
     // Navigate to a non COOP page.
     TestNavigationManager non_coop_navigation(web_contents(), non_coop_page);
     shell()->LoadURL(non_coop_page);
-    EXPECT_TRUE(non_coop_navigation.WaitForRequestStart());
+    if (ShouldCreateNewHostForAllFrames()) {
+      non_coop_navigation.WaitForSpeculativeRenderFrameHostCreation();
+    } else {
+      EXPECT_TRUE(non_coop_navigation.WaitForRequestStart());
+    }
 
     // A speculative RenderFrameHost will only be created if we always use a new
     // RenderFrameHost for all cross-document navigations.
@@ -2360,6 +2385,9 @@ IN_PROC_BROWSER_TEST_P(CrossOriginOpenerPolicyBrowserTest,
     TestNavigationManager coop_navigation(web_contents(), coop_page);
     shell()->LoadURL(coop_page);
     EXPECT_TRUE(coop_navigation.WaitForRequestStart());
+    if (CanSameSiteMainFrameNavigationsChangeRenderFrameHosts()) {
+      coop_navigation.WaitForSpeculativeRenderFrameHostCreation();
+    }
 
     auto* speculative_rfh = web_contents()
                                 ->GetPrimaryFrameTree()
@@ -2395,6 +2423,9 @@ IN_PROC_BROWSER_TEST_P(CrossOriginOpenerPolicyBrowserTest,
     TestNavigationManager non_coop_navigation(web_contents(), non_coop_page);
     shell()->LoadURL(non_coop_page);
     EXPECT_TRUE(non_coop_navigation.WaitForRequestStart());
+    if (CanSameSiteMainFrameNavigationsChangeRenderFrameHosts()) {
+      non_coop_navigation.WaitForSpeculativeRenderFrameHostCreation();
+    }
 
     auto* speculative_rfh = web_contents()
                                 ->GetPrimaryFrameTree()
@@ -2429,6 +2460,9 @@ IN_PROC_BROWSER_TEST_P(CrossOriginOpenerPolicyBrowserTest,
     TestNavigationManager coop_navigation(web_contents(), coop_page);
     shell()->LoadURL(coop_page);
     EXPECT_TRUE(coop_navigation.WaitForRequestStart());
+    if (ShouldCreateNewHostForAllFrames()) {
+      coop_navigation.WaitForSpeculativeRenderFrameHostCreation();
+    }
 
     // A speculative RenderFrameHost will only be created if we always use a new
     // RenderFrameHost for all cross-document navigations.
@@ -2754,8 +2788,8 @@ IN_PROC_BROWSER_TEST_P(VirtualBrowsingContextGroupTest, Navigation) {
               "Cross-Origin-Embedder-Policy: require-corp"),
           true,
       },
-      // TODO(https://crbug.com/1101339). Test with COEP-RO.
-      // TODO(https://crbug.com/1101339). Test with COOP-RO+COOP.
+      // TODO(crbug.com/40138297). Test with COEP-RO.
+      // TODO(crbug.com/40138297). Test with COOP-RO+COOP.
   };
 
   for (const auto& test_case : kTestCases) {
@@ -2897,8 +2931,8 @@ IN_PROC_BROWSER_TEST_P(VirtualBrowsingContextGroupTest, WindowOpen) {
           true,
       },
 
-      // TODO(https://crbug.com/1101339). Test with COEP-RO.
-      // TODO(https://crbug.com/1101339). Test with COOP-RO+COOP
+      // TODO(crbug.com/40138297). Test with COEP-RO.
+      // TODO(crbug.com/40138297). Test with COOP-RO+COOP
   };
 
   for (const auto& test_case : kTestCases) {
@@ -3380,7 +3414,7 @@ IN_PROC_BROWSER_TEST_P(VirtualBrowsingContextGroupTest, HistoryNavigation) {
   EXPECT_NE(group_3, group_4);
   EXPECT_NE(group_1, group_4);
 
-  // TODO(https://crbug.com/1112256) During history navigation, the virtual
+  // TODO(crbug.com/40709606) During history navigation, the virtual
   // browsing context group must be restored whenever the SiteInstance is
   // restored. Currently, the SiteInstance is restored, but the virtual browsing
   // context group is new.
@@ -3438,9 +3472,26 @@ IN_PROC_BROWSER_TEST_P(VirtualBrowsingContextGroupTest,
   EXPECT_NE(group_4, group_1);
 }
 
+// A subclass for tests incompatible with OriginKeyedProcessesByDefault.
+class CrossOriginOpenerPolicyNoOKPBrowserTest
+    : public CrossOriginOpenerPolicyBrowserTest {
+ public:
+  CrossOriginOpenerPolicyNoOKPBrowserTest() {
+    feature_list_
+        .InitWithFeatures(/*enabled_features=*/
+                          {}, /*disabled_features=*/{
+                              features::kOriginKeyedProcessesByDefault});
+  }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+};
+
 // A test to make sure that loading a page with COOP/COEP headers doesn't set
-// is_origin_keyed() on the SiteInstance's SiteInfo.
-IN_PROC_BROWSER_TEST_P(CrossOriginOpenerPolicyBrowserTest,
+// is_origin_keyed() on the SiteInstance's SiteInfo. This test should be run
+// with OriginKeyedProcessesByDefault disabled, otherwise the SiteInfo will
+// be origin-keyed regardless of COOP/COEP.
+IN_PROC_BROWSER_TEST_P(CrossOriginOpenerPolicyNoOKPBrowserTest,
                        CoopCoepNotOriginKeyed) {
   GURL isolated_page(
       https_server()->GetURL("a.test",
@@ -3457,7 +3508,7 @@ IN_PROC_BROWSER_TEST_P(CrossOriginOpenerPolicyBrowserTest,
   EXPECT_FALSE(current_si->GetSiteInfo().requires_origin_keyed_process());
 }
 
-// TODO(crbug.com/1467243): Disable flaky test in Linux.
+// TODO(crbug.com/40924316): Disable flaky test in Linux.
 #if BUILDFLAG(IS_LINUX)
 #define MAYBE_CrossOriginIsolatedSiteInstance_MainFrame \
   DISABLED_CrossOriginIsolatedSiteInstance_MainFrame
@@ -3683,7 +3734,14 @@ IN_PROC_BROWSER_TEST_P(CrossOriginOpenerPolicyBrowserTest,
     SiteInstanceImpl* iframe_si = iframe_rfh->GetSiteInstance();
     EXPECT_TRUE(iframe_si->IsCrossOriginIsolated());
     EXPECT_TRUE(iframe_si->IsRelatedSiteInstance(main_si));
-    EXPECT_EQ(iframe_si->GetProcess(), main_si->GetProcess());
+    if (SiteIsolationPolicy::AreOriginKeyedProcessesEnabledByDefault()) {
+      // In this case, the main frame and the child frame have different
+      // origins, so when OriginKeyedProcessesByDefault is enabled they will
+      // be placed into different processes.
+      EXPECT_NE(iframe_si->GetProcess(), main_si->GetProcess());
+    } else {
+      EXPECT_EQ(iframe_si->GetProcess(), main_si->GetProcess());
+    }
   }
 }
 
@@ -4134,7 +4192,14 @@ IN_PROC_BROWSER_TEST_P(CrossOriginOpenerPolicyBrowserTest,
   SiteInstanceImpl* iframe_si = iframe_rfh->GetSiteInstance();
   EXPECT_TRUE(iframe_si->IsCrossOriginIsolated());
   EXPECT_TRUE(iframe_si->IsRelatedSiteInstance(main_si));
-  EXPECT_EQ(iframe_si->GetProcess(), main_si->GetProcess());
+  if (SiteIsolationPolicy::AreOriginKeyedProcessesEnabledByDefault()) {
+    // The main frame and the child frame have different origins, so when
+    // OriginKeyedProcessesByDefault is enabled they will be placed in different
+    // processes.
+    EXPECT_NE(iframe_si->GetProcess(), main_si->GetProcess());
+  } else {
+    EXPECT_EQ(iframe_si->GetProcess(), main_si->GetProcess());
+  }
 
   // Open an isolated popup, but cross-origin.
   {
@@ -4274,7 +4339,7 @@ IN_PROC_BROWSER_TEST_P(CrossOriginOpenerPolicyBrowserTest,
     // don't have the COOP information yet. Then when we receive the final
     // response, we will try to reuse the process used by the speculative RFH,
     // which is the same process as before.
-    // TODO(https://crbug.com/1426413): This is unexpected. Fix this so that the
+    // TODO(crbug.com/40261276): This is unexpected. Fix this so that the
     // process won't be reused.
     EXPECT_EQ(process_B, process_A);
   } else {
@@ -4433,6 +4498,12 @@ IN_PROC_BROWSER_TEST_P(CrossOriginOpenerPolicyBrowserTest,
     // locked process back to an unlocked process, and hence require a process
     // swap.
     EXPECT_NE(rph_id_2, rph_id_3);
+  } else if (SiteIsolationPolicy::AreOriginKeyedProcessesEnabledByDefault()) {
+    // With OriginKeyedProcessesByDefault, each unique origin will be placed in
+    // a separate process.
+    EXPECT_NE(rph_id_1, rph_id_2);
+    EXPECT_NE(rph_id_2, rph_id_3);
+    EXPECT_NE(rph_id_1, rph_id_3);
   } else {
     EXPECT_EQ(rph_id_1, rph_id_2);
     EXPECT_EQ(rph_id_2, rph_id_3);
@@ -4529,7 +4600,7 @@ IN_PROC_BROWSER_TEST_P(CrossOriginOpenerPolicyBrowserTest,
   // that's locked to b.test.
   TestNavigationManager navigation(web_contents(), url_2);
   EXPECT_TRUE(BeginNavigateToURLFromRenderer(web_contents(), url_2));
-  EXPECT_TRUE(navigation.WaitForRequestStart());
+  navigation.WaitForSpeculativeRenderFrameHostCreation();
   RenderFrameHostWrapper speculative_rfh(web_contents()
                                              ->GetPrimaryFrameTree()
                                              .root()
@@ -4540,7 +4611,6 @@ IN_PROC_BROWSER_TEST_P(CrossOriginOpenerPolicyBrowserTest,
   EXPECT_NE(rph_id_1, rph_id_2);
 
   // Allow the navigation to receive the response and commit.
-  navigation.ResumeNavigation();
   EXPECT_TRUE(navigation.WaitForNavigationFinished());
   EXPECT_TRUE(navigation.was_successful());
 
@@ -4588,11 +4658,6 @@ IN_PROC_BROWSER_TEST_P(CrossOriginOpenerPolicyBrowserTest,
   TestNavigationManager navigation(web_contents(), url_2);
   EXPECT_TRUE(BeginNavigateToURLFromRenderer(web_contents(), url_2));
   EXPECT_TRUE(navigation.WaitForRequestStart());
-  RenderFrameHostImpl* speculative_rfh = web_contents()
-                                             ->GetPrimaryFrameTree()
-                                             .root()
-                                             ->render_manager()
-                                             ->speculative_frame_host();
 
   // When the back-forward cache is enabled, or when RenderDocument is used, we
   // will get a speculative RenderFrameHost, which should reuse the existing
@@ -4600,16 +4665,25 @@ IN_PROC_BROWSER_TEST_P(CrossOriginOpenerPolicyBrowserTest,
   // should stay in the current RenderFrameHost.
   int rph_id_2;
   if (IsBackForwardCacheEnabled() || ShouldCreateNewHostForAllFrames()) {
+    navigation.WaitForSpeculativeRenderFrameHostCreation();
+    RenderFrameHost* speculative_rfh = web_contents()
+                                           ->GetPrimaryFrameTree()
+                                           .root()
+                                           ->render_manager()
+                                           ->speculative_frame_host();
     ASSERT_TRUE(speculative_rfh);
     rph_id_2 = speculative_rfh->GetProcess()->GetID();
     EXPECT_EQ(rph_id_1, rph_id_2);
   } else {
-    ASSERT_FALSE(speculative_rfh);
+    ASSERT_FALSE(web_contents()
+                     ->GetPrimaryFrameTree()
+                     .root()
+                     ->render_manager()
+                     ->speculative_frame_host());
     rph_id_2 = rph_id_1;
   }
 
-  // Allow the navigation to receive the response and commit.
-  navigation.ResumeNavigation();
+  // Allow the navigation to receive the response commit.
   EXPECT_TRUE(navigation.WaitForNavigationFinished());
   EXPECT_TRUE(navigation.was_successful());
 
@@ -4651,7 +4725,9 @@ IN_PROC_BROWSER_TEST_P(CrossOriginOpenerPolicyBrowserTest,
   // Start a navigation to another same-site COOP URL.
   TestNavigationManager navigation(web_contents(), url_2);
   EXPECT_TRUE(BeginNavigateToURLFromRenderer(web_contents(), url_2));
-  EXPECT_TRUE(navigation.WaitForRequestStart());
+  // Wait for response to ensure any speculative RFH has already been created,
+  // if necessary.
+  ASSERT_TRUE(navigation.WaitForResponse());
   RenderFrameHostImpl* speculative_rfh = web_contents()
                                              ->GetPrimaryFrameTree()
                                              .root()
@@ -4676,7 +4752,7 @@ IN_PROC_BROWSER_TEST_P(CrossOriginOpenerPolicyBrowserTest,
     rph_id_2 = rph_id_1;
   }
 
-  // Allow the navigation to receive the response and commit.
+  // Allow the navigation to commit.
   navigation.ResumeNavigation();
   EXPECT_TRUE(navigation.WaitForNavigationFinished());
   EXPECT_TRUE(navigation.was_successful());
@@ -4745,7 +4821,8 @@ IN_PROC_BROWSER_TEST_P(ProcessReuseOnPrerenderCOOPSwapBrowserTest,
   // with new BrowsingInstance / SiteInstance, and a new process will be
   // assigned to it accordingly.
   ASSERT_TRUE(navigation_manager.WaitForRequestStart());
-  int prerender_host_id = prerender_helper().GetHostForUrl(prerender_page);
+  FrameTreeNodeId prerender_host_id =
+      prerender_helper().GetHostForUrl(prerender_page);
   RenderFrameHostImpl* rfh_2 =
       web_contents()->UnsafeFindFrameByFrameTreeNodeId(prerender_host_id);
   ASSERT_TRUE(rfh_2);
@@ -4780,7 +4857,7 @@ IN_PROC_BROWSER_TEST_P(ProcessReuseOnPrerenderCOOPSwapBrowserTest,
   EXPECT_EQ(rph_id_2, rph_id_3);
 }
 
-// TODO(https://crbug.com/1101339). Test inheritance of the virtual browsing
+// TODO(crbug.com/40138297). Test inheritance of the virtual browsing
 // context group when using window.open from an iframe, same-origin and
 // cross-origin.
 
@@ -4789,6 +4866,10 @@ static auto kTestParams =
                      testing::Bool());
 INSTANTIATE_TEST_SUITE_P(All,
                          CrossOriginOpenerPolicyBrowserTest,
+                         kTestParams,
+                         CrossOriginOpenerPolicyBrowserTest::DescribeParams);
+INSTANTIATE_TEST_SUITE_P(All,
+                         CrossOriginOpenerPolicyNoOKPBrowserTest,
                          kTestParams,
                          CrossOriginOpenerPolicyBrowserTest::DescribeParams);
 INSTANTIATE_TEST_SUITE_P(All,
@@ -5016,7 +5097,7 @@ IN_PROC_BROWSER_TEST_P(
 
   EXPECT_EQ(false, EvalJs(sub_document, "'SharedArrayBuffer' in globalThis"));
 
-  // TODO(https://crbug.com/1144838): Being able to share SharedArrayBuffer from
+  // TODO(crbug.com/40155614): Being able to share SharedArrayBuffer from
   // a document with self.crossOriginIsolated == false sounds wrong.
   EXPECT_TRUE(ExecJs(sub_document, R"(
     // Create a WebAssembly Memory to bypass the SAB constructor restriction.
@@ -5693,7 +5774,7 @@ IN_PROC_BROWSER_TEST_P(SoapByDefaultVirtualBrowsingContextGroupTest,
   EXPECT_NE(group_3, group_4);
   EXPECT_NE(group_1, group_4);
 
-  // TODO(https://crbug.com/1112256) During history navigation, the virtual
+  // TODO(crbug.com/40709606) During history navigation, the virtual
   // browsing context group must be restored whenever the SiteInstance is
   // restored. Currently, the SiteInstance is restored, but the virtual browsing
   // context group is new.
@@ -6309,7 +6390,7 @@ IN_PROC_BROWSER_TEST_P(CoopRestrictPropertiesBrowserTest,
 
 // Verify that CSP: sandbox is taken into account for the common coop origin
 // computation.
-// TODO(https://crbug.com/1385827): This is not currently the case. Enable once
+// TODO(crbug.com/40879437): This is not currently the case. Enable once
 // COOP is bundled with the appropriate origin.
 IN_PROC_BROWSER_TEST_P(CoopRestrictPropertiesBrowserTest,
                        DoNotReuseBrowsingInstanceInCoopGroupOpaqueOrigin) {
@@ -6637,7 +6718,7 @@ IN_PROC_BROWSER_TEST_P(CoopRestrictPropertiesBrowserTest,
   popup_window->GetController().GoBack();
 
   // Check that the proper speculative SiteInstance was selected.
-  ASSERT_TRUE(nav_manager.WaitForRequestStart());
+  nav_manager.WaitForSpeculativeRenderFrameHostCreation();
   RenderFrameHostImpl* speculative_rfh = popup_window->GetPrimaryFrameTree()
                                              .root()
                                              ->render_manager()
@@ -7118,7 +7199,7 @@ IN_PROC_BROWSER_TEST_P(CoopRestrictPropertiesProxiesBrowserTest,
 // BrowsingInstance will have visibility of all its BrowsingInstance frames, but
 // will only have visibility of the direct opener frame in a different
 // BrowsingInstance in the same CoopRelatedGroup.
-// TODO(1495328): Failing on Mac bots
+// TODO(crbug.com/40286486): Failing on Mac bots
 #if BUILDFLAG(IS_MAC)
 #define MAYBE_ChainedPopupsMixedBrowsingInstanceProxies DISABLED_ChainedPopupsMixedBrowsingInstanceProxies
 #else
@@ -7228,7 +7309,7 @@ class FrameNameChangedWaiter : public WebContentsObserver {
 
 // This test verifies that proxies usually created to support named targeting
 // are not created for cross-BrowsingInstance frames.
-// TODO(https://crbug.com/1467184): This test will likely need to change if we
+// TODO(crbug.com/40276662): This test will likely need to change if we
 // implement per-BrowsingInstance names. In that case, named targeting would be
 // possible using the per-BrowsingContextGroup names, and proxies should be
 // created.
@@ -7409,7 +7490,7 @@ IN_PROC_BROWSER_TEST_P(CoopRestrictPropertiesProxiesBrowserTest,
 // event.source, even cross-BrowsingInstance, even when the source is an iframe
 // for which the target frame's SiteInstanceGroup does not have a main frame
 // proxy yet.
-// TODO(1495328) Failing on mac bots
+// TODO(crbug.com/40286486) Failing on mac bots
 #if BUILDFLAG(IS_MAC)
 #define MAYBE_SubframePostMessageProxiesCrossBrowsingInstance DISABLED_SubframePostMessageProxiesCrossBrowsingInstance
 #else
@@ -8163,7 +8244,7 @@ IN_PROC_BROWSER_TEST_P(CoopRestrictPropertiesProxiesBrowserTest,
 
 // This test verifies that named targeting does not resolve across
 // BrowsingInstances.
-// TODO(https://crbug.com/1467184): Named targeting might evolve in the future,
+// TODO(crbug.com/40276662): Named targeting might evolve in the future,
 // when we're able to have per-BrowsingInstance names. For now, we're simply
 // blocking all named targeting.
 IN_PROC_BROWSER_TEST_P(CoopRestrictPropertiesBrowserTest,
@@ -8234,9 +8315,9 @@ IN_PROC_BROWSER_TEST_P(CoopRestrictPropertiesBrowserTest,
 // Smoke test with kNewBrowsingContextStateOnBrowsingContextGroupSwap enabled.
 // Verifies that nothing breaks when we're dealing with proxies across different
 // BrowsingInstances with COOP: restrict-properties.
-// TODO(1394669): Enable once BrowsingContextState new mode implementation is
-// further down the line. Currently this test crashes even with COOP:
-// same-origin.
+// TODO(crbug.com/40061970): Enable once BrowsingContextState new mode
+// implementation is further down the line. Currently this test crashes even
+// with COOP: same-origin.
 IN_PROC_BROWSER_TEST_P(
     CoopRestrictPropertiesWithNewBrowsingContextStateModeBrowserTest,
     DISABLED_BrowsingContextStateNewModeSmokeTest) {
@@ -8611,9 +8692,9 @@ IN_PROC_BROWSER_TEST_P(CoopRestrictPropertiesReportingBrowserTest,
               "Cross-Origin-Embedder-Policy: require-corp"),
           true,
       },
-      // TODO(https://crbug.com/1424417): Test with COEP-RO.
-      // TODO(https://crbug.com/1424417): Test interactions with COOP: SO.
-      // TODO(https://crbug.com/1424417): Test interactions with COOP: SOAP.
+      // TODO(crbug.com/40260406): Test with COEP-RO.
+      // TODO(crbug.com/40260406): Test interactions with COOP: SO.
+      // TODO(crbug.com/40260406): Test interactions with COOP: SOAP.
   };
 
   for (const auto& test_case : kTestCases) {
@@ -8638,6 +8719,119 @@ IN_PROC_BROWSER_TEST_P(CoopRestrictPropertiesReportingBrowserTest,
       EXPECT_NE(group_2, group_3);  // url_a <- url_b.
     } else {
       EXPECT_EQ(group_1, group_2);  // url_a -> url_b.
+      EXPECT_EQ(group_2, group_3);  // url_b <- url_b.
+    }
+  }
+}
+
+// Navigate in between two documents. Check the virtual browsing context group
+// is properly updated.
+IN_PROC_BROWSER_TEST_P(CrossOriginOpenerPolicyBrowserTest,
+                       NavigationVirtualBrowsingContextGroupNoopener) {
+  const struct {
+    GURL url_a;
+    GURL url_b;
+    bool expect_different_group_a_to_b;
+    bool expect_different_group_b_to_a;
+  } kTestCases[] = {
+      {
+          // unsafe-none, noopener => no change
+          https_server()->GetURL("a.test",
+                                 "/set-header?"
+                                 "Cross-Origin-Opener-Policy: unsafe-none"),
+          https_server()->GetURL(
+              "a.test",
+              "/set-header?"
+              "Cross-Origin-Opener-Policy: noopener-allow-popups"),
+          true,
+          false,
+      },
+      {
+          // Same origin, noopener => change
+          https_server()->GetURL("a.test",
+                                 "/set-header?"
+                                 "Cross-Origin-Opener-Policy: same-origin"),
+          https_server()->GetURL(
+              "a.test",
+              "/set-header?"
+              "Cross-Origin-Opener-Policy: noopener-allow-popups"),
+          true,
+          true,
+      },
+      {
+          // Same origin allow popups, noopener => change
+          https_server()->GetURL(
+              "a.test",
+              "/set-header?"
+              "Cross-Origin-Opener-Policy: same-origin-allow-popups"),
+          https_server()->GetURL(
+              "a.test",
+              "/set-header?"
+              "Cross-Origin-Opener-Policy: noopener-allow-popups"),
+          true,
+          false,
+      },
+      {
+          // unsafe-none, noopener => no change
+          https_server()->GetURL("a.test",
+                                 "/set-header?"
+                                 "Cross-Origin-Opener-Policy: unsafe-none"),
+          https_server()->GetURL(
+              "a.test",
+              "/set-header?"
+              "Cross-Origin-Opener-Policy-Report-Only: noopener-allow-popups"),
+          true,
+          false,
+      },
+      {
+          // Same origin, noopener => change
+          https_server()->GetURL("a.test",
+                                 "/set-header?"
+                                 "Cross-Origin-Opener-Policy: same-origin"),
+          https_server()->GetURL(
+              "a.test",
+              "/set-header?"
+              "Cross-Origin-Opener-Policy-Report-Only: noopener-allow-popups"),
+          true,
+          true,
+      },
+      {
+          // Same origin allow popups, noopener => change
+          https_server()->GetURL(
+              "a.test",
+              "/set-header?"
+              "Cross-Origin-Opener-Policy: same-origin-allow-popups"),
+          https_server()->GetURL(
+              "a.test",
+              "/set-header?"
+              "Cross-Origin-Opener-Policy-Report-Only: noopener-allow-popups"),
+          true,
+          true,
+      },
+  };
+
+  for (const auto& test_case : kTestCases) {
+    SCOPED_TRACE(testing::Message()
+                 << std::endl
+                 << "url_a = " << test_case.url_a << std::endl
+                 << "url_b = " << test_case.url_b << std::endl);
+    ASSERT_TRUE(NavigateToURL(shell(), test_case.url_a));
+    int group_1 = VirtualBrowsingContextGroup(web_contents());
+
+    ASSERT_TRUE(NavigateToURL(shell(), test_case.url_b));
+    int group_2 = VirtualBrowsingContextGroup(web_contents());
+
+    ASSERT_TRUE(NavigateToURL(shell(), test_case.url_a));
+    int group_3 = VirtualBrowsingContextGroup(web_contents());
+
+    if (test_case.expect_different_group_a_to_b) {
+      EXPECT_NE(group_1, group_2);  // url_a -> url_b.
+    } else {
+      EXPECT_EQ(group_1, group_2);  // url_a -> url_b.
+    }
+    if (test_case.expect_different_group_b_to_a) {
+      EXPECT_NE(group_2, group_3);  // url_a <- url_b.
+    } else {
       EXPECT_EQ(group_2, group_3);  // url_b <- url_b.
     }
   }
@@ -8759,8 +8953,8 @@ IN_PROC_BROWSER_TEST_P(CoopRestrictPropertiesReportingBrowserTest,
           true,
       },
 
-      // TODO(https://crbug.com/1101339). Test with COEP-RO.
-      // TODO(https://crbug.com/1101339). Test with COOP-RO+COOP
+      // TODO(crbug.com/40138297). Test with COEP-RO.
+      // TODO(crbug.com/40138297). Test with COOP-RO+COOP
   };
 
   for (const auto& test_case : kTestCases) {
@@ -9746,7 +9940,7 @@ IN_PROC_BROWSER_TEST_P(CoopRestrictPropertiesAccessBrowserTest,
   // Navigate to a WebUI page. It should use another browsing context group in
   // another CoopRelatedGroup. This WebUI page will not have an opener, but will
   // NOT clear proxies, keeping the handle in the main page valid.
-  // TODO(https://crbug.com/1366827): This is an unspec'd behavior and might
+  // TODO(crbug.com/40239885): This is an unspec'd behavior and might
   // change in the future.
   ASSERT_TRUE(NavigateToURL(popup_window, webui_page));
   RenderFrameHostImpl* webui_popup_rfh = popup_window->GetPrimaryMainFrame();
@@ -9759,7 +9953,7 @@ IN_PROC_BROWSER_TEST_P(CoopRestrictPropertiesAccessBrowserTest,
   // Because they are in different browsing context groups in different
   // CoopRelatedGroups, access to cross-origin properties should conservatively
   // NOT be restricted.
-  // TODO(https://crbug.com/1464618): This might change in the future, if we
+  // TODO(crbug.com/40275679): This might change in the future, if we
   // decide to impose restrictions on all accesses from different browsing
   // context groups.
   EXPECT_TRUE(ExecJs(current_frame_host(), "window.w.blur()"));
@@ -9997,10 +10191,10 @@ IN_PROC_BROWSER_TEST_P(CoopRestrictPropertiesAccessBrowserTest, Prerender) {
   // does not support staying in the same CoopRelatedGroup, so it will use a
   // completely new CoopRelatedGroup. During activation we should get new
   // BrowsingContextGroupInfo tokens.
-  // TODO(https://crbug.com/1455344): This is an undesired consequence of
+  // TODO(crbug.com/40917339): This is an undesired consequence of
   // always starting the prerendering in another BrowsingInstance. See if this
   // should be fixed.
-  int host_id = prerender_helper().AddPrerender(coop_rp_page);
+  FrameTreeNodeId host_id = prerender_helper().AddPrerender(coop_rp_page);
   RenderFrameHostImpl* prerender_frame_host = static_cast<RenderFrameHostImpl*>(
       prerender_helper().GetPrerenderedMainFrameHost(host_id));
   ASSERT_TRUE(prerender_frame_host);
@@ -10063,7 +10257,7 @@ IN_PROC_BROWSER_TEST_P(CoopRestrictPropertiesAccessBrowserTest, Prerender) {
   // because the interfaces are associated.
   ASSERT_TRUE(NavigateToURL(popup_window, regular_page_2_with_fragment));
 
-  // TODO(https://crbug.com/1455344): The current end behavior is that we end up
+  // TODO(crbug.com/40917339): The current end behavior is that we end up
   // with a page in another BrowsingInstance, with proxies still around. No
   // restriction is enforced in the renderer, because the tokens for the
   // CoopRelatedGroup do not match, but all browser mitigated APIs will be

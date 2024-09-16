@@ -63,6 +63,14 @@ gn_args.config(
     },
 )
 
+gn_args.config(
+    name = "android_asan",
+    args = {
+        "is_asan": True,
+        "default_min_sdk_version": 27,
+    },
+)
+
 # We build Android with codecs on most bots to ensure maximum test
 # coverage, but use 'android_builder_without_codecs' on bots responsible for
 # building publicly advertised non-Official Android builds --
@@ -85,6 +93,14 @@ gn_args.config(
     configs = ["android"],
     args = {
         "debuggable_apks": False,
+    },
+)
+
+# For Android builds requiring is_desktop_android.
+gn_args.config(
+    name = "android_desktop",
+    args = {
+        "is_desktop_android": True,
     },
 )
 
@@ -113,7 +129,7 @@ gn_args.config(
     },
 )
 
-# TODO(https://crbug.com/1020714): This is temporary. We'd like to run a
+# TODO(crbug.com/40105916): This is temporary. We'd like to run a
 # smoke test on android_binary_sizes to ensure coverage of proguard, at
 # which point we can merge this into android_fastbuild. Until then, only
 # disable proguard on a few bots to gather metrics on the effect on build
@@ -214,9 +230,60 @@ gn_args.config(
 
 gn_args.config(
     name = "cast_android",
+    args_file = "//chromecast/build/args/config/android.gni",
+    configs = [
+        "cast_receiver",
+        "android",
+        "minimal_symbols",
+        "static",
+    ],
+)
+
+gn_args.config(
+    name = "cast_linux",
+    args_file = "//chromecast/build/args/config/linux.gni",
+    configs = [
+        "cast_receiver",
+        "linux",
+        "minimal_symbols",
+        "static",
+    ],
+)
+
+gn_args.config(
+    name = "cast_debug",
     args = {
-        "is_cast_android": True,
+        "cast_is_debug": True,
     },
+    configs = [
+        "debug",
+        "dcheck_always_on",
+    ],
+)
+
+gn_args.config(
+    name = "cast_java_debug",
+    args = {
+        "is_java_debug": True,
+    },
+)
+
+gn_args.config(
+    name = "cast_java_release",
+    args = {
+        "is_java_debug": False,
+    },
+)
+
+gn_args.config(
+    name = "cast_release",
+    args = {
+        "cast_is_debug": False,
+    },
+    configs = [
+        "dcheck_off",
+        "release",
+    ],
 )
 
 gn_args.config(
@@ -327,6 +394,9 @@ gn_args.config(
 
 gn_args.config(
     name = "chromeos_device",
+    configs = [
+        "chromeos",
+    ],
     args = {
         "is_chromeos_device": True,
     },
@@ -392,6 +462,7 @@ gn_args.config(
     args = {
         "clang_base_path": "//third_party/cronet_android_mainline_clang/linux-amd64",
         "clang_use_chrome_plugins": False,
+        "default_min_sdk_version": 29,
         # https://crbug.com/1481060
         "llvm_android_mainline": True,
     },
@@ -500,7 +571,7 @@ gn_args.config(
     },
 )
 
-# TODO(https://crbug.com/1010584): Explicitly enable DirectX 12.
+# TODO(crbug.com/40101527): Explicitly enable DirectX 12.
 gn_args.config(
     name = "dx12vk",
     configs = [
@@ -563,9 +634,23 @@ gn_args.config(
 )
 
 gn_args.config(
+    name = "enterprise_companion",
+    args = {
+        "enable_enterprise_companion": True,
+    },
+)
+
+gn_args.config(
     name = "extended_tracing",
     args = {
         "extended_tracing_enabled": True,
+    },
+)
+
+gn_args.config(
+    name = "no_fatal_linker_warnings",
+    args = {
+        "fatal_linker_warnings": False,
     },
 )
 
@@ -771,12 +856,29 @@ gn_args.config(
 )
 
 gn_args.config(
+    name = "linux",
+    args = {
+        "target_os": "linux",
+    },
+)
+
+gn_args.config(
     name = "linux_wayland",
+    configs = [
+        "linux",
+    ],
     args = {
         "ozone_auto_platforms": False,
         "ozone_platform_wayland": True,
         "ozone_platform": "wayland",
         "use_bundled_weston": True,
+    },
+)
+
+gn_args.config(
+    name = "lld",
+    args = {
+        "use_lld": True,
     },
 )
 
@@ -879,6 +981,13 @@ gn_args.config(
 gn_args.config(
     name = "no_reclient",
     args = {
+        "use_reclient": False,
+    },
+)
+
+gn_args.config(
+    name = "no_remoteexec",
+    args = {
         "use_remoteexec": False,
     },
 )
@@ -901,6 +1010,11 @@ gn_args.config(
     name = "no_secondary_abi",
     args = {
         "skip_secondary_abi_for_cq": True,
+        # A chromium build with "skip_secondary_abi_for_cq" enabled in a
+        # checkout that has src-internal fails if enable_chrome_android_internal
+        # is not set to false.
+        # TODO(crbug.com/361540497): Can remove this when the build is fixed.
+        "enable_chrome_android_internal": False,
     },
 )
 
@@ -993,16 +1107,16 @@ gn_args.config(
 )
 
 gn_args.config(
-    name = "perfetto",
+    name = "perfetto_zlib",
     args = {
-        "use_perfetto_client_library": True,
+        "enable_perfetto_zlib": True,
     },
 )
 
 gn_args.config(
-    name = "perfetto_zlib",
+    name = "pgo_phase_0",
     args = {
-        "enable_perfetto_zlib": True,
+        "chrome_pgo_phase": 0,
     },
 )
 
@@ -1017,7 +1131,7 @@ gn_args.config(
 )
 
 gn_args.config(
-    name = "reclient",
+    name = "remoteexec",
     args = {
         "use_remoteexec": True,
     },
@@ -1026,10 +1140,10 @@ gn_args.config(
 gn_args.config(
     name = "reclient_with_remoteexec_links",
     args = {
-        "use_remoteexec_links": True,
+        "use_reclient_links": True,
         "concurrent_links": 50,
     },
-    configs = ["reclient"],
+    configs = ["remoteexec"],
 )
 
 gn_args.config(
@@ -1346,6 +1460,13 @@ gn_args.config(
     name = "webview_trichrome",
     args = {
         "system_webview_package_name": "com.google.android.webview.debug",
+    },
+)
+
+gn_args.config(
+    name = "win",
+    args = {
+        "target_os": "win",
     },
 )
 

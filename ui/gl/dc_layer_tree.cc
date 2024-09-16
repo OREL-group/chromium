@@ -269,12 +269,10 @@ void SolidColorSurfacePool::TrimAfterCommit() {
   // |kMaxSolidColorSurfacesToRetain|.
   trim_target_size = std::min(trim_target_size, tracked_surfaces_.size());
 
-  DVLOG(1) << "SolidColorSurfacePool stats before trim: "
-           << "requested=" << stats_since_last_trim_.num_surfaces_requested
-           << ", "
+  DVLOG(3) << "SolidColorSurfacePool stats before trim: " << "requested="
+           << stats_since_last_trim_.num_surfaces_requested << ", "
            << "recolored=" << stats_since_last_trim_.num_surfaces_recolored
-           << ", "
-           << "in-use/total=" << num_used_this_frame_ << "/"
+           << ", " << "in-use/total=" << num_used_this_frame_ << "/"
            << tracked_surfaces_.size()
            << (num_used_this_frame_ > kMaxSolidColorSurfacesToRetain
                    ? " (in-use exceeds kMaxSolidColorSurfacesToRetain)"
@@ -381,8 +379,8 @@ VideoProcessorWrapper* DCLayerTree::InitializeVideoProcessor(
     bool is_hdr_output,
     bool& video_processor_recreated) {
   video_processor_recreated = false;
-  auto& video_processor_wrapper = video_processor_wrapper_[static_cast<int>(
-      is_hdr_output ? VideoProcessorType::kHDR : VideoProcessorType::kSDR)];
+  auto& video_processor_wrapper = is_hdr_output ? video_processor_wrapper_hdr_
+                                                : video_processor_wrapper_sdr_;
   if (!video_processor_wrapper.video_device) {
     // This can fail if the D3D device is "Microsoft Basic Display Adapter".
     if (FAILED(d3d11_device_.As(&video_processor_wrapper.video_device))) {
@@ -505,7 +503,8 @@ bool DCLayerTree::VisualTree::VisualSubtree::Update(
     const gfx::Transform& quad_to_root_transform,
     const gfx::RRectF& rounded_corner_bounds,
     float opacity,
-    const std::optional<gfx::Rect>& clip_rect_in_root) {
+    const std::optional<gfx::Rect>& clip_rect_in_root,
+    bool allow_antialiasing) {
   bool needs_commit = false;
 
   // Helper function to set |field| to |parameter| and return whether it
@@ -548,6 +547,8 @@ bool DCLayerTree::VisualTree::VisualSubtree::Update(
   const bool opacity_changed = SetField(opacity_, opacity);
   const bool clip_rect_in_root_changed =
       SetField(clip_rect_in_root_, clip_rect_in_root);
+  const bool allow_antialiasing_changed =
+      SetField(allow_antialiasing_, allow_antialiasing);
 
   // Methods that update the visual tree can only fail with OOM. We'll assert
   // success in this function to aid in debugging.
@@ -787,13 +788,15 @@ bool DCLayerTree::VisualTree::VisualSubtree::Update(
     }
   }
 
-  if (quad_to_root_transform_changed || quad_rect_changed) {
+  if (quad_to_root_transform_changed || quad_rect_changed ||
+      allow_antialiasing_changed) {
     const float kNeedsSoftBorderTolerance = 0.001;
     const bool content_soft_borders =
-        !quad_to_root_transform_.Preserves2dAxisAlignment() ||
-        !gfx::IsNearestRectWithinDistance(
-            quad_to_root_transform_.MapRect(gfx::RectF(quad_rect_)),
-            kNeedsSoftBorderTolerance);
+        allow_antialiasing_ &&
+        (!quad_to_root_transform_.Preserves2dAxisAlignment() ||
+         !gfx::IsNearestRectWithinDistance(
+             quad_to_root_transform_.MapRect(gfx::RectF(quad_rect_)),
+             kNeedsSoftBorderTolerance));
     // The border mode of the transform visual is set (instead of the content
     // visual), so this setting can affect both the content and the background
     // color, since both are are children of the transform visual.
@@ -822,14 +825,7 @@ DCLayerTree::VisualTree::VisualTree(DCLayerTree* dc_layer_tree)
 DCLayerTree::VisualTree::~VisualTree() = default;
 
 bool DCLayerTree::VisualTree::BuildTree(
-    const std::vector<std::unique_ptr<DCLayerOverlayParams>>& overlays,
-    bool needs_rebuild_visual_tree) {
-  // For optimized tree |needs_rebuild_visual_tree| means that we may need to
-  // add/re-add a delegated ink visual into the root surface's visual.
-  // TODO(http://crbug.com/1380822): Clean up needs_rebuild_visual_tree
-  // and use dedicated add_delegated_ink_visual flag instead.
-  const bool add_delegated_ink_visual = needs_rebuild_visual_tree;
-
+    const std::vector<std::unique_ptr<DCLayerOverlayParams>>& overlays) {
   // Index into the subtree from the previous frame that is being reused in the
   // current frame for the given overlay index.
   // |overlay_index_to_reused_subtree| has an entry for every overlay in the
@@ -879,22 +875,27 @@ bool DCLayerTree::VisualTree::BuildTree(
   VisualTreeValid(subtree_index_to_overlay, prev_subtree_is_attached_to_root);
 #endif  // DCHECK_IS_ON()
 
-  // Visual for root surface. Cache it to add DelegatedInk visual if needed.
-  Microsoft::WRL::ComPtr<IDCompositionVisual2> root_surface_visual;
   IDCompositionVisual2* left_sibling_visual = nullptr;
+
+  base::flat_set<uint64_t> layers_with_multiple_overlays;
+  for (size_t i = 1; i < overlays.size(); i++) {
+    if (overlays[i]->aggregated_layer_id == 0) {
+      // A layer ID of 0 is invalid and implies no explicit layer, which should
+      // be treated as different from every other layer ID, including 0 itself.
+      continue;
+    }
+
+    if (overlays[i]->aggregated_layer_id ==
+        overlays[i - 1]->aggregated_layer_id) {
+      // There were at least two contiguous quads in the same layer.
+      layers_with_multiple_overlays.emplace(overlays[i]->aggregated_layer_id);
+    }
+  }
 
   // This loop walks the overlays and builds or updates the visual subtree for
   // each overlay. |left_sibling_visual| is required to properly stack visual
   // subtrees that are detached from the root visual.
   for (unsigned int i = 0; i < overlays.size(); i++) {
-    const bool is_root_plane = overlays[i]->z_order == 0;
-    if (!is_root_plane && overlays[i]->overlay_image) {
-      TRACE_EVENT2(
-          "gpu", "DCLayerTree::VisualTree::UpdateOverlay", "image_type",
-          DCLayerOverlayTypeToString(overlays[i]->overlay_image->type()),
-          "size", overlays[i]->content_rect.size().ToString());
-    }
-
     bool subtree_attached_to_root = false;
     if (visual_subtrees[i]) {
       DCHECK(overlay_index_to_reused_subtree[i]);
@@ -938,6 +939,16 @@ bool DCLayerTree::VisualTree::BuildTree(
             ? overlays[i]->overlay_image->dcomp_visual_content()
             : nullptr;
 
+    // TODO(crbug.com/324460866): We turn off overlay edge antialiasing when
+    // there are multiple overlays in the same layer. This is a workaround to
+    // avoid seams when there is e.g. a complex transform applied to the layer.
+    // This works for partial delegation because we only expect non-trivial
+    // transforms in ephemeral (i.e. animation) states. To support arbitrary
+    // content in full delegation, we'll need to parent overlays in the same
+    // layer under the same transform visual.
+    const bool allow_antialiasing = !layers_with_multiple_overlays.contains(
+        overlays[i]->aggregated_layer_id);
+
     needs_commit |= visual_subtrees[i]->Update(
         dc_layer_tree_->dcomp_device_.Get(), dcomp_visual_content,
         dcomp_surface_serial, image_size, overlays[i]->content_rect,
@@ -945,7 +956,7 @@ bool DCLayerTree::VisualTree::BuildTree(
         overlays[i]->background_color.value_or(SkColors::kTransparent),
         overlays[i]->quad_rect, overlays[i]->nearest_neighbor_filter,
         overlays[i]->transform, overlays[i]->rounded_corner_bounds,
-        overlays[i]->opacity, overlays[i]->clip_rect);
+        overlays[i]->opacity, overlays[i]->clip_rect, allow_antialiasing);
 
     if (!subtree_attached_to_root) {
       HRESULT hr = dc_layer_tree_->dcomp_root_visual_.Get()->AddVisual(
@@ -954,23 +965,12 @@ bool DCLayerTree::VisualTree::BuildTree(
       needs_commit = true;
     }
     left_sibling_visual = visual_subtree->container_visual();
-
-    // Zero z_order represents root layer.
-    if (visual_subtree->z_order() == 0) {
-      // Verify we have single root visual layer.
-      DCHECK(!root_surface_visual);
-      root_surface_visual = visual_subtree->content_visual();
-    }
   }
 
   // Update subtree_map_ and visual_subtrees_ with new values.
   subtree_map_ = std::move(subtree_map);
   visual_subtrees_ = std::move(visual_subtrees);
 
-  if (add_delegated_ink_visual && root_surface_visual) {
-    needs_commit |= dc_layer_tree_->AddDelegatedInkVisualToTreeIfNeeded(
-        root_surface_visual.Get());
-  }
   if (needs_commit) {
     TRACE_EVENT0("gpu", "DCLayerTree::CommitAndClearPendingOverlays::Commit");
     HRESULT hr = dc_layer_tree_->dcomp_device_->Commit();
@@ -1171,30 +1171,31 @@ bool DCLayerTree::CommitAndClearPendingOverlays(
     std::vector<std::unique_ptr<DCLayerOverlayParams>> overlays) {
   TRACE_EVENT1("gpu", "DCLayerTree::CommitAndClearPendingOverlays",
                "num_overlays", overlays.size());
-  DCHECK(!needs_rebuild_visual_tree_ || ink_renderer_->HasBeenInitialized());
 
-  {
-    Microsoft::WRL::ComPtr<IDXGISwapChain1> root_swap_chain;
-    Microsoft::WRL::ComPtr<IDCompositionSurface> root_dcomp_surface;
-    auto it = base::ranges::find(overlays, 0, &DCLayerOverlayParams::z_order);
-    if (it != overlays.end() && (*it)->overlay_image) {
-      Microsoft::WRL::ComPtr<IUnknown> root_visual_content =
-          (*it)->overlay_image->dcomp_visual_content();
-      CHECK(root_visual_content);
-      HRESULT hr = root_visual_content.As(&root_swap_chain);
-      if (hr == E_NOINTERFACE) {
-        DCHECK_EQ(nullptr, root_swap_chain);
-        hr = root_visual_content.As(&root_dcomp_surface);
-      }
+  Microsoft::WRL::ComPtr<IDXGISwapChain1> root_swap_chain;
+  auto it = base::ranges::find(overlays, 0, &DCLayerOverlayParams::z_order);
+  if (it != overlays.end() && (*it)->overlay_image) {
+    Microsoft::WRL::ComPtr<IUnknown> root_visual_content =
+        (*it)->overlay_image->dcomp_visual_content();
+    CHECK(root_visual_content);
+    HRESULT hr = root_visual_content.As(&root_swap_chain);
+    if (hr == E_NOINTERFACE) {
+      DCHECK_EQ(root_swap_chain, nullptr);
+    } else {
       CHECK_EQ(S_OK, hr);
+      CHECK_NE(root_swap_chain, nullptr);
     }
+  }
 
-    if (root_swap_chain != root_swap_chain_ ||
-        root_dcomp_surface != root_dcomp_surface_) {
-      DCHECK(!(root_swap_chain && root_dcomp_surface));
-      root_swap_chain_ = std::move(root_swap_chain);
-      root_dcomp_surface_ = std::move(root_dcomp_surface);
-      needs_rebuild_visual_tree_ = true;
+  // If delegated ink metadata exists for this frame, attempt to make an overlay
+  // so that a visual subtree can be created for a delegated ink visual.
+  // TODO(crbug.com/335553727) Consider clearing ink_renderer_ when there's no
+  // metadata.
+  if (pending_delegated_ink_metadata_) {
+    if (auto ink_layer = ink_renderer_->MakeDelegatedInkOverlay(
+            dcomp_device_.Get(), root_swap_chain.Get(),
+            std::move(pending_delegated_ink_metadata_))) {
+      overlays.push_back(std::move(ink_layer));
     }
   }
 
@@ -1208,7 +1209,6 @@ bool DCLayerTree::CommitAndClearPendingOverlays(
     video_swap_chains_.resize(num_swap_chain_presenters);
     // If we need to grow or shrink swap chain presenters, we'll need to add or
     // remove visuals.
-    needs_rebuild_visual_tree_ = true;
   }
 
   // Sort layers by z-order.
@@ -1262,10 +1262,9 @@ bool DCLayerTree::CommitAndClearPendingOverlays(
     visual_tree_ = std::make_unique<VisualTree>(this);
   }
 
-  const bool status =
-      visual_tree_->BuildTree(overlays, needs_rebuild_visual_tree_);
+  const bool status = visual_tree_->BuildTree(overlays);
 
-  needs_rebuild_visual_tree_ = false;
+  ink_renderer_->ReportPointsDrawn();
 
   // Clean up excess surfaces so the pool will not grow unbounded.
   solid_color_surface_pool_->TrimAfterCommit();
@@ -1301,50 +1300,10 @@ bool DCLayerTree::SupportsDelegatedInk() {
   return ink_renderer_->DelegatedInkIsSupported(dcomp_device_);
 }
 
-bool DCLayerTree::InitializeInkRenderer() {
-  return ink_renderer_->Initialize(dcomp_device_, root_swap_chain_);
-}
-
-bool DCLayerTree::AddDelegatedInkVisualToTreeIfNeeded(
-    IDCompositionVisual2* root_surface_visual) {
-  // Only add the ink visual to the tree if it has already been initialized.
-  // It will only have been initialized if delegated ink has been used, so
-  // this ensures the visual is only added when it is needed. The ink renderer
-  // must be updated so that if the root swap chain or dcomp device have
-  // changed the ink visual and delegated ink object can be updated
-  // accordingly.
-  if (!ink_renderer_->HasBeenInitialized()) {
-    return false;
-  }
-
-  // Reinitialize the ink renderer in case the root swap chain or dcomp
-  // device changed since initialization.
-  if (!InitializeInkRenderer()) {
-    return false;
-  }
-
-  DCHECK(SupportsDelegatedInk());
-  root_surface_visual->AddVisual(ink_renderer_->GetInkVisual(), FALSE, nullptr);
-  // Adding the ink visual to a new visual tree invalidates all previously set
-  // properties. Therefore, force update.
-  ink_renderer_->SetNeedsDcompPropertiesUpdate();
-  return true;
-}
-
 void DCLayerTree::SetDelegatedInkTrailStartPoint(
     std::unique_ptr<gfx::DelegatedInkMetadata> metadata) {
   DCHECK(SupportsDelegatedInk());
-
-  if (!ink_renderer_->HasBeenInitialized()) {
-    if (!InitializeInkRenderer())
-      return;
-    // This ensures that the delegated ink visual is added to the tree after
-    // the root visual is created, during
-    // DCLayerTree::CommitAndClearPendingOverlays
-    needs_rebuild_visual_tree_ = true;
-  }
-
-  ink_renderer_->SetDelegatedInkTrailStartPoint(std::move(metadata));
+  pending_delegated_ink_metadata_ = std::move(metadata);
 }
 
 void DCLayerTree::InitDelegatedInkPointRendererReceiver(

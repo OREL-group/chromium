@@ -70,12 +70,14 @@ std::unique_ptr<FetchItemSnippetResponse> CreateMockResponse(
 class WebstoreReinstallerBrowserTest : public WebstoreInstallerTest {
  public:
   WebstoreReinstallerBrowserTest()
-      : WebstoreInstallerTest(
-            kWebstoreDomain,
-            kTestDataPath,
-            kCrxFilename,
-            kAppDomain,
-            kNonAppDomain) {}
+      : WebstoreInstallerTest(kWebstoreDomain,
+                              kTestDataPath,
+                              kCrxFilename,
+                              kAppDomain,
+                              kNonAppDomain) {
+    scoped_feature_list_.InitAndDisableFeature(
+        extensions_features::kUseItemSnippetsAPI);
+  }
   ~WebstoreReinstallerBrowserTest() override {}
 
   void OnInstallCompletion(base::OnceClosure quit_closure,
@@ -86,6 +88,7 @@ class WebstoreReinstallerBrowserTest : public WebstoreInstallerTest {
   bool last_install_result() const { return last_install_result_; }
 
  private:
+  base::test::ScopedFeatureList scoped_feature_list_;
   bool last_install_result_;
 };
 
@@ -107,11 +110,14 @@ IN_PROC_BROWSER_TEST_F(WebstoreReinstallerBrowserTest, TestWebstoreReinstall) {
       ExtensionBuilder()
           .SetLocation(mojom::ManifestLocation::kInternal)
           .SetID(kTestExtensionId)
-          .SetManifest(base::Value::Dict()
-                           .Set("name", kExtensionName)
-                           .Set("description", "Foo")
-                           .Set("manifest_version", 2)
-                           .Set("version", "1.0"))
+          .SetManifest(
+              base::Value::Dict()
+                  .Set("name", kExtensionName)
+                  .Set("description", "Foo")
+                  .Set("manifest_version", 2)
+                  .Set("version", "1.0")
+                  .Set("update_url",
+                       "https://clients2.google.com/service/update2/crx"))
           .Build();
   extension_service()->AddExtension(extension.get());
   ExtensionRegistry* registry = ExtensionRegistry::Get(profile());
@@ -187,11 +193,14 @@ IN_PROC_BROWSER_TEST_F(WebstoreReinstallerItemSnippetsBrowserTest,
       ExtensionBuilder()
           .SetLocation(mojom::ManifestLocation::kInternal)
           .SetID(kTestExtensionId)
-          .SetManifest(base::Value::Dict()
-                           .Set("name", kExtensionName)
-                           .Set("description", "Foo")
-                           .Set("manifest_version", 2)
-                           .Set("version", "1.0"))
+          .SetManifest(
+              base::Value::Dict()
+                  .Set("name", kExtensionName)
+                  .Set("description", "Foo")
+                  .Set("manifest_version", 2)
+                  .Set("version", "1.0")
+                  .Set("update_url",
+                       "https://clients2.google.com/service/update2/crx"))
           .Build();
   extension_service()->AddExtension(extension.get());
 

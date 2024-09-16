@@ -95,7 +95,6 @@ AmbientAnimationProgressTracker::GetGlobalProgress() const {
   }
   NOTREACHED() << "HasActiveAnimations() must be true before calling "
                   "GetGlobalProgress()";
-  return Progress();
 }
 
 AmbientAnimationProgressTracker::ImmutableParams

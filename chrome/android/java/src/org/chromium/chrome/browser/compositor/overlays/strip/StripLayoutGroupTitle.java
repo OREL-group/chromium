@@ -4,13 +4,14 @@
 
 package org.chromium.chrome.browser.compositor.overlays.strip;
 
-import android.graphics.RectF;
+import android.content.Context;
+import android.graphics.Rect;
 import android.util.FloatProperty;
 
 import androidx.annotation.ColorInt;
-import androidx.annotation.Nullable;
 
 import org.chromium.base.MathUtils;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.ui.base.LocalizationUtils;
 
@@ -20,6 +21,26 @@ import org.chromium.ui.base.LocalizationUtils;
  * onto the GL canvas.
  */
 public class StripLayoutGroupTitle extends StripLayoutView {
+
+    private final Context mContext;
+
+    /** Delegate for additional group title functionality. */
+    public interface StripLayoutGroupTitleDelegate extends StripLayoutViewOnClickHandler {
+        /**
+         * Releases the resources associated with this group indicator.
+         *
+         * @param rootId The root ID of the given group indicator.
+         */
+        void releaseResourcesForGroupTitle(int rootId);
+
+        /**
+         * Rebuilds the resources associated with this group indicator.
+         *
+         * @param groupTitle This group indicator.
+         */
+        void rebuildResourcesForGroupTitle(StripLayoutGroupTitle groupTitle);
+    }
+
     /** A property for animations to use for changing the width of the bottom indicator. */
     public static final FloatProperty<StripLayoutGroupTitle> BOTTOM_INDICATOR_WIDTH =
             new FloatProperty<>("bottomIndicatorWidth") {
@@ -51,22 +72,14 @@ public class StripLayoutGroupTitle extends StripLayoutView {
     private static final int EFFECTIVE_MIN_WIDTH = MIN_VISUAL_WIDTH_DP + WIDTH_MARGINS_DP;
     private static final int EFFECTIVE_MAX_WIDTH = MAX_VISUAL_WIDTH_DP + WIDTH_MARGINS_DP;
 
-    // State variables.
-    private final boolean mIncognito;
-
-    // Position variables.
-    private float mDrawX;
-    private float mDrawY;
-    private float mWidth;
-    private float mHeight;
-    private final RectF mTouchTarget = new RectF();
+    // External influences.
+    private final StripLayoutGroupTitleDelegate mDelegate;
 
     // Tab group variables.
+    // Tab group's root Id this view refers to.
     private int mRootId;
     private String mTitle;
     @ColorInt private int mColor;
-
-    private String mAccessibilityDescription = "";
 
     // Bottom indicator variables
     private float mBottomIndicatorWidth;
@@ -74,96 +87,39 @@ public class StripLayoutGroupTitle extends StripLayoutView {
     /**
      * Create a {@link StripLayoutGroupTitle} that represents the TabGroup for the {@code rootId}.
      *
+     * @param delegate The delegate for additional strip group title functionality.
      * @param incognito Whether or not this tab group is Incognito.
      * @param rootId The root ID for the tab group.
-     * @param title The title of the tab group, if it is set. Null otherwise.
-     * @param textWidth The width of the title text in px.
-     * @param color The color of the tab group.
      */
     public StripLayoutGroupTitle(
+            Context context,
+            StripLayoutGroupTitleDelegate delegate,
             boolean incognito,
-            int rootId,
-            @Nullable String title,
-            float textWidth,
-            @ColorInt int color) {
+            int rootId) {
+        super(incognito, delegate);
         assert rootId != Tab.INVALID_TAB_ID : "Tried to create a group title for an invalid group.";
-
-        mIncognito = incognito;
-
-        updateRootId(rootId);
-        updateTitle(title, textWidth);
-        updateTint(color);
+        mRootId = rootId;
+        mContext = context;
+        mDelegate = delegate;
     }
 
     @Override
-    public float getDrawX() {
-        return mDrawX;
+    void onVisibilityChanged(boolean newVisibility) {
+        if (newVisibility) {
+            mDelegate.rebuildResourcesForGroupTitle(this);
+        } else {
+            mDelegate.releaseResourcesForGroupTitle(mRootId);
+        }
     }
 
     @Override
-    public void setDrawX(float x) {
-        mDrawX = x;
-        mTouchTarget.left = x;
-        mTouchTarget.right = x + mWidth;
-    }
-
-    @Override
-    public float getDrawY() {
-        return mDrawY;
-    }
-
-    @Override
-    public void setDrawY(float y) {
-        mDrawY = y;
-        mTouchTarget.top = y;
-        mTouchTarget.bottom = y + mHeight;
-    }
-
-    @Override
-    public float getWidth() {
-        return mWidth;
-    }
-
-    @Override
-    public void setWidth(float width) {
-        mWidth = width;
-        mTouchTarget.right = mDrawX + mWidth;
-    }
-
-    @Override
-    public float getHeight() {
-        return mHeight;
-    }
-
-    @Override
-    public void setHeight(float height) {
-        mHeight = height;
-        mTouchTarget.bottom = mDrawY + mHeight;
-    }
-
-    @Override
-    public String getAccessibilityDescription() {
-        return mAccessibilityDescription;
-    }
-
-    protected void setAccessibilityDescription(String accessibilityDescription) {
-        mAccessibilityDescription = accessibilityDescription;
-    }
-
-    @Override
-    public void getTouchTarget(RectF outTarget) {
-        outTarget.set(mTouchTarget);
-    }
-
-    @Override
-    public boolean checkClickedOrHovered(float x, float y) {
-        return mTouchTarget.contains(x, y);
+    public void setIncognito(boolean incognito) {
+        assert false : "Incognito state of a group title cannot change";
     }
 
     @Override
     public boolean hasClickAction() {
-        // TODO(https://crbug.com/326492955): Implement click to collapse/expand.
-        return false;
+        return ChromeFeatureList.sTabStripGroupCollapse.isEnabled();
     }
 
     @Override
@@ -172,44 +128,46 @@ public class StripLayoutGroupTitle extends StripLayoutView {
         return false;
     }
 
-    @Override
-    public void handleClick(long time) {
-        // TODO(crbug.com/326492955): Implement click to collapse/expand.
-    }
-
-    /**
-     * @return Whether the tab group this represents is Incognito or not.
-     */
-    public boolean isIncognito() {
-        return mIncognito;
-    }
-
     /**
      * @return DrawX accounting for padding.
      */
     public float getPaddedX() {
-        return mDrawX + (LocalizationUtils.isLayoutRtl() ? MARGIN_END_DP : MARGIN_START_DP);
+        return getDrawX() + (LocalizationUtils.isLayoutRtl() ? MARGIN_END_DP : MARGIN_START_DP);
     }
 
     /**
      * @return DrawY accounting for padding.
      */
     public float getPaddedY() {
-        return mDrawY + MARGIN_TOP_DP;
+        return getDrawY() + MARGIN_TOP_DP;
     }
 
     /**
      * @return Width accounting for padding.
      */
     public float getPaddedWidth() {
-        return mWidth - MARGIN_START_DP - MARGIN_END_DP;
+        return getWidth() - MARGIN_START_DP - MARGIN_END_DP;
     }
 
     /**
      * @return Height accounting for padding.
      */
     public float getPaddedHeight() {
-        return mHeight - MARGIN_TOP_DP - MARGIN_BOTTOM_DP;
+        return getHeight() - MARGIN_TOP_DP - MARGIN_BOTTOM_DP;
+    }
+
+    /**
+     * Get padded bounds for this view.
+     *
+     * @param out Rect to set the bounds.
+     */
+    public void getPaddedBoundsPx(Rect out) {
+        float dpToPx = mContext.getResources().getDisplayMetrics().density;
+        out.set(
+                (int) (getPaddedX() * dpToPx),
+                (int) (getPaddedY() * dpToPx),
+                (int) ((getPaddedX() + getPaddedWidth()) * dpToPx),
+                (int) ((getPaddedY() + getPaddedHeight()) * dpToPx));
     }
 
     /**

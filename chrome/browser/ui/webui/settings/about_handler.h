@@ -22,7 +22,7 @@
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 #include "base/task/cancelable_task_tracker.h"
-#include "chrome/browser/ash/tpm_firmware_update.h"
+#include "chrome/browser/ash/tpm/tpm_firmware_update.h"
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 namespace base {
@@ -215,12 +215,17 @@ class AboutHandler : public settings::SettingsPageUIHandler,
   // Opens the Extended Updates dialog. |args| must be empty.
   void HandleOpenExtendedUpdatesDialog(const base::Value::List& args);
 
-  // Called when extended updates policy value is changed.
-  void OnDeviceExtendedUpdatePolicyChanged(const base::Value* previous_policy,
-                                           const base::Value* current_policy);
+  // Records metric indicating that the Extended Updates option was shown.
+  void HandleRecordExtendedUpdatesShown(const base::Value::List& args);
+
+  // Called when the |kDeviceExtendedAutoUpdateEnabled| setting is changed.
+  void OnExtendedUpdatesSettingChanged();
 
   // Whether the end of life incentive includes an offer.
   bool eol_incentive_shows_offer_ = false;
+
+  // Subscription for changes to the |kDeviceExtendedAutoUpdateEnabled| setting.
+  base::CallbackListSubscription extended_updates_setting_change_subscription_;
 #endif
 
   const raw_ptr<Profile> profile_;

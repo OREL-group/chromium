@@ -26,13 +26,14 @@ import org.chromium.chrome.browser.layouts.LayoutManagerProvider;
 import org.chromium.chrome.browser.layouts.LayoutStateProvider;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorSupplier;
+import org.chromium.components.autofill.ImageSize;
 import org.chromium.components.autofill.VirtualCardEnrollmentLinkType;
 import org.chromium.components.autofill.payments.LegalMessageLine;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.modelutil.PropertyModel;
 
-import java.util.LinkedList;
+import java.util.List;
 
 /** Bridge for the virtual card enrollment bottom sheet. */
 @JNINamespace("autofill")
@@ -71,6 +72,7 @@ import java.util.LinkedList;
      * @param issuerLegalMessages Legal messages from the issuer bank.
      * @param acceptButtonLabel The label for the button that enrolls a virtual card.
      * @param cancelButtonLabel The label for the button that cancels enrollment.
+     * @param loadingDescription The description for the loading view.
      * @return True if shown.
      */
     @CalledByNative
@@ -85,10 +87,11 @@ import java.util.LinkedList;
             Bitmap issuerIconBitmap,
             @JniType("std::u16string") String cardLabel,
             @JniType("std::u16string") String cardDescription,
-            LinkedList<LegalMessageLine> googleLegalMessages,
-            LinkedList<LegalMessageLine> issuerLegalMessages,
+            @JniType("std::vector") List<LegalMessageLine> googleLegalMessages,
+            @JniType("std::vector") List<LegalMessageLine> issuerLegalMessages,
             @JniType("std::u16string") String acceptButtonLabel,
-            @JniType("std::u16string") String cancelButtonLabel) {
+            @JniType("std::u16string") String cancelButtonLabel,
+            @JniType("std::u16string") String loadingDescription) {
         if (webContents == null || webContents.isDestroyed()) return false;
 
         WindowAndroid window = webContents.getTopLevelNativeWindow();
@@ -101,7 +104,7 @@ import java.util.LinkedList;
         mNativeAutofillVcnEnrollBottomSheetBridge = nativeAutofillVcnEnrollBottomSheetBridge;
 
         AutofillUiUtils.CardIconSpecs cardIconSpecs =
-                AutofillUiUtils.CardIconSpecs.create(mContext, AutofillUiUtils.CardIconSize.LARGE);
+                AutofillUiUtils.CardIconSpecs.create(mContext, ImageSize.LARGE);
 
         PropertyModel.Builder modelBuilder =
                 new PropertyModel.Builder(AutofillVcnEnrollBottomSheetProperties.ALL_KEYS)
@@ -149,7 +152,11 @@ import java.util.LinkedList;
                                 acceptButtonLabel)
                         .with(
                                 AutofillVcnEnrollBottomSheetProperties.CANCEL_BUTTON_LABEL,
-                                cancelButtonLabel);
+                                cancelButtonLabel)
+                        .with(AutofillVcnEnrollBottomSheetProperties.SHOW_LOADING_STATE, false)
+                        .with(
+                                AutofillVcnEnrollBottomSheetProperties.LOADING_DESCRIPTION,
+                                loadingDescription);
 
         mCoordinator =
                 new AutofillVcnEnrollBottomSheetCoordinator(
@@ -222,6 +229,10 @@ import java.util.LinkedList;
         if (mCoordinator == null) return;
         mCoordinator.hide();
         mCoordinator = null;
+    }
+
+    AutofillVcnEnrollBottomSheetCoordinator getCoordinatorForTesting() {
+        return mCoordinator;
     }
 
     @NativeMethods

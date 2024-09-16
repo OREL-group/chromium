@@ -13,7 +13,6 @@
 #include "components/viz/common/frame_sinks/begin_frame_source.h"
 #include "components/viz/demo/common/switches.h"
 #include "components/viz/service/main/viz_compositor_thread_runner_impl.h"
-#include "gpu/ipc/host/gpu_memory_buffer_support.h"
 #include "gpu/ipc/service/gpu_init.h"
 #include "services/viz/privileged/mojom/gl/gpu_host.mojom.h"
 #include "ui/gl/gl_utils.h"
@@ -25,7 +24,7 @@ namespace {
 
 std::unique_ptr<base::Thread> CreateAndStartIOThread() {
   base::Thread::Options thread_options(base::MessagePumpType::IO, 0);
-  thread_options.thread_type = base::ThreadType::kCompositing;
+  thread_options.thread_type = base::ThreadType::kDisplayCritical;
   auto io_thread = std::make_unique<base::Thread>("VizDemoGpuIOThread");
   CHECK(io_thread->StartWithOptions(std::move(thread_options)));
   return io_thread;
@@ -49,10 +48,6 @@ DemoService::DemoService(
     gpu_init_ = std::make_unique<gpu::GpuInit>();
 
     io_thread_ = CreateAndStartIOThread();
-
-    auto pref = gpu_init_->gpu_preferences();
-    pref.texture_target_exception_list =
-        gpu::CreateBufferUsageAndFormatExceptionList();
 
     viz::GpuServiceImpl::InitParams init_params;
     init_params.watchdog_thread = gpu_init_->TakeWatchdogThread();

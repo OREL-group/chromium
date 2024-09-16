@@ -7,10 +7,12 @@
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
+#include "base/test/bind.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
 #include "chrome/browser/history/history_service_factory.h"
+#include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/sync/sync_service_factory.h"
 #include "chrome/browser/trusted_vault/trusted_vault_service_factory.h"
 #include "chrome/browser/ui/ui_features.h"
@@ -19,15 +21,20 @@
 #include "chrome/test/base/testing_profile.h"
 #include "components/commerce/core/commerce_feature_list.h"
 #include "components/data_sharing/public/features.h"
-#include "components/password_manager/core/browser/features/password_features.h"
 #include "components/saved_tab_groups/features.h"
+#include "components/spellcheck/spellcheck_buildflags.h"
 #include "components/sync/base/command_line_switches.h"
+#include "components/sync/base/data_type.h"
 #include "components/sync/base/features.h"
-#include "components/sync/base/model_type.h"
 #include "components/sync/service/sync_service_impl.h"
 #include "content/public/test/browser_task_environment.h"
 #include "extensions/buildflags/buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+#if BUILDFLAG(ENABLE_SPELLCHECK)
+#include "chrome/browser/spellchecker/spellcheck_factory.h"
+#include "chrome/browser/spellchecker/spellcheck_service.h"
+#endif  // BUILDFLAG(ENABLE_SPELLCHECK)
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 #include "ash/constants/ash_features.h"
@@ -56,13 +63,27 @@ class SyncServiceFactoryTest : public testing::Test {
                               FaviconServiceFactory::GetDefaultFactory());
     builder.AddTestingFactory(HistoryServiceFactory::GetInstance(),
                               HistoryServiceFactory::GetDefaultFactory());
-    builder.AddTestingFactory(TrustedVaultServiceFactory::GetInstance(),
-                              TrustedVaultServiceFactory::GetDefaultFactory());
     builder.AddTestingFactory(SyncServiceFactory::GetInstance(),
                               SyncServiceFactory::GetDefaultFactory());
+    builder.AddTestingFactory(
+        TemplateURLServiceFactory::GetInstance(),
+        base::BindRepeating(&TemplateURLServiceFactory::BuildInstanceFor));
+    builder.AddTestingFactory(TrustedVaultServiceFactory::GetInstance(),
+                              TrustedVaultServiceFactory::GetDefaultFactory());
     // Some services will only be created if there is a WebDataService.
     builder.AddTestingFactory(WebDataServiceFactory::GetInstance(),
                               WebDataServiceFactory::GetDefaultFactory());
+
+#if BUILDFLAG(ENABLE_SPELLCHECK)
+    builder.AddTestingFactory(
+        SpellcheckServiceFactory::GetInstance(),
+        base::BindRepeating(base::BindLambdaForTesting(
+            [](content::BrowserContext* browser_context) {
+              return std::unique_ptr<KeyedService>(
+                  std::make_unique<SpellcheckService>(browser_context));
+            })));
+#endif  // BUILDFLAG(ENABLE_SPELLCHECK)
+
     profile_ = builder.Build();
   }
 
@@ -70,7 +91,10 @@ class SyncServiceFactoryTest : public testing::Test {
 #if BUILDFLAG(IS_CHROMEOS_ASH)
     app_list::AppListSyncableServiceFactory::SetUseInTesting(false);
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
-    base::ThreadPoolInstance::Get()->FlushForTesting();
+    // There may tasks in flight referencing fields owned by the test fixture.
+    // Make sure they are flushed now to prevent memory safety errors, e.g.
+    // use-after-destruction errors.
+    task_environment_.RunUntilIdle();
   }
 
  protected:
@@ -78,17 +102,17 @@ class SyncServiceFactoryTest : public testing::Test {
   ~SyncServiceFactoryTest() override = default;
 
   // Returns the collection of default datatypes.
-  syncer::ModelTypeSet DefaultDatatypes() {
-    static_assert(51 == syncer::GetNumModelTypes(),
+  syncer::DataTypeSet DefaultDatatypes() {
+    static_assert(53 == syncer::GetNumDataTypes(),
                   "When adding a new type, you probably want to add it here as "
                   "well (assuming it is already enabled). Check similar "
                   "function in "
                   "ios/c/b/sync/model/sync_service_factory_unittest.cc");
 
-    syncer::ModelTypeSet datatypes;
+    syncer::DataTypeSet datatypes;
 
     // These preprocessor conditions and their order should be in sync with
-    // preprocessor conditions in ChromeSyncClient::CreateModelTypeControllers:
+    // preprocessor conditions in ChromeSyncClient::CreateDataTypeControllers:
 
     // ChromeSyncClient types.
     datatypes.Put(syncer::READING_LIST);
@@ -127,6 +151,9 @@ class SyncServiceFactoryTest : public testing::Test {
     if (arc::IsArcAllowedForProfile(profile())) {
       datatypes.Put(syncer::ARC_PACKAGE);
     }
+    if (ash::features::IsFloatingSsoAllowed()) {
+      datatypes.Put(syncer::COOKIES);
+    }
     datatypes.Put(syncer::OS_PREFERENCES);
     datatypes.Put(syncer::OS_PRIORITY_PREFERENCES);
     datatypes.Put(syncer::PRINTERS);
@@ -137,8 +164,11 @@ class SyncServiceFactoryTest : public testing::Test {
     datatypes.Put(syncer::WORKSPACE_DESK);
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
-    // Common types. This excludes PASSWORDS because the password store factory
-    // is null for testing and hence no controller gets instantiated.
+    // Common types. This excludes PASSWORDS,
+    // INCOMING_PASSWORD_SHARING_INVITATION and
+    // INCOMING_PASSWORD_SHARING_INVITATION, because the password store factory
+    // is null for testing and hence no controller gets instantiated for those
+    // types.
     datatypes.Put(syncer::AUTOFILL);
     datatypes.Put(syncer::AUTOFILL_PROFILE);
     if (base::FeatureList::IsEnabled(
@@ -149,8 +179,8 @@ class SyncServiceFactoryTest : public testing::Test {
     datatypes.Put(syncer::AUTOFILL_WALLET_METADATA);
     datatypes.Put(syncer::AUTOFILL_WALLET_OFFER);
     datatypes.Put(syncer::BOOKMARKS);
-    if (base::FeatureList::IsEnabled(commerce::kProductSpecificationsSync)) {
-      datatypes.Put(syncer::COMPARE);
+    if (base::FeatureList::IsEnabled(commerce::kProductSpecifications)) {
+      datatypes.Put(syncer::PRODUCT_COMPARISON);
     }
     datatypes.Put(syncer::CONTACT_INFO);
     datatypes.Put(syncer::DEVICE_INFO);
@@ -169,15 +199,6 @@ class SyncServiceFactoryTest : public testing::Test {
     }
 #endif  // !BUILDFLAG(IS_ANDROID)
     if (base::FeatureList::IsEnabled(
-            password_manager::features::
-                kPasswordManagerEnableReceiverService)) {
-      datatypes.Put(syncer::INCOMING_PASSWORD_SHARING_INVITATION);
-    }
-    if (base::FeatureList::IsEnabled(
-            password_manager::features::kPasswordManagerEnableSenderService)) {
-      datatypes.Put(syncer::OUTGOING_PASSWORD_SHARING_INVITATION);
-    }
-    if (base::FeatureList::IsEnabled(
             data_sharing::features::kDataSharingFeature)) {
       datatypes.Put(syncer::COLLABORATION_GROUP);
       datatypes.Put(syncer::SHARED_TAB_GROUP_DATA);
@@ -187,9 +208,14 @@ class SyncServiceFactoryTest : public testing::Test {
       datatypes.Put(syncer::WEB_APKS);
     }
 #endif  // BUILDFLAG(IS_ANDROID)
-    if (base::FeatureList::IsEnabled(syncer::kSyncPlusAddress)) {
-      datatypes.Put(syncer::PLUS_ADDRESS);
+
+    // syncer::PLUS_ADDRESS is excluded because GoogleGroupsManagerFactory is
+    // null for testing and hence no controller gets instantiated for the type.
+
+    if (base::FeatureList::IsEnabled(syncer::kSyncPlusAddressSetting)) {
+      datatypes.Put(syncer::PLUS_ADDRESS_SETTING);
     }
+
     return datatypes;
   }
 
@@ -221,10 +247,11 @@ TEST_F(SyncServiceFactoryTest, DisableSyncFlag) {
 TEST_F(SyncServiceFactoryTest, CreateSyncServiceImplDefault) {
   syncer::SyncServiceImpl* sync_service =
       SyncServiceFactory::GetAsSyncServiceImplForProfileForTesting(profile());
-  syncer::ModelTypeSet types = sync_service->GetRegisteredDataTypesForTest();
-  const syncer::ModelTypeSet default_types = DefaultDatatypes();
+  syncer::DataTypeSet types = sync_service->GetRegisteredDataTypesForTest();
+  const syncer::DataTypeSet default_types = DefaultDatatypes();
   EXPECT_EQ(default_types.size(), types.size());
-  for (syncer::ModelType type : default_types) {
-    EXPECT_TRUE(types.Has(type)) << type << " not found in datatypes map";
+  for (syncer::DataType type : default_types) {
+    EXPECT_TRUE(types.Has(type))
+        << syncer::DataTypeToDebugString(type) << " not found in datatypes map";
   }
 }

@@ -23,7 +23,7 @@ export enum CrUrlListItemSize {
 
 export interface CrUrlListItemElement {
   $: {
-    anchor: HTMLElement,
+    anchor: HTMLAnchorElement,
     badgesContainer: HTMLElement,
     badges: HTMLSlotElement,
     button: HTMLElement,
@@ -91,13 +91,16 @@ export class CrUrlListItemElement extends CrUrlListItemElementBase {
       },
 
       size: {
-        reflect: true,
         type: String,
+        reflect: true,
       },
 
       imageUrls: {type: Array},
 
-      firstImageLoaded_: {type: Boolean},
+      firstImageLoaded_: {
+        type: Boolean,
+        state: true,
+      },
 
       forceHover: {
         reflect: true,
@@ -114,20 +117,22 @@ export class CrUrlListItemElement extends CrUrlListItemElementBase {
        * activate.
        */
       asAnchor: {type: Boolean},
+      asAnchorTarget: {type: String},
     };
   }
 
-  alwaysShowSuffix: boolean;
+  alwaysShowSuffix: boolean = false;
   asAnchor: boolean = false;
+  asAnchorTarget: string = '_self';
   itemAriaLabel?: string;
   itemAriaDescription?: string;
   count?: number;
   description?: string;
   reverseElideDescription: boolean = false;
   hasBadges: boolean = false;
-  private hasDescriptions_: boolean = false;
-  private hasSlottedContent_: boolean = false;
-  private isFolder_: boolean = false;
+  protected hasDescriptions_: boolean = false;
+  protected hasSlottedContent_: boolean = false;
+  protected isFolder_: boolean = false;
   size: CrUrlListItemSize = CrUrlListItemSize.MEDIUM;
   override title: string = '';
   url?: string;
@@ -175,12 +180,14 @@ export class CrUrlListItemElement extends CrUrlListItemElementBase {
   }
 
   override focus() {
-    // This component itself is not focusable, so override its focus method
-    // to focus its main focusable child, the title button.
+    this.getFocusableElement().focus();
+  }
+
+  getFocusableElement() {
     if (this.asAnchor) {
-      this.$.anchor.focus();
+      return this.$.anchor;
     } else {
-      this.$.button.focus();
+      return this.$.button;
     }
   }
 

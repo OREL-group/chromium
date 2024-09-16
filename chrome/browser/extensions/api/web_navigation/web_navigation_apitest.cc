@@ -40,6 +40,7 @@
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_features.h"
+#include "content/public/common/isolated_world_ids.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/test/back_forward_cache_util.h"
 #include "content/public/test/browser_test.h"
@@ -124,10 +125,12 @@ class DelayLoadStartAndExecuteJavascript : public TabStripModelObserver,
 
     if (has_user_gesture_) {
       render_frame_host_->ExecuteJavaScriptWithUserGestureForTests(
-          base::UTF8ToUTF16(script_), base::NullCallback());
+          base::UTF8ToUTF16(script_), base::NullCallback(),
+          content::ISOLATED_WORLD_ID_GLOBAL);
     } else {
-      render_frame_host_->ExecuteJavaScriptForTests(base::UTF8ToUTF16(script_),
-                                                    base::NullCallback());
+      render_frame_host_->ExecuteJavaScriptForTests(
+          base::UTF8ToUTF16(script_), base::NullCallback(),
+          content::ISOLATED_WORLD_ID_GLOBAL);
     }
     script_was_executed_ = true;
   }
@@ -310,6 +313,9 @@ IN_PROC_BROWSER_TEST_P(WebNavigationApiPrerenderTestWithContextType, GetFrame) {
 }
 
 IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, GetFrameIncognito) {
+  // TODO(crbug.com/40937027): Convert test to use HTTPS and then remove.
+  ScopedAllowHttpForHostnamesForTesting allow_http({"a.com"},
+                                                   profile()->GetPrefs());
   ASSERT_TRUE(StartEmbeddedTestServer());
 
   GURL url = embedded_test_server()->GetURL("a.com", "/empty.html");
@@ -351,53 +357,32 @@ IN_PROC_BROWSER_TEST_P(WebNavigationApiTestWithContextType, FormSubmission) {
 }
 
 class WebNavigationApiPrerenderTestWithServiceWorker
-    : public WebNavigationApiTest,
-      public testing::WithParamInterface<bool> {
+    : public WebNavigationApiTest {
  public:
   WebNavigationApiPrerenderTestWithServiceWorker()
       // This test uses chrome.tabs.executeScript, which is not available in
       // MV3 or later. See crbug.com/332328868.
       : WebNavigationApiTest(ContextType::kServiceWorkerMV2) {
-    feature_list_.InitWithFeatureState(
-        extensions_features::kExtensionsServiceWorkerOptimizedEventDispatch,
-        GetParam());
+
   }
   ~WebNavigationApiPrerenderTestWithServiceWorker() override = default;
   WebNavigationApiPrerenderTestWithServiceWorker(
       const WebNavigationApiPrerenderTestWithServiceWorker&) = delete;
   WebNavigationApiPrerenderTestWithServiceWorker& operator=(
       const WebNavigationApiPrerenderTestWithServiceWorker&) = delete;
-
- private:
-  base::test::ScopedFeatureList feature_list_;
 };
 
-// Tests that prerender events emit the correct events in the correct order
-// depending on service worker start optimization feature state.
-IN_PROC_BROWSER_TEST_P(WebNavigationApiPrerenderTestWithServiceWorker,
+// Tests that prerender events emit the correct events in the expected order.
+IN_PROC_BROWSER_TEST_F(WebNavigationApiPrerenderTestWithServiceWorker,
                        Prerendering) {
-  // TODO(crbug.com/1394910): Use https in the test and remove this allowlist
+  // TODO(crbug.com/40248833): Use https in the test and remove this allowlist
   // entry.
   ScopedAllowHttpForHostnamesForTesting scoped_allow_http(
       {"a.test"}, browser()->profile()->GetPrefs());
 
   ASSERT_TRUE(StartEmbeddedTestServer());
-
-  if (base::FeatureList::IsEnabled(
-          extensions_features::
-              kExtensionsServiceWorkerOptimizedEventDispatch)) {
-    ASSERT_TRUE(RunExtensionTest("webnavigation/prerendering/optim_sw"))
-        << message_;
-  } else {
-    ASSERT_TRUE(RunExtensionTest("webnavigation/prerendering")) << message_;
-  }
+  EXPECT_TRUE(RunExtensionTest("webnavigation/prerendering")) << message_;
 }
-
-INSTANTIATE_TEST_SUITE_P(
-    ServiceWorker,
-    WebNavigationApiPrerenderTestWithServiceWorker,
-    /* features::kExtensionsServiceWorkerOptimizedEventDispatch status */
-    testing::Bool());
 
 // TODO(crbug.com/40791797):
 // WebNavigationApiTestWithContextType.Download test is flaky.
@@ -420,7 +405,7 @@ IN_PROC_BROWSER_TEST_P(WebNavigationApiTestWithContextType, MAYBE_Download) {
 
 IN_PROC_BROWSER_TEST_P(WebNavigationApiTestWithContextType,
                        ServerRedirectSingleProcess) {
-  // TODO(crbug.com/1394910): Use https in the test and remove these allowlist
+  // TODO(crbug.com/40248833): Use https in the test and remove these allowlist
   // entries.
   ScopedAllowHttpForHostnamesForTesting scoped_allow_http(
       {"www.a.com", "www.b.com"}, browser()->profile()->GetPrefs());
@@ -732,7 +717,7 @@ IN_PROC_BROWSER_TEST_P(WebNavigationApiTestWithContextType, PendingDeletion) {
 }
 
 IN_PROC_BROWSER_TEST_P(WebNavigationApiTestWithContextType, Crash) {
-  // TODO(crbug.com/1394910): Use https in the test and remove this allowlist
+  // TODO(crbug.com/40248833): Use https in the test and remove this allowlist
   // entry.
   ScopedAllowHttpForHostnamesForTesting scoped_allow_http(
       {"www.a.com"}, browser()->profile()->GetPrefs());

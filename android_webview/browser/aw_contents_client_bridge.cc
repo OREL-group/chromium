@@ -9,7 +9,6 @@
 #include <utility>
 
 #include "android_webview/browser/network_service/net_helpers.h"
-#include "android_webview/browser_jni_headers/AwContentsClientBridge_jni.h"
 #include "android_webview/common/devtools_instrumentation.h"
 #include "android_webview/grit/components_strings.h"
 #include "base/android/jni_android.h"
@@ -33,6 +32,9 @@
 #include "net/ssl/ssl_private_key.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "android_webview/browser_jni_headers/AwContentsClientBridge_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::ConvertJavaStringToUTF16;
@@ -286,13 +288,15 @@ void AwContentsClientBridge::RunJavaScriptDialog(
 
   switch (dialog_type) {
     case content::JAVASCRIPT_DIALOG_TYPE_ALERT: {
-      devtools_instrumentation::ScopedEmbedderCallbackTask("onJsAlert");
+      devtools_instrumentation::ScopedEmbedderCallbackTask embedder_callback(
+          "onJsAlert");
       Java_AwContentsClientBridge_handleJsAlert(env, obj, jurl, jmessage,
                                                 callback_id);
       break;
     }
     case content::JAVASCRIPT_DIALOG_TYPE_CONFIRM: {
-      devtools_instrumentation::ScopedEmbedderCallbackTask("onJsConfirm");
+      devtools_instrumentation::ScopedEmbedderCallbackTask embedder_callback(
+          "onJsConfirm");
       Java_AwContentsClientBridge_handleJsConfirm(env, obj, jurl, jmessage,
                                                   callback_id);
       break;
@@ -300,7 +304,8 @@ void AwContentsClientBridge::RunJavaScriptDialog(
     case content::JAVASCRIPT_DIALOG_TYPE_PROMPT: {
       ScopedJavaLocalRef<jstring> jdefault_value(
           ConvertUTF16ToJavaString(env, default_prompt_text));
-      devtools_instrumentation::ScopedEmbedderCallbackTask("onJsPrompt");
+      devtools_instrumentation::ScopedEmbedderCallbackTask embedder_callback(
+          "onJsPrompt");
       Java_AwContentsClientBridge_handleJsPrompt(env, obj, jurl, jmessage,
                                                  jdefault_value, callback_id);
       break;
@@ -333,7 +338,8 @@ void AwContentsClientBridge::RunBeforeUnloadDialog(
   ScopedJavaLocalRef<jstring> jmessage(
       ConvertUTF16ToJavaString(env, message_text));
 
-  devtools_instrumentation::ScopedEmbedderCallbackTask("onJsBeforeUnload");
+  devtools_instrumentation::ScopedEmbedderCallbackTask embedder_callback(
+      "onJsBeforeUnload");
   Java_AwContentsClientBridge_handleJsBeforeUnload(env, obj, jurl, jmessage,
                                                    callback_id);
 }
@@ -351,7 +357,7 @@ bool AwContentsClientBridge::ShouldOverrideUrlLoading(
   if (!obj)
     return true;
   ScopedJavaLocalRef<jstring> jurl = ConvertUTF16ToJavaString(env, url);
-  devtools_instrumentation::ScopedEmbedderCallbackTask(
+  devtools_instrumentation::ScopedEmbedderCallbackTask embedder_callback(
       "shouldOverrideUrlLoading");
 
   std::vector<std::string> header_names;

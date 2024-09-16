@@ -9,7 +9,6 @@
 
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
-#include "chrome/services/bundz_translation/bundz_translation_service.h"
 #include "chrome/services/speech/buildflags/buildflags.h"
 #include "components/paint_preview/buildflags/buildflags.h"
 #include "components/password_manager/core/common/password_manager_features.h"
@@ -18,6 +17,7 @@
 #include "components/safe_browsing/buildflags.h"
 #include "components/services/language_detection/language_detection_service_impl.h"
 #include "components/services/language_detection/public/mojom/language_detection.mojom.h"
+#include "components/services/on_device_translation/on_device_translation_service.h"
 #include "components/services/patch/file_patcher_impl.h"
 #include "components/services/patch/public/mojom/file_patcher.mojom.h"
 #include "components/services/unzip/public/mojom/unzipper.mojom.h"
@@ -30,13 +30,7 @@
 #include "mojo/public/cpp/bindings/service_factory.h"
 #include "pdf/buildflags.h"
 #include "printing/buildflags/buildflags.h"
-#include "services/screen_ai/buildflags/buildflags.h"
 #include "ui/accessibility/accessibility_features.h"
-
-#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
-#include "services/screen_ai/public/mojom/screen_ai_factory.mojom.h"  // nogncheck
-#include "services/screen_ai/screen_ai_service_impl.h"  // nogncheck
-#endif
 
 #if BUILDFLAG(IS_WIN)
 #include "chrome/services/system_signals/win/win_system_signals_service.h"
@@ -65,8 +59,11 @@
 #include "chrome/common/importer/profile_import.mojom.h"
 #include "chrome/utility/importer/profile_import_impl.h"
 #include "components/mirroring/service/mirroring_service.h"
+#include "services/passage_embeddings/passage_embeddings_service.h"
 #include "services/proxy_resolver/proxy_resolver_factory_impl.h"  // nogncheck
 #include "services/proxy_resolver/public/mojom/proxy_resolver.mojom.h"
+#include "services/screen_ai/public/mojom/screen_ai_factory.mojom.h"  // nogncheck
+#include "services/screen_ai/screen_ai_service_impl.h"  // nogncheck
 #endif  // !BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(ENABLE_BROWSER_SPEECH_SERVICE)
@@ -76,10 +73,6 @@
 
 #if BUILDFLAG(FULL_SAFE_BROWSING) || BUILDFLAG(IS_CHROMEOS_ASH)
 #include "chrome/services/file_util/file_util_service.h"  // nogncheck
-#endif
-
-#if BUILDFLAG(FULL_SAFE_BROWSING) && (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN))
-#include "chrome/services/file_util/document_analysis_service.h"  // nogncheck
 #endif
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
@@ -253,6 +246,13 @@ auto RunMirroringService(
       std::move(receiver), content::UtilityThread::Get()->GetIOTaskRunner());
 }
 
+auto RunPassageEmbeddingsService(
+    mojo::PendingReceiver<passage_embeddings::mojom::PassageEmbeddingsService>
+        receiver) {
+  return std::make_unique<passage_embeddings::PassageEmbeddingsService>(
+      std::move(receiver));
+}
+
 #endif  // !BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(ENABLE_BROWSER_SPEECH_SERVICE)
@@ -263,7 +263,7 @@ auto RunSpeechRecognitionService(
 }
 #endif  // !BUILDFLAG(ENABLE_BROWSER_SPEECH_SERVICE)
 
-#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
+#if !BUILDFLAG(IS_ANDROID)
 auto RunScreenAIServiceFactory(
     mojo::PendingReceiver<screen_ai::mojom::ScreenAIServiceFactory> receiver) {
   return std::make_unique<screen_ai::ScreenAIService>(std::move(receiver));
@@ -274,13 +274,6 @@ auto RunScreenAIServiceFactory(
 auto RunCupsIppParser(
     mojo::PendingReceiver<ipp_parser::mojom::IppParser> receiver) {
   return std::make_unique<ipp_parser::IppParser>(std::move(receiver));
-}
-#endif
-
-#if BUILDFLAG(FULL_SAFE_BROWSING) && (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN))
-auto RunDocumentAnalysis(
-    mojo::PendingReceiver<chrome::mojom::DocumentAnalysisService> receiver) {
-  return std::make_unique<DocumentAnalysisService>(std::move(receiver));
 }
 #endif
 
@@ -438,10 +431,10 @@ auto RunMahiContentExtractionServiceFactory(
 }
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
-auto RunBundzTranslationService(
-    mojo::PendingReceiver<bundz_translation::mojom::BundzTranslationService>
-        receiver) {
-  return std::make_unique<bundz_translation::BundzTranslationService>(
+auto RunOnDeviceTranslationService(
+    mojo::PendingReceiver<
+        on_device_translation::mojom::OnDeviceTranslationService> receiver) {
+  return std::make_unique<on_device_translation::OnDeviceTranslationService>(
       std::move(receiver));
 }
 
@@ -466,15 +459,13 @@ void RegisterMainThreadServices(mojo::ServiceFactory& services) {
 #if !BUILDFLAG(IS_ANDROID)
   services.Add(RunProfileImporter);
   services.Add(RunMirroringService);
+  services.Add(RunPassageEmbeddingsService);
+  services.Add(RunScreenAIServiceFactory);
 #endif  // !BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(ENABLE_BROWSER_SPEECH_SERVICE)
   services.Add(RunSpeechRecognitionService);
 #endif  // !BUILDFLAG(ENABLE_BROWSER_SPEECH_SERVICE)
-
-#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
-  services.Add(RunScreenAIServiceFactory);
-#endif
 
 #if BUILDFLAG(IS_WIN)
   services.Add(RunProcessorMetrics);
@@ -497,10 +488,6 @@ void RegisterMainThreadServices(mojo::ServiceFactory& services) {
 
 #if BUILDFLAG(FULL_SAFE_BROWSING) || BUILDFLAG(IS_CHROMEOS_ASH)
   services.Add(RunFileUtil);
-#endif
-
-#if BUILDFLAG(FULL_SAFE_BROWSING) && (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN))
-  services.Add(RunDocumentAnalysis);
 #endif
 
 #if BUILDFLAG(ENABLE_EXTENSIONS) && !BUILDFLAG(IS_WIN)
@@ -556,7 +543,7 @@ void RegisterMainThreadServices(mojo::ServiceFactory& services) {
   services.Add(RunMahiContentExtractionServiceFactory);
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
-  services.Add(RunBundzTranslationService);
+  services.Add(RunOnDeviceTranslationService);
 }
 
 void RegisterIOThreadServices(mojo::ServiceFactory& services) {

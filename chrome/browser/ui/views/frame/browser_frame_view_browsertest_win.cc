@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/ui/views/frame/browser_frame_view_win.h"
-
 #include <tuple>
 
 #include "base/files/file_util.h"
@@ -17,6 +15,7 @@
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/frame/app_menu_button.h"
 #include "chrome/browser/ui/views/frame/browser_caption_button_container_win.h"
+#include "chrome/browser/ui/views/frame/browser_frame_view_win.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/windows_caption_button.h"
 #include "chrome/browser/ui/views/web_apps/frame_toolbar/web_app_frame_toolbar_test_helper.h"
@@ -25,6 +24,7 @@
 #include "chrome/browser/ui/web_applications/app_browser_controller.h"
 #include "chrome/browser/ui/web_applications/test/web_app_browsertest_util.h"
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom.h"
+#include "chrome/browser/web_applications/test/os_integration_test_override_impl.h"
 #include "chrome/browser/web_applications/test/web_app_install_test_utils.h"
 #include "chrome/browser/web_applications/web_app_install_info.h"
 #include "chrome/browser/win/titlebar_config.h"
@@ -38,6 +38,7 @@
 #include "ui/base/pointer/touch_ui_controller.h"
 #include "ui/color/color_id.h"
 #include "ui/color/color_provider.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/view_utils.h"
 
 class BrowserFrameViewWinTest : public InProcessBrowserTest {
@@ -147,18 +148,19 @@ class WebAppBrowserFrameViewWinTest : public InProcessBrowserTest {
       const WebAppBrowserFrameViewWinTest&) = delete;
   ~WebAppBrowserFrameViewWinTest() override = default;
 
-  GURL GetStartURL() { return GURL("https://test.org"); }
+  GURL GetStartURL() {
+    return embedded_test_server()->GetURL("/web_apps/no_manifest.html");
+  }
 
   void SetUpOnMainThread() override {
     InProcessBrowserTest::SetUpOnMainThread();
-
+    CHECK(embedded_test_server()->Start());
     WebAppToolbarButtonContainer::DisableAnimationForTesting(true);
   }
 
   void InstallAndLaunchWebApp() {
-    auto web_app_info = std::make_unique<web_app::WebAppInstallInfo>();
-    web_app_info->start_url = GetStartURL();
-    web_app_info->scope = GetStartURL().GetWithoutFilename();
+    auto web_app_info =
+        web_app::WebAppInstallInfo::CreateWithStartUrlForTesting(GetStartURL());
     if (theme_color_) {
       web_app_info->theme_color = *theme_color_;
     }
@@ -188,6 +190,9 @@ class WebAppBrowserFrameViewWinTest : public InProcessBrowserTest {
       nullptr;
   raw_ptr<WebAppFrameToolbarView, AcrossTasksDanglingUntriaged>
       web_app_frame_toolbar_ = nullptr;
+
+ private:
+  web_app::OsIntegrationTestOverrideBlockingRegistration faked_os_integration_;
 };
 
 IN_PROC_BROWSER_TEST_F(WebAppBrowserFrameViewWinTest, ThemeColor) {
@@ -282,8 +287,8 @@ class WebAppBrowserFrameViewWinWindowControlsOverlayTest
 
     std::vector<blink::mojom::DisplayMode> display_overrides = {
         blink::mojom::DisplayMode::kWindowControlsOverlay};
-    auto web_app_info = std::make_unique<web_app::WebAppInstallInfo>();
-    web_app_info->start_url = start_url;
+    auto web_app_info =
+        web_app::WebAppInstallInfo::CreateWithStartUrlForTesting(start_url);
     web_app_info->scope = start_url.GetWithoutFilename();
     web_app_info->display_mode = blink::mojom::DisplayMode::kStandalone;
     web_app_info->user_display_mode =
@@ -336,6 +341,7 @@ class WebAppBrowserFrameViewWinWindowControlsOverlayTest
   WebAppFrameToolbarTestHelper web_app_frame_toolbar_helper_;
 
  private:
+  web_app::OsIntegrationTestOverrideBlockingRegistration faked_os_integration_;
   base::ScopedTempDir temp_dir_;
 };
 
@@ -365,6 +371,9 @@ IN_PROC_BROWSER_TEST_F(WebAppBrowserFrameViewWinWindowControlsOverlayTest,
 
   // ClientView should be covering the entire screen.
   EXPECT_EQ(frame_view_->GetBoundsForClientView().y(), 0);
+
+  // Exit full screen.
+  frame_view_->frame()->SetFullscreen(false);
 }
 
 IN_PROC_BROWSER_TEST_F(WebAppBrowserFrameViewWinWindowControlsOverlayTest,
@@ -391,12 +400,13 @@ IN_PROC_BROWSER_TEST_F(WebAppBrowserFrameViewWinWindowControlsOverlayTest,
 
   // Verify tooltip text has been updated.
   EXPECT_EQ(minimize_button->GetTooltipText(),
-            minimize_button->GetAccessibleName());
+            minimize_button->GetViewAccessibility().GetCachedName());
   EXPECT_EQ(maximize_button->GetTooltipText(),
-            maximize_button->GetAccessibleName());
+            maximize_button->GetViewAccessibility().GetCachedName());
   EXPECT_EQ(restore_button->GetTooltipText(),
-            restore_button->GetAccessibleName());
-  EXPECT_EQ(close_button->GetTooltipText(), close_button->GetAccessibleName());
+            restore_button->GetViewAccessibility().GetCachedName());
+  EXPECT_EQ(close_button->GetTooltipText(),
+            close_button->GetViewAccessibility().GetCachedName());
 
   ToggleWindowControlsOverlayEnabledAndWait();
 
@@ -407,8 +417,14 @@ IN_PROC_BROWSER_TEST_F(WebAppBrowserFrameViewWinWindowControlsOverlayTest,
   EXPECT_EQ(close_button->GetTooltipText(), u"");
 }
 
+// TODO(crbug.com/361780162): This test has been flaky on Windows ASan testers.
+#if BUILDFLAG(IS_WIN) && defined(ADDRESS_SANITIZER)
+#define MAYBE_CaptionButtonHitTest DISABLED_CaptionButtonHitTest
+#else
+#define MAYBE_CaptionButtonHitTest CaptionButtonHitTest
+#endif
 IN_PROC_BROWSER_TEST_F(WebAppBrowserFrameViewWinWindowControlsOverlayTest,
-                       CaptionButtonHitTest) {
+                       MAYBE_CaptionButtonHitTest) {
   InstallAndLaunchWebAppWithWindowControlsOverlay();
   frame_view_->GetWidget()->LayoutRootViewIfNecessary();
 

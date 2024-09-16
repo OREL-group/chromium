@@ -872,7 +872,7 @@ class ChromeHidDelegateRenderFrameTestBase
     profile_manager_ = std::make_unique<TestingProfileManager>(
         TestingBrowserProcess::GetGlobal());
     ASSERT_TRUE(profile_manager_->SetUp());
-    // TODO(crbug.com/1399310): Pass testing factory when creating profile.
+    // TODO(crbug.com/40249783): Pass testing factory when creating profile.
     // Ideally, we should be able to pass testing factory when calling profile
     // manager's CreateTestingProfile. However, due to the fact that:
     // 1) TestingProfile::TestingProfile(...) will call BrowserContextShutdown
@@ -1033,7 +1033,7 @@ class ChromeHidDelegateServiceWorkerTestBase
     auto builder = TestingProfile::Builder();
     auto testing_profile = builder.Build();
     profile_ = testing_profile.get();
-    // TODO(crbug.com/1399310): Pass testing factory when creating profile.
+    // TODO(crbug.com/40249783): Pass testing factory when creating profile.
     // Ideally, we should use TestingProfile::Builder::AddTestingFactory to
     // inject MockHidConnectionTracker. However, due to the fact that:
     // 1) TestingProfile::TestingProfile(...) will call BrowserContextShutdown
@@ -1063,18 +1063,6 @@ class ChromeHidDelegateServiceWorkerTest
 };
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-class DisableWebHidOnExtensionServiceWorkerHelper {
- public:
-  DisableWebHidOnExtensionServiceWorkerHelper() {
-    scoped_feature_list_.InitWithFeatures(
-        /*enabled_features=*/{},
-        /*disabled_features=*/{
-            features::kEnableWebHidOnExtensionServiceWorker});
-  }
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
-};
 
 class ChromeHidDelegateExtensionServiceWorkerTest
     : public ChromeHidDelegateServiceWorkerTestBase {
@@ -1086,33 +1074,11 @@ class ChromeHidDelegateExtensionServiceWorkerTest
   void SetUpOriginUrl() override { SetUpExtensionOriginUrl(); }
 };
 
-class ChromeHidDelegateExtensionServiceWorkerFeatureDisabledTest
-    : public ChromeHidDelegateExtensionServiceWorkerTest,
-      public DisableWebHidOnExtensionServiceWorkerHelper {
- public:
-  ChromeHidDelegateExtensionServiceWorkerFeatureDisabledTest() {
-    // There is no hid connection tracker activity when
-    // features::kEnableWebHidOnExtensionServiceWorker is disabled.
-    supports_hid_connection_tracker_ = false;
-  }
-};
-
 class ChromeHidDelegateExtensionRenderFrameTest
     : public ChromeHidDelegateRenderFrameTestBase {
  public:
   ChromeHidDelegateExtensionRenderFrameTest() {
     supports_hid_connection_tracker_ = true;
-  }
-  // ChromeHidTestHelper
-  void SetUpOriginUrl() override { SetUpExtensionOriginUrl(); }
-};
-
-class ChromeHidDelegateExtensionRenderFrameFeatureDisabledTest
-    : public ChromeHidDelegateExtensionRenderFrameTest,
-      public DisableWebHidOnExtensionServiceWorkerHelper {
- public:
-  ChromeHidDelegateExtensionRenderFrameFeatureDisabledTest() {
-    supports_hid_connection_tracker_ = false;
   }
   // ChromeHidTestHelper
   void SetUpOriginUrl() override { SetUpExtensionOriginUrl(); }
@@ -1152,11 +1118,6 @@ TEST_F(ChromeHidDelegateRenderFrameTest, ConnectAndRemove) {
 
 TEST_F(ChromeHidDelegateRenderFrameTest, ConnectAndNavigateCrossDocument) {
   TestConnectAndNavigateCrossDocument(web_contents());
-}
-
-TEST_F(ChromeHidDelegateExtensionServiceWorkerFeatureDisabledTest,
-       HidServiceNotConnected) {
-  TestHidServiceNotConnected();
 }
 
 TEST_F(ChromeHidDelegateServiceWorkerTest, HidServiceNotConnected) {
@@ -1201,11 +1162,6 @@ TEST_F(ChromeHidDelegateExtensionRenderFrameTest, ConnectAndRemove) {
 TEST_F(ChromeHidDelegateExtensionRenderFrameTest,
        ConnectAndNavigateCrossDocument) {
   TestConnectAndNavigateCrossDocument(web_contents());
-}
-
-TEST_F(ChromeHidDelegateExtensionRenderFrameFeatureDisabledTest,
-       ConnectionTrackerOpenDeviceNoIndicatorNoNotification) {
-  TestConnectionTrackerOpenDeviceNoConnectionCountUpdate();
 }
 
 TEST_F(ChromeHidDelegateExtensionServiceWorkerTest, AddChangeRemoveDevice) {

@@ -29,8 +29,8 @@
 #include "ui/gfx/geometry/point_conversions.h"
 
 #if BUILDFLAG(ENABLE_UNHANDLED_TAP)
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/mojom/unhandled_tap_notifier/unhandled_tap_notifier.mojom-blink.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/web/web_node.h"
 #include "third_party/blink/renderer/core/editing/frame_selection.h"
 #include "third_party/blink/renderer/core/editing/selection_template.h"
@@ -110,7 +110,7 @@ HitTestRequest::HitTestRequestType GestureManager::GetHitTypeForGestureType(
       // FIXME: Shouldn't LongTap and TwoFingerTap clear the Active state?
       return hit_type | HitTestRequest::kActive | HitTestRequest::kReadOnly;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return hit_type | HitTestRequest::kActive | HitTestRequest::kReadOnly;
   }
 }
@@ -161,7 +161,7 @@ WebInputEventResult GestureManager::HandleGestureEventInFrame(
     case WebInputEvent::Type::kGestureTapUnconfirmed:
       break;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 
   return WebInputEventResult::kNotHandled;
@@ -560,10 +560,10 @@ WebInputEventResult GestureManager::HandleGestureShowPress() {
   LocalFrameView* view = frame_->View();
   if (!view)
     return WebInputEventResult::kNotHandled;
-  const LocalFrameView::ScrollableAreaSet* areas = view->UserScrollableAreas();
+  const LocalFrameView::ScrollableAreaMap* areas = view->UserScrollableAreas();
   if (!areas)
     return WebInputEventResult::kNotHandled;
-  for (PaintLayerScrollableArea* scrollable_area : *areas) {
+  for (PaintLayerScrollableArea* scrollable_area : areas->Values()) {
     if (scrollable_area->ScrollsOverflow())
       scrollable_area->CancelScrollAnimation();
   }

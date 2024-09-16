@@ -429,12 +429,22 @@ LanguageSettingsPrivateSetLanguageAlwaysTranslateStateFunction::Run() {
   const auto params = language_settings_private::
       SetLanguageAlwaysTranslateState::Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params);
-
   const std::unique_ptr<translate::TranslatePrefs> translate_prefs =
       CreateTranslatePrefsForBrowserContext(browser_context());
 
-  translate_prefs->SetLanguageAlwaysTranslateState(params->language_code,
-                                                   params->always_translate);
+  if (params->always_translate) {
+    language::LanguageModel* language_model =
+        LanguageModelManagerFactory::GetForBrowserContext(browser_context())
+            ->GetPrimaryModel();
+    std::string target_language = TranslateService::GetTargetLanguage(
+        Profile::FromBrowserContext(browser_context())->GetPrefs(),
+        language_model);
+    translate_prefs->AddLanguagePairToAlwaysTranslateList(params->language_code,
+                                                          target_language);
+  } else {
+    translate_prefs->RemoveLanguagePairFromAlwaysTranslateList(
+        params->language_code);
+  }
 
   return RespondNow(NoArguments());
 }
@@ -499,7 +509,7 @@ LanguageSettingsPrivateMoveLanguageFunction::Run() {
 
     case language_settings_private::MoveType::kNone:
     case language_settings_private::MoveType::kMaxValue:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
   }
 
   // On Desktop we can only move languages by one position.
@@ -559,9 +569,9 @@ void LanguageSettingsPrivateGetSpellcheckWordsFunction::
 void LanguageSettingsPrivateGetSpellcheckWordsFunction::
     OnCustomDictionaryChanged(
         const SpellcheckCustomDictionary::Change& dictionary_change) {
-  NOTREACHED() << "SpellcheckCustomDictionary::Observer: "
-                  "OnCustomDictionaryChanged() called before "
-                  "OnCustomDictionaryLoaded()";
+  NOTREACHED_IN_MIGRATION() << "SpellcheckCustomDictionary::Observer: "
+                               "OnCustomDictionaryChanged() called before "
+                               "OnCustomDictionaryLoaded()";
 }
 
 base::Value::List

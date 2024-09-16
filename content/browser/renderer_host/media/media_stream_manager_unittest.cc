@@ -162,12 +162,6 @@ class MockAudioManager : public AudioManagerPlatform {
     }
   }
 
-  media::AudioParameters GetDefaultOutputStreamParameters() override {
-    return media::AudioParameters(media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
-                                  media::ChannelLayoutConfig::Stereo(), 48000,
-                                  128);
-  }
-
   media::AudioParameters GetOutputStreamParameters(
       const std::string& device_id) override {
     return media::AudioParameters(media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
@@ -316,7 +310,6 @@ class TestMediaStreamDispatcherHost
       const std::optional<base::UnguessableToken>& session_id,
       blink::mojom::MediaStreamType type,
       bool is_secure) override {}
-  void OnStreamStarted(const std::string& label) override {}
 
 #if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
   void SendWheel(const base::UnguessableToken& device_id,
@@ -325,6 +318,9 @@ class TestMediaStreamDispatcherHost
   void SetZoomLevel(const base::UnguessableToken& device_id,
                     int32_t zoom_level,
                     SetZoomLevelCallback callback) override {}
+  void RequestCapturedSurfaceControlPermission(
+      const base::UnguessableToken& device_id,
+      RequestCapturedSurfaceControlPermissionCallback callback) override {}
   void FocusCapturedSurface(const std::string& label, bool focus) override {}
   void ApplySubCaptureTarget(const base::UnguessableToken& device_id,
                              media::mojom::SubCaptureTargetType type,
@@ -387,6 +383,7 @@ blink::StreamControls GetAudioStreamControls(std::string hmac_device_id) {
 enum class CapturedSurfaceControlAPI {
   kSendWheel,
   kSetZoomLevel,
+  kRequestPermission,
 };
 
 // Make an arbitrary valid CapturedWheelAction.
@@ -633,7 +630,7 @@ class MediaStreamManagerTest : public ::testing::Test {
       const std::string& label,
       blink::mojom::StreamDevicesSetPtr stream_devices_set,
       bool pan_tilt_zoom_allowed) {
-    // TODO(crbug.com/1300883): Generalize to multiple streams.
+    // TODO(crbug.com/40216442): Generalize to multiple streams.
     DCHECK_EQ(stream_devices_set->stream_devices.size(), 1u);
     if (request_audio && audio_share) {
       ASSERT_TRUE(
@@ -1865,6 +1862,8 @@ class MediaStreamManagerCapturedSurfaceControlTest
                   100, CapturedSurfaceControlResult::kSuccess);
               captured_surface_controller->SetSetZoomLevelResponse(
                   CapturedSurfaceControlResult::kSuccess);
+              captured_surface_controller->SetRequestPermissionResponse(
+                  CapturedSurfaceControlResult::kSuccess);
               return base::WrapUnique<CapturedSurfaceController>(
                   captured_surface_controller.release());
             },
@@ -1910,6 +1909,14 @@ class MediaStreamManagerCapturedSurfaceControlTest
         MakeCallback());
   }
 
+  void RequestPermission(
+      GlobalRenderFrameHostId gdm_rfhid,
+      std::optional<base::UnguessableToken> session_id = std::nullopt) {
+    media_stream_manager_->RequestCapturedSurfaceControlPermission(
+        gdm_rfhid, session_id.value_or(video_device_.session_id()),
+        MakeCallback());
+  }
+
   blink::MediaStreamDevice video_device_;
   blink::MediaStreamDevice audio_device_;
 
@@ -1951,8 +1958,12 @@ class MediaStreamManagerCapturedSurfaceControlActionTest
         SetZoomLevel(gdm_rfhid, session_id);
         return;
       }
+      case CapturedSurfaceControlAPI::kRequestPermission: {
+        RequestPermission(gdm_rfhid, session_id);
+        return;
+      }
     }
-    NOTREACHED_NORETURN();
+    NOTREACHED();
   }
 
   const CapturedSurfaceControlAPI tested_api_;
@@ -1962,7 +1973,8 @@ INSTANTIATE_TEST_SUITE_P(
     ,
     MediaStreamManagerCapturedSurfaceControlActionTest,
     testing::Values(CapturedSurfaceControlAPI::kSendWheel,
-                    CapturedSurfaceControlAPI::kSetZoomLevel));
+                    CapturedSurfaceControlAPI::kSetZoomLevel,
+                    CapturedSurfaceControlAPI::kRequestPermission));
 
 TEST_P(MediaStreamManagerCapturedSurfaceControlActionTest, SuccessfulIfValid) {
   SCOPED_TRACE("SuccessfulIfValid");
@@ -2007,7 +2019,7 @@ TEST_P(MediaStreamManagerCapturedSurfaceControlActionTest,
 // This test is currently disabled because the code that ensures that Captured
 // Surface Control APIs are disallowed for self-capture has not yet been
 // authored.
-// TODO(crbug.com/1511754): Enable this test.
+// TODO(crbug.com/41484336): Enable this test.
 TEST_P(MediaStreamManagerCapturedSurfaceControlActionTest,
        DISABLED_FailsIfSelfCapture) {
   SCOPED_TRACE("FailsIfSelfCapture");
@@ -2018,7 +2030,7 @@ TEST_P(MediaStreamManagerCapturedSurfaceControlActionTest,
   SimulateGetDisplayMedia(gdm_rfhid, captured_wc_id);
 
   RunTestedAction(gdm_rfhid);
-  // TODO(crbug.com/1512926): Use a dedicated error.
+  // TODO(crbug.com/41485502): Use a dedicated error.
   EXPECT_EQ(result_, CapturedSurfaceControlResult::kUnknownError);
 }
 
@@ -2036,7 +2048,7 @@ TEST_P(MediaStreamManagerCapturedSurfaceControlActionTest,
   SimulateGetDisplayMedia(gdm_rfhid, captured_wc_id);
 
   RunTestedAction(gdm_rfhid);
-  // TODO(crbug.com/1512926): Use a dedicated error.
+  // TODO(crbug.com/41485502): Use a dedicated error.
   EXPECT_EQ(result_, CapturedSurfaceControlResult::kUnknownError);
 }
 
@@ -2054,7 +2066,7 @@ TEST_P(MediaStreamManagerCapturedSurfaceControlActionTest,
   SimulateGetDisplayMedia(gdm_rfhid, captured_wc_id);
 
   RunTestedAction(gdm_rfhid);
-  // TODO(crbug.com/1512926): Use a dedicated error.
+  // TODO(crbug.com/41485502): Use a dedicated error.
   EXPECT_EQ(result_, CapturedSurfaceControlResult::kUnknownError);
 }
 #endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)

@@ -4,183 +4,231 @@
 
 #include "ash/public/cpp/picker/picker_search_result.h"
 
+#include <cstddef>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
 
 #include "ui/base/models/image_model.h"
-#include "ui/gfx/geometry/size.h"
 #include "url/gurl.h"
 
 namespace ash {
 
-bool PickerSearchResult::TextData::operator==(
-    const PickerSearchResult::TextData&) const = default;
+PickerTextResult::PickerTextResult(std::u16string_view text,
+                                   PickerTextResult::Source source)
+    : PickerTextResult(text, u"", ui::ImageModel(), source) {}
 
-bool PickerSearchResult::SearchRequestData::operator==(
-    const PickerSearchResult::SearchRequestData&) const = default;
+PickerTextResult::PickerTextResult(std::u16string_view primary_text,
+                                   std::u16string_view secondary_text,
+                                   ui::ImageModel icon,
+                                   Source source)
+    : primary_text(primary_text),
+      secondary_text(secondary_text),
+      icon(std::move(icon)),
+      source(source) {}
 
-bool PickerSearchResult::EmojiData::operator==(
-    const PickerSearchResult::EmojiData&) const = default;
+PickerTextResult::PickerTextResult(const PickerTextResult&) = default;
+PickerTextResult& PickerTextResult::operator=(const PickerTextResult&) =
+    default;
+PickerTextResult::~PickerTextResult() = default;
 
-bool PickerSearchResult::SymbolData::operator==(
-    const PickerSearchResult::SymbolData&) const = default;
+bool PickerTextResult::operator==(const PickerTextResult&) const = default;
 
-bool PickerSearchResult::EmoticonData::operator==(
-    const PickerSearchResult::EmoticonData&) const = default;
+PickerSearchRequestResult::PickerSearchRequestResult(
+    std::u16string_view primary_text,
+    std::u16string_view secondary_text,
+    ui::ImageModel icon)
+    : primary_text(primary_text),
+      secondary_text(secondary_text),
+      icon(std::move(icon)) {}
 
-PickerSearchResult::ClipboardData::ClipboardData(
+PickerSearchRequestResult::PickerSearchRequestResult(
+    const PickerSearchRequestResult&) = default;
+PickerSearchRequestResult& PickerSearchRequestResult::operator=(
+    const PickerSearchRequestResult&) = default;
+PickerSearchRequestResult::~PickerSearchRequestResult() = default;
+
+bool PickerSearchRequestResult::operator==(
+    const PickerSearchRequestResult&) const = default;
+
+PickerEmojiResult PickerEmojiResult::Emoji(std::u16string_view text,
+                                           std::u16string name) {
+  return PickerEmojiResult(Type::kEmoji, text, std::move(name));
+}
+
+PickerEmojiResult PickerEmojiResult::Symbol(std::u16string_view text,
+                                            std::u16string name) {
+  return PickerEmojiResult(Type::kSymbol, text, std::move(name));
+}
+
+PickerEmojiResult PickerEmojiResult::Emoticon(std::u16string_view text,
+                                              std::u16string name) {
+  return PickerEmojiResult(Type::kEmoticon, text, std::move(name));
+}
+
+PickerEmojiResult::PickerEmojiResult(Type type,
+                                     std::u16string_view text,
+                                     std::u16string name)
+    : type(type), text(text), name(std::move(name)) {}
+
+PickerEmojiResult::PickerEmojiResult(const PickerEmojiResult&) = default;
+PickerEmojiResult& PickerEmojiResult::operator=(const PickerEmojiResult&) =
+    default;
+PickerEmojiResult::~PickerEmojiResult() = default;
+
+bool PickerEmojiResult::operator==(const PickerEmojiResult&) const = default;
+
+PickerClipboardResult::PickerClipboardResult(
     base::UnguessableToken item_id,
     DisplayFormat display_format,
+    size_t file_count,
     std::u16string display_text,
-    std::optional<ui::ImageModel> display_image)
+    std::optional<ui::ImageModel> display_image,
+    bool is_recent)
     : item_id(item_id),
       display_format(display_format),
+      file_count(file_count),
       display_text(std::move(display_text)),
-      display_image(std::move(display_image)) {}
+      display_image(std::move(display_image)),
+      is_recent(is_recent) {}
 
-PickerSearchResult::ClipboardData::ClipboardData(
-    const PickerSearchResult::ClipboardData&) = default;
-
-PickerSearchResult::ClipboardData& PickerSearchResult::ClipboardData::operator=(
-    const PickerSearchResult::ClipboardData&) = default;
-
-PickerSearchResult::ClipboardData::~ClipboardData() = default;
-
-bool PickerSearchResult::ClipboardData::operator==(
-    const PickerSearchResult::ClipboardData&) const = default;
-
-PickerSearchResult::GifData::GifData(const GURL& preview_url,
-                                     const GURL& preview_image_url,
-                                     const gfx::Size& preview_dimensions,
-                                     const GURL& full_url,
-                                     const gfx::Size& full_dimensions,
-                                     std::u16string content_description)
-    : preview_url(preview_url),
-      preview_image_url(preview_image_url),
-      preview_dimensions(preview_dimensions),
-      full_url(full_url),
-      full_dimensions(full_dimensions),
-      content_description(std::move(content_description)) {}
-
-PickerSearchResult::GifData::GifData(const PickerSearchResult::GifData&) =
+PickerClipboardResult::PickerClipboardResult(const PickerClipboardResult&) =
     default;
 
-PickerSearchResult::GifData& PickerSearchResult::GifData::operator=(
-    const PickerSearchResult::GifData&) = default;
+PickerClipboardResult& PickerClipboardResult::operator=(
+    const PickerClipboardResult&) = default;
 
-PickerSearchResult::GifData::~GifData() = default;
+PickerClipboardResult::~PickerClipboardResult() = default;
 
-bool PickerSearchResult::GifData::operator==(
-    const PickerSearchResult::GifData&) const = default;
-
-bool PickerSearchResult::LocalFileData::operator==(const LocalFileData&) const =
+bool PickerClipboardResult::operator==(const PickerClipboardResult&) const =
     default;
 
-bool PickerSearchResult::DriveFileData::operator==(const DriveFileData&) const =
+PickerLocalFileResult::PickerLocalFileResult(std::u16string title,
+                                             base::FilePath file_path,
+                                             bool best_match)
+    : title(std::move(title)),
+      file_path(std::move(file_path)),
+      best_match(best_match) {}
+
+PickerLocalFileResult::PickerLocalFileResult(const PickerLocalFileResult&) =
     default;
 
-bool PickerSearchResult::BrowsingHistoryData::operator==(
-    const PickerSearchResult::BrowsingHistoryData&) const = default;
+PickerLocalFileResult& PickerLocalFileResult::operator=(
+    const PickerLocalFileResult&) = default;
 
-bool PickerSearchResult::CategoryData::operator==(const CategoryData&) const =
+PickerLocalFileResult::~PickerLocalFileResult() = default;
+
+bool PickerLocalFileResult::operator==(const PickerLocalFileResult&) const =
     default;
 
-PickerSearchResult::~PickerSearchResult() = default;
+PickerDriveFileResult::PickerDriveFileResult(std::optional<std::string> id,
+                                             std::u16string title,
+                                             GURL url,
+                                             base::FilePath file_path,
+                                             bool best_match)
+    : id(std::move(id)),
+      title(std::move(title)),
+      url(std::move(url)),
+      file_path(std::move(file_path)),
+      best_match(best_match) {}
 
-PickerSearchResult::PickerSearchResult(const PickerSearchResult&) = default;
-
-PickerSearchResult& PickerSearchResult::operator=(const PickerSearchResult&) =
+PickerDriveFileResult::PickerDriveFileResult(const PickerDriveFileResult&) =
     default;
 
-PickerSearchResult::PickerSearchResult(PickerSearchResult&&) = default;
+PickerDriveFileResult& PickerDriveFileResult::operator=(
+    const PickerDriveFileResult&) = default;
 
-PickerSearchResult& PickerSearchResult::operator=(PickerSearchResult&&) =
+PickerDriveFileResult::~PickerDriveFileResult() = default;
+
+bool PickerDriveFileResult::operator==(const PickerDriveFileResult&) const =
     default;
 
-PickerSearchResult PickerSearchResult::Text(std::u16string_view text) {
-  return PickerSearchResult(TextData{.primary_text = std::u16string(text),
-                                     .secondary_text = u"",
-                                     .icon = ui::ImageModel()});
-}
+PickerBrowsingHistoryResult::PickerBrowsingHistoryResult(GURL url,
+                                                         std::u16string title,
+                                                         ui::ImageModel icon,
+                                                         bool best_match)
+    : url(std::move(url)),
+      title(std::move(title)),
+      icon(std::move(icon)),
+      best_match(best_match) {}
 
-PickerSearchResult PickerSearchResult::Text(std::u16string_view primary_text,
-                                            std::u16string_view secondary_text,
-                                            ui::ImageModel icon) {
-  return PickerSearchResult(
-      TextData{.primary_text = std::u16string(primary_text),
-               .secondary_text = std::u16string(secondary_text),
-               .icon = std::move(icon)});
-}
+PickerBrowsingHistoryResult::PickerBrowsingHistoryResult(
+    const PickerBrowsingHistoryResult&) = default;
 
-PickerSearchResult PickerSearchResult::SearchRequest(std::u16string_view text,
-                                                     ui::ImageModel icon) {
-  return PickerSearchResult(
-      SearchRequestData{.text = std::u16string(text), .icon = std::move(icon)});
-}
+PickerBrowsingHistoryResult& PickerBrowsingHistoryResult::operator=(
+    const PickerBrowsingHistoryResult&) = default;
 
-PickerSearchResult PickerSearchResult::Emoji(std::u16string_view emoji) {
-  return PickerSearchResult(EmojiData{.emoji = std::u16string(emoji)});
-}
+PickerBrowsingHistoryResult::~PickerBrowsingHistoryResult() = default;
 
-PickerSearchResult PickerSearchResult::Symbol(std::u16string_view symbol) {
-  return PickerSearchResult(SymbolData{.symbol = std::u16string(symbol)});
-}
+bool PickerBrowsingHistoryResult::operator==(
+    const PickerBrowsingHistoryResult&) const = default;
 
-PickerSearchResult PickerSearchResult::Emoticon(std::u16string_view emoticon) {
-  return PickerSearchResult(EmoticonData{.emoticon = std::u16string(emoticon)});
-}
+PickerCategoryResult::PickerCategoryResult(PickerCategory category)
+    : category(category) {}
 
-PickerSearchResult PickerSearchResult::Clipboard(
-    base::UnguessableToken item_id,
-    ClipboardData::DisplayFormat display_format,
-    std::u16string display_text,
-    std::optional<ui::ImageModel> display_image) {
-  return PickerSearchResult(ClipboardData(item_id, display_format,
-                                          std::move(display_text),
-                                          std::move(display_image)));
-}
+PickerCategoryResult::PickerCategoryResult(const PickerCategoryResult&) =
+    default;
+PickerCategoryResult& PickerCategoryResult::operator=(
+    const PickerCategoryResult&) = default;
+PickerCategoryResult::~PickerCategoryResult() = default;
 
-PickerSearchResult PickerSearchResult::Gif(const GURL& preview_url,
-                                           const GURL& preview_image_url,
-                                           const gfx::Size& preview_dimensions,
-                                           const GURL& full_url,
-                                           const gfx::Size& full_dimensions,
-                                           std::u16string content_description) {
-  return PickerSearchResult(
-      GifData(preview_url, preview_image_url, preview_dimensions, full_url,
-              full_dimensions, std::move(content_description)));
-}
+bool PickerCategoryResult::operator==(const PickerCategoryResult&) const =
+    default;
 
-PickerSearchResult PickerSearchResult::BrowsingHistory(const GURL& url,
-                                                       std::u16string title,
-                                                       ui::ImageModel icon) {
-  return PickerSearchResult(BrowsingHistoryData{
-      .url = url, .title = std::move(title), .icon = std::move(icon)});
-}
+PickerEditorResult::PickerEditorResult(
+    Mode mode,
+    std::u16string display_name,
+    std::optional<chromeos::editor_menu::PresetQueryCategory> category,
+    std::optional<std::string> preset_query_id)
+    : mode(mode),
+      display_name(std::move(display_name)),
+      category(std::move(category)),
+      preset_query_id(std::move(preset_query_id)) {}
 
-PickerSearchResult PickerSearchResult::LocalFile(std::u16string title,
-                                                 base::FilePath file_path) {
-  return PickerSearchResult(LocalFileData{.file_path = std::move(file_path),
-                                          .title = std::move(title)});
-}
+PickerEditorResult::PickerEditorResult(const PickerEditorResult&) = default;
 
-PickerSearchResult PickerSearchResult::DriveFile(std::u16string title,
-                                                 const GURL& url) {
-  return PickerSearchResult(
-      DriveFileData{.url = url, .title = std::move(title)});
-}
+PickerEditorResult& PickerEditorResult::operator=(const PickerEditorResult&) =
+    default;
 
-PickerSearchResult PickerSearchResult::Category(PickerCategory category) {
-  return PickerSearchResult(CategoryData{.category = category});
-}
+PickerEditorResult::~PickerEditorResult() = default;
 
-bool PickerSearchResult::operator==(const PickerSearchResult&) const = default;
+bool PickerEditorResult::operator==(const PickerEditorResult&) const = default;
 
-const PickerSearchResult::Data& PickerSearchResult::data() const {
-  return data_;
-}
+PickerNewWindowResult::PickerNewWindowResult(Type type) : type(type) {}
 
-PickerSearchResult::PickerSearchResult(Data data) : data_(std::move(data)) {}
+PickerNewWindowResult::PickerNewWindowResult(const PickerNewWindowResult&) =
+    default;
+PickerNewWindowResult& PickerNewWindowResult::operator=(
+    const PickerNewWindowResult&) = default;
+PickerNewWindowResult::~PickerNewWindowResult() = default;
+
+bool PickerNewWindowResult::operator==(const PickerNewWindowResult&) const =
+    default;
+
+PickerCapsLockResult::PickerCapsLockResult(
+    bool enabled,
+    PickerCapsLockResult::Shortcut shortcut)
+    : enabled(enabled), shortcut(shortcut) {}
+
+PickerCapsLockResult::PickerCapsLockResult(const PickerCapsLockResult&) =
+    default;
+PickerCapsLockResult& PickerCapsLockResult::operator=(
+    const PickerCapsLockResult&) = default;
+PickerCapsLockResult::~PickerCapsLockResult() = default;
+
+bool PickerCapsLockResult::operator==(const PickerCapsLockResult&) const =
+    default;
+
+PickerCaseTransformResult::PickerCaseTransformResult(Type type) : type(type) {}
+
+PickerCaseTransformResult::PickerCaseTransformResult(
+    const PickerCaseTransformResult&) = default;
+PickerCaseTransformResult& PickerCaseTransformResult::operator=(
+    const PickerCaseTransformResult&) = default;
+PickerCaseTransformResult::~PickerCaseTransformResult() = default;
+
+bool PickerCaseTransformResult::operator==(
+    const PickerCaseTransformResult&) const = default;
 
 }  // namespace ash

@@ -5,10 +5,13 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_HTML_ANCHOR_ELEMENT_METRICS_SENDER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_HTML_ANCHOR_ELEMENT_METRICS_SENDER_H_
 
+#include <compare>
+
 #include "third_party/blink/public/mojom/loader/navigation_predictor.mojom-blink.h"
 #include "third_party/blink/public/mojom/preloading/anchor_element_interaction_host.mojom-blink.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
+#include "third_party/blink/renderer/platform/allow_discouraged_type.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_set.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_remote.h"
@@ -93,6 +96,7 @@ class CORE_EXPORT AnchorElementMetricsSender final
 
   void AddAnchorElement(HTMLAnchorElement& element);
   void RemoveAnchorElement(HTMLAnchorElement& element);
+  void DocumentDetached(Document& document);
 
   void SetTickClockForTesting(const base::TickClock* clock);
   void SetNowAsNavigationStartForTesting();
@@ -107,6 +111,15 @@ class CORE_EXPORT AnchorElementMetricsSender final
   // Report the pointer event for the anchor element.
   void MaybeReportAnchorElementPointerEvent(HTMLAnchorElement& element,
                                             const PointerEvent& pointer_event);
+
+  // Record and send metrics to the browser process about the position of
+  // tracked anchor elements in the viewport.
+  void MaybeReportAnchorElementsPositionOnScrollEnd();
+
+  // Called when a pointerdown is about to be dispatched to any Node in |this|'s
+  // document or local subframes. Record the location of the pointer event for
+  // future metrics computation.
+  void RecordPointerDown(const PointerEvent& pointer_event);
 
   void Trace(Visitor*) const override;
 
@@ -139,6 +152,10 @@ class CORE_EXPORT AnchorElementMetricsSender final
   base::TimeTicks NavigationStart() const;
 
   void RegisterForLifecycleNotifications();
+
+  void PositionUpdateTimerFired(TimerBase*);
+
+  void ComputeAnchorElementsPositionUpdates();
 
   // Mock timestamp for navigation start used for testing.
   std::optional<base::TimeTicks> mock_navigation_start_for_testing_;
@@ -178,9 +195,13 @@ class CORE_EXPORT AnchorElementMetricsSender final
   // is no longer done.
   bool should_skip_update_delays_for_testing_ = false;
 
+  // Cached field trial param values.
   const int random_anchor_sampling_period_;
+  const wtf_size_t max_number_of_observations_;
+  const base::TimeDelta intersection_observer_delay_;
 
   Member<IntersectionObserver> intersection_observer_;
+  HeapHashSet<WeakMember<const HTMLAnchorElement>> anchors_in_viewport_;
 
   WTF::Vector<mojom::blink::AnchorElementEnteredViewportPtr>
       entered_viewport_messages_;
@@ -196,13 +217,57 @@ class CORE_EXPORT AnchorElementMetricsSender final
   WTF::Vector<mojom::blink::AnchorElementLeftViewportPtr>
       left_viewport_messages_;
 
+  WTF::Vector<mojom::blink::AnchorElementPositionUpdatePtr>
+      position_update_messages_;
+
   WTF::Vector<mojom::blink::AnchorElementClickPtr> clicked_messages_;
 
   const base::TickClock* clock_;
 
   bool is_registered_for_lifecycle_notifications_ = false;
 
-  bool intersection_observer_limit_exceeded_ = false;
+  // The y-coordinate of the last pointerdown (in the visual viewport coordinate
+  // space and offset by the height of the browser top-controls), reported in
+  // |RecordPointerDown|. Used to compute |position_update_messages_|.
+  std::optional<float> last_pointer_down_ = std::nullopt;
+  // Indicates that we should populate |position_update_messages_| in
+  // |DidFinishLifecycleUpdate|.
+  bool should_compute_positions_after_next_lifecycle_update_ = false;
+  // Used to timeout waiting for |UpdateVisibleAnchors| being called after
+  // |MaybeReportAnchorElementsPositionOnScrollEnd| is called. The timer is
+  // stopped when |UpdateVisibleAnchors| is called.
+  HeapTaskRunnerTimer<AnchorElementMetricsSender> position_update_timer_;
+
+  // These two sets, together, contain the anchors sampled in to be observed
+  // by `intersection_observer_, ordered by their priority (currently,
+  // `ratio_area`).
+  //
+  // The top `max_number_of_observations_` entries are observed at any one
+  // time (and exist in `observed_anchors_`).
+  //
+  //  non_observed_anchors_     observed_anchors_ (size capped)
+  // +-----------------------+ +-------------------------------+
+  // | .1 A1 | .2 A2 | .3 A3 | | .4 A4 | .5 A5 | .6 A6 | .7 A7 |
+  // +-----------------------+ +-------------------------------+
+  //
+  // If an anchor is added, the first element of `observed_anchors_`
+  // might be moved to `non_observed_anchors_` to make room.
+  // If an observed anchor is removed, the last element of
+  // `non_observed_anchors_` is moved to `observed_anchors_`
+  struct AnchorObservation {
+    // mojom::blink::AnchorElementMetrics::ratio_area * 100 (see documentation
+    // in navigation_predictor.mojom).
+    int percent_area;
+    // DOMNodeId for the anchor this AnchorObservation is created for.
+    DOMNodeId dom_node_id;
+
+    bool operator==(const AnchorObservation&) const = default;
+    auto operator<=>(const AnchorObservation&) const = default;
+  };
+  std::set<AnchorObservation> observed_anchors_
+      ALLOW_DISCOURAGED_TYPE("WTF::HashSet lacks key sorting.");
+  std::set<AnchorObservation> not_observed_anchors_
+      ALLOW_DISCOURAGED_TYPE("WTF::HashSet lacks key sorting.");
 
   SEQUENCE_CHECKER(sequence_checker_);
 };

@@ -9,13 +9,21 @@
 #include "ash/accessibility/accessibility_controller.h"
 #include "ash/api/tasks/tasks_types.h"
 #include "ash/constants/ash_pref_names.h"
+#include "ash/constants/url_constants.h"
+#include "ash/media/media_controller_impl.h"
+#include "ash/public/cpp/ash_web_view_factory.h"
+#include "ash/public/cpp/shell_window_ids.h"
 #include "ash/public/cpp/system/anchored_nudge_data.h"
 #include "ash/root_window_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
+#include "ash/shell_delegate.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/system/do_not_disturb_notification_controller.h"
 #include "ash/system/focus_mode/focus_mode_histogram_names.h"
+#include "ash/system/focus_mode/focus_mode_metrics_recorder.h"
 #include "ash/system/focus_mode/focus_mode_session.h"
+#include "ash/system/focus_mode/focus_mode_tasks_provider.h"
 #include "ash/system/focus_mode/focus_mode_tray.h"
 #include "ash/system/focus_mode/focus_mode_util.h"
 #include "ash/system/focus_mode/sounds/focus_mode_sounds_controller.h"
@@ -23,12 +31,16 @@
 #include "ash/system/toast/anchored_nudge_manager_impl.h"
 #include "ash/system/unified/unified_system_tray.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/rand_util.h"
 #include "base/time/time.h"
+#include "chromeos/ash/components/audio/sounds.h"
+#include "chromeos/ash/components/audio/system_sounds_delegate.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/message_center/message_center.h"
+#include "ui/views/widget/widget.h"
 
 namespace ash {
 
@@ -38,6 +50,8 @@ FocusModeController* g_instance = nullptr;
 
 // The default Focus Mode session duration.
 constexpr base::TimeDelta kDefaultSessionDuration = base::Minutes(25);
+
+constexpr base::TimeDelta kSessionEndSoundDelay = base::Milliseconds(200);
 
 bool IsQuietModeOnSetByFocusMode() {
   auto* message_center = message_center::MessageCenter::Get();
@@ -77,7 +91,9 @@ FocusModeTray* GetFocusModeTrayInActiveWindow() {
   return status_area_widget->focus_mode_tray();
 }
 
-void ShowEndingMomentNudge() {
+void ShowEndingMomentNudge(
+    const size_t congratulatory_index,
+    const std::optional<FocusModeSession>& current_session) {
   auto* tray = GetFocusModeTrayInActiveWindow();
   if (!tray) {
     return;
@@ -85,20 +101,19 @@ void ShowEndingMomentNudge() {
 
   // NOTE: we anchor to `tray->image_view()` in order to center the nudge
   // properly because there is extra spacing on the actual `FocusModeTray` view.
-  AnchoredNudgeData nudge_data(
-      focus_mode_util::kFocusModeEndingMomentNudgeId,
-      NudgeCatalogName::kFocusModeEndingMomentNudge,
-      l10n_util::GetStringUTF16(
-          IDS_ASH_STATUS_TRAY_FOCUS_MODE_ENDING_MOMENT_NUDGE),
-      tray->image_view());
+  const auto& title_and_emoji =
+      focus_mode_util::GetCongratulatoryTextAndEmoji(congratulatory_index);
+  AnchoredNudgeData nudge_data(focus_mode_util::kFocusModeEndingMomentNudgeId,
+                               NudgeCatalogName::kFocusModeEndingMomentNudge,
+                               title_and_emoji, tray->image_view());
   nudge_data.arrow = views::BubbleBorder::BOTTOM_CENTER;
   nudge_data.duration = NudgeDuration::kDefaultDuration;
   nudge_data.anchored_to_shelf = true;
+  nudge_data.announce_chromevox = false;
   nudge_data.click_callback =
       base::BindRepeating(&FocusModeTray::ShowBubble, base::Unretained(tray));
   AnchoredNudgeManager::Get()->Show(nudge_data);
 
-  auto current_session = FocusModeController::Get()->current_session();
   CHECK(current_session);
   const std::u16string duration_string =
       focus_mode_util::GetDurationString(current_session->session_duration(),
@@ -107,7 +122,7 @@ void ShowEndingMomentNudge() {
       ->accessibility_controller()
       ->TriggerAccessibilityAlertWithMessage(l10n_util::GetStringFUTF8(
           IDS_ASH_STATUS_TRAY_FOCUS_MODE_ENDING_MOMENT_NUDGE_ALERT,
-          duration_string));
+          title_and_emoji, duration_string));
 }
 
 void HideEndingMomentNudge() {
@@ -116,49 +131,42 @@ void HideEndingMomentNudge() {
   }
 }
 
-void RecordInitialDurationHistogram(base::TimeDelta session_duration) {
-  base::UmaHistogramCustomTimes(
-      /*name=*/focus_mode_histogram_names::
-          kInitialDurationOnSessionStartsHistogramName,
-      /*sample=*/session_duration,
-      /*min=*/focus_mode_util::kMinimumDuration,
-      /*max=*/focus_mode_util::kMaximumDuration, /*buckets=*/50);
-}
-
-void RecordStartSessionSourceHistogram(
-    focus_mode_histogram_names::ToggleSource source) {
-  switch (source) {
-    case focus_mode_histogram_names::ToggleSource::kFocusPanel:
-      base::UmaHistogramEnumeration(
-          /*name=*/focus_mode_histogram_names::kStartSessionSourceHistogramName,
-          /*sample=*/focus_mode_histogram_names::StartSessionSource::
-              kFocusPanel);
-      break;
-    case focus_mode_histogram_names::ToggleSource::kFeaturePod:
-      base::UmaHistogramEnumeration(
-          /*name=*/focus_mode_histogram_names::kStartSessionSourceHistogramName,
-          /*sample=*/focus_mode_histogram_names::StartSessionSource::
-              kFeaturePod);
-      break;
-    default:
-      break;
+void OnTaskFetched(FocusModeTasksModel::Delegate::FetchTaskCallback callback,
+                   const FocusModeTask& task) {
+  if (task.empty()) {
+    std::move(callback).Run(std::nullopt);
+    return;
   }
+
+  std::move(callback).Run(task);
 }
 
 }  // namespace
 
-FocusModeController::FocusModeController()
-    : session_duration_(kDefaultSessionDuration) {
+FocusModeController::FocusModeController(
+    std::unique_ptr<FocusModeDelegate> delegate)
+    : session_duration_(kDefaultSessionDuration),
+      delegate_(std::move(delegate)) {
   CHECK_EQ(g_instance, nullptr);
   g_instance = this;
 
   focus_mode_sounds_controller_ = std::make_unique<FocusModeSoundsController>();
+
+  focus_mode_sounds_controller_->AddObserver(this);
+  tasks_model_.SetDelegate(weak_factory_.GetWeakPtr());
+  tasks_model_observation_.Observe(&tasks_model_);
   Shell::Get()->session_controller()->AddObserver(this);
 }
 
 FocusModeController::~FocusModeController() {
   Shell::Get()->session_controller()->RemoveObserver(this);
-  ResetFocusSession();
+  focus_mode_sounds_controller_->RemoveObserver(this);
+
+  // TODO(b/338694884): Move this to startup.
+  if (IsQuietModeOnSetByFocusMode()) {
+    message_center::MessageCenter::Get()->SetQuietMode(
+        false, message_center::QuietModeSourceType::kFocusMode);
+  }
 
   CHECK_EQ(g_instance, this);
   g_instance = nullptr;
@@ -186,6 +194,27 @@ void FocusModeController::RegisterProfilePrefs(PrefRegistrySimple* registry) {
       prefs::kFocusModeDoNotDisturb,
       /*default_value=*/true,
       user_prefs::PrefRegistrySyncable::SYNCABLE_OS_PREF);
+  registry->RegisterDictionaryPref(
+      prefs::kFocusModeSelectedTask,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_OS_PREF);
+  registry->RegisterDictionaryPref(
+      prefs::kFocusModeSoundSection,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_OS_PREF);
+
+  // Prefs for YouTube Music.
+  registry->RegisterBooleanPref(
+      prefs::kFocusModeYTMDisplayOAuthConsent, /*default_value=*/true,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_OS_PREF);
+  registry->RegisterBooleanPref(
+      prefs::kFocusModeYTMDisplayFreeTrial, /*default_value=*/true,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_OS_PREF);
+
+  // Pref is device-local and should never be synced.
+  registry->RegisterStringPref(prefs::kFocusModeDeviceId, "");
+
+  // Pref only set via policy.
+  registry->RegisterStringPref(prefs::kFocusModeSoundsEnabled,
+                               focus_mode_util::kFocusModeSoundsEnabled);
 }
 
 void FocusModeController::AddObserver(Observer* observer) {
@@ -212,7 +241,87 @@ void FocusModeController::ToggleFocusMode(
 void FocusModeController::OnActiveUserSessionChanged(
     const AccountId& account_id) {
   ResetFocusSession();
-  UpdateFromUserPrefs();
+  tasks_model_.Reset();
+  tasks_provider_.Reset();
+
+  // Since we cannot guarantee that `TasksClientImpl::InvalidateCache()` has
+  // been called before this when the active user session changes, we should
+  // just call `FocusModeController::UpdateFromUserPrefs()` as a PostTask to
+  // prevent the `TasksClientImpl::GetTasks()` callback from potentially being
+  // failed.
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE, base::BindOnce(&FocusModeController::UpdateFromUserPrefs,
+                                weak_factory_.GetWeakPtr()));
+}
+
+void FocusModeController::OnSelectedPlaylistChanged() {
+  // If a user swaps playlists or deselects the playlist, we should close the
+  // previous media widget. The reason we don't just reuse the existing widget
+  // with a new playlist is that we need to refresh the web view source title so
+  // that it's populated correctly in the media controls.
+  if (media_widget_) {
+    CloseMediaWidget();
+  }
+
+  if (focus_mode_metrics_recorder_) {
+    focus_mode_metrics_recorder_->SetHasSelectedSoundType(
+        focus_mode_sounds_controller_->selected_playlist());
+  }
+
+  // Only attempt to create the media widget if we are in an active focus
+  // session.
+  if (in_focus_session()) {
+    MaybeCreateMediaWidget();
+  }
+}
+
+void FocusModeController::OnSelectedTaskChanged(
+    const std::optional<FocusModeTask>& task) {
+  if (in_focus_session() || in_ending_moment()) {
+    SaveSelectedTaskSettingsToUserPrefs(task);
+  }
+
+  if (focus_mode_metrics_recorder_ && task) {
+    focus_mode_metrics_recorder_->IncrementTasksSelectedCount();
+  }
+}
+
+void FocusModeController::OnTasksUpdated(
+    const std::vector<FocusModeTask>& tasks) {}
+
+void FocusModeController::OnTaskCompleted(const FocusModeTask& completed_task) {
+  if (focus_mode_metrics_recorder_) {
+    focus_mode_metrics_recorder_->IncrementTasksCompletedCount();
+  }
+}
+
+void FocusModeController::FetchTask(
+    const TaskId& task_id,
+    FocusModeTasksModel::Delegate::FetchTaskCallback callback) {
+  tasks_provider_.GetTask(task_id.list_id, task_id.id,
+                          base::BindOnce(OnTaskFetched, std::move(callback)));
+}
+
+void FocusModeController::FetchTasks() {
+  tasks_provider_.GetSortedTaskList(base::BindOnce(
+      &FocusModeController::OnTasksReceived, weak_factory_.GetWeakPtr()));
+}
+
+void FocusModeController::AddTask(
+    const FocusModeTasksModel::TaskUpdate& update,
+    FocusModeTasksModel::Delegate::FetchTaskCallback callback) {
+  tasks_provider_.AddTask(*update.title,
+                          base::BindOnce(OnTaskFetched, std::move(callback)));
+}
+
+void FocusModeController::UpdateTask(
+    const FocusModeTasksModel::TaskUpdate& update) {
+  const TaskId& task_id = *update.task_id;
+  const std::string& title = update.title.has_value() ? *update.title : "";
+  const bool completed =
+      update.completed.has_value() ? update.completed.value() : false;
+  tasks_provider_.UpdateTask(task_id.list_id, task_id.id, title, completed,
+                             base::DoNothing());
 }
 
 void FocusModeController::ExtendSessionDuration() {
@@ -226,6 +335,12 @@ void FocusModeController::ExtendSessionDuration() {
 
   std::string message;
   if (was_in_ending_moment) {
+    PerformActionsForMusic();
+    paused_by_ending_moment_ = false;
+
+    focus_mode_metrics_recorder_->RecordHistogramOnEndingMoment(
+        focus_mode_histogram_names::EndingMomentBubbleClosedReason::kExtended);
+
     message = l10n_util::GetStringUTF8(
         IDS_ASH_STATUS_TRAY_FOCUS_MODE_EXTEND_TEN_MINUTES_BUTTON_ALERT);
   } else {
@@ -258,6 +373,20 @@ void FocusModeController::ExtendSessionDuration() {
 }
 
 void FocusModeController::ResetFocusSession() {
+  if (focus_mode_metrics_recorder_) {
+    focus_mode_metrics_recorder_->RecordHistogramsOnEnd();
+    if (!in_focus_session()) {
+      focus_mode_metrics_recorder_->RecordHistogramOnEndingMoment(
+          current_session()->persistent_ending()
+              ? focus_mode_histogram_names::EndingMomentBubbleClosedReason::
+                    kOpended
+              : focus_mode_histogram_names::EndingMomentBubbleClosedReason::
+                    kIgnored);
+    }
+
+    focus_mode_metrics_recorder_.reset();
+  }
+
   if (timer_.IsRunning()) {
     timer_.Stop();
   }
@@ -265,6 +394,9 @@ void FocusModeController::ResetFocusSession() {
   HideEndingMomentNudge();
 
   SetFocusTrayVisibility(false);
+  if (media_widget_) {
+    CloseMediaWidget();
+  }
 
   if (IsQuietModeOnSetByFocusMode()) {
     message_center::MessageCenter::Get()->SetQuietMode(
@@ -351,24 +483,26 @@ base::Time FocusModeController::GetActualEndTime() const {
                             : current_session_->end_time();
 }
 
-void FocusModeController::SetSelectedTask(const api::Task* task) {
-  if (!task) {
-    selected_task_id_.clear();
-    selected_task_title_.clear();
-  } else {
-    selected_task_id_ = task->id;
-    selected_task_title_ = task->title;
+void FocusModeController::SetSelectedTask(const FocusModeTask& task) {
+  if (task.task_id.empty()) {
+    tasks_model_.ClearSelectedTask();
+    return;
   }
-  // TODO(b/305089077): Update user prefs.
+
+  tasks_model_.SetSelectedTask(task);
 }
 
 bool FocusModeController::HasSelectedTask() const {
-  return !selected_task_id_.empty();
+  return !!tasks_model_.selected_task();
 }
 
 void FocusModeController::CompleteTask() {
-  tasks_provider_.MarkAsCompleted(selected_task_id_);
-  SetSelectedTask(nullptr);
+  const FocusModeTask* selected_task = tasks_model_.selected_task();
+  if (!selected_task) {
+    return;
+  }
+  tasks_model_.UpdateTask(
+      FocusModeTasksModel::TaskUpdate::CompletedUpdate(selected_task->task_id));
 }
 
 void FocusModeController::MaybeShowEndingMomentNudge() {
@@ -384,7 +518,7 @@ void FocusModeController::MaybeShowEndingMomentNudge() {
     return;
   }
 
-  ShowEndingMomentNudge();
+  ShowEndingMomentNudge(congratulatory_index_, current_session_);
 }
 
 void FocusModeController::TriggerEndingMomentImmediately() {
@@ -395,13 +529,53 @@ void FocusModeController::TriggerEndingMomentImmediately() {
   OnTimerTick();
 }
 
+const base::UnguessableToken& FocusModeController::GetMediaSessionRequestId() {
+  if (!test_media_request_id_.is_empty()) {
+    CHECK_IS_TEST();
+    return test_media_request_id_;
+  }
+
+  return focus_mode_media_view_
+             ? focus_mode_media_view_->GetMediaSessionRequestId()
+             : base::UnguessableToken::Null();
+}
+
+void FocusModeController::RequestTasksUpdateForTesting() {
+  tasks_model_.RequestUpdate();
+}
+
+bool FocusModeController::TasksProviderHasCachedTasksForTesting() const {
+  return !tasks_provider_.TasksForTesting().empty();  // IN-TEST
+}
+
+media_session::mojom::MediaSessionInfoPtr
+FocusModeController::GetSystemMediaSessionInfo() {
+  if (test_media_session_info_) {
+    CHECK_IS_TEST();
+    return std::move(test_media_session_info_);
+  }
+  return Shell::Get()->media_controller()->GetMediaSessionInfo();
+}
+
 void FocusModeController::StartFocusSession(
     focus_mode_histogram_names::ToggleSource source) {
-  RecordInitialDurationHistogram(/*session_duration=*/session_duration_);
-  RecordStartSessionSourceHistogram(source);
-  base::UmaHistogramBoolean(/*name=*/focus_mode_histogram_names::
-                                kHasSelectedTaskOnSessionStartHistogramName,
-                            /*sample=*/HasSelectedTask());
+  paused_by_ending_moment_ = false;
+  focus_mode_sounds_controller_->reset_paused_event_count();
+  focus_mode_metrics_recorder_ =
+      std::make_unique<FocusModeMetricsRecorder>(session_duration_);
+  const FocusModeTask* selected_task = tasks_model_.selected_task();
+  focus_mode_metrics_recorder_->RecordHistogramsOnStart(
+      source, selected_task ? selected_task->task_id : TaskId());
+  if (selected_task) {
+    focus_mode_metrics_recorder_->IncrementTasksSelectedCount();
+  }
+
+  const auto& selected_playlist =
+      focus_mode_sounds_controller_->selected_playlist();
+  focus_mode_metrics_recorder_->SetHasSelectedSoundType(selected_playlist);
+  if (!selected_playlist.empty()) {
+    focus_mode_sounds_controller_->SoundsStarted();
+  }
 
   current_session_ = FocusModeSession(session_duration_,
                                       session_duration_ + base::Time::Now());
@@ -436,6 +610,7 @@ void FocusModeController::StartFocusSession(
   CloseSystemTrayBubble();
   SetFocusTrayVisibility(true);
   HideEndingMomentNudge();
+  MaybeCreateMediaWidget();
 
   for (auto& observer : observers_) {
     observer.OnFocusModeChanged(/*in_focus_session=*/true);
@@ -453,6 +628,17 @@ void FocusModeController::OnTimerTick() {
       return;
     case FocusModeSession::State::kEnding:
       timer_.Stop();
+      congratulatory_index_ = base::RandInt(
+          /*min=*/0, /*max=*/focus_mode_util::kCongratulatoryTitleNum - 1);
+
+      if (media_widget_) {
+        paused_by_ending_moment_ =
+            focus_mode_sounds_controller_->selected_playlist().state ==
+            focus_mode_util::SoundState::kPlaying;
+        if (paused_by_ending_moment_) {
+          focus_mode_sounds_controller_->PausePlayback();
+        }
+      }
 
       // Set a timer to terminate the ending moment. If the focus tray bubble is
       // open, the ending moment will exist until the bubble is closed.
@@ -464,6 +650,16 @@ void FocusModeController::OnTimerTick() {
       } else {
         current_session_->set_persistent_ending();
       }
+
+      // Play sounds effect after 200ms delay.
+      base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
+          FROM_HERE, base::BindOnce([]() {
+            if (Shell::HasInstance()) {
+              Shell::Get()->system_sounds_delegate()->Play(
+                  Sound::kFocusModeEndingMoment);
+            }
+          }),
+          kSessionEndSoundDelay);
 
       for (auto& observer : observers_) {
         observer.OnFocusModeChanged(/*in_focus_session=*/false);
@@ -491,15 +687,68 @@ void FocusModeController::UpdateFromUserPrefs() {
   if (session_duration_ <= base::TimeDelta()) {
     session_duration_ = kDefaultSessionDuration;
   }
+
+  UpdateSelectedTaskFromUserPrefs();
+  focus_mode_sounds_controller_->UpdateFromUserPrefs();
+}
+
+void FocusModeController::UpdateSelectedTaskFromUserPrefs() {
+  PrefService* active_user_prefs =
+      Shell::Get()->session_controller()->GetActivePrefService();
+  if (!active_user_prefs) {
+    // Can be null in tests.
+    return;
+  }
+
+  // Get the selected task from the dict and also update the selected task if
+  // there is a task.
+  const auto& selected_task_dict =
+      active_user_prefs->GetDict(prefs::kFocusModeSelectedTask);
+  if (selected_task_dict.empty()) {
+    return;
+  }
+
+  TaskId pref_task = {
+      .list_id =
+          *(selected_task_dict.FindString(focus_mode_util::kTaskListIdKey)),
+      .id = *(selected_task_dict.FindString(focus_mode_util::kTaskIdKey))};
+  if (!pref_task.empty()) {
+    tasks_model_.SetSelectedTaskFromPrefs(pref_task);
+  }
 }
 
 void FocusModeController::SaveSettingsToUserPrefs() {
+  PrefService* active_user_prefs =
+      Shell::Get()->session_controller()->GetActivePrefService();
+  if (!active_user_prefs) {
+    return;
+  }
+
+  active_user_prefs->SetTimeDelta(prefs::kFocusModeSessionDuration,
+                                  session_duration_);
+  active_user_prefs->SetBoolean(prefs::kFocusModeDoNotDisturb,
+                                turn_on_do_not_disturb_);
+  const auto* selected_task = tasks_model_.selected_task();
+  SaveSelectedTaskSettingsToUserPrefs(
+      selected_task ? std::make_optional<FocusModeTask>(*selected_task)
+                    : std::nullopt);
+}
+
+void FocusModeController::SaveSelectedTaskSettingsToUserPrefs(
+    const std::optional<FocusModeTask>& task) {
   if (PrefService* active_user_prefs =
           Shell::Get()->session_controller()->GetActivePrefService()) {
-    active_user_prefs->SetTimeDelta(prefs::kFocusModeSessionDuration,
-                                    session_duration_);
-    active_user_prefs->SetBoolean(prefs::kFocusModeDoNotDisturb,
-                                  turn_on_do_not_disturb_);
+    base::Value::Dict selected_task_dict;
+
+    // If there is a selected task, we will save its `task_id.list_id` and
+    // `task_id.id`; otherwise, we will store an empty dict.
+    if (task) {
+      selected_task_dict.Set(focus_mode_util::kTaskListIdKey,
+                             task->task_id.list_id);
+      selected_task_dict.Set(focus_mode_util::kTaskIdKey, task->task_id.id);
+    }
+    active_user_prefs->SetDict(prefs::kFocusModeSelectedTask,
+                               std::move(selected_task_dict));
   }
 }
 
@@ -535,6 +784,75 @@ bool FocusModeController::IsFocusTrayBubbleVisible() const {
     }
   }
   return false;
+}
+
+bool FocusModeController::MaybeCreateMediaWidget() {
+  if (media_widget_ ||
+      focus_mode_sounds_controller_->selected_playlist().empty()) {
+    return false;
+  }
+
+  CHECK(in_focus_session());
+
+  views::Widget::InitParams params(
+      views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET,
+      views::Widget::InitParams::TYPE_WINDOW_FRAMELESS);
+  params.name = "FocusModeMediaWidget";
+  params.parent = Shell::GetContainer(Shell::GetPrimaryRootWindow(),
+                                      kShellWindowId_OverlayContainer);
+  params.child = true;
+
+  // The media window should be hidden.
+  params.layer_type = ui::LAYER_NOT_DRAWN;
+  params.opacity = views::Widget::InitParams::WindowOpacity::kTranslucent;
+  // The media window does not receive any events.
+  params.activatable = views::Widget::InitParams::Activatable::kNo;
+  params.accept_events = false;
+
+  media_widget_ = std::make_unique<views::Widget>();
+  media_widget_->Init(std::move(params));
+
+  AshWebView::InitParams web_view_params;
+  web_view_params.suppress_navigation = true;
+  web_view_params.enable_wake_locks = false;
+  web_view_params.source_title =
+      focus_mode_util::GetSourceTitleForMediaControls(
+          focus_mode_sounds_controller_->selected_playlist());
+  focus_mode_media_view_ = media_widget_->SetContentsView(
+      AshWebViewFactory::Get()->Create(web_view_params));
+  focus_mode_media_view_->Navigate(GURL(chrome::kChromeUIFocusModeMediaURL));
+  return true;
+}
+
+void FocusModeController::CloseMediaWidget() {
+  CHECK(media_widget_);
+  focus_mode_media_view_.ClearAndDelete();
+  focus_mode_media_view_ = nullptr;
+  media_widget_.reset();
+}
+
+void FocusModeController::PerformActionsForMusic() {
+  const auto& selected_playlist =
+      focus_mode_sounds_controller_->selected_playlist();
+  // Do nothing if there is no selected playlist, or a new media widget was
+  // created.
+  if (selected_playlist.empty() || MaybeCreateMediaWidget()) {
+    return;
+  }
+
+  // If the music was paused by the user before the ending moment, we should
+  // keep it in paused state after extending the session; otherwise, we will
+  // continue to play the existing music because it was paused by the ending
+  // moment.
+  if (paused_by_ending_moment_) {
+    focus_mode_sounds_controller_->ResumePlayingPlayback();
+  }
+}
+
+void FocusModeController::OnTasksReceived(
+    const std::vector<FocusModeTask>& tasks) {
+  std::vector<FocusModeTask> copy = tasks;
+  tasks_model_.SetTaskList(std::move(copy));
 }
 
 }  // namespace ash

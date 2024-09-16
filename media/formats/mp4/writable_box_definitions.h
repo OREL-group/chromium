@@ -13,6 +13,7 @@
 #include "base/time/time.h"
 #include "media/base/audio_codecs.h"
 #include "media/base/media_export.h"
+#include "media/base/video_codecs.h"
 #include "media/formats/mp4/box_definitions.h"
 #include "media/formats/mp4/fourccs.h"
 #include "media/media_buildflags.h"
@@ -60,9 +61,10 @@ struct MEDIA_EXPORT Box {};
 
 // Box header with version and flags.
 struct MEDIA_EXPORT FullBox : Box {
-  // version 1 is 64 bits where applicable, 0 is 32 bits.
-  uint8_t version;
-  uint32_t flags : 24;
+  // Default version 1, which is 64 bits where applicable.
+  // If it needs 32 bits, then the box writer should override it.
+  uint8_t version = 1;
+  uint32_t flags : 24 = 0;
 };
 
 // Pixel Aspect Ratio Box (`pasp`) box.
@@ -73,8 +75,8 @@ struct MEDIA_EXPORT PixelAspectRatioBox : Box {
 
 // Bit Rate Box (`btrt`) box.
 struct MEDIA_EXPORT BitRate : Box {
-  uint32_t max_bit_rate;
-  uint32_t avg_bit_rate;
+  uint32_t max_bit_rate = 0;
+  uint32_t avg_bit_rate = 0;
 };
 
 #if BUILDFLAG(USE_PROPRIETARY_CODECS)
@@ -91,7 +93,7 @@ struct MEDIA_EXPORT ElementaryStreamDescriptor : FullBox {
   std::vector<uint8_t> aac_codec_description;
 };
 
-// AVC DecoderConfiguration Record (`avcc`) box.
+// AVC DecoderConfiguration Record (`avcC`) box.
 struct MEDIA_EXPORT AVCDecoderConfiguration : Box {
   // Refer AVCDecoderConfigurationRecord of box_definitions.h
   // because it provides Serialize method and the format
@@ -100,19 +102,34 @@ struct MEDIA_EXPORT AVCDecoderConfiguration : Box {
 };
 #endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
 
+// VP9 DecoderConfiguration Record (`vpcC`) box.
 struct MEDIA_EXPORT VPCodecConfiguration : FullBox {
+  VPCodecConfiguration(VideoCodecProfile profile,
+                       uint8_t level,
+                       const gfx::ColorSpace& color_space);
+
   VideoCodecProfile profile;
   uint8_t level;
   gfx::ColorSpace color_space;
 };
 
-// VisualSampleEtnry (`avc1`, 'vp09') box.
+// AV1 DecoderConfiguration Record (`av1C`) box.
+struct MEDIA_EXPORT AV1CodecConfiguration : FullBox {
+  AV1CodecConfiguration();
+  ~AV1CodecConfiguration();
+  AV1CodecConfiguration(const AV1CodecConfiguration&);
+  AV1CodecConfiguration& operator=(const AV1CodecConfiguration&);
+  std::vector<uint8_t> av1_decoder_configuration_data;
+};
+
+// VisualSampleEntry (`avc1`, 'vp09', 'av01') box.
 struct MEDIA_EXPORT VisualSampleEntry : Box {
-  VisualSampleEntry();
+  explicit VisualSampleEntry(VideoCodec codec);
   ~VisualSampleEntry();
   VisualSampleEntry(const VisualSampleEntry&);
   VisualSampleEntry& operator=(const VisualSampleEntry&);
 
+  VideoCodec codec;
   gfx::Size coded_size;
   // It is formatted in a fixed 32-byte field, with the first
   // byte set to the number of bytes to be displayed, followed
@@ -123,13 +140,14 @@ struct MEDIA_EXPORT VisualSampleEntry : Box {
   // It will have browser brand name.
   std::string compressor_name;  // char compressor_name[32];
 
-  VideoCodec codec;
 #if BUILDFLAG(USE_PROPRIETARY_CODECS)
   std::optional<AVCDecoderConfiguration> avc_decoder_configuration;
 #endif
   std::optional<VPCodecConfiguration> vp_decoder_configuration;
+  std::optional<AV1CodecConfiguration> av1_decoder_configuration;
 
   PixelAspectRatioBox pixel_aspect_ratio;
+  BitRate bit_rate;
 };
 
 // Opus media data ('dOps') box.
@@ -146,15 +164,17 @@ struct MEDIA_EXPORT OpusSpecificBox : Box {
 
 // Audio Sample Entry (`mp4a` or 'Opus') box.
 struct MEDIA_EXPORT AudioSampleEntry : Box {
-  AudioSampleEntry();
+  AudioSampleEntry(AudioCodec codec,
+                   uint32_t sample_rate,
+                   uint8_t channel_count);
   ~AudioSampleEntry();
   AudioSampleEntry(const AudioSampleEntry&);
   AudioSampleEntry& operator=(const AudioSampleEntry&);
 
+  AudioCodec codec;
   uint32_t sample_rate;  // AudioSampleEntry.
   uint8_t channel_count;
 
-  AudioCodec codec;
 #if BUILDFLAG(USE_PROPRIETARY_CODECS)
   std::optional<ElementaryStreamDescriptor> elementary_stream_descriptor;
 #endif
@@ -238,6 +258,8 @@ struct MEDIA_EXPORT MediaInformation : Box {
 
 // Media Handler (`hdlr`) box.
 struct MEDIA_EXPORT MediaHandler : FullBox {
+  explicit MediaHandler(bool is_audio);
+
   mp4::FourCC handler_type;
   std::string name;
 };
@@ -253,6 +275,7 @@ struct MEDIA_EXPORT MediaHeader : FullBox {
 
 // Media (`mdia`) box.
 struct MEDIA_EXPORT Media : Box {
+  explicit Media(bool is_audio);
   MediaHeader header;
   MediaHandler handler;
   MediaInformation information;
@@ -260,6 +283,7 @@ struct MEDIA_EXPORT Media : Box {
 
 // Track header (`tkhd`) box.
 struct MEDIA_EXPORT TrackHeader : FullBox {
+  TrackHeader(uint32_t track_id, bool is_audio);
   uint32_t track_id;
   base::Time creation_time;
   base::Time modification_time;
@@ -270,6 +294,7 @@ struct MEDIA_EXPORT TrackHeader : FullBox {
 
 // Track (`trak`) box.
 struct MEDIA_EXPORT Track : Box {
+  explicit Track(uint32_t track_id, bool is_audio);
   TrackHeader header;
   Media media;
 };
@@ -332,8 +357,8 @@ struct MEDIA_EXPORT TrackFragmentRun : FullBox {
   TrackFragmentRun(const TrackFragmentRun&);
   TrackFragmentRun& operator=(const TrackFragmentRun&);
 
-  uint32_t sample_count;
-  uint32_t first_sample_flags;
+  uint32_t sample_count = 0;
+  uint32_t first_sample_flags = 0;
 
   // Optional fields, presence is indicated in `flags`. If not present, the
   // default value established in the `TrackFragmentHeader` is used.
@@ -346,19 +371,19 @@ struct MEDIA_EXPORT TrackFragmentRun : FullBox {
 
 // Track Fragment Decode Time (`tfdt`) box.
 struct MEDIA_EXPORT TrackFragmentDecodeTime : Box {
-  uint32_t track_id;
+  uint32_t track_id = 0;
   base::TimeDelta base_media_decode_time;
 };
 
 // Track Fragment Header(`tfhd`) box.
 struct MEDIA_EXPORT TrackFragmentHeader : FullBox {
-  uint32_t track_id;
+  uint32_t track_id = 0;
 
   // `base_data_offset` will be calculated during fragment write.
   // uint64_t base_data_offset;
   base::TimeDelta default_sample_duration;
-  uint32_t default_sample_size;
-  uint32_t default_sample_flags;
+  uint32_t default_sample_size = 0;
+  uint32_t default_sample_flags = 0;
 };
 
 // Track Fragment Header(`traf`) box.
@@ -370,12 +395,14 @@ struct MEDIA_EXPORT TrackFragment : Box {
 
 // Movie Fragment Header(`mfhd`) box.
 struct MEDIA_EXPORT MovieFragmentHeader : FullBox {
+  explicit MovieFragmentHeader(uint32_t sequence_number);
+
   uint32_t sequence_number;
 };
 
 // Movie Fragment (`moof`) box.
 struct MEDIA_EXPORT MovieFragment : Box {
-  MovieFragment();
+  explicit MovieFragment(uint32_t sequence_number);
   ~MovieFragment();
   MovieFragment(const MovieFragment&);
   MovieFragment& operator=(const MovieFragment&);
@@ -395,10 +422,10 @@ struct MEDIA_EXPORT MediaData : Box {
 
 // File Type (`ftyp`) box.
 struct MEDIA_EXPORT FileType : Box {
-  FileType();
+  FileType(mp4::FourCC major_brand, uint32_t minor_version);
   ~FileType();
-  uint32_t major_brand;
-  uint32_t minor_version;
+  const uint32_t major_brand;
+  const uint32_t minor_version;
   std::vector<uint32_t> compatible_brands;
 };
 
@@ -418,7 +445,7 @@ struct MEDIA_EXPORT TrackFragmentRandomAccess : FullBox {
   TrackFragmentRandomAccess(const TrackFragmentRandomAccess&);
   TrackFragmentRandomAccess& operator=(const TrackFragmentRandomAccess&);
 
-  uint32_t track_id;
+  uint32_t track_id = 0;
   std::vector<TrackFragmentRandomAccessEntry> entries;
 };
 

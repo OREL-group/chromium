@@ -222,11 +222,6 @@ bool NativeViewHostMac::SetCornerRadii(
   return true;
 }
 
-bool NativeViewHostMac::SetCustomMask(std::unique_ptr<ui::LayerOwner> mask) {
-  NOTIMPLEMENTED();
-  return false;
-}
-
 void NativeViewHostMac::SetHitTestTopInset(int top_inset) {
   NOTIMPLEMENTED();
 }
@@ -341,6 +336,10 @@ gfx::NativeViewAccessible NativeViewHostMac::GetParentAccessible() {
   return native_view_hostable_
              ? native_view_hostable_->ViewsHostableGetParentAccessible()
              : nullptr;
+}
+
+ui::Layer* NativeViewHostMac::GetUILayer() {
+  return host_->layer();
 }
 
 // static

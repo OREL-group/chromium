@@ -96,7 +96,7 @@ class TransactionFulfilledFunction : public ScriptFunction::Callable {
 
   ScriptValue Call(ScriptState* script_state, ScriptValue value) override {
     ExceptionState exception_state(script_state->GetIsolate(),
-                                   ExceptionContextType::kOperationInvoke,
+                                   v8::ExceptionContext::kOperation,
                                    "SmartCardConnection", "startTransaction");
 
     if (value.IsUndefined()) {
@@ -109,6 +109,8 @@ class TransactionFulfilledFunction : public ScriptFunction::Callable {
             script_state->GetIsolate(), value.V8Value(), exception_state);
 
     if (exception_state.HadException()) {
+      ApplyContextToException(script_state, exception_state.GetException(),
+                              exception_state.GetContext());
       ScriptValue exception_value(script_state->GetIsolate(),
                                   exception_state.GetException());
       connection_->OnTransactionCallbackFailed(exception_value);
@@ -303,7 +305,7 @@ ScriptPromise<IDLUndefined> SmartCardConnection::disconnect(
     ExceptionState& exception_state) {
   if (!smart_card_context_->EnsureNoOperationInProgress(exception_state) ||
       !EnsureConnection(exception_state)) {
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   auto* resolver = MakeGarbageCollected<ScriptPromiseResolver<IDLUndefined>>(
@@ -325,12 +327,12 @@ ScriptPromise<DOMArrayBuffer> SmartCardConnection::transmit(
     ExceptionState& exception_state) {
   if (!smart_card_context_->EnsureNoOperationInProgress(exception_state) ||
       !EnsureConnection(exception_state)) {
-    return ScriptPromise<DOMArrayBuffer>();
+    return EmptyPromise();
   }
 
   if (send_buffer.IsDetached() || send_buffer.IsNull()) {
     exception_state.ThrowTypeError("Invalid send buffer.");
-    return ScriptPromise<DOMArrayBuffer>();
+    return EmptyPromise();
   }
 
   device::mojom::blink::SmartCardProtocol protocol = active_protocol_;
@@ -341,7 +343,7 @@ ScriptPromise<DOMArrayBuffer> SmartCardConnection::transmit(
   if (protocol == device::mojom::blink::SmartCardProtocol::kUndefined) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       "No active protocol.");
-    return ScriptPromise<DOMArrayBuffer>();
+    return EmptyPromise();
   }
 
   auto* resolver = MakeGarbageCollected<ScriptPromiseResolver<DOMArrayBuffer>>(
@@ -365,7 +367,7 @@ ScriptPromise<SmartCardConnectionStatus> SmartCardConnection::status(
     ExceptionState& exception_state) {
   if (!smart_card_context_->EnsureNoOperationInProgress(exception_state) ||
       !EnsureConnection(exception_state)) {
-    return ScriptPromise<SmartCardConnectionStatus>();
+    return EmptyPromise();
   }
 
   auto* resolver =
@@ -387,7 +389,7 @@ ScriptPromise<DOMArrayBuffer> SmartCardConnection::control(
     ExceptionState& exception_state) {
   if (!smart_card_context_->EnsureNoOperationInProgress(exception_state) ||
       !EnsureConnection(exception_state)) {
-    return ScriptPromise<DOMArrayBuffer>();
+    return EmptyPromise();
   }
 
   auto* resolver = MakeGarbageCollected<ScriptPromiseResolver<DOMArrayBuffer>>(
@@ -399,8 +401,7 @@ ScriptPromise<DOMArrayBuffer> SmartCardConnection::control(
   // Note that there are control codes which require no input data.
   // Thus sending an empty data vector is fine.
   if (!data.IsDetached() && !data.IsNull() && data.ByteLength() > 0u) {
-    data_vector.Append(data.Bytes(),
-                       static_cast<wtf_size_t>(data.ByteLength()));
+    data_vector.AppendSpan(data.ByteSpan());
   }
 
   connection_->Control(
@@ -417,7 +418,7 @@ ScriptPromise<DOMArrayBuffer> SmartCardConnection::getAttribute(
     ExceptionState& exception_state) {
   if (!smart_card_context_->EnsureNoOperationInProgress(exception_state) ||
       !EnsureConnection(exception_state)) {
-    return ScriptPromise<DOMArrayBuffer>();
+    return EmptyPromise();
   }
 
   auto* resolver = MakeGarbageCollected<ScriptPromiseResolver<DOMArrayBuffer>>(
@@ -438,12 +439,12 @@ ScriptPromise<IDLUndefined> SmartCardConnection::setAttribute(
     ExceptionState& exception_state) {
   if (!smart_card_context_->EnsureNoOperationInProgress(exception_state) ||
       !EnsureConnection(exception_state)) {
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   if (data.IsDetached() || data.IsNull()) {
     exception_state.ThrowTypeError("Invalid data.");
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   auto* resolver = MakeGarbageCollected<ScriptPromiseResolver<IDLUndefined>>(
@@ -451,7 +452,7 @@ ScriptPromise<IDLUndefined> SmartCardConnection::setAttribute(
   SetOperationInProgress(resolver);
 
   Vector<uint8_t> data_vector;
-  data_vector.Append(data.Bytes(), static_cast<wtf_size_t>(data.ByteLength()));
+  data_vector.AppendSpan(data.ByteSpan());
 
   connection_->SetAttrib(
       tag, data_vector,
@@ -468,13 +469,13 @@ ScriptPromise<IDLUndefined> SmartCardConnection::startTransaction(
     ExceptionState& exception_state) {
   if (!smart_card_context_->EnsureNoOperationInProgress(exception_state) ||
       !EnsureConnection(exception_state)) {
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   if (transaction_state_) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
                                       kTransactionAlreadyExists);
-    return ScriptPromise<IDLUndefined>();
+    return EmptyPromise();
   }
 
   AbortSignal* signal = options->getSignalOr(nullptr);
@@ -613,9 +614,7 @@ void SmartCardConnection::OnDataResult(
     return;
   }
 
-  const Vector<uint8_t>& data = result->get_data();
-
-  resolver->Resolve(DOMArrayBuffer::Create(data.data(), data.size()));
+  resolver->Resolve(DOMArrayBuffer::Create(result->get_data()));
 }
 
 void SmartCardConnection::OnStatusDone(
@@ -644,8 +643,7 @@ void SmartCardConnection::OnStatusDone(
   status->setState(connection_state.value());
   if (!mojo_status->answer_to_reset.empty()) {
     status->setAnswerToReset(
-        DOMArrayBuffer::Create(mojo_status->answer_to_reset.data(),
-                               mojo_status->answer_to_reset.size()));
+        DOMArrayBuffer::Create(mojo_status->answer_to_reset));
   }
   resolver->Resolve(status);
 }

@@ -384,10 +384,14 @@ void WindowCache::OnGetPropertyResponse(Window window,
     } else if (atom == gtk_frame_extents_) {
       if (response->format == CHAR_BIT * sizeof(int32_t) &&
           response->value_len == 4) {
-        const int32_t* frame_extents = response->value->front_as<int32_t>();
-        info->gtk_frame_extents_px =
-            gfx::Insets::TLBR(frame_extents[2], frame_extents[0],
-                              frame_extents[3], frame_extents[1]);
+        const int32_t* frame_extents = response->value->cast_to<int32_t>();
+        // This is safe: we've checked (in the condition above) that the
+        // response contains four int32_ts. It would be nice if instead
+        // GetPropertyResponse had a way to convert its value safely into a
+        // span<T> for some T.
+        UNSAFE_BUFFERS(info->gtk_frame_extents_px = gfx::Insets::TLBR(
+                           frame_extents[2], frame_extents[0], frame_extents[3],
+                           frame_extents[1]));
       } else {
         info->gtk_frame_extents_px = gfx::Insets();
       }
@@ -405,7 +409,7 @@ void WindowCache::OnGetRectanglesResponse(
         info->bounding_rects_px = std::move(response->rectangles);
         break;
       case Shape::Sk::Clip:
-        NOTREACHED();
+        NOTREACHED_IN_MIGRATION();
         break;
       case Shape::Sk::Input:
         info->input_rects_px = std::move(response->rectangles);

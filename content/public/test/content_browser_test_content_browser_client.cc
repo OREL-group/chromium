@@ -33,20 +33,12 @@ ContentBrowserTestContentBrowserClient::
   }
 }
 
-bool ContentBrowserTestContentBrowserClient::CreateThreadPool(
-    std::string_view name) {
-  // Injects a test TaskTracker to watch for long-running tasks and produce a
-  // useful timeout message in order to find the cause of flaky timeout tests.
-  base::test::TaskEnvironment::CreateThreadPool();
-  return true;
-}
-
 void ContentBrowserTestContentBrowserClient::OnNetworkServiceCreated(
     network::mojom::NetworkService* network_service) {
   // Override ShellContentBrowserClient::OnNetworkServiceCreated() not to call
   // NetworkService::ConfigureStubHostResolver(), because some tests are flaky
   // when configuring the stub host resolver.
-  // TODO(crbug.com/1521190): Remove this override once the flakiness is fixed.
+  // TODO(crbug.com/41494161): Remove this override once the flakiness is fixed.
 }
 
 }  // namespace content

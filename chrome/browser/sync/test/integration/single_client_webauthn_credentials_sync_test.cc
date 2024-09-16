@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "base/containers/span.h"
+#include "base/location.h"
 #include "base/rand_util.h"
 #include "base/ranges/algorithm.h"
 #include "base/test/scoped_feature_list.h"
@@ -17,13 +18,15 @@
 #include "components/password_manager/core/browser/features/password_manager_features_util.h"
 #include "components/signin/public/base/signin_switches.h"
 #include "components/sync/base/client_tag_hash.h"
+#include "components/sync/base/data_type.h"
 #include "components/sync/base/features.h"
-#include "components/sync/base/model_type.h"
 #include "components/sync/engine/loopback_server/loopback_server_entity.h"
 #include "components/sync/engine/loopback_server/persistent_unique_client_entity.h"
 #include "components/sync/model/in_memory_metadata_change_list.h"
 #include "components/sync/protocol/entity_specifics.pb.h"
 #include "components/sync/protocol/webauthn_credential_specifics.pb.h"
+#include "components/sync/test/test_matchers.h"
+#include "components/version_info/version_info.h"
 #include "components/webauthn/core/browser/passkey_model.h"
 #include "components/webauthn/core/browser/passkey_model_change.h"
 #include "components/webauthn/core/browser/passkey_model_utils.h"
@@ -34,6 +37,7 @@
 
 namespace {
 
+using testing::ElementsAre;
 using testing::IsEmpty;
 using testing::Optional;
 using testing::UnorderedElementsAre;
@@ -99,8 +103,37 @@ CreateEntityWithCustomClientTagHash(
                                              client_tag_hash),
       syncer::WEBAUTHN_CREDENTIAL, /*version=*/0,
       /*non_unique_name=*/"", client_tag_hash, entity, /*creation_time=*/0,
-      /*last_modified_time=*/0);
+      /*last_modified_time=*/0, /*collaboration_id=*/"");
 }
+
+class PasskeyModelReadyChecker : public StatusChangeChecker,
+                                 public webauthn::PasskeyModel::Observer {
+ public:
+  explicit PasskeyModelReadyChecker(webauthn::PasskeyModel* model)
+      : model_(model) {
+    observation_.Observe(model);
+  }
+  ~PasskeyModelReadyChecker() override = default;
+
+  // SingleClientStatusChangeChecker:
+  bool IsExitConditionSatisfied(std::ostream* os) override {
+    return model_->IsReady();
+  }
+
+  // webauthn::PasskeyModel::Observer:
+  void OnPasskeysChanged(
+      const std::vector<webauthn::PasskeyModelChange>& changes) override {
+    CheckExitCondition();
+  }
+
+  void OnPasskeyModelShuttingDown() override {}
+
+ private:
+  const raw_ptr<webauthn::PasskeyModel> model_;
+  base::ScopedObservation<webauthn::PasskeyModel,
+                          webauthn::PasskeyModel::Observer>
+      observation_{this};
+};
 
 class SingleClientWebAuthnCredentialsSyncTest : public SyncTest {
  public:
@@ -142,6 +175,10 @@ class SingleClientWebAuthnCredentialsSyncTest : public SyncTest {
   webauthn::PasskeySyncBridge& GetModel() {
     return webauthn_credentials_helper::GetModel(kSingleProfile);
   }
+
+  void WaitTillModelReady() {
+    CHECK(PasskeyModelReadyChecker(&GetModel()).Wait());
+  }
 };
 
 // Adding a local passkey should sync to the server.
@@ -157,7 +194,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientWebAuthnCredentialsSyncTest,
   // The client tag hash used should follow sync's usual rules. (Android's
   // implementation of passkeys uses a different client tag hash format.)
   std::vector<sync_pb::SyncEntity> entities =
-      fake_server_->GetSyncEntitiesByModelType(syncer::WEBAUTHN_CREDENTIAL);
+      fake_server_->GetSyncEntitiesByDataType(syncer::WEBAUTHN_CREDENTIAL);
   EXPECT_EQ(entities.size(), 1u);
   EXPECT_EQ(entities.front().specifics().webauthn_credential().sync_id(),
             sync_id);
@@ -166,6 +203,20 @@ IN_PROC_BROWSER_TEST_F(SingleClientWebAuthnCredentialsSyncTest,
                 syncer::WEBAUTHN_CREDENTIAL,
                 entities.front().specifics().webauthn_credential().sync_id())
                 .value());
+}
+
+IN_PROC_BROWSER_TEST_F(SingleClientWebAuthnCredentialsSyncTest,
+                       StartWithLocalPasskey) {
+  // Exercise the case where PasskeySyncBridge::MergeFullSyncData has local
+  // credentials that the server doesn't know about.
+  ASSERT_TRUE(SetupClients());
+  WaitTillModelReady();
+  const std::string sync_id = GetModel().AddNewPasskeyForTesting(NewPasskey());
+  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+
+  EXPECT_TRUE(
+      ServerPasskeysMatchChecker(UnorderedElementsAre(EntityHasSyncId(sync_id)))
+          .Wait());
 }
 
 // CreatePasskey should create a new passkey entity and upload it to the server.
@@ -388,6 +439,8 @@ IN_PROC_BROWSER_TEST_F(SingleClientWebAuthnCredentialsSyncTest,
 // Deleting a local passkey should remove from the server.
 IN_PROC_BROWSER_TEST_F(SingleClientWebAuthnCredentialsSyncTest,
                        UploadLocalPasskeyDeletion) {
+  const base::Location kLocation = FROM_HERE;
+
   ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
 
   sync_pb::WebauthnCredentialSpecifics passkey = NewPasskey();
@@ -399,9 +452,14 @@ IN_PROC_BROWSER_TEST_F(SingleClientWebAuthnCredentialsSyncTest,
   PasskeyChangeObservationChecker change_checker(
       kSingleProfile,
       {{webauthn::PasskeyModelChange::ChangeType::REMOVE, sync_id}});
-  GetModel().DeletePasskey(passkey.credential_id());
+  GetModel().DeletePasskey(passkey.credential_id(), kLocation);
   EXPECT_TRUE(ServerPasskeysMatchChecker(IsEmpty()).Wait());
   EXPECT_TRUE(change_checker.Wait());
+
+  EXPECT_THAT(GetFakeServer()->GetCommittedDeletionOrigins(
+                  syncer::DataType::WEBAUTHN_CREDENTIAL),
+              ElementsAre(syncer::MatchesDeletionOrigin(
+                  version_info::GetVersionNumber(), kLocation)));
 }
 
 // Downloading a deletion for a passkey that does not exist locally should not
@@ -448,7 +506,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientWebAuthnCredentialsSyncTest,
 
   MockPasskeyModelObserver observer(&GetModel());
   EXPECT_CALL(observer, OnPasskeysChanged).Times(0);
-  EXPECT_FALSE(GetModel().DeletePasskey("non existing id"));
+  EXPECT_FALSE(GetModel().DeletePasskey("non existing id", FROM_HERE));
   EXPECT_TRUE(
       ServerPasskeysMatchChecker(UnorderedElementsAre(EntityHasSyncId(sync_id)))
           .Wait());
@@ -487,7 +545,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientWebAuthnCredentialsSyncTest,
       ServerPasskeysMatchChecker(testing::BeginEndDistanceIs(6)).Wait());
 
   // Delete passkey 4. This should result in only passkey 4 being deleted.
-  ASSERT_TRUE(GetModel().DeletePasskey(passkey4.credential_id()));
+  ASSERT_TRUE(GetModel().DeletePasskey(passkey4.credential_id(), FROM_HERE));
   EXPECT_TRUE(ServerPasskeysMatchChecker(
                   UnorderedElementsAre(EntityHasSyncId(passkey1.sync_id()),
                                        EntityHasSyncId(passkey2.sync_id()),
@@ -497,7 +555,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientWebAuthnCredentialsSyncTest,
                   .Wait());
 
   // Delete passkey 5. This should also result in only passkey 5 being deleted.
-  ASSERT_TRUE(GetModel().DeletePasskey(passkey5.credential_id()));
+  ASSERT_TRUE(GetModel().DeletePasskey(passkey5.credential_id(), FROM_HERE));
   EXPECT_TRUE(ServerPasskeysMatchChecker(
                   UnorderedElementsAre(EntityHasSyncId(passkey1.sync_id()),
                                        EntityHasSyncId(passkey2.sync_id()),
@@ -506,7 +564,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientWebAuthnCredentialsSyncTest,
                   .Wait());
 
   // Delete passkey 6. All credentials should be deleted.
-  ASSERT_TRUE(GetModel().DeletePasskey(passkey6.credential_id()));
+  ASSERT_TRUE(GetModel().DeletePasskey(passkey6.credential_id(), FROM_HERE));
   EXPECT_TRUE(ServerPasskeysMatchChecker(IsEmpty()).Wait());
 }
 
@@ -536,7 +594,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientWebAuthnCredentialsSyncTest,
                       EntityHasSyncId(different_user_id_passkey.sync_id())))
                   .Wait());
 
-  ASSERT_TRUE(GetModel().DeletePasskey(passkey.credential_id()));
+  ASSERT_TRUE(GetModel().DeletePasskey(passkey.credential_id(), FROM_HERE));
   EXPECT_TRUE(ServerPasskeysMatchChecker(
                   UnorderedElementsAre(
                       EntityHasSyncId(different_rp_id_passkey.sync_id()),
@@ -563,12 +621,44 @@ IN_PROC_BROWSER_TEST_F(SingleClientWebAuthnCredentialsSyncTest,
                   .Wait());
 
   // Deleting should fail because neither passkey is head of a shadow chain.
-  ASSERT_FALSE(GetModel().DeletePasskey(passkey1.credential_id()));
-  ASSERT_FALSE(GetModel().DeletePasskey(passkey2.credential_id()));
+  ASSERT_FALSE(GetModel().DeletePasskey(passkey1.credential_id(), FROM_HERE));
+  ASSERT_FALSE(GetModel().DeletePasskey(passkey2.credential_id(), FROM_HERE));
   EXPECT_TRUE(ServerPasskeysMatchChecker(
                   UnorderedElementsAre(EntityHasSyncId(passkey1.sync_id()),
                                        EntityHasSyncId(passkey2.sync_id())))
                   .Wait());
+}
+
+IN_PROC_BROWSER_TEST_F(SingleClientWebAuthnCredentialsSyncTest,
+                       DeleteAllPasskeys) {
+  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+
+  sync_pb::WebauthnCredentialSpecifics passkey1 = NewPasskey();
+  sync_pb::WebauthnCredentialSpecifics passkey2 = NewPasskey();
+
+  GetModel().AddNewPasskeyForTesting(passkey1);
+  GetModel().AddNewPasskeyForTesting(passkey2);
+  EXPECT_TRUE(ServerPasskeysMatchChecker(
+                  UnorderedElementsAre(EntityHasSyncId(passkey1.sync_id()),
+                                       EntityHasSyncId(passkey2.sync_id())))
+                  .Wait());
+
+  GetModel().DeleteAllPasskeys();
+  EXPECT_TRUE(GetModel().GetAllPasskeys().empty());
+  EXPECT_TRUE(ServerPasskeysMatchChecker(IsEmpty()).Wait());
+}
+
+IN_PROC_BROWSER_TEST_F(SingleClientWebAuthnCredentialsSyncTest,
+                       DeleteAllPasskeysEmptyStore) {
+  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+
+  EXPECT_TRUE(GetModel().GetAllPasskeys().empty());
+  EXPECT_TRUE(ServerPasskeysMatchChecker(IsEmpty()).Wait());
+
+  GetModel().DeleteAllPasskeys();
+
+  EXPECT_TRUE(GetModel().GetAllPasskeys().empty());
+  EXPECT_TRUE(ServerPasskeysMatchChecker(IsEmpty()).Wait());
 }
 
 // Tests that deleting a passkey is persisted across browser restarts.
@@ -583,7 +673,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientWebAuthnCredentialsSyncTest,
                   .Wait());
   EXPECT_THAT(GetModel().GetAllPasskeys(),
               UnorderedElementsAre(PasskeyHasSyncId(passkey.sync_id())));
-  GetModel().DeletePasskey(passkey.credential_id());
+  GetModel().DeletePasskey(passkey.credential_id(), FROM_HERE);
   EXPECT_TRUE(GetModel().GetAllPasskeys().empty());
 }
 
@@ -615,13 +705,15 @@ IN_PROC_BROWSER_TEST_F(SingleClientWebAuthnCredentialsSyncTest, UpdatePasskey) {
                                        {
                                            .user_name = kUsername2,
                                            .user_display_name = kDisplayName2,
-                                       }));
+                                       },
+                                       /*updated_by_user=*/false));
   EXPECT_TRUE(
       ServerPasskeysMatchChecker(UnorderedElementsAre(testing::AllOf(
                                      EntityHasUsername(kUsername2),
                                      EntityHasDisplayName(kDisplayName2))))
           .Wait());
   EXPECT_TRUE(change_checker.Wait());
+  EXPECT_FALSE(GetModel().GetAllPasskeys().at(0).edited_by_user());
   EXPECT_EQ(GetModel().GetAllPasskeys().at(0).user_name(), kUsername2);
   EXPECT_EQ(GetModel().GetAllPasskeys().at(0).user_display_name(),
             kDisplayName2);
@@ -632,13 +724,69 @@ IN_PROC_BROWSER_TEST_F(SingleClientWebAuthnCredentialsSyncTest,
                        UpdateNonExistingPasskey) {
   ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
 
+  sync_pb::WebauthnCredentialSpecifics passkey = NewPasskey();
+  passkey.set_user_name(kUsername1);
+  passkey.set_user_display_name(kDisplayName1);
+  GetModel().AddNewPasskeyForTesting(passkey);
+  EXPECT_TRUE(
+      ServerPasskeysMatchChecker(UnorderedElementsAre(testing::AllOf(
+                                     EntityHasUsername(kUsername1),
+                                     EntityHasDisplayName(kDisplayName1))))
+          .Wait());
+  // Simulate the user explicitly requesting a passkey update.
+  PasskeyChangeObservationChecker change_checker(
+      kSingleProfile,
+      {{webauthn::PasskeyModelChange::ChangeType::UPDATE, passkey.sync_id()}});
+  EXPECT_TRUE(GetModel().UpdatePasskey(passkey.credential_id(),
+                                       {
+                                           .user_name = kUsername2,
+                                           .user_display_name = kDisplayName2,
+                                       },
+                                       /*updated_by_user=*/true));
+  EXPECT_TRUE(
+      ServerPasskeysMatchChecker(UnorderedElementsAre(testing::AllOf(
+                                     EntityHasUsername(kUsername2),
+                                     EntityHasDisplayName(kDisplayName2))))
+          .Wait());
+  EXPECT_TRUE(change_checker.Wait());
+  EXPECT_TRUE(GetModel().GetAllPasskeys().at(0).edited_by_user());
+  EXPECT_EQ(GetModel().GetAllPasskeys().at(0).user_name(), kUsername2);
+  EXPECT_EQ(GetModel().GetAllPasskeys().at(0).user_display_name(),
+            kDisplayName2);
+
+  // Simulate an update that was not requested by the user.
+  EXPECT_FALSE(GetModel().UpdatePasskey(passkey.credential_id(),
+                                        {
+                                            .user_name = kUsername1,
+                                            .user_display_name = kDisplayName1,
+                                        },
+                                        /*updated_by_user=*/false));
+  // Make sure no changes were done.
+  EXPECT_TRUE(
+      ServerPasskeysMatchChecker(UnorderedElementsAre(testing::AllOf(
+                                     EntityHasUsername(kUsername2),
+                                     EntityHasDisplayName(kDisplayName2))))
+          .Wait());
+  EXPECT_TRUE(GetModel().GetAllPasskeys().at(0).edited_by_user());
+  EXPECT_EQ(GetModel().GetAllPasskeys().at(0).user_name(), kUsername2);
+  EXPECT_EQ(GetModel().GetAllPasskeys().at(0).user_display_name(),
+            kDisplayName2);
+}
+
+// Tests that attempting to update a passkey that was previously edited by the
+// user is rejected.
+IN_PROC_BROWSER_TEST_F(SingleClientWebAuthnCredentialsSyncTest,
+                       UpdatePasskeyEditedByUser) {
+  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+
   MockPasskeyModelObserver observer(&GetModel());
   EXPECT_CALL(observer, OnPasskeysChanged).Times(0);
   EXPECT_FALSE(GetModel().UpdatePasskey("non existing id",
                                         {
                                             .user_name = kUsername1,
                                             .user_display_name = kDisplayName1,
-                                        }));
+                                        },
+                                        /*updated_by_user=*/false));
 }
 
 // Tests that updating a passkey is persisted across browser restarts.
@@ -657,7 +805,8 @@ IN_PROC_BROWSER_TEST_F(SingleClientWebAuthnCredentialsSyncTest,
                                        {
                                            .user_name = kUsername1,
                                            .user_display_name = kDisplayName1,
-                                       }));
+                                       },
+                                       /*updated_by_user=*/false));
 }
 
 IN_PROC_BROWSER_TEST_F(SingleClientWebAuthnCredentialsSyncTest,
@@ -665,6 +814,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientWebAuthnCredentialsSyncTest,
   ASSERT_TRUE(SetupClients());
   ASSERT_TRUE(GetClient(0)->AwaitSyncSetupCompletion());
   ASSERT_EQ(GetModel().GetAllPasskeys().size(), 1u);
+  EXPECT_FALSE(GetModel().GetAllPasskeys().at(0).edited_by_user());
   EXPECT_EQ(GetModel().GetAllPasskeys().at(0).user_name(), kUsername1);
   EXPECT_EQ(GetModel().GetAllPasskeys().at(0).user_display_name(),
             kDisplayName1);

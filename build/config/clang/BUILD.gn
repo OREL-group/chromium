@@ -2,17 +2,68 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/buildflag_header.gni")
+import("//build/config/pch.gni")
 import("//build/config/rust.gni")
-import("//build/toolchain/goma.gni")
 import("clang.gni")
 
 if (is_ios) {
   import("//build/config/ios/config.gni")  # For `target_environment`
 }
 
+config("raw_ptr_check") {
+  if (clang_use_chrome_plugins || clang_use_raw_ptr_plugin) {
+    cflags = []
+
+    # The plugin is built directly into clang, so there's no need to load it
+    # dynamically.
+    cflags += [
+      "-Xclang",
+      "-add-plugin",
+      "-Xclang",
+      "raw-ptr-plugin",
+
+      "-Xclang",
+      "-plugin-arg-raw-ptr-plugin",
+      "-Xclang",
+      "check-raw-ptr-to-stack-allocated",
+
+      "-Xclang",
+      "-plugin-arg-raw-ptr-plugin",
+      "-Xclang",
+      "disable-check-raw-ptr-to-stack-allocated-error",
+
+      # TODO(crbug.com/40944547): Remove when raw_ptr check has been
+      # enabled for the dawn repo.
+      "-Xclang",
+      "-plugin-arg-raw-ptr-plugin",
+      "-Xclang",
+      "raw-ptr-exclude-path=" +
+          rebase_path("//third_party/dawn/", root_build_dir),
+    ]
+
+    if (enable_check_raw_ptr_fields) {
+      cflags += [
+        "-Xclang",
+        "-plugin-arg-raw-ptr-plugin",
+        "-Xclang",
+        "check-raw-ptr-fields",
+      ]
+    }
+
+    if (enable_check_raw_ref_fields) {
+      cflags += [
+        "-Xclang",
+        "-plugin-arg-raw-ptr-plugin",
+        "-Xclang",
+        "check-raw-ref-fields",
+      ]
+    }
+  }
+}
+
 config("find_bad_constructs") {
   if (clang_use_chrome_plugins) {
+    configs = []
     cflags = []
 
     # The plugin is built directly into clang, so there's no need to load it
@@ -26,35 +77,22 @@ config("find_bad_constructs") {
       "-Xclang",
       "-plugin-arg-find-bad-constructs",
       "-Xclang",
+      "span-ctor-from-string-literal",
+
+      "-Xclang",
+      "-plugin-arg-find-bad-constructs",
+      "-Xclang",
       "raw-ref-template-as-trivial-member",
 
       "-Xclang",
       "-plugin-arg-find-bad-constructs",
       "-Xclang",
+      "raw-span-template-as-trivial-member",
+
+      "-Xclang",
+      "-plugin-arg-find-bad-constructs",
+      "-Xclang",
       "check-stack-allocated",
-
-      # TODO(danakj): Delete this after the next clang roll.
-      "-Xclang",
-      "-plugin-arg-find-bad-constructs",
-      "-Xclang",
-      "check-allow-auto-typedefs-better-nested",
-
-      "-Xclang",
-      "-plugin-arg-find-bad-constructs",
-      "-Xclang",
-      "check-raw-ptr-to-stack-allocated",
-
-      "-Xclang",
-      "-plugin-arg-find-bad-constructs",
-      "-Xclang",
-      "disable-check-raw-ptr-to-stack-allocated-error",
-
-      # TODO(https://crbug.com/1504043): Remove when raw_ptr check has been
-      # enabled for the dawn repo.
-      "-Xclang",
-      "-plugin-arg-find-bad-constructs",
-      "-Xclang",
-      "raw-ptr-exclude-path=/third_party/dawn/",
     ]
 
     if (is_linux || is_chromeos || is_android || is_fuchsia) {
@@ -66,23 +104,7 @@ config("find_bad_constructs") {
       ]
     }
 
-    if (enable_check_raw_ptr_fields) {
-      cflags += [
-        "-Xclang",
-        "-plugin-arg-find-bad-constructs",
-        "-Xclang",
-        "check-raw-ptr-fields",
-      ]
-    }
-
-    if (enable_check_raw_ref_fields) {
-      cflags += [
-        "-Xclang",
-        "-plugin-arg-find-bad-constructs",
-        "-Xclang",
-        "check-raw-ref-fields",
-      ]
-    }
+    configs += [ ":raw_ptr_check" ]
   }
 }
 
@@ -94,10 +116,17 @@ config("find_bad_constructs") {
 #
 # See //build/config/unsafe_buffers_paths.txt for an example file, this it the
 # file used by Chromium.
+#
+# This build configuration is not supported when `enable_precompiled_headers`
+# is on because the pragmas that enable and disable unsafe-buffers warnings are
+# not serialized to precompiled header files, and thus we get warnings that we
+# should not.
 config("unsafe_buffers") {
   if (clang_use_chrome_plugins && clang_unsafe_buffers_paths != "" &&
-      !use_goma) {
+      !enable_precompiled_headers) {
     cflags = [
+      "-DUNSAFE_BUFFERS_BUILD",
+
       "-Xclang",
       "-add-plugin",
       "-Xclang",
@@ -109,11 +138,6 @@ config("unsafe_buffers") {
       rebase_path(clang_unsafe_buffers_paths, root_build_dir),
     ]
   }
-}
-
-buildflag_header("unsafe_buffers_buildflags") {
-  header = "unsafe_buffers_buildflags.h"
-  flags = [ "UNSAFE_BUFFERS_WARNING_ENABLED=$clang_use_chrome_plugins" ]
 }
 
 # Enables some extra Clang-specific warnings. Some third-party code won't
@@ -212,12 +236,7 @@ template("clang_lib") {
 
 # Adds a dependency on the Clang runtime library clang_rt.builtins.
 clang_lib("compiler_builtins") {
-  if (!toolchain_has_rust) {
-    # Since there's no Rust in the toolchain, there's no concern that we'll use
-    # the Rust stdlib's intrinsics here.
-    #
-    # Don't define libname which makes this target do nothing.
-  } else if (is_mac) {
+  if (is_mac) {
     libname = "osx"
   } else if (is_ios) {
     if (target_environment == "simulator") {

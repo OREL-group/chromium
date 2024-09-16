@@ -9,13 +9,22 @@
 
 #include "base/gtest_prod_util.h"
 #include "base/memory/weak_ptr.h"
+#include "base/time/time.h"
 #include "chrome/services/sharing/nearby/platform/ble_v2_remote_peripheral.h"
 #include "device/bluetooth/public/mojom/adapter.mojom.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/shared_remote.h"
 #include "third_party/nearby/src/internal/platform/implementation/ble_v2.h"
 
+namespace base {
+class SequencedTaskRunner;
+class WaitableEvent;
+}  // namespace base
+
 namespace nearby::chrome {
+
+class BleV2GattServer;
 
 // Concrete ble_v2::BleMedium implementation.
 // Productionized impl will also consumes bluetooth::mojom::Adapter methods.
@@ -110,10 +119,51 @@ class BleV2Medium : public ::nearby::api::ble_v2::BleMedium,
   uint64_t GenerateUniqueSessionId();
   chrome::BleV2RemotePeripheral* GetDiscoveredBlePeripheral(
       const std::string& address);
-  Uuid BluetoothServiceUuidToNearbyUuid(
-      const device::BluetoothUUID& bluetooth_service_uuid);
+
+  void DoRegisterGattServices(
+      BleV2GattServer* gatt_server,
+      bool* registration_success,
+      base::WaitableEvent* register_gatt_services_waitable_event);
+  void OnRegisterGattServices(
+      bool* out_registration_success,
+      base::WaitableEvent* register_gatt_services_waitable_event,
+      bool in_registration_success);
+
+  void DoConnectToGattServer(
+      mojo::PendingRemote<bluetooth::mojom::Device>* device,
+      const std::string& address,
+      base::WaitableEvent* connect_to_gatt_server_waitable_event);
+  void OnConnectToGattServer(
+      base::TimeTicks gatt_connection_start_time,
+      mojo::PendingRemote<bluetooth::mojom::Device>* out_device,
+      base::WaitableEvent* connect_to_gatt_server_waitable_event,
+      bluetooth::mojom::ConnectResult result,
+      mojo::PendingRemote<bluetooth::mojom::Device> in_device);
+
+  void Shutdown(base::WaitableEvent* shutdown_waitable_event);
+
+  // `task_runner_` is used in `StartAdvertising()` to post a task to register
+  // `ble_v2_gatt_server_` if it exists (which indicates that the GATT server
+  // will be advertised, thus all the GATT services associated with
+  // `ble_v2_gatt_server_` need to be registered beforehand). The
+  // `task_runner_` and posted tasks are shutdown in `Shutdown()` in the
+  // destructor.
+  scoped_refptr<base::SequencedTaskRunner> task_runner_;
 
   mojo::SharedRemote<bluetooth::mojom::Adapter> adapter_;
+
+  // Only set in `StartGattServer()` if the LE Dual Scatternet role
+  // is supported on the device. This is used to trigger asynchronous GATT
+  // server registration in `StartAdvertising()`.
+  base::WeakPtr<BleV2GattServer> gatt_server_;
+
+  // Track all pending register GATT service waitable events.
+  base::flat_set<raw_ptr<base::WaitableEvent>>
+      pending_register_gatt_services_waitable_events_;
+
+  // Track all pending connect to remote GATT servers waitable events.
+  base::flat_set<raw_ptr<base::WaitableEvent>>
+      pending_connect_to_gatt_server_waitable_events_;
 
   // Only set while discovery is active.
   mojo::Remote<bluetooth::mojom::DiscoverySession> discovery_session_;
@@ -134,7 +184,7 @@ class BleV2Medium : public ::nearby::api::ble_v2::BleMedium,
 
   // Group registered advertisements with the same bluetooth service uuid.
   std::map<device::BluetoothUUID,
-           std::vector<mojo::Remote<bluetooth::mojom::Advertisement>>>
+           std::vector<mojo::SharedRemote<bluetooth::mojom::Advertisement>>>
       registered_advertisements_map_;
 
   // |adapter_observer_| is only set and bound during active discovery so that

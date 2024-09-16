@@ -5,6 +5,7 @@
 #import "ios/chrome/browser/content_notification/model/content_notification_client.h"
 
 #import "base/metrics/histogram_functions.h"
+#import "ios/chrome/browser/content_notification/model/content_notification_nau_configuration.h"
 #import "ios/chrome/browser/content_notification/model/content_notification_service.h"
 #import "ios/chrome/browser/content_notification/model/content_notification_service_factory.h"
 #import "ios/chrome/browser/push_notification/model/constants.h"
@@ -19,36 +20,78 @@ ContentNotificationClient::ContentNotificationClient()
 
 ContentNotificationClient::~ContentNotificationClient() = default;
 
-void ContentNotificationClient::HandleNotificationInteraction(
+bool ContentNotificationClient::HandleNotificationInteraction(
     UNNotificationResponse* response) {
-  NSDictionary<NSString*, id>* payload =
-      response.notification.request.content.userInfo;
+  // Need to check if it is a content notification first to avoid conflicts with
+  // other clients.
+  if (![response.notification.request.content.categoryIdentifier
+          isEqualToString:kContentNotificationFeedbackCategoryIdentifier]) {
+    return false;
+  }
+  // In order to send delivered NAUs, the payload has been modified for it to be
+  // processed on `HandleNotificationReception()`. Before reusing the payload,
+  // remove the NAU body paramater from the payload to return it to its normal
+  // state.
+  NSMutableDictionary<NSString*, id>* unprocessedPayload =
+      [response.notification.request.content.userInfo mutableCopy];
+  if ([unprocessedPayload objectForKey:kContentNotificationNAUBodyParameter]) {
+    [unprocessedPayload
+        removeObjectForKey:kContentNotificationNAUBodyParameter];
+  }
+  // Regenerate the regular payload as NSDictionary after removing the extra
+  // object.
+  NSDictionary<NSString*, id>* payload = [unprocessedPayload copy];
   ContentNotificationService* contentNotificationService =
-      ContentNotificationServiceFactory::GetForBrowserState(
-          GetLastUsedBrowserState());
+      ContentNotificationServiceFactory::GetForBrowserState(GetAnyProfile());
+  ContentNotificationNAUConfiguration* config =
+      [[ContentNotificationNAUConfiguration alloc] init];
+  config.notification = response.notification;
   if ([response.actionIdentifier
           isEqualToString:kContentNotificationFeedbackActionIdentifier]) {
+    config.actionType = NAUActionTypeFeedbackClicked;
+    base::UmaHistogramEnumeration(
+        kContentNotificationActionHistogramName,
+        NotificationActionType::kNotificationActionTypeFeedbackClicked);
     NSDictionary<NSString*, NSString*>* feedbackPayload =
         contentNotificationService->GetFeedbackPayload(payload);
-    loadFeedbackWithPayloadAndClientId(feedbackPayload,
+    LoadFeedbackWithPayloadAndClientId(feedbackPayload,
                                        PushNotificationClientId::kContent);
-  } else {
+  } else if ([response.actionIdentifier
+                 isEqualToString:UNNotificationDefaultActionIdentifier]) {
+    config.actionType = NAUActionTypeOpened;
+    base::UmaHistogramEnumeration(
+        kContentNotificationActionHistogramName,
+        NotificationActionType::kNotificationActionTypeOpened);
     const GURL& url = contentNotificationService->GetDestinationUrl(payload);
     if (url.is_empty()) {
       base::UmaHistogramBoolean("ContentNotifications.OpenURLAction.HasURL",
                                 false);
-      loadUrlInNewTab(GURL("chrome://newtab"));
+      return true;
     }
     base::UmaHistogramBoolean("ContentNotifications.OpenURLAction.HasURL",
                               true);
-    loadUrlInNewTab(url);
+    LoadUrlInNewTab(url);
+  } else if ([response.actionIdentifier
+                 isEqualToString:UNNotificationDismissActionIdentifier]) {
+    base::UmaHistogramBoolean("ContentNotifications.DismissAction", true);
+    config.actionType = NAUActionTypeDismissed;
+    base::UmaHistogramEnumeration(
+        kContentNotificationActionHistogramName,
+        NotificationActionType::kNotificationActionTypeDismissed);
   }
+  // TODO(crbug.com/337871560): Three way patch NAU and adding completion
+  // handler.
+  contentNotificationService->SendNAUForConfiguration(config);
+  return true;
 }
 
-UIBackgroundFetchResult ContentNotificationClient::HandleNotificationReception(
+// TODO(crbug.com/338875261): Add background refresh support.
+// Delivered NAUs are currently being sent from the push_notification_delegate,
+// and in the future they should be here once background refresh is available.
+std::optional<UIBackgroundFetchResult>
+ContentNotificationClient::HandleNotificationReception(
     NSDictionary<NSString*, id>* payload) {
-  // TODO: b/332578232 - Implement notification reception logic.
-  return UIBackgroundFetchResultNoData;
+  return std::nullopt;
 }
 
 NSArray<UNNotificationCategory*>*

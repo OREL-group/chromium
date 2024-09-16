@@ -16,6 +16,7 @@
 #include "components/manta/base_provider_test_helper.h"
 #include "components/manta/manta_status.h"
 #include "components/manta/proto/rpc_status.pb.h"
+#include "components/manta/provider_params.h"
 #include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
@@ -38,14 +39,10 @@ class FakeOrcaProvider : public OrcaProvider, public FakeBaseProvider {
   FakeOrcaProvider(
       scoped_refptr<network::SharedURLLoaderFactory> test_url_loader_factory,
       signin::IdentityManager* identity_manager)
-      : BaseProvider(test_url_loader_factory,
-                     identity_manager,
-                     /*is_demo_mode=*/false),
+      : BaseProvider(test_url_loader_factory, identity_manager),
         OrcaProvider(test_url_loader_factory,
                      identity_manager,
-                     /*is_demo_mode=*/false,
-                     /*chrome_version=*/std::string(),
-                     /*locale=*/std::string()),
+                     ProviderParams()),
         FakeBaseProvider(test_url_loader_factory, identity_manager) {}
 };
 
@@ -143,6 +140,8 @@ TEST_F(OrcaProviderTest, ParseMalformedSerializedProto) {
                      base::Value::Dict response, MantaStatus manta_status) {
                    EXPECT_EQ(manta_status.status_code,
                              MantaStatusCode::kMalformedResponse);
+                   EXPECT_EQ(manta_status.message, "");
+                   EXPECT_EQ(manta_status.locale, "");
                    quit_closure.Run();
                  }));
 
@@ -158,6 +157,8 @@ TEST_F(OrcaProviderTest, ParseRpcStatusFromFailedResponse) {
 
   proto::RpcLocalizedMessage localize_message;
   localize_message.set_message("bar");
+  localize_message.set_locale("en");
+
   auto* detail = rpc_status.add_details();
   detail->set_type_url("type.googleapis.com/google.rpc.LocalizedMessage");
   detail->set_value(localize_message.SerializeAsString());
@@ -177,6 +178,7 @@ TEST_F(OrcaProviderTest, ParseRpcStatusFromFailedResponse) {
                    EXPECT_EQ(manta_status.status_code,
                              MantaStatusCode::kInvalidInput);
                    EXPECT_EQ(manta_status.message, "bar");
+                   EXPECT_EQ(manta_status.locale, "en");
                    quit_closure.Run();
                  }));
 
@@ -202,6 +204,7 @@ TEST_F(OrcaProviderTest, ParseRpcStatusFromFailedResponse) {
                    EXPECT_EQ(manta_status.status_code,
                              MantaStatusCode::kRestrictedCountry);
                    EXPECT_EQ(manta_status.message, "bar");
+                   EXPECT_EQ(manta_status.locale, "en");
                    quit_closure.Run();
                  }));
 

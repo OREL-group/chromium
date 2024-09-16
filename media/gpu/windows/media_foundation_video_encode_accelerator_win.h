@@ -8,6 +8,7 @@
 #include <mfapi.h>
 #include <mfidl.h>
 #include <stdint.h>
+#include <wrl/client.h>
 
 #include <memory>
 
@@ -30,7 +31,7 @@
 #include "media/base/video_frame_converter.h"
 #include "media/base/win/dxgi_device_manager.h"
 #include "media/gpu/media_gpu_export.h"
-#include "media/gpu/windows/d3d11_com_defs.h"
+#include "media/gpu/windows/d3d_com_defs.h"
 #include "media/video/video_encode_accelerator.h"
 
 namespace media {
@@ -89,7 +90,7 @@ class MEDIA_GPU_EXPORT MediaFoundationVideoEncodeAccelerator
   IFACEMETHODIMP_(ULONG) Release() override;
   IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override;
 
-  enum class DriverVendor { kOther, kNvidia, kIntel, kAMD };
+  enum class DriverVendor { kOther, kNvidia, kIntel, kAMD, kQualcomm };
 
  protected:
   ~MediaFoundationVideoEncodeAccelerator() override;
@@ -145,13 +146,16 @@ class MEDIA_GPU_EXPORT MediaFoundationVideoEncodeAccelerator
 
   // Activates the asynchronous encoder instance |encoder_| according to codec
   // merit.
-  bool ActivateAsyncEncoder(IMFActivate** pp_activates,
-                            uint32_t activate_count,
-                            bool is_constrained_h264);
+  bool ActivateAsyncEncoder(
+      std::vector<Microsoft::WRL::ComPtr<IMFActivate>>& activates,
+      bool is_constrained_h264);
 
   // Initializes and allocates memory for input and output parameters.
   bool InitializeInputOutputParameters(VideoCodecProfile output_profile,
                                        bool is_constrained_h264);
+
+  // Sets the SW implementation of the BRC, if the encoder supports it.
+  void SetSWRateControl();
 
   // Initializes encoder parameters for real-time use.
   bool SetEncoderModes();
@@ -187,25 +191,27 @@ class MEDIA_GPU_EXPORT MediaFoundationVideoEncodeAccelerator
   // process all inputs, produce all outputs and tell us when it's done.
   void DrainEncoder();
 
-  // Check if |size| is supported by current profile. It depends on the result
-  // of |GetSupportedProfiles|. As max resolution is hard coded at this time,
+  // Check if |size| is supported. As max resolution is hard coded at this time,
   // frame size larger than 1920x1088 will be rejected even it could be
   // supported by hardware and driver.
-  bool IsFrameSizeAllowed(const gfx::Size& size);
+  bool IsFrameSizeAllowed(gfx::Size size);
   // Update frame size without re-initializing the encoder.
   void UpdateFrameSize(const gfx::Size& size);
 
   // Initialize video processing (for scaling).
   HRESULT InitializeD3DVideoProcessing(ID3D11Texture2D* input_texture);
-  // Scales `input_texture` to size `input_visible_size_`. On success, the
-  // result is stored in `scaled_d3d11_texture_`.
-  HRESULT PerformD3DScaling(ID3D11Texture2D* input_texture);
+  // Scales visible subrect of `input_texture` to size of
+  // `scaled_d3d11_texture_`. On success, the result is stored in
+  // `scaled_d3d11_texture_`.
+  HRESULT PerformD3DScaling(ID3D11Texture2D* input_texture,
+                            const gfx::Rect& visible_rect);
 
   // Initializes the video copying operation by making sure
   // `copied_d3d11_texture_` exists and that its size matches `input_texture`.
   HRESULT InitializeD3DCopying(ID3D11Texture2D* input_texture);
   // Copies `input_texture` to `copied_d3d11_texture_`.
-  HRESULT PerformD3DCopy(ID3D11Texture2D* input_texture);
+  HRESULT PerformD3DCopy(ID3D11Texture2D* input_texture,
+                         const gfx::Rect& visible_rect);
 
   // Used to post tasks from the IMFMediaEvent::Invoke() method.
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
@@ -253,6 +259,9 @@ class MEDIA_GPU_EXPORT MediaFoundationVideoEncodeAccelerator
   // Codec type and profile used for encoding.
   VideoCodec codec_ = VideoCodec::kUnknown;
   VideoCodecProfile profile_ = VideoCodecProfile::VIDEO_CODEC_PROFILE_UNKNOWN;
+
+  // Type of content being encoded.
+  Config::ContentType content_type_ = Config::ContentType::kCamera;
 
   // Vendor of the active video encoder.
   DriverVendor vendor_ = DriverVendor::kOther;
@@ -323,9 +332,11 @@ class MEDIA_GPU_EXPORT MediaFoundationVideoEncodeAccelerator
   base::circular_deque<OutOfBandMetadata> sample_metadata_queue_;
   gpu::GpuDriverBugWorkarounds workarounds_;
 
-  // Enumerating supported profiles takes time, so cache the result here for
-  // future requests.
-  std::optional<SupportedProfiles> supported_profiles_;
+  // This counter starts from 0, used for managing the METransformNeedInput
+  // events sent by MFT encoder.
+  uint32_t encoder_needs_input_counter_;
+
+  gfx::Size max_resolution_;
 
   // Declared last to ensure that all weak pointers are invalidated before
   // other destructors run.

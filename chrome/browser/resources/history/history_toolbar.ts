@@ -4,13 +4,14 @@
 
 import './shared_style.css.js';
 import './strings.m.js';
+import 'chrome://resources/cr_components/history_embeddings/icons.html.js';
 import 'chrome://resources/cr_elements/cr_toolbar/cr_toolbar.js';
 import 'chrome://resources/cr_elements/cr_toolbar/cr_toolbar_selection_overlay.js';
 
+import {getInstance as getAnnouncerInstance} from 'chrome://resources/cr_elements/cr_a11y_announcer/cr_a11y_announcer.js';
 import type {CrToolbarElement} from 'chrome://resources/cr_elements/cr_toolbar/cr_toolbar.js';
 import type {CrToolbarSearchFieldElement} from 'chrome://resources/cr_elements/cr_toolbar/cr_toolbar_search_field.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
-import {IronA11yAnnouncer} from 'chrome://resources/polymer/v3_0/iron-a11y-announcer/iron-a11y-announcer.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {getTemplate} from './history_toolbar.html.js';
@@ -52,6 +53,16 @@ export class HistoryToolbarElement extends PolymerElement {
         computed: 'computeSearchIconOverride_(selectedPage)',
       },
 
+      searchInputAriaDescription_: {
+        type: String,
+        computed: 'computeSearchInputAriaDescriptionOverride_(selectedPage)',
+      },
+
+      searchPrompt_: {
+        type: String,
+        computed: 'computeSearchPrompt_(selectedPage)',
+      },
+
       // The most recent term entered in the search field. Updated incrementally
       // as the user types.
       searchTerm: {
@@ -88,6 +99,8 @@ export class HistoryToolbarElement extends PolymerElement {
 
   count: number = 0;
   private searchIconOverride_?: string;
+  private searchInputAriaDescription_?: string;
+  private searchPrompt_: string;
   searchTerm: string;
   selectedPage: string;
   spinnerActive: boolean;
@@ -109,9 +122,7 @@ export class HistoryToolbarElement extends PolymerElement {
 
   clearSelectedItems() {
     this.fire_('unselect-all');
-    IronA11yAnnouncer.requestAvailability();
-    this.fire_(
-        'iron-announce', {text: loadTimeData.getString('itemsUnselected')});
+    getAnnouncerInstance().announce(loadTimeData.getString('itemsUnselected'));
   }
 
   /**
@@ -138,7 +149,9 @@ export class HistoryToolbarElement extends PolymerElement {
   }
 
   private onSearchChanged_(event: CustomEvent<string>) {
-    this.fire_('change-query', {search: event.detail});
+    this.fire_(
+        'change-query',
+        {search: event.detail, /* Prevent updating after date. */ after: null});
   }
 
   private numberOfItemsSelected_(count: number): string {
@@ -148,10 +161,28 @@ export class HistoryToolbarElement extends PolymerElement {
   private computeSearchIconOverride_(): string|undefined {
     if (loadTimeData.getBoolean('enableHistoryEmbeddings') &&
         TABBED_PAGES.includes(this.selectedPage)) {
-      return 'history:embeddings';
+      return 'history-embeddings:search';
     }
 
     return undefined;
+  }
+
+  private computeSearchInputAriaDescriptionOverride_(): string|undefined {
+    if (loadTimeData.getBoolean('enableHistoryEmbeddings') &&
+        TABBED_PAGES.includes(this.selectedPage)) {
+      return loadTimeData.getString('historyEmbeddingsDisclaimer');
+    }
+
+    return undefined;
+  }
+
+  private computeSearchPrompt_(): string {
+    if (loadTimeData.getBoolean('enableHistoryEmbeddings') &&
+        TABBED_PAGES.includes(this.selectedPage)) {
+      return loadTimeData.getString('historyEmbeddingsSearchPrompt');
+    }
+
+    return loadTimeData.getString('searchPrompt');
   }
 }
 

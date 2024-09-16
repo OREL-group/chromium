@@ -9,6 +9,7 @@
 #include <string>
 
 #include "base/types/id_type.h"
+#include "base/types/strong_alias.h"
 #include "base/unguessable_token.h"
 #include "build/build_config.h"
 #include "third_party/abseil-cpp/absl/types/variant.h"
@@ -36,7 +37,7 @@ class TokenType
 // LocalFrameToken and RemoteFrameToken identify AutofillDrivers and
 // AutofillAgents.
 //
-// TODO(crbug.com/1441921): Implement frame tokens as described below for iOS.
+// TODO(crbug.com/40266699): Implement frame tokens as described below for iOS.
 //
 // Every pair of associated AutofillAgent and AutofillDriver has a
 // LocalFrameToken, which uniquely identifies them and remains stable for their

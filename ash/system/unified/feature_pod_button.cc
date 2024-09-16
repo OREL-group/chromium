@@ -122,7 +122,8 @@ void FeaturePodLabelButton::Layout(PassKey) {
       arrow_size));
 }
 
-gfx::Size FeaturePodLabelButton::CalculatePreferredSize() const {
+gfx::Size FeaturePodLabelButton::CalculatePreferredSize(
+    const views::SizeBounds& available_size) const {
   // Minimum width of the button
   int width = kUnifiedFeaturePodLabelWidth + GetInsets().width();
   if (detailed_view_arrow_->GetVisible()) {
@@ -189,6 +190,7 @@ void FeaturePodLabelButton::ShowDetailedViewArrow() {
 }
 
 void FeaturePodLabelButton::OnEnabledChanged() {
+  views::Button::OnEnabledChanged();
   const AshColorProvider* color_provider = AshColorProvider::Get();
   const SkColor primary_text_color =
       color_provider->GetContentLayerColor(ContentLayerType::kTextColorPrimary);

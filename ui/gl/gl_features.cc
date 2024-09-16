@@ -26,12 +26,6 @@
 namespace features {
 namespace {
 
-#if BUILDFLAG(IS_APPLE)
-BASE_FEATURE(kGpuVsync, "GpuVsync", base::FEATURE_DISABLED_BY_DEFAULT);
-#else
-BASE_FEATURE(kGpuVsync, "GpuVsync", base::FEATURE_ENABLED_BY_DEFAULT);
-#endif
-
 #if BUILDFLAG(IS_ANDROID)
 const base::FeatureParam<std::string>
     kPassthroughCommandDecoderBlockListByBrand{
@@ -91,6 +85,12 @@ void SplitAndAppendANGLEFeatureList(const std::string& list,
 
 }  // namespace
 
+#if BUILDFLAG(IS_APPLE)
+BASE_FEATURE(kGpuVsync, "GpuVsync", base::FEATURE_DISABLED_BY_DEFAULT);
+#else
+BASE_FEATURE(kGpuVsync, "GpuVsync", base::FEATURE_ENABLED_BY_DEFAULT);
+#endif
+
 #if BUILDFLAG(ENABLE_VALIDATING_COMMAND_DECODER)
 // Use the passthrough command decoder by default.  This can be overridden with
 // the --use-cmd-decoder=passthrough or --use-cmd-decoder=validating flags.
@@ -132,7 +132,7 @@ BASE_FEATURE(kUsePrimaryMonitorVSyncIntervalOnSV3,
 bool UseGpuVsync() {
   return !base::CommandLine::ForCurrentProcess()->HasSwitch(
              switches::kDisableGpuVsync) &&
-         base::FeatureList::IsEnabled(kGpuVsync);
+         base::FeatureList::IsEnabled(features::kGpuVsync);
 }
 
 bool IsAndroidFrameDeadlineEnabled() {
@@ -188,6 +188,22 @@ bool UsePassthroughCommandDecoder() {
 #endif  // defined(PASSTHROUGH_COMMAND_DECODER_LAUNCHED)
 }
 
+#if DCHECK_IS_ON()
+bool IsANGLEValidationEnabled() {
+  return true;
+}
+#else
+// Enables the use of ANGLE validation for EGL and GL (non-WebGL) contexts.
+BASE_FEATURE(kDefaultEnableANGLEValidation,
+             "DefaultEnableANGLEValidation",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+bool IsANGLEValidationEnabled() {
+  return base::FeatureList::IsEnabled(kDefaultEnableANGLEValidation) &&
+         UsePassthroughCommandDecoder();
+}
+#endif
+
 void GetANGLEFeaturesFromCommandLineAndFinch(
     const base::CommandLine* command_line,
     std::vector<std::string>& enabled_angle_features,
@@ -218,4 +234,46 @@ void GetANGLEFeaturesFromCommandLineAndFinch(
 #endif
 }
 
+#if BUILDFLAG(ENABLE_SWIFTSHADER)
+bool IsSwiftShaderAllowedByCommandLine(const base::CommandLine* command_line) {
+  // If the switch to opt-into unsafe SwiftShader is present, always allow
+  // SwiftShader.
+  if (command_line->HasSwitch(switches::kEnableUnsafeSwiftShader)) {
+    return true;
+  }
+
+  std::string angle_name =
+      command_line->GetSwitchValueASCII(switches::kUseANGLE);
+  if (angle_name == gl::kANGLEImplementationSwiftShaderName) {
+    // If SwiftShader is specifically requested with the --use-angle command
+    // line flag, allow it.
+    return true;
+  }
+
+  return false;
+}
+
+// Allow fallback to SwfitShader without command line flags during the
+// deprecation period.
+BASE_FEATURE(kAllowSwiftShaderFallback,
+             "AllowSwiftShaderFallback",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+bool IsSwiftShaderAllowedByFeature() {
+  return base::FeatureList::IsEnabled(kAllowSwiftShaderFallback);
+}
+#else
+bool IsSwiftShaderAllowedByCommandLine(const base::CommandLine*) {
+  return false;
+}
+
+bool IsSwiftShaderAllowedByFeature() {
+  return false;
+}
+#endif
+
+bool IsSwiftShaderAllowed(const base::CommandLine* command_line) {
+  return IsSwiftShaderAllowedByCommandLine(command_line) ||
+         IsSwiftShaderAllowedByFeature();
+}
 }  // namespace features

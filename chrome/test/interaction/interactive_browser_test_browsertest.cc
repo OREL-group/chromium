@@ -8,7 +8,8 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/functional/bind.h"
-#include "base/test/bind.h"
+#include "base/functional/callback_helpers.h"
+#include "build/build_config.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/test/base/test_switches.h"
 #include "components/constrained_window/constrained_window_views.h"
@@ -17,6 +18,7 @@
 #include "ui/base/interaction/element_tracker.h"
 #include "ui/base/interaction/expect_call_in_scope.h"
 #include "ui/base/interaction/interaction_sequence.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/native_widget_types.h"
@@ -533,9 +535,6 @@ IN_PROC_BROWSER_TEST_F(InteractiveBrowserTestBrowsertest,
 
   RunTestSequence(
       InstrumentTab(kTabId),
-      // This is needed to prevent subsequent navigation from causing the
-      // previous step to fail due to the element immediately losing visibility.
-      FlushEvents(),
       InParallel(Steps(NavigateWebContents(kTabId, url1),
                        NavigateWebContents(kTabId, url2)),
                  WaitForStateChange(kTabId, state_change)));
@@ -557,9 +556,6 @@ IN_PROC_BROWSER_TEST_F(InteractiveBrowserTestBrowsertest,
 
   RunTestSequence(
       InstrumentTab(kTabId),
-      // This is needed to prevent subsequent navigation from causing the
-      // previous step to fail due to the element immediately losing visibility.
-      FlushEvents(),
       InParallel(Steps(NavigateWebContents(kTabId, url1),
                        NavigateWebContents(kTabId, url2)),
                  WaitForStateChange(kTabId, state_change)));
@@ -661,26 +657,27 @@ class TestDialog : public views::DialogDelegateView {
   TestDialog() { SetProperty(views::kElementIdentifierKey, kElementId); }
   ~TestDialog() override = default;
 
-  gfx::Size CalculatePreferredSize() const override {
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override {
     return gfx::Size(200, 200);
   }
 
-  static views::Widget* Show(Browser* parent, ui::ModalType modal_type) {
+  static views::Widget* Show(Browser* parent, ui::mojom::ModalType modal_type) {
     auto dialog = std::make_unique<TestDialog>();
     dialog->SetModalType(modal_type);
     views::Widget* widget = nullptr;
     switch (modal_type) {
-      case ui::MODAL_TYPE_WINDOW:
+      case ui::mojom::ModalType::kWindow:
         widget = constrained_window::CreateBrowserModalDialogViews(
             std::move(dialog), parent->window()->GetNativeWindow());
         break;
-      case ui::MODAL_TYPE_CHILD:
+      case ui::mojom::ModalType::kChild:
         widget = constrained_window::CreateWebModalDialogViews(
             dialog.release(),
             parent->tab_strip_model()->GetActiveWebContents());
         break;
-      case ui::MODAL_TYPE_SYSTEM:
-      case ui::MODAL_TYPE_NONE:
+      case ui::mojom::ModalType::kSystem:
+      case ui::mojom::ModalType::kNone:
         widget = views::DialogDelegate::CreateDialogWidget(
             std::move(dialog), nullptr,
             BrowserView::GetBrowserViewForBrowser(parent)
@@ -728,7 +725,7 @@ DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(TestDialog, kElementId);
 
 class InteractiveBrowserTestDialogBrowsertest
     : public InteractiveBrowserTest,
-      public testing::WithParamInterface<ui::ModalType> {
+      public testing::WithParamInterface<ui::mojom::ModalType> {
  public:
   InteractiveBrowserTestDialogBrowsertest() = default;
   ~InteractiveBrowserTestDialogBrowsertest() override = default;
@@ -737,19 +734,25 @@ class InteractiveBrowserTestDialogBrowsertest
 INSTANTIATE_TEST_SUITE_P(
     ,
     InteractiveBrowserTestDialogBrowsertest,
-    ::testing::Values(ui::MODAL_TYPE_NONE,
-                      ui::MODAL_TYPE_CHILD,
-                      ui::MODAL_TYPE_WINDOW,
-                      ui::MODAL_TYPE_SYSTEM),
-    [](const testing::TestParamInfo<ui::ModalType>& param) {
+    ::testing::Values(
+        ui::mojom::ModalType::kNone,
+        ui::mojom::ModalType::kChild,
+        ui::mojom::ModalType::kWindow
+#if !BUILDFLAG(IS_MAC)
+        // System modals not supported on mac; see crbug.com/335864910
+        ,
+        ui::mojom::ModalType::kSystem
+#endif
+        ),
+    [](const testing::TestParamInfo<ui::mojom::ModalType>& param) {
       switch (param.param) {
-        case ui::MODAL_TYPE_NONE:
+        case ui::mojom::ModalType::kNone:
           return "None";
-        case ui::MODAL_TYPE_CHILD:
+        case ui::mojom::ModalType::kChild:
           return "Child";
-        case ui::MODAL_TYPE_WINDOW:
+        case ui::mojom::ModalType::kWindow:
           return "Window";
-        case ui::MODAL_TYPE_SYSTEM:
+        case ui::mojom::ModalType::kSystem:
           return "System";
       }
     });

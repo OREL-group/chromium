@@ -32,31 +32,26 @@ class AutofillSuggestionController : public AutofillPopupViewDelegate {
  public:
   // Acts as a factory method to create a new `AutofillSuggestionController`, or
   // reuse `previous` if the construction arguments are the same. `previous` may
-  // be invalidated by this call. The controller will listen for keyboard input
-  // routed to `web_contents` while the popup is showing, unless `web_contents`
-  // is null.
+  // be invalidated by this call.
   static base::WeakPtr<AutofillSuggestionController> GetOrCreate(
       base::WeakPtr<AutofillSuggestionController> previous,
-      base::WeakPtr<AutofillPopupDelegate> delegate,
+      base::WeakPtr<AutofillSuggestionDelegate> delegate,
       content::WebContents* web_contents,
       PopupControllerCommon controller_common,
       int32_t form_control_ax_id);
 
-  // Recalculates the height and width of the popup and triggers a redraw when
-  // suggestions change.
+  using UiSessionId = AutofillClient::SuggestionUiSessionId;
+  // Generates a new unique session id for suggestion UI.
+  static UiSessionId GenerateSuggestionUiSessionId();
+
+  // Recalculates the height and width of the suggestion UI and triggers a
+  // redraw when suggestions change.
   virtual void OnSuggestionsChanged() = 0;
 
-  // Selects the suggestion with `index`. For fillable items, this will trigger
-  // preview. For other items, it does not do anything.
-  virtual void SelectSuggestion(int index) = 0;
-
-  // Unselect currently selected suggestion, noop if nothing is selected.
-  virtual void UnselectSuggestion() = 0;
-
-  // Accepts the suggestion at `index`. The suggestion will only be accepted if
-  // the popup has been shown for at least `kIgnoreEarlyClicksOnPopupDuration`
-  // to allow ruling out accidental popup interactions (crbug.com/1279268).
-  static constexpr base::TimeDelta kIgnoreEarlyClicksOnPopupDuration =
+  // Accepts the suggestion at `index`. The suggestion is only accepted if the
+  // UI has been shown for at least `kIgnoreEarlyClicksOnSuggestionsDuration` to
+  // allow ruling out accidental UI interactions (crbug.com/1279268).
+  static constexpr base::TimeDelta kIgnoreEarlyClicksOnSuggestionsDuration =
       base::Milliseconds(500);
   virtual void AcceptSuggestion(int index) = 0;
 
@@ -70,7 +65,7 @@ class AutofillSuggestionController : public AutofillPopupViewDelegate {
   virtual int GetLineCount() const = 0;
 
   // Returns the full set of autofill suggestions, if applicable.
-  virtual std::vector<Suggestion> GetSuggestions() const = 0;
+  virtual const std::vector<Suggestion>& GetSuggestions() const = 0;
 
   // Returns the suggestion at the given `row` index. The `Suggestion` is the
   // data model including information that is to be shown in the UI.
@@ -82,25 +77,31 @@ class AutofillSuggestionController : public AutofillPopupViewDelegate {
   virtual std::optional<AutofillClient::PopupScreenLocation>
   GetPopupScreenLocation() const = 0;
 
-  // Shows the popup, or updates the existing popup with the given values.
-  virtual void Show(std::vector<Suggestion> suggestions,
+  // Shows the suggestion UI, or updates the existing suggestion UI with the
+  // given values.
+  virtual void Show(UiSessionId session_id,
+                    std::vector<Suggestion> suggestions,
                     AutofillSuggestionTriggerSource trigger_source,
                     AutoselectFirstSuggestion autoselect_first_suggestion) = 0;
 
-  // Determines whether to suppress minimum show thresholds. It should only be
-  // set during tests that cannot mock time (e.g. the autofill interactive
-  // browsertests).
-  virtual void DisableThresholdForTesting(bool disable_threshold) = 0;
+  // Returns the unique session id for the suggestions UI that is showing. If
+  // no UI is showing, it returns `std::nullopt`. If there are multiple,
+  // connected controllers (e.g. for sub-popups on Desktop), all controllers
+  // will have the same session id.
+  virtual std::optional<UiSessionId> GetUiSessionId() const = 0;
 
-  virtual void KeepPopupOpenForTesting() = 0;
+  // This method cannot be moved into a test api, because it is called by
+  // production code in `ChromeAutofillClient`. This happens because, before the
+  // popup is shown, tests can ask the client to keep the popup open for
+  // testing. Then, once the client shows the popup, the client calls this
+  // method.
+  virtual void SetKeepPopupOpenForTesting(bool keep_popup_open_for_testing) = 0;
 
-  virtual void SetViewForTesting(base::WeakPtr<AutofillPopupView> view) = 0;
-
-  // Updates the data list values currently shown with the popup.
+  // Updates the data list values currently shown.
   virtual void UpdateDataListValues(base::span<const SelectOption> options) = 0;
 
-  // Informs the controller that the popup may not be hidden by stale data or
-  // interactions with native Chrome UI. This state remains active until the
+  // Informs the controller that the suggestions may not be hidden by stale data
+  // or interactions with native Chrome UI. This state remains active until the
   // view is destroyed.
   virtual void PinView() = 0;
 

@@ -7,6 +7,7 @@
 #include <memory>
 
 #include "base/test/gtest_util.h"
+#include "chrome/browser/ui/tabs/features.h"
 #include "chrome/browser/ui/tabs/pinned_tab_collection.h"
 #include "chrome/browser/ui/tabs/tab_collection.h"
 #include "chrome/browser/ui/tabs/tab_group_tab_collection.h"
@@ -14,16 +15,18 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_delegate.h"
 #include "chrome/browser/ui/tabs/test_tab_strip_model_delegate.h"
+#include "chrome/browser/ui/tabs/test_util.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/test/browser_task_environment.h"
+#include "content/public/test/test_renderer_host.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 class TabCollectionStorageTest : public ::testing::Test {
  public:
   TabCollectionStorageTest() {
-    scoped_feature_list_.InitWithFeatures(
-        {features::kTabStripCollectionStorage}, {});
+    scoped_feature_list_.InitWithFeatures({tabs::kTabStripCollectionStorage},
+                                          {});
     pinned_collection_ = std::make_unique<tabs::PinnedTabCollection>();
     testing_profile_ = std::make_unique<TestingProfile>();
     tab_strip_model_delegate_ = std::make_unique<TestTabStripModelDelegate>();
@@ -43,7 +46,8 @@ class TabCollectionStorageTest : public ::testing::Test {
   void AddTabs(int num) {
     for (int i = 0; i < num; i++) {
       std::unique_ptr<tabs::TabModel> tab_model =
-          std::make_unique<tabs::TabModel>(nullptr, GetTabStripModel());
+          std::make_unique<tabs::TabModel>(MakeWebContents(),
+                                           GetTabStripModel());
       tabs::TabModel* tab_model_ptr = tab_model.get();
 
       tabs::TabModel* inserted_tab_model_ptr =
@@ -109,21 +113,28 @@ class TabCollectionStorageTest : public ::testing::Test {
     return ids;
   }
 
+  std::unique_ptr<content::WebContents> MakeWebContents() {
+    return content::WebContents::Create(
+        content::WebContents::CreateParams(testing_profile_.get()));
+  }
+
  private:
   content::BrowserTaskEnvironment task_environment_;
   base::test::ScopedFeatureList scoped_feature_list_;
+  content::RenderViewHostTestEnabler test_enabler_;
+  std::unique_ptr<Profile> testing_profile_;
   std::unique_ptr<tabs::PinnedTabCollection> pinned_collection_;
   std::unique_ptr<TabStripModel> tab_strip_model_;
-  std::unique_ptr<Profile> testing_profile_;
   std::unique_ptr<TestTabStripModelDelegate> tab_strip_model_delegate_;
   std::map<std::string, std::string> storage_children_to_id_map_;
+  tabs::PreventTabFeatureInitialization prevent_;
 };
 
 TEST_F(TabCollectionStorageTest, AddTabOperation) {
   auto tab_model_one =
-      std::make_unique<tabs::TabModel>(nullptr, GetTabStripModel());
+      std::make_unique<tabs::TabModel>(MakeWebContents(), GetTabStripModel());
   auto tab_model_two =
-      std::make_unique<tabs::TabModel>(nullptr, GetTabStripModel());
+      std::make_unique<tabs::TabModel>(MakeWebContents(), GetTabStripModel());
 
   tabs::TabModel* tab_model_one_ptr = tab_model_one.get();
   tabs::TabModel* tab_model_two_ptr = tab_model_two.get();
@@ -153,7 +164,7 @@ TEST_F(TabCollectionStorageTest, AddTabOperation) {
 
 TEST_F(TabCollectionStorageTest, RemoveTabOperation) {
   auto tab_model_one =
-      std::make_unique<tabs::TabModel>(nullptr, GetTabStripModel());
+      std::make_unique<tabs::TabModel>(MakeWebContents(), GetTabStripModel());
   tabs::TabModel* tab_model_one_ptr = tab_model_one.get();
 
   tabs::TabCollectionStorage* collection_storage = GetTabCollectionStorage();
@@ -177,7 +188,7 @@ TEST_F(TabCollectionStorageTest, RemoveTabOperation) {
 
 TEST_F(TabCollectionStorageTest, CloseTabOperation) {
   auto tab_model_one =
-      std::make_unique<tabs::TabModel>(nullptr, GetTabStripModel());
+      std::make_unique<tabs::TabModel>(MakeWebContents(), GetTabStripModel());
   tabs::TabModel* tab_model_one_ptr = tab_model_one.get();
 
   tabs::TabCollectionStorage* collection_storage = GetTabCollectionStorage();
@@ -199,7 +210,7 @@ TEST_F(TabCollectionStorageTest, CloseTabOperation) {
 
 TEST_F(TabCollectionStorageTest, MoveTabOperation) {
   auto tab_model_one =
-      std::make_unique<tabs::TabModel>(nullptr, GetTabStripModel());
+      std::make_unique<tabs::TabModel>(MakeWebContents(), GetTabStripModel());
   tabs::TabModel* tab_model_one_ptr = tab_model_one.get();
 
   tabs::TabCollectionStorage* collection_storage = GetTabCollectionStorage();
@@ -230,13 +241,14 @@ TEST_F(TabCollectionStorageTest, MoveTabOperation) {
 // TODO(b/332586827): Re-enable death testing.
 TEST_F(TabCollectionStorageTest, DISABLED_InvalidArgumentsTabOperations) {
   auto tab_model_one =
-      std::make_unique<tabs::TabModel>(nullptr, GetTabStripModel());
+      std::make_unique<tabs::TabModel>(MakeWebContents(), GetTabStripModel());
   tabs::TabCollectionStorage* collection_storage = GetTabCollectionStorage();
   std::unique_ptr<tabs::TabModel> empty_ptr;
 
   EXPECT_DEATH_IF_SUPPORTED(
-      collection_storage->AddTab(
-          std::make_unique<tabs::TabModel>(nullptr, GetTabStripModel()), 10ul),
+      collection_storage->AddTab(std::make_unique<tabs::TabModel>(
+                                     MakeWebContents(), GetTabStripModel()),
+                                 10ul),
       "");
   EXPECT_DEATH_IF_SUPPORTED(
       collection_storage->AddTab(std::move(empty_ptr), 1ul), "");
@@ -355,7 +367,7 @@ TEST_F(TabCollectionStorageTest, CloseMixedTabAndCollectionOperation) {
 
 TEST_F(TabCollectionStorageTest, MoveMixedTabAndCollectionOperation) {
   auto tab_model_one =
-      std::make_unique<tabs::TabModel>(nullptr, GetTabStripModel());
+      std::make_unique<tabs::TabModel>(MakeWebContents(), GetTabStripModel());
   tabs::TabModel* tab_model_one_ptr = tab_model_one.get();
 
   auto tab_collection_one = std::make_unique<tabs::TabGroupTabCollection>(

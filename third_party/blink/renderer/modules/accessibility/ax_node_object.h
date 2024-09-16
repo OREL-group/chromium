@@ -80,11 +80,11 @@ class MODULES_EXPORT AXNodeObject : public AXObject {
 
   AXObjectInclusion ShouldIncludeBasedOnSemantics(
       IgnoredReasons* = nullptr) const;
-  bool ComputeAccessibilityIsIgnored(IgnoredReasons* = nullptr) const override;
+  bool ComputeIsIgnored(IgnoredReasons* = nullptr) const override;
   ax::mojom::blink::Role DetermineRoleValue() override;
   ax::mojom::blink::Role NativeRoleIgnoringAria() const override;
   void AlterSliderOrSpinButtonValue(bool increase);
-  AXObject* ActiveDescendant() override;
+  AXObject* ActiveDescendant() const override;
   String AriaAccessibilityDescription() const;
   String AutoComplete() const override;
   void AccessibilityChildrenFromAOMProperty(AOMRelationListProperty,
@@ -141,6 +141,7 @@ class MODULES_EXPORT AXNodeObject : public AXObject {
   bool IsNativeSpinButton() const override;
   bool IsEmbeddingElement() const override;
   bool IsLinked() const override;
+  bool IsVisible() const override;
   bool IsVisited() const override;
 
   // Check object state.
@@ -224,9 +225,6 @@ class MODULES_EXPORT AXNodeObject : public AXObject {
   ax::mojom::blink::Role RawAriaRole() const final;
   void AriaDescribedbyElements(AXObjectVector&) const override;
   void AriaOwnsElements(AXObjectVector&) const override;
-  void Dropeffects(
-      Vector<ax::mojom::blink::Dropeffect>& dropeffects) const override;
-
   ax::mojom::blink::HasPopup HasPopup() const override;
   ax::mojom::blink::IsPopup IsPopup() const override;
   bool IsEditableRoot() const override;
@@ -301,7 +299,6 @@ class MODULES_EXPORT AXNodeObject : public AXObject {
   LayoutObject* GetLayoutObject() const final;
 
   // DOM and layout tree access.
-  AtomicString Language() const override;
   bool HasAttribute(const QualifiedName&) const override;
   const AtomicString& GetAttribute(const QualifiedName&) const override;
 
@@ -359,11 +356,26 @@ class MODULES_EXPORT AXNodeObject : public AXObject {
                          Vector<int>& word_ends) const override;
 
  private:
+  // Store values that could change over the lifetime of the AXObject, but
+  // are repeatedly looked up during serialization. While the tree is frozen,
+  // the value remains constant. The generation ID is incremented each time
+  // the tree is frozen. Anytime a value is recomputed that is stored in this
+  // cache, it compares the current vs cached generation, updating the cached
+  // value and generation if needed.
+  struct GenerationalCache : public GarbageCollected<GenerationalCache> {
+    virtual void Trace(Visitor*) const;
+    uint64_t generation = 0;
+    Member<AXObject> next_on_line;
+    Member<AXObject> previous_on_line;
+  };
+  mutable Member<GenerationalCache> generational_cache_;
+  void MaybeResetCache() const;
+  AXObject* SetNextOnLine(AXObject* next_on_line) const;
+  AXObject* SetPreviousOnLine(AXObject* previous_on_line) const;
+
   bool HasInternalsAttribute(Element&, const QualifiedName&) const;
   const AtomicString& GetInternalsAttribute(Element&,
                                             const QualifiedName&) const;
-
-  bool IsNativeCheckboxInMixedState() const;
 
   // This function returns the text of a tooltip associated with the element.
   // Although there are two ways of doing this, it is unlikely that an author
@@ -391,6 +403,10 @@ class MODULES_EXPORT AXNodeObject : public AXObject {
                                NameSources*,
                                bool* found_text_alternative) const;
   String MaybeAppendFileDescriptionToName(const String& name) const;
+  bool ShouldIncludeContentInTextAlternative(
+      bool recursive,
+      const AXObject* aria_label_or_description_root,
+      AXObjectSet& visited) const;
   String PlaceholderFromNativeAttribute() const;
   String GetValueContributionToName(AXObjectSet& visited) const;
   bool UseNameFromSelectedOption() const;
@@ -398,6 +414,8 @@ class MODULES_EXPORT AXNodeObject : public AXObject {
 
   void AddChildrenImpl();
   void AddNodeChildren();
+  void AddMenuListChildren();
+  void AddMenuListPopupChildren();
   void AddPseudoElementChildrenFromLayoutTree();
   bool CanAddLayoutChild(LayoutObject& child);
   void AddInlineTextBoxChildren();
@@ -414,7 +432,6 @@ class MODULES_EXPORT AXNodeObject : public AXObject {
 #endif
 
   ax::mojom::blink::TextPosition GetTextPositionFromRole() const;
-  ax::mojom::blink::Dropeffect ParseDropeffect(String& dropeffect) const;
 
   static bool IsNameFromLabelElement(HTMLElement* control);
 

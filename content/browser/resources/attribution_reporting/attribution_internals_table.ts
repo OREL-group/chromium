@@ -45,7 +45,7 @@ export class AttributionInternalsTableElement<T> extends CustomElement {
     this.cols_ = [];
     this.getId_ = getId;
 
-    const tr = this.$<HTMLElement>('thead > tr')!;
+    const tr = this.getRequiredElement('thead > tr');
     tr.addEventListener('click', e => this.onSortButtonClick_(e));
 
     const addTh = (content: Node|string, render: RenderFunc<T>) => {
@@ -58,7 +58,7 @@ export class AttributionInternalsTableElement<T> extends CustomElement {
     };
 
     if (isSelectable) {
-      const tbody = this.$<HTMLElement>('tbody')!;
+      const tbody = this.getRequiredElement('tbody');
       tbody.addEventListener('click', e => this.onTbodyClick(e));
       tbody.addEventListener('keydown', e => {
         if (e.code === 'Enter' || e.code === 'Space') {
@@ -121,11 +121,11 @@ export class AttributionInternalsTableElement<T> extends CustomElement {
   }
 
   private rowCount_(): number {
-    return this.$<HTMLTableSectionElement>('tbody')!.rows.length;
+    return this.getRequiredElement('tbody').rows.length;
   }
 
   private dispatchRowsChange_(): void {
-    const td = this.$<HTMLTableCellElement>('tfoot td')!;
+    const td = this.getRequiredElement<HTMLTableCellElement>('tfoot td');
     td.colSpan = this.cols_!.length - 1;
 
     const rowCount = this.rowCount_();
@@ -170,9 +170,22 @@ export class AttributionInternalsTableElement<T> extends CustomElement {
       this.clearRows();
     }
 
-    if (this.getId_) {
-      this.updateRows([data]);
-      return;
+    let tr: DataRowElement<T>|undefined;
+
+    const id = this.getId_ ? this.getId_(data, /*updated=*/ true) : undefined;
+    if (id !== undefined) {
+      tr = Array.prototype.find.call(
+          this.dataRows_(),
+          tr => id === this.getId_!(tr.data, /*updated=*/ false));
+
+      if (tr !== undefined) {
+        tr.data = data;
+        this.cols_!.forEach((render, idx) => render(tr!.cells[idx]!, data));
+      }
+    }
+
+    if (tr === undefined) {
+      tr = this.newRow_(data);
     }
 
     let nextTr: DataRowElement<T>|undefined;
@@ -182,7 +195,6 @@ export class AttributionInternalsTableElement<T> extends CustomElement {
           this.dataRows_(), tr => this.compare_!(tr.data, data) > 0);
     }
 
-    const tr = this.newRow_(data);
     if (nextTr) {
       nextTr.before(tr);
     } else {

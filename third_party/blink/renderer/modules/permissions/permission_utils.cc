@@ -7,12 +7,13 @@
 #include <utility>
 
 #include "build/build_config.h"
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/mojom/permissions/permission.mojom-blink.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/renderer/bindings/core/v8/native_value_traits_impl.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_camera_device_permission_descriptor.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_clipboard_permission_descriptor.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_fullscreen_permission_descriptor.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_midi_permission_descriptor.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_permission_descriptor.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_permission_name.h"
@@ -119,9 +120,6 @@ String PermissionNameToString(PermissionName name) {
     case PermissionName::STORAGE_ACCESS:
       return "storage-access";
     case PermissionName::WINDOW_MANAGEMENT:
-      if (RuntimeEnabledFeatures::WindowPlacementPermissionAliasEnabled()) {
-        return "window_placement";
-      }
       return "window-management";
     case PermissionName::LOCAL_FONTS:
       return "local_fonts";
@@ -133,9 +131,15 @@ String PermissionNameToString(PermissionName name) {
       return "captured-surface-control";
     case PermissionName::SPEAKER_SELECTION:
       return "speaker-selection";
+    case PermissionName::KEYBOARD_LOCK:
+      return "keyboard-lock";
+    case PermissionName::POINTER_LOCK:
+      return "pointer-lock";
+    case PermissionName::FULLSCREEN:
+      return "fullscreen";
+    case PermissionName::WEB_APP_INSTALLATION:
+      return "web-app-installation";
   }
-  NOTREACHED();
-  return "unknown";
 }
 
 PermissionDescriptorPtr CreatePermissionDescriptor(PermissionName name) {
@@ -189,6 +193,17 @@ PermissionDescriptorPtr CreateTopLevelStorageAccessPermissionDescriptor(
   descriptor->extension =
       mojom::blink::PermissionDescriptorExtension::NewTopLevelStorageAccess(
           std::move(top_level_storage_access_extension));
+  return descriptor;
+}
+
+PermissionDescriptorPtr CreateFullscreenPermissionDescriptor(
+    bool allow_without_user_gesture) {
+  auto descriptor = CreatePermissionDescriptor(PermissionName::FULLSCREEN);
+  auto fullscreen_extension = mojom::blink::FullscreenPermissionDescriptor::New(
+      allow_without_user_gesture);
+  descriptor->extension =
+      mojom::blink::PermissionDescriptorExtension::NewFullscreen(
+          std::move(fullscreen_extension));
   return descriptor;
 }
 
@@ -351,19 +366,6 @@ PermissionDescriptorPtr ParsePermissionDescriptor(
     return CreateTopLevelStorageAccessPermissionDescriptor(origin_as_kurl);
   }
   if (name == V8PermissionName::Enum::kWindowManagement) {
-    UseCounter::Count(CurrentExecutionContext(script_state->GetIsolate()),
-                      WebFeature::kWindowManagementPermissionDescriptorUsed);
-    return CreatePermissionDescriptor(PermissionName::WINDOW_MANAGEMENT);
-  }
-  if (name == V8PermissionName::Enum::kWindowPlacement) {
-    if (!RuntimeEnabledFeatures::WindowPlacementPermissionAliasEnabled()) {
-      exception_state.ThrowTypeError(
-          "The Window Placement alias is not enabled.");
-      return nullptr;
-    }
-    Deprecation::CountDeprecation(
-        CurrentExecutionContext(script_state->GetIsolate()),
-        WebFeature::kWindowPlacementPermissionDescriptorUsed);
     return CreatePermissionDescriptor(PermissionName::WINDOW_MANAGEMENT);
   }
   if (name == V8PermissionName::Enum::kLocalFonts) {
@@ -394,6 +396,37 @@ PermissionDescriptorPtr ParsePermissionDescriptor(
       return nullptr;
     }
     return CreatePermissionDescriptor(PermissionName::SPEAKER_SELECTION);
+  }
+  if (name == V8PermissionName::Enum::kKeyboardLock) {
+    return CreatePermissionDescriptor(PermissionName::KEYBOARD_LOCK);
+  }
+  if (name == V8PermissionName::Enum::kPointerLock) {
+    return CreatePermissionDescriptor(PermissionName::POINTER_LOCK);
+  }
+  if (name == V8PermissionName::Enum::kFullscreen) {
+    FullscreenPermissionDescriptor* fullscreen_permission =
+        NativeValueTraits<FullscreenPermissionDescriptor>::NativeValue(
+            script_state->GetIsolate(), raw_descriptor.V8Value(),
+            exception_state);
+    if (exception_state.HadException()) {
+      return nullptr;
+    }
+    if (!fullscreen_permission->allowWithoutGesture()) {
+      // There is no permission state for fullscreen with user gesture.
+      exception_state.ThrowTypeError(
+          "Fullscreen Permission only supports allowWithoutGesture:true.");
+      return nullptr;
+    }
+    return CreateFullscreenPermissionDescriptor(
+        fullscreen_permission->allowWithoutGesture());
+  }
+  if (name == V8PermissionName::Enum::kWebAppInstallation) {
+    if (!RuntimeEnabledFeatures::WebAppInstallationEnabled(
+            ExecutionContext::From(script_state))) {
+      exception_state.ThrowTypeError("The Web App Install API is not enabled.");
+      return nullptr;
+    }
+    return CreatePermissionDescriptor(PermissionName::WEB_APP_INSTALLATION);
   }
   return nullptr;
 }

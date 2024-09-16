@@ -4,8 +4,6 @@
 
 #include <string>
 
-#include "base/test/scoped_feature_list.h"
-#include "chrome/browser/browser_features.h"
 #include "chrome/browser/preloading/chrome_preloading.h"
 #include "chrome/browser/preloading/prerender/prerender_manager.h"
 #include "chrome/browser/preloading/prerender/prerender_utils.h"
@@ -31,11 +29,7 @@ class PrerenderManagerTest : public ChromeRenderViewHostTestHarness {
             content::BrowserTaskEnvironment::REAL_IO_THREAD),
         prerender_helper_(
             base::BindRepeating(&PrerenderManagerTest::GetActiveWebContents,
-                                base::Unretained(this))) {
-    scoped_feature_list_.InitAndEnableFeatureWithParameters(
-        features::kOmniboxTriggerForPrerender2,
-        {{"SupportSearchSuggestion", "true"}});
-  }
+                                base::Unretained(this))) {}
 
   void SetUp() override {
     prerender_helper_.RegisterServerRequestMonitor(&test_server_);
@@ -70,7 +64,7 @@ class PrerenderManagerTest : public ChromeRenderViewHostTestHarness {
 
   GURL GetCanonicalSearchUrl(const GURL& search_suggestion_url) {
     GURL canonical_search_url;
-    EXPECT_TRUE(HasCanoncialPreloadingOmniboxSearchURL(
+    EXPECT_TRUE(HasCanonicalPreloadingOmniboxSearchURL(
         search_suggestion_url, profile(), &canonical_search_url));
     return canonical_search_url;
   }
@@ -106,6 +100,7 @@ class PrerenderManagerTest : public ChromeRenderViewHostTestHarness {
         preloading_data->AddPreloadingAttempt(
             chrome_preloading_predictor::kOmniboxDirectURLInput,
             content::PreloadingType::kPrerender, same_url_matcher,
+            /*planned_max_preloading_type=*/std::nullopt,
             GetActiveWebContents()
                 ->GetPrimaryMainFrame()
                 ->GetPageUkmSourceId());
@@ -118,7 +113,6 @@ class PrerenderManagerTest : public ChromeRenderViewHostTestHarness {
   static std::string search_site() { return "/title1.html"; }
 
   content::test::PrerenderTestHelper prerender_helper_;
-  base::test::ScopedFeatureList scoped_feature_list_;
   std::unique_ptr<content::test::ScopedPrerenderWebContentsDelegate>
       web_contents_delegate_;
 
@@ -134,8 +128,9 @@ TEST_F(PrerenderManagerTest, StartCleanSearchSuggestionPrerender) {
   prerender_manager()->StartPrerenderSearchResult(
       canonical_url, prerendering_url, /*attempt=*/nullptr);
   registry_observer.WaitForTrigger(prerendering_url);
-  int prerender_host_id = prerender_helper().GetHostForUrl(prerendering_url);
-  EXPECT_NE(prerender_host_id, content::RenderFrameHost::kNoFrameTreeNodeId);
+  content::FrameTreeNodeId prerender_host_id =
+      prerender_helper().GetHostForUrl(prerendering_url);
+  EXPECT_TRUE(prerender_host_id);
 }
 
 // Tests that the old prerender will be destroyed when starting prerendering a
@@ -149,8 +144,9 @@ TEST_F(PrerenderManagerTest, StartNewSuggestionPrerender) {
       canonical_url1, prerendering_url1, /*attempt=*/nullptr);
 
   registry_observer.WaitForTrigger(prerendering_url1);
-  int prerender_host_id1 = prerender_helper().GetHostForUrl(prerendering_url1);
-  ASSERT_NE(prerender_host_id1, content::RenderFrameHost::kNoFrameTreeNodeId);
+  content::FrameTreeNodeId prerender_host_id1 =
+      prerender_helper().GetHostForUrl(prerendering_url1);
+  ASSERT_TRUE(prerender_host_id1);
   content::test::PrerenderHostObserver host_observer(*GetActiveWebContents(),
                                                      prerender_host_id1);
   GURL prerendering_url2 = GetSearchSuggestionUrl("prer", "prerender");
@@ -174,8 +170,9 @@ TEST_F(PrerenderManagerTest, StartSameSuggestionPrerender) {
   prerender_manager()->StartPrerenderSearchResult(
       canonical_url, prerendering_url1, /*attempt=*/nullptr);
   registry_observer.WaitForTrigger(prerendering_url1);
-  int prerender_host_id1 = prerender_helper().GetHostForUrl(prerendering_url1);
-  EXPECT_NE(prerender_host_id1, content::RenderFrameHost::kNoFrameTreeNodeId);
+  content::FrameTreeNodeId prerender_host_id1 =
+      prerender_helper().GetHostForUrl(prerendering_url1);
+  EXPECT_TRUE(prerender_host_id1);
   GURL prerendering_url2 = GetSearchSuggestionUrl("prer", "prerender");
   prerender_manager()->StartPrerenderSearchResult(
       canonical_url, prerendering_url2, /*attempt=*/nullptr);
@@ -183,7 +180,8 @@ TEST_F(PrerenderManagerTest, StartSameSuggestionPrerender) {
 
   // The created prerender for `prerendering_url1` still exists, so the
   // prerender_host_id should be the same.
-  int prerender_host_id2 = prerender_helper().GetHostForUrl(prerendering_url2);
+  content::FrameTreeNodeId prerender_host_id2 =
+      prerender_helper().GetHostForUrl(prerendering_url2);
   EXPECT_EQ(prerender_host_id2, prerender_host_id1);
 }
 
@@ -194,8 +192,9 @@ TEST_F(PrerenderManagerTest, StartCleanPrerenderDirectUrlInput) {
 
   TriggerDirectUrlInputPrerender(prerendering_url);
   registry_observer.WaitForTrigger(prerendering_url);
-  int prerender_host_id = prerender_helper().GetHostForUrl(prerendering_url);
-  EXPECT_NE(prerender_host_id, content::RenderFrameHost::kNoFrameTreeNodeId);
+  content::FrameTreeNodeId prerender_host_id =
+      prerender_helper().GetHostForUrl(prerendering_url);
+  EXPECT_TRUE(prerender_host_id);
 }
 
 // Test that the PreloadingTriggeringOutcome is set to kFailure when the DUI
@@ -207,8 +206,9 @@ TEST_F(PrerenderManagerTest, StartNewPrerenderDirectUrlInput) {
   content::PreloadingAttempt* preloading_attempt =
       TriggerDirectUrlInputPrerender(prerendering_url);
   registry_observer.WaitForTrigger(prerendering_url);
-  int prerender_host_id = prerender_helper().GetHostForUrl(prerendering_url);
-  EXPECT_NE(prerender_host_id, content::RenderFrameHost::kNoFrameTreeNodeId);
+  content::FrameTreeNodeId prerender_host_id =
+      prerender_helper().GetHostForUrl(prerendering_url);
+  EXPECT_TRUE(prerender_host_id);
   content::test::PrerenderHostObserver host_observer(*GetActiveWebContents(),
                                                      prerender_host_id);
   GURL prerendering_url2 = GetUrl("/bar");
@@ -241,7 +241,7 @@ class PrerenderManagerBasicRequirementTest
     }
   }
 
-  int StartPrerender() {
+  content::FrameTreeNodeId StartPrerender() {
     content::test::PrerenderHostRegistryObserver registry_observer(
         *GetActiveWebContents());
     GURL prerendering_url;
@@ -268,7 +268,7 @@ class PrerenderManagerBasicRequirementTest
       case kSearchSuggestion:
         return prerender_utils::kDefaultSearchEngineMetricSuffix;
     }
-    NOTREACHED_NORETURN();
+    NOTREACHED();
   }
 
   // Navigates to another page that cannot be prerendered.
@@ -287,8 +287,8 @@ INSTANTIATE_TEST_SUITE_P(
 // Tests that the PrerenderHandle is destroyed when the primary page changed.
 TEST_P(PrerenderManagerBasicRequirementTest, NavigateAway) {
   base::HistogramTester histogram_tester;
-  int prerender_host_id = StartPrerender();
-  ASSERT_NE(prerender_host_id, content::RenderFrameHost::kNoFrameTreeNodeId);
+  content::FrameTreeNodeId prerender_host_id = StartPrerender();
+  ASSERT_TRUE(prerender_host_id);
   content::test::PrerenderHostObserver host_observer(*GetActiveWebContents(),
                                                      prerender_host_id);
   NavigateAway();

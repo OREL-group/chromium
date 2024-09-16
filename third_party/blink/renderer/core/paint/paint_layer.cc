@@ -46,12 +46,10 @@
 
 #include <limits>
 
-#include "base/allocator/partition_allocator/src/partition_alloc/partition_alloc.h"
 #include "base/containers/adapters.h"
-#include "base/debug/crash_logging.h"
-#include "base/debug/dump_without_crashing.h"
 #include "build/build_config.h"
 #include "cc/input/scroll_snap_data.h"
+#include "partition_alloc/partition_alloc.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/core/animation/scroll_timeline.h"
 #include "third_party/blink/renderer/core/css/css_property_names.h"
@@ -159,6 +157,18 @@ PaintLayer* SlowContainingLayer(LayoutObject& layout_object) {
   return nullptr;
 }
 
+std::optional<gfx::SizeF> ComputeFilterViewport(const PaintLayer& layer) {
+  if (const auto* layout_inline =
+          DynamicTo<LayoutInline>(layer.GetLayoutObject())) {
+    return gfx::SizeF(layout_inline->PhysicalLinesBoundingBox().size);
+  }
+  const auto* box = layer.GetLayoutBox();
+  if (box->IsSVGForeignObject()) {
+    return std::nullopt;
+  }
+  return gfx::SizeF(box->Size());
+}
+
 }  // namespace
 
 PaintLayer::PaintLayer(LayoutBoxModelObject* layout_object)
@@ -218,6 +228,9 @@ void PaintLayer::Destroy() {
     const ComputedStyle& style = GetLayoutObject().StyleRef();
     if (style.HasFilter())
       style.Filter().RemoveClient(*resource_info_);
+    if (style.HasBackdropFilter()) {
+      style.BackdropFilter().RemoveClient(*resource_info_);
+    }
     if (auto* reference_clip =
             DynamicTo<ReferenceClipPathOperation>(style.ClipPath()))
       reference_clip->RemoveClient(*resource_info_);
@@ -291,6 +304,7 @@ void PaintLayer::UpdateTransform() {
 }
 
 void PaintLayer::UpdateTransformAfterStyleChange(
+    StyleDifference diff,
     const ComputedStyle* old_style,
     const ComputedStyle& new_style) {
   // It's possible for the old and new style transform data to be equivalent
@@ -299,7 +313,7 @@ void PaintLayer::UpdateTransformAfterStyleChange(
   bool had_transform = Transform();
   bool has_transform = GetLayoutObject().HasTransform();
   if (had_transform == has_transform && old_style &&
-      new_style.TransformDataEquivalent(*old_style)) {
+      !diff.TransformDataChanged()) {
     return;
   }
   bool had_3d_transform = Has3DTransform();
@@ -461,14 +475,14 @@ void PaintLayer::UpdateDescendantDependentFlags() {
   }
 
   bool previously_has_visible_content = has_visible_content_;
-  if (GetLayoutObject().StyleRef().Visibility() == EVisibility::kVisible) {
+  if (GetLayoutObject().StyleRef().UsedVisibility() == EVisibility::kVisible) {
     has_visible_content_ = true;
   } else {
     // layer may be hidden but still have some visible content, check for this
     has_visible_content_ = false;
     LayoutObject* r = GetLayoutObject().SlowFirstChild();
     while (r) {
-      if (r->StyleRef().Visibility() == EVisibility::kVisible &&
+      if (r->StyleRef().UsedVisibility() == EVisibility::kVisible &&
           (!r->HasLayer() || !r->EnclosingLayer()->IsSelfPaintingLayer())) {
         has_visible_content_ = true;
         break;
@@ -706,8 +720,9 @@ void PaintLayer::RemoveChild(PaintLayer* old_child) {
     MarkAncestorChainForFlagsUpdate();
   }
 
-  if (GetLayoutObject().StyleRef().Visibility() != EVisibility::kVisible)
+  if (GetLayoutObject().StyleRef().UsedVisibility() != EVisibility::kVisible) {
     DirtyVisibleContentStatus();
+  }
 
   old_child->SetPreviousSibling(nullptr);
   old_child->SetNextSibling(nullptr);
@@ -1020,7 +1035,7 @@ Node* PaintLayer::EnclosingNode() const {
     if (Node* e = r->GetNode())
       return e;
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return nullptr;
 }
 
@@ -1185,17 +1200,10 @@ PaintLayer* PaintLayer::HitTestLayer(
   DCHECK_GE(layout_object.GetDocument().Lifecycle().GetState(),
             DocumentLifecycle::kPrePaintClean);
 
-  if (UNLIKELY(layout_object.NeedsLayout() &&
-               !layout_object.ChildLayoutBlockedByDisplayLock())) {
-    // Skip if we need layout. This should never happen. See crbug.com/1423308.
-
-    // Record whether the LayoutView exists and if it needs layout.
-    LayoutView* view = layout_object.GetFrameView()->GetLayoutView();
-    SCOPED_CRASH_KEY_BOOL("Crbug1423308", "ViewExists", !!view);
-    SCOPED_CRASH_KEY_BOOL("Crbug1423308", "ViewNeedsLayout",
-                          view && view->NeedsLayout());
-    base::debug::DumpWithoutCrashing();
-
+  if (layout_object.NeedsLayout() &&
+      !layout_object.ChildLayoutBlockedByDisplayLock()) [[unlikely]] {
+    // Skip if we need layout. This should never happen. See crbug.com/1423308
+    // and crbug.com/330051489.
     return nullptr;
   }
 
@@ -1214,14 +1222,12 @@ PaintLayer* PaintLayer::HitTestLayer(
 
   std::optional<CheckAncestorPositionVisibilityScope>
       check_position_visibility_scope;
-  if (RuntimeEnabledFeatures::CSSPositionVisibilityEnabled()) {
-    if (InvisibleForPositionVisibility() ||
-        HasAncestorInvisibleForPositionVisibility()) {
-      return nullptr;
-    }
-    if (GetLayoutObject().IsStackingContext()) {
-      check_position_visibility_scope.emplace(*this);
-    }
+  if (InvisibleForPositionVisibility() ||
+      HasAncestorInvisibleForPositionVisibility()) {
+    return nullptr;
+  }
+  if (GetLayoutObject().IsStackingContext()) {
+    check_position_visibility_scope.emplace(*this);
   }
 
   // TODO(vmpstr): We need to add a simple document flag which says whether
@@ -1542,8 +1548,8 @@ bool PaintLayer::HitTestFragmentsWithPhase(
 
     inside_clip_rect = true;
 
-    if (UNLIKELY(GetLayoutObject().IsLayoutInline() &&
-                 GetLayoutObject().CanTraversePhysicalFragments())) {
+    if (GetLayoutObject().IsLayoutInline() &&
+        GetLayoutObject().CanTraversePhysicalFragments()) [[unlikely]] {
       // When hit-testing an inline that has a layer, we'll search for it in
       // each fragment of the containing block. Each fragment has its own
       // offset, and we need to do one fragment at a time. If the inline uses a
@@ -1802,10 +1808,11 @@ PaintLayer* PaintLayer::HitTestChildren(
 void PaintLayer::UpdateFilterReferenceBox() {
   if (!HasFilterThatMovesPixels())
     return;
-  PhysicalRect result = LocalBoundingBoxIncludingSelfPaintingDescendants();
-  gfx::RectF reference_box(result);
+  gfx::RectF reference_box(LocalBoundingBoxIncludingSelfPaintingDescendants());
+  std::optional<gfx::SizeF> viewport(ComputeFilterViewport(*this));
   if (!ResourceInfo() ||
-      ResourceInfo()->FilterReferenceBox() != reference_box) {
+      ResourceInfo()->FilterReferenceBox() != reference_box ||
+      ResourceInfo()->FilterViewport() != viewport) {
     if (GetLayoutObject().GetDocument().Lifecycle().GetState() ==
         DocumentLifecycle::kInPrePaint) {
       GetLayoutObject()
@@ -1814,8 +1821,13 @@ void PaintLayer::UpdateFilterReferenceBox() {
     } else {
       GetLayoutObject().SetNeedsPaintPropertyUpdate();
     }
+    if (ResourceInfo() && ResourceInfo()->FilterViewport() != viewport) {
+      filter_on_effect_node_dirty_ = true;
+    }
   }
-  EnsureResourceInfo().SetFilterReferenceBox(reference_box);
+  auto& resource_info = EnsureResourceInfo();
+  resource_info.SetFilterReferenceBox(reference_box);
+  resource_info.SetFilterViewport(viewport);
 }
 
 gfx::RectF PaintLayer::FilterReferenceBox() const {
@@ -1826,6 +1838,15 @@ gfx::RectF PaintLayer::FilterReferenceBox() const {
   if (ResourceInfo())
     return ResourceInfo()->FilterReferenceBox();
   return gfx::RectF();
+}
+
+std::optional<gfx::SizeF> PaintLayer::FilterViewport() const {
+  DCHECK_GE(GetLayoutObject().GetDocument().Lifecycle().GetState(),
+            DocumentLifecycle::kInPrePaint);
+  if (ResourceInfo()) {
+    return ResourceInfo()->FilterViewport();
+  }
+  return std::nullopt;
 }
 
 gfx::RectF PaintLayer::BackdropFilterReferenceBox() const {
@@ -2000,13 +2021,13 @@ PaintLayer* PaintLayer::EnclosingSelfPaintingLayer() {
   return layer;
 }
 
-void PaintLayer::UpdateFilters(const ComputedStyle* old_style,
+void PaintLayer::UpdateFilters(StyleDifference diff,
+                               const ComputedStyle* old_style,
                                const ComputedStyle& new_style) {
   if (!filter_on_effect_node_dirty_) {
-    filter_on_effect_node_dirty_ =
-        old_style ? old_style->Filter() != new_style.Filter() ||
-                        !old_style->ReflectionDataEquivalent(new_style)
-                  : new_style.HasFilterInducingProperty();
+    filter_on_effect_node_dirty_ = old_style
+                                       ? diff.FilterChanged()
+                                       : new_style.HasFilterInducingProperty();
   }
 
   if (!new_style.HasFilterInducingProperty() &&
@@ -2026,6 +2047,19 @@ void PaintLayer::UpdateBackdropFilters(const ComputedStyle* old_style,
     backdrop_filter_on_effect_node_dirty_ =
         old_style ? old_style->BackdropFilter() != new_style.BackdropFilter()
                   : new_style.HasBackdropFilter();
+  }
+
+  if (!new_style.HasBackdropFilter() &&
+      (!old_style || !old_style->HasBackdropFilter())) {
+    return;
+  }
+
+  const bool had_resource_info = ResourceInfo();
+  if (new_style.HasBackdropFilter()) {
+    new_style.BackdropFilter().AddClient(EnsureResourceInfo());
+  }
+  if (had_resource_info && old_style) {
+    old_style->BackdropFilter().RemoveClient(*ResourceInfo());
   }
 }
 
@@ -2138,22 +2172,13 @@ void PaintLayer::StyleDidChange(StyleDifference diff,
     MarkAncestorChainForFlagsUpdate();
   }
 
-  // If the (current)color changes and a filter is applied that uses it, the
-  // filter needs to be updated.
-  const ComputedStyle& new_style = GetLayoutObject().StyleRef();
-  if (diff.TextDecorationOrColorChanged()) {
-    if (new_style.HasFilter() && new_style.Filter().UsesCurrentColor()) {
-      GetLayoutObject().SetNeedsPaintPropertyUpdate();
-      SetFilterOnEffectNodeDirty();
-    }
-  }
-
   // HasNonContainedAbsolutePositionDescendant depends on position changes.
+  const ComputedStyle& new_style = GetLayoutObject().StyleRef();
   if (!old_style || old_style->GetPosition() != new_style.GetPosition())
     MarkAncestorChainForFlagsUpdate();
 
-  UpdateTransformAfterStyleChange(old_style, new_style);
-  UpdateFilters(old_style, new_style);
+  UpdateTransformAfterStyleChange(diff, old_style, new_style);
+  UpdateFilters(diff, old_style, new_style);
   UpdateBackdropFilters(old_style, new_style);
   UpdateClipPath(old_style, new_style);
   UpdateOffsetPath(old_style, new_style);
@@ -2191,13 +2216,6 @@ PaintLayerClipper PaintLayer::Clipper() const {
   return PaintLayerClipper(this);
 }
 
-bool PaintLayer::ScrollsOverflow() const {
-  if (PaintLayerScrollableArea* scrollable_area = GetScrollableArea())
-    return scrollable_area->ScrollsOverflow();
-
-  return false;
-}
-
 FilterOperations PaintLayer::FilterOperationsIncludingReflection() const {
   const auto& style = GetLayoutObject().StyleRef();
   FilterOperations filter_operations = style.Filter();
@@ -2226,7 +2244,7 @@ void PaintLayer::UpdateCompositorFilterOperationsForFilter(
     return;
 
   operations =
-      FilterEffectBuilder(reference_box, zoom,
+      FilterEffectBuilder(reference_box, FilterViewport(), zoom,
                           style.VisitedDependentColor(GetCSSPropertyColor()),
                           style.UsedColorScheme())
           .BuildFilterOperations(filter);
@@ -2270,7 +2288,7 @@ void PaintLayer::UpdateCompositorFilterOperationsForBackdropFilter(
   // bounds with a mirror edge mode, but this is the responsibility of the
   // compositor to apply, regardless of the actual filter operations added here.
   operations =
-      FilterEffectBuilder(reference_box, zoom,
+      FilterEffectBuilder(reference_box, FilterViewport(), zoom,
                           style.VisitedDependentColor(GetCSSPropertyColor()),
                           style.UsedColorScheme(), nullptr, nullptr)
           .BuildFilterOperations(filter_operations);
@@ -2424,9 +2442,6 @@ void PaintLayer::SetPreviousPaintResult(PaintResult result) {
 void PaintLayer::SetInvisibleForPositionVisibility(
     LayerPositionVisibility visibility,
     bool invisible) {
-  if (!RuntimeEnabledFeatures::CSSPositionVisibilityEnabled()) {
-    return;
-  }
   bool already_invisible = InvisibleForPositionVisibility();
   if (invisible) {
     invisible_for_position_visibility_ |= static_cast<int>(visibility);
@@ -2458,7 +2473,6 @@ void PaintLayer::SetInvisibleForPositionVisibility(
 }
 
 bool PaintLayer::HasAncestorInvisibleForPositionVisibility() const {
-  CHECK(RuntimeEnabledFeatures::CSSPositionVisibilityEnabled());
   if (!CheckAncestorPositionVisibilityScope::ShouldCheck()) {
     return false;
   }

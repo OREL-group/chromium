@@ -33,7 +33,6 @@ import org.chromium.chrome.browser.screenshot_monitor.ScreenshotTabObserver;
 import org.chromium.chrome.browser.tab.CurrentTabObserver;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.toolbar.adaptive.AdaptiveToolbarFeatures;
 import org.chromium.chrome.browser.translate.TranslateBridge;
 import org.chromium.chrome.browser.translate.TranslateUtils;
 import org.chromium.chrome.browser.ui.appmenu.AppMenuCoordinator;
@@ -49,8 +48,8 @@ import org.chromium.ui.base.WindowAndroid;
 import org.chromium.url.GURL;
 
 /**
- * A helper class for IPH shown on the toolbar.
- * TODO(https://crbug.com/865801): Remove feature-specific IPH from here.
+ * A helper class for IPH shown on the toolbar. TODO(crbug.com/40585866): Remove feature-specific
+ * IPH from here.
  */
 public class ToolbarButtonInProductHelpController
         implements ScreenshotMonitorDelegate, PauseResumeWithNativeObserver {
@@ -167,8 +166,7 @@ public class ToolbarButtonInProductHelpController
         if (tab == null || tab.getWebContents() == null) return;
 
         if (!ShoppingFeatures.isShoppingListEligible(tab.getProfile())
-                || !PowerBookmarkUtils.isPriceTrackingEligible(tab)
-                || AdaptiveToolbarFeatures.isContextualPageActionUiEnabled()) {
+                || !PowerBookmarkUtils.isPriceTrackingEligible(tab)) {
             return;
         }
 

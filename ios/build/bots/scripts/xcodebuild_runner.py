@@ -32,6 +32,12 @@ if os.path.split(os.path.dirname(__file__))[1] != 'plugin':
 from plugin_utils import init_plugins_from_args
 from test_plugin_service import TestPluginServicerWrapper, TestPluginServicer
 
+THIS_DIR = os.path.abspath(os.path.dirname(__file__))
+CHROMIUM_SRC_DIR = os.path.abspath(os.path.join(THIS_DIR, '../../../..'))
+sys.path.append(
+    os.path.abspath(os.path.join(CHROMIUM_SRC_DIR, 'build/util/lib/proto')))
+import measures
+
 LOGGER = logging.getLogger(__name__)
 MAXIMUM_TESTS_PER_SHARD_FOR_RERUN = 20
 XTDEVICE_FOLDER = os.path.expanduser('~/Library/Developer/XCTestDevices')
@@ -177,8 +183,10 @@ class LaunchCommand(object):
     overall_launch_command_result = ResultCollection()
     clones = self.clones
     running_tests = set(self.egtests_app.get_all_tests())
+    attempt_count = measures.count('test_attempts', 'eg')
     # total number of attempts is self.retries+1
     for attempt in range(self.retries + 1):
+      attempt_count.record()
       # Cleanup any running plugin process before each attempt
       if self.test_plugin_service:
         self.test_plugin_service.reset()
@@ -201,12 +209,20 @@ class LaunchCommand(object):
       outdir_attempt = os.path.join(self.out_dir, 'attempt_%d' % attempt)
       cmd_list = self.egtests_app.command(outdir_attempt, 'id=%s' % self.udid,
                                           clones)
-      # TODO(crbug.com/914878): add heartbeat logging to xcodebuild_runner.
-      LOGGER.info('Start test attempt #%d for command [%s]' % (
-          attempt, ' '.join(cmd_list)))
+
+      # TODO(crbug.com/340857498): temporarily turning this off on all
+      # device testing due to Xcode hang on iOS17.4+. In the future
+      # we should have a testing config flag to toggle this on/off
+      if not iossim_util.is_device_with_udid_simulator(self.udid):
+        cmd_list.extend(['-collect-test-diagnostics', 'never'])
+
+      # TODO(crbug.com/40606422): add heartbeat logging to xcodebuild_runner.
+      LOGGER.info('Start test attempt #%d for command [%s]' %
+                  (attempt, ' '.join(cmd_list)))
       output = self.launch_attempt(cmd_list)
 
-      result = XcodeLogParser.collect_test_results(outdir_attempt, output)
+      result = XcodeLogParser.collect_test_results(outdir_attempt, output,
+                                                   clones > 1)
 
       tests_selected_at_runtime = _tests_decided_at_runtime(
           self.egtests_app.test_app_path)
@@ -214,7 +230,7 @@ class LaunchCommand(object):
       # will cover any missing tests. For these decided at runtime, retain
       # crashes from all attempts and a dummy "crashed" result will be reported
       # to indicate some tests might never ran.
-      # TODO(crbug.com/1235871): Switch back to excluded tests and set
+      # TODO(crbug.com/40782444): Switch back to excluded tests and set
       # |overall_crash| to always True.
       overall_launch_command_result.add_result_collection(
           result, overwrite_crash=not tests_selected_at_runtime)
@@ -295,11 +311,6 @@ class SimulatorParallelTestRunner(test_runner.SimulatorTestRunner):
     self.release = kwargs.get('release') or False
     self.test_results['path_delimiter'] = '/'
 
-    # TODO(crbug.com/1486897): For simulators, the record_video_option
-    # is always None right now, because we are still using our own video
-    # plugin. Currently native Xcode15+ video recording is only supported
-    # on iOS17+, but we should aim to migrate to the native solution so
-    # that we don't need to maintain our own.
     self.record_video_option = kwargs.get('record_video_option')
 
     self.all_eg_test_names = []
@@ -307,6 +318,8 @@ class SimulatorParallelTestRunner(test_runner.SimulatorTestRunner):
     self.resolve_eg_test_cases()
 
     # initializing test plugin service
+    # TODO(crbug.com/40933880): remove the legacy code of video recording
+    # support as we have migrated to native xcode video recording.
     self.test_plugin_service = None
     enabled_plugins = init_plugins_from_args(
         os.path.join(self.out_dir, self.udid), **kwargs)
@@ -481,7 +494,7 @@ class SimulatorParallelTestRunner(test_runner.SimulatorTestRunner):
       # Adds unexpectedly skipped tests to result if applicable.
       tests_selected_at_runtime = _tests_decided_at_runtime(self.app_path)
       unexpectedly_skipped = []
-      # TODO(crbug.com/1048758): For the multitasking or any flaky test suites,
+      # TODO(crbug.com/40672177): For the multitasking or any flaky test suites,
       # |all_tests_to_run| contains more tests than what actually runs.
       if not tests_selected_at_runtime:
         # |all_tests_to_run| takes into consideration that only a subset of

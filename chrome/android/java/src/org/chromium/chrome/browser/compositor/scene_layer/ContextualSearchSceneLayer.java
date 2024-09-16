@@ -20,7 +20,6 @@ import org.chromium.chrome.browser.compositor.bottombar.contextualsearch.Related
 import org.chromium.chrome.browser.layouts.scene_layer.SceneLayer;
 import org.chromium.chrome.browser.layouts.scene_layer.SceneOverlayLayer;
 import org.chromium.chrome.browser.profiles.Profile;
-import org.chromium.chrome.browser.profiles.ProfileManager;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.resources.ResourceManager;
 
@@ -34,11 +33,13 @@ public class ContextualSearchSceneLayer extends SceneOverlayLayer {
     /** If the scene layer has been initialized. */
     private boolean mIsInitialized;
 
+    private final Profile mProfile;
     private final float mDpToPx;
 
     private ContextualSearchImageControl mImageControl;
 
-    public ContextualSearchSceneLayer(float dpToPx) {
+    public ContextualSearchSceneLayer(Profile profile, float dpToPx) {
+        mProfile = profile;
         mDpToPx = dpToPx;
     }
 
@@ -112,6 +113,7 @@ public class ContextualSearchSceneLayer extends SceneOverlayLayer {
 
         float searchBarMarginSide = panel.getBarMarginSide();
         float searchBarMarginTop = panel.getBarMarginTop();
+        float searchBarMarginBottom = panel.getBarMarginBottomPx();
         float searchBarHeight = panel.getBarHeight();
 
         float searchContextOpacity = searchBarControl.getSearchBarContextOpacity();
@@ -192,6 +194,7 @@ public class ContextualSearchSceneLayer extends SceneOverlayLayer {
                         searchPanelHeight * mDpToPx,
                         searchBarMarginSide * mDpToPx,
                         searchBarMarginTop * mDpToPx,
+                        searchBarMarginBottom,
                         searchBarHeight * mDpToPx,
                         searchContextOpacity,
                         searchBarControl.getTextLayerMinHeight(),
@@ -216,7 +219,7 @@ public class ContextualSearchSceneLayer extends SceneOverlayLayer {
                         touchHighlightVisible,
                         touchHighlightXOffset,
                         touchHighlightWidth,
-                        ProfileManager.getLastUsedRegularProfile(),
+                        mProfile,
                         roundedBarTopResourceId,
                         separatorLineColor);
     }
@@ -311,6 +314,7 @@ public class ContextualSearchSceneLayer extends SceneOverlayLayer {
                 float searchPanelHeight,
                 float searchBarMarginSide,
                 float searchBarMarginTop,
+                float searchBarMarginBottom,
                 float searchBarHeight,
                 float searchContextOpacity,
                 float searchTextLayerMinHeight,

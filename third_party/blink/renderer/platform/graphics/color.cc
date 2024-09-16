@@ -23,6 +23,11 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/platform/graphics/color.h"
 
 #include <math.h>
@@ -245,7 +250,6 @@ Color Color::FromColorMix(Color::ColorSpace interpolation_space,
                           Color color2,
                           float percentage,
                           float alpha_multiplier) {
-  DCHECK(percentage >= 0.0f && percentage <= 1.0f);
   DCHECK(alpha_multiplier >= 0.0f && alpha_multiplier <= 1.0f);
   Color result = InterpolateColors(interpolation_space, hue_method, color1,
                                    color2, percentage);
@@ -268,7 +272,6 @@ float Color::HueInterpolation(float value1,
                               Color::HueInterpolationMethod hue_method) {
   DCHECK(value1 >= 0.0f && value1 < 360.0f) << value1;
   DCHECK(value2 >= 0.0f && value2 < 360.0f) << value2;
-  DCHECK(percentage >= 0.0f && percentage <= 1.0f);
   // Adapt values of angles if needed, depending on the hue_method.
   switch (hue_method) {
     case Color::HueInterpolationMethod::kShorter: {
@@ -401,8 +404,6 @@ Color Color::InterpolateColors(Color::ColorSpace interpolation_space,
                                Color color1,
                                Color color2,
                                float percentage) {
-  DCHECK(percentage >= 0.0f && percentage <= 1.0f);
-
   // https://www.w3.org/TR/css-color-4/#missing:
   // When interpolating colors, missing components do not behave as zero values
   // for color space conversions.
@@ -417,7 +418,7 @@ Color Color::InterpolateColors(Color::ColorSpace interpolation_space,
   CarryForwardAnalogousMissingComponents(color2, color2_prev_color_space);
 
   if (!SubstituteMissingParameters(color1, color2)) {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
     return Color();
   }
 
@@ -511,7 +512,7 @@ std::tuple<float, float, float> Color::ExportAsXYZD50Floats() const {
       return gfx::SRGBToXYZD50(r, g, b);
     }
     case ColorSpace::kNone:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return std::tuple<float, float, float>();
   }
 }
@@ -876,8 +877,9 @@ void Color::UnpremultiplyColor() {
 // This converts -0.0 to 0.0, so that they have the same hash value. This
 // ensures that equal FontDescription have the same hash value.
 float NormalizeSign(float number) {
-  if (UNLIKELY(number == 0.0))
+  if (number == 0.0) [[unlikely]] {
     return 0.0;
+  }
   return number;
 }
 
@@ -968,13 +970,13 @@ String Color::ColorSpaceToString(Color::ColorSpace color_space) {
     case Color::ColorSpace::kOklch:
       return "oklch";
     case Color::ColorSpace::kSRGBLegacy:
-      return "RGB Legacy";
+      return "rgb";
     case Color::ColorSpace::kHSL:
-      return "HSL";
+      return "hsl";
     case Color::ColorSpace::kHWB:
-      return "HWB";
+      return "hwb";
     case ColorSpace::kNone:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return "None";
   }
 }

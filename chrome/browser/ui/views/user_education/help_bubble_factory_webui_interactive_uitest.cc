@@ -18,7 +18,6 @@
 #include "chrome/browser/ui/toolbar/app_menu_model.h"
 #include "chrome/browser/ui/toolbar/bookmark_sub_menu_model.h"
 #include "chrome/browser/ui/toolbar/reading_list_sub_menu_model.h"
-#include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/side_panel/side_panel.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_coordinator.h"
@@ -39,7 +38,6 @@
 #include "content/public/test/browser_test.h"
 #include "ui/base/interaction/element_identifier.h"
 #include "ui/base/interaction/element_tracker.h"
-#include "ui/base/ui_base_features.h"
 #include "ui/views/interaction/element_tracker_views.h"
 #include "ui/views/test/widget_test.h"
 
@@ -80,8 +78,6 @@ DEFINE_LOCAL_STATE_IDENTIFIER_VALUE(ViewSizeObserver, kSidePanelSize);
 class HelpBubbleFactoryWebUIInteractiveUiTest : public InteractiveBrowserTest {
  public:
   HelpBubbleFactoryWebUIInteractiveUiTest() {
-    feature_list_.InitWithFeatures(
-        {features::kSidePanelPinning, features::kChromeRefresh2023}, {});
   }
   ~HelpBubbleFactoryWebUIInteractiveUiTest() override = default;
 
@@ -98,20 +94,20 @@ class HelpBubbleFactoryWebUIInteractiveUiTest : public InteractiveBrowserTest {
                     side_panel_ = AsView(el);
                     ASSERT_TRUE(side_panel_);
                   }),
-        WaitForShow(kReadLaterSidePanelWebViewElementId), FlushEvents(),
+        WaitForShow(kReadLaterSidePanelWebViewElementId),
         // Ensure that the Reading List side panel loads properly.
         InstrumentNonTabWebView(kReadLaterWebContentsElementId,
                                 kReadLaterSidePanelWebViewElementId),
         ObserveState(kSidePanelSize, std::ref(side_panel_)),
-        WaitForState(kSidePanelSize, testing::Ne(gfx::Size())), FlushEvents());
+        WaitForState(kSidePanelSize, testing::Ne(gfx::Size())));
   }
 
   auto OpenBookmarksSidePanel() {
-      return Steps(
-          PressButton(kToolbarAppMenuButtonElementId),
-          SelectMenuItem(AppMenuModel::kBookmarksMenuItem),
-          SelectMenuItem(BookmarkSubMenuModel::kShowBookmarkSidePanelItem),
-          WaitForShow(kSidePanelElementId), FlushEvents());
+    return Steps(
+        PressButton(kToolbarAppMenuButtonElementId),
+        SelectMenuItem(AppMenuModel::kBookmarksMenuItem),
+        SelectMenuItem(BookmarkSubMenuModel::kShowBookmarkSidePanelItem),
+        WaitForShow(kSidePanelElementId));
   }
 
   auto ShowHelpBubble(ElementSpecifier element) {
@@ -180,7 +176,6 @@ class HelpBubbleFactoryWebUIInteractiveUiTest : public InteractiveBrowserTest {
   }
 
   raw_ptr<views::View> side_panel_ = nullptr;
-  base::test::ScopedFeatureList feature_list_;
 };
 
 IN_PROC_BROWSER_TEST_F(HelpBubbleFactoryWebUIInteractiveUiTest,
@@ -277,7 +272,7 @@ IN_PROC_BROWSER_TEST_F(HelpBubbleFactoryWebUIInteractiveUiTest,
 
       ExecuteJsAt(kBrowserTabId, kPathToHelpBubbleCloseButton,
                   "el => el.click()"),
-      WaitForStateChange(kBrowserTabId, bubble_hidden), FlushEvents(),
+      WaitForStateChange(kBrowserTabId, bubble_hidden),
 
       // Verify that the handler no longer believes that the anchor has a help
       // bubble.
@@ -330,7 +325,7 @@ IN_PROC_BROWSER_TEST_F(HelpBubbleFactoryRtlWebUIInteractiveUiTest,
                     [](ui::InteractionSequence* seq, ui::TrackedElement* el) {
                       seq->NameElement(el, kSidePanelElementName);
                     })),
-      ShowHelpBubble(kSidePanelElementName), FlushEvents(),
+      ShowHelpBubble(kSidePanelElementName),
       WithView(kSidePanelElementId,
                [](SidePanel* side_panel) {
                  side_panel->OnResize(-50, true);

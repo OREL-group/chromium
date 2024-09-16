@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "chrome/browser/extensions/api/downloads/downloads_api.h"
 
 #include <stddef.h>
@@ -1177,6 +1182,15 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
           download_item->GetTargetFilePath(), IconLoader::NORMAL, "foo"),
       args32, &result_string));
 
+  // Asking for an icon that is neither 16 nor 32 px should fail.
+  // Regression test for https://crbug.com/348379083.
+  EXPECT_EQ(
+      RunFunctionAndReturnError(
+          MockedGetFileIconFunction(download_item->GetTargetFilePath(),
+                                    IconLoader::NORMAL, "foo"),
+          base::StringPrintf(R"([%d, {"size": 10}])", download_item->GetId())),
+      "Invalid `size`. Must be either `16` or `32`.");
+
   // Finish the download and try again.
   FinishFirstSlowDownloads();
   EXPECT_EQ(DownloadItem::COMPLETE, download_item->GetState());
@@ -2008,8 +2022,16 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
 }
 
 // Test that we disallow certain headers case-insensitively.
+// TODO(crbug.com/335421977): Flaky on "Linux ChromiumOS MSan Tests"
+#if (BUILDFLAG(IS_CHROMEOS) && defined(MEMORY_SANITIZER))
+#define MAYBE_DownloadExtensionTest_Download_UnsafeHeaders \
+  DISABLED_DownloadExtensionTest_Download_UnsafeHeaders
+#else
+#define MAYBE_DownloadExtensionTest_Download_UnsafeHeaders \
+  DownloadExtensionTest_Download_UnsafeHeaders
+#endif
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
-                       DownloadExtensionTest_Download_UnsafeHeaders) {
+                       MAYBE_DownloadExtensionTest_Download_UnsafeHeaders) {
   LoadExtension("downloads_split");
   ASSERT_TRUE(StartEmbeddedTestServer());
   GoOnTheRecord();
@@ -4337,7 +4359,7 @@ IN_PROC_BROWSER_TEST_F(
         current_browser(),
         // This code used to use a mock class that no longer works, due to the
         // NetworkService shipping.
-        // TODO(https://crbug.com/700382): Fix or delete this test.
+        // TODO(crbug.com/41306723): Fix or delete this test.
         GURL(), WindowOpenDisposition::CURRENT_TAB,
         ui_test_utils::BROWSER_TEST_NO_WAIT);
     observer->WaitForFinished();
@@ -4378,7 +4400,7 @@ IN_PROC_BROWSER_TEST_F(
       current_browser(),
       // This code used to use a mock class that no longer works, due to the
       // NetworkService shipping.
-      // TODO(https://crbug.com/700382): Fix or delete this test.
+      // TODO(crbug.com/41306723): Fix or delete this test.
       GURL(), WindowOpenDisposition::NEW_BACKGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
 
@@ -4487,9 +4509,8 @@ void OnDangerPromptCreated(DownloadDangerPrompt* prompt) {
   prompt->InvokeActionForTesting(DownloadDangerPrompt::ACCEPT);
 }
 
-#if BUILDFLAG(IS_MAC) && !defined(NDEBUG)
-// Flaky on Mac debug, failing with a timeout.
-// http://crbug.com/180759
+// TODO(https://crbug.com/40304461): Flaky on Mac debug, failing with a timeout.
+#if (BUILDFLAG(IS_MAC) && !defined(NDEBUG))
 #define MAYBE_DownloadExtensionTest_AcceptDanger \
   DISABLED_DownloadExtensionTest_AcceptDanger
 #else

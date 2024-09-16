@@ -147,7 +147,7 @@ class BackForwardCacheMessageFilter : public mojo::MessageFilter {
 
   void DidDispatchOrReject(mojo::Message* message, bool accepted) override {}
 
-  // TODO(https://crbug.com/1125996): Remove once a well-behaved frozen
+  // TODO(crbug.com/40147948): Remove once a well-behaved frozen
   // RenderFrame never send IPCs messages, even if there are active pages in the
   // process.
   bool ProcessHoldsNonCachedPages() {
@@ -265,7 +265,7 @@ void RenderFrameHostImpl::SetUpMojoConnection() {
             base::Unretained(this)));
   }
 
-  // TODO(crbug.com/1395830): Avoid binding the DomAutomationControllerHost
+  // TODO(crbug.com/40249262): Avoid binding the DomAutomationControllerHost
   // interface outside of tests.
   associated_registry_->AddInterface<mojom::DomAutomationControllerHost>(
       base::BindRepeating(
@@ -331,12 +331,10 @@ void RenderFrameHostImpl::SetUpMojoConnection() {
       base::BindRepeating(&RenderFrameHostImpl::CreateBroadcastChannelProvider,
                           base::Unretained(this)));
 
-  if (base::FeatureList::IsEnabled(net::features::kSupportPartitionedBlobUrl)) {
-    associated_registry_->AddInterface<blink::mojom::BlobURLStore>(
-        base::BindRepeating(
-            &RenderFrameHostImpl::BindBlobUrlStoreAssociatedReceiver,
-            base::Unretained(this)));
-  }
+  associated_registry_->AddInterface<blink::mojom::BlobURLStore>(
+      base::BindRepeating(
+          &RenderFrameHostImpl::BindBlobUrlStoreAssociatedReceiver,
+          base::Unretained(this)));
 
   if (base::FeatureList::IsEnabled(
           blink::features::kEnableFileBackedBlobFactory)) {

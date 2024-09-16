@@ -53,6 +53,19 @@ class FakeFacilitatedPaymentsClient : public FacilitatedPaymentsClient {
               LoadRiskData,
               (base::OnceCallback<void(const std::string&)>),
               (override));
+  MOCK_METHOD(autofill::PaymentsDataManager*,
+              GetPaymentsDataManager,
+              (),
+              (override));
+  MOCK_METHOD(FacilitatedPaymentsNetworkInterface*,
+              GetFacilitatedPaymentsNetworkInterface,
+              (),
+              (override));
+  MOCK_METHOD(std::optional<CoreAccountInfo>,
+              GetCoreAccountInfo,
+              (),
+              (override));
+  MOCK_METHOD(bool, IsInLandscapeMode, (), (override));
 };
 
 class ContentFacilitatedPaymentsDriverTest

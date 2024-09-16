@@ -45,6 +45,11 @@ using ::testing::Eq;
 using ::testing::Matches;
 using ::testing::Property;
 
+using TestVariantsParam = std::tuple<
+    /*is_apps_collections_enabled=*/bool,
+    /*is_welcome_tour_v2_enabled=*/bool,
+    /*is_welcome_tour_counterfactaully_enabled=*/bool>;
+
 // Matchers --------------------------------------------------------------------
 
 MATCHER_P(ElementIdentifier, matcher, "") {
@@ -55,21 +60,52 @@ MATCHER_P(RootWindow, matcher, "") {
   return Matches(matcher)(arg->GetWidget()->GetNativeWindow()->GetRootWindow());
 }
 
+// Helpers ---------------------------------------------------------------------
+
+bool IsAppsCollectionsEnabled(TestVariantsParam param) {
+  return std::get<0>(param);
+}
+
+bool IsWelcomeTourV2Enabled(TestVariantsParam param) {
+  return std::get<1>(param);
+}
+
+bool IsWelcomeTourCounterfactuallyEnabled(TestVariantsParam param) {
+  return std::get<2>(param);
+}
+
+std::string GenerateTestSuffix(
+    const testing::TestParamInfo<TestVariantsParam>& info) {
+  return base::StrCat(
+      {IsWelcomeTourV2Enabled(info.param) ? "V2" : "V1", "_",
+       IsWelcomeTourCounterfactuallyEnabled(info.param) ? "Counterfactual_"
+                                                        : "",
+       IsAppsCollectionsEnabled(info.param) ? "AppsCollectionsEnabled"
+                                            : "AppsCollectionsDisabled"});
+}
+
 }  // namespace
 
 // WelcomeTourInteractiveUiTest ------------------------------------------------
 
 // Base class for interactive UI tests of the Welcome Tour in Ash.
-class WelcomeTourInteractiveUiTest : public InteractiveBrowserTest,
-                                     public ::testing::WithParamInterface<
-                                         /*is_apps_collections_enabled=*/bool> {
+class WelcomeTourInteractiveUiTest
+    : public InteractiveBrowserTest,
+      public testing::WithParamInterface<TestVariantsParam> {
  public:
   WelcomeTourInteractiveUiTest() {
     // NOTE: These tests are not concerned with user eligibility, so explicitly
     // force user eligibility for the Welcome Tour.
+    // Only one of `kWelcomeTourHoldbackArm`, `kWelcomeTourCounterfactualArm`
+    // and `kWelcomeTourV2` can be enabled at a time.
     scoped_feature_list_.InitWithFeatureStates(
         {{ash::features::kWelcomeTour, true},
          {ash::features::kWelcomeTourForceUserEligibility, true},
+         {ash::features::kWelcomeTourV2,
+          IsWelcomeTourV2Enabled() && !IsWelcomeTourCounterfactuallyEnabled()},
+         {ash::features::kWelcomeTourCounterfactualArm,
+          IsWelcomeTourCounterfactuallyEnabled()},
+         {ash::features::kWelcomeTourHoldbackArm, false},
          {app_list_features::kAppsCollections, IsAppsCollectionsEnabled()},
          {app_list_features::kForceShowAppsCollections,
           IsAppsCollectionsEnabled()}});
@@ -103,7 +139,21 @@ class WelcomeTourInteractiveUiTest : public InteractiveBrowserTest,
 
   // Returns whether the AppsCollections feature is enabled in the Welcome Tour
   // given test parameterization.
-  bool IsAppsCollectionsEnabled() const { return GetParam(); }
+  bool IsAppsCollectionsEnabled() const {
+    return ::IsAppsCollectionsEnabled(GetParam());
+  }
+
+  // Returns whether the WelcomeTourV2 feature is enabled given test
+  // parameterization.
+  bool IsWelcomeTourV2Enabled() const {
+    return ::IsWelcomeTourV2Enabled(GetParam());
+  }
+
+  // Returns whether the WelcomeTour feature is counterfactually enabled given
+  // test parameterization.
+  bool IsWelcomeTourCounterfactuallyEnabled() const {
+    return ::IsWelcomeTourCounterfactuallyEnabled(GetParam());
+  }
 
   // Returns a builder for an interaction step that waits for the app list
   // bubble to hide.
@@ -181,23 +231,21 @@ class WelcomeTourInteractiveUiTest : public InteractiveBrowserTest,
 
   // Returns a builder for an interaction step that checks the dialog
   // description.
-  [[nodiscard]] static auto CheckDialogDescription() {
+  [[nodiscard]] static auto CheckDialogDescription(int message_id) {
     const std::u16string product_name = ui::GetChromeOSDeviceName();
     return CheckViewProperty(
         ash::SystemDialogDelegateView::kDescriptionTextIdForTesting,
         &views::Label::GetText,
-        l10n_util::GetStringFUTF16(IDS_ASH_WELCOME_TOUR_DIALOG_DESCRIPTION_TEXT,
-                                   product_name));
+        l10n_util::GetStringFUTF16(message_id, product_name));
   }
 
   // Returns a builder for an interaction step that checks the dialog title.
-  [[nodiscard]] static auto CheckDialogTitle() {
+  [[nodiscard]] static auto CheckDialogTitle(int message_id) {
     const std::u16string product_name = ui::GetChromeOSDeviceName();
     return CheckViewProperty(
         ash::SystemDialogDelegateView::kTitleTextIdForTesting,
         &views::Label::GetText,
-        l10n_util::GetStringFUTF16(IDS_ASH_WELCOME_TOUR_DIALOG_TITLE_TEXT,
-                                   product_name));
+        l10n_util::GetStringFUTF16(message_id, product_name));
   }
 
   // Returns a builder for an interaction step that checks that the anchor of a
@@ -252,10 +300,14 @@ class WelcomeTourInteractiveUiTest : public InteractiveBrowserTest,
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
-INSTANTIATE_TEST_SUITE_P(All,
-                         WelcomeTourInteractiveUiTest,
-                         /*is_apps_collections_enabled=*/
-                         ::testing::Bool());
+INSTANTIATE_TEST_SUITE_P(
+    All,
+    WelcomeTourInteractiveUiTest,
+    testing::Combine(
+        /*is_apps_collections_enabled=*/testing::Bool(),
+        /*is_welcome_tour_v2_enabled=*/testing::Bool(),
+        /*is_welcome_tour_counterfactually_enabled=*/testing::Bool()),
+    &GenerateTestSuffix);
 
 // Tests -----------------------------------------------------------------------
 
@@ -266,10 +318,17 @@ IN_PROC_BROWSER_TEST_P(WelcomeTourInteractiveUiTest, WelcomeTour) {
   RunTestSequence(
       // Step 0: Dialog.
       InAnyContext(WaitForDialogVisibility(true)),
-      InSameContext(Steps(
-          CheckDialogAcceptButtonFocus(true), CheckDialogAcceptButtonText(),
-          CheckDialogCancelButtonText(), CheckDialogDescription(),
-          CheckDialogTitle(), PressDialogAcceptButton(), FlushEvents())),
+      InSameContext(
+          Steps(CheckDialogAcceptButtonFocus(true),
+                CheckDialogAcceptButtonText(), CheckDialogCancelButtonText(),
+                CheckDialogDescription(
+                    ash::features::IsWelcomeTourV2Enabled()
+                        ? IDS_ASH_WELCOME_TOUR_DIALOG_DESCRIPTION_TEXT_V2
+                        : IDS_ASH_WELCOME_TOUR_DIALOG_DESCRIPTION_TEXT),
+                CheckDialogTitle(ash::features::IsWelcomeTourV2Enabled()
+                                     ? IDS_ASH_WELCOME_TOUR_DIALOG_TITLE_TEXT_V2
+                                     : IDS_ASH_WELCOME_TOUR_DIALOG_TITLE_TEXT),
+                PressDialogAcceptButton())),
 
       // Step 1: Shelf.
       InAnyContext(WaitForHelpBubble()),
@@ -279,7 +338,7 @@ IN_PROC_BROWSER_TEST_P(WelcomeTourInteractiveUiTest, WelcomeTour) {
                     IDS_ASH_WELCOME_TOUR_SHELF_BUBBLE_BODY_TEXT)),
                 CheckHelpBubbleDefaultButtonFocus(true),
                 CheckHelpBubbleDefaultButtonText(IDS_TUTORIAL_NEXT_BUTTON),
-                PressHelpBubbleDefaultButton(), FlushEvents())),
+                PressHelpBubbleDefaultButton())),
 
       // Step 2: Status area.
       InAnyContext(WaitForHelpBubble()),
@@ -289,7 +348,7 @@ IN_PROC_BROWSER_TEST_P(WelcomeTourInteractiveUiTest, WelcomeTour) {
                     IDS_ASH_WELCOME_TOUR_STATUS_AREA_BUBBLE_BODY_TEXT)),
                 CheckHelpBubbleDefaultButtonFocus(true),
                 CheckHelpBubbleDefaultButtonText(IDS_TUTORIAL_NEXT_BUTTON),
-                PressHelpBubbleDefaultButton(), FlushEvents())),
+                PressHelpBubbleDefaultButton())),
 
       // Step 3: Home button.
       InAnyContext(WaitForHelpBubble()),
@@ -302,7 +361,7 @@ IN_PROC_BROWSER_TEST_P(WelcomeTourInteractiveUiTest, WelcomeTour) {
               product_name)),
           CheckHelpBubbleDefaultButtonFocus(true),
           CheckHelpBubbleDefaultButtonText(IDS_TUTORIAL_NEXT_BUTTON),
-          PressHelpBubbleDefaultButton(), FlushEvents())),
+          PressHelpBubbleDefaultButton())),
 
       // Step 4: Search box.
       InAnyContext(WaitForHelpBubble()),
@@ -313,9 +372,20 @@ IN_PROC_BROWSER_TEST_P(WelcomeTourInteractiveUiTest, WelcomeTour) {
               IDS_ASH_WELCOME_TOUR_SEARCH_BOX_BUBBLE_BODY_TEXT, product_name)),
           CheckHelpBubbleDefaultButtonFocus(true),
           CheckHelpBubbleDefaultButtonText(IDS_TUTORIAL_NEXT_BUTTON),
-          PressHelpBubbleDefaultButton(), FlushEvents())),
+          PressHelpBubbleDefaultButton())),
 
-      // Step 5: Settings app.
+      // Step 5 in V2: Files app.
+      If([&] { return ash::features::IsWelcomeTourV2Enabled(); },
+         InAnyContext(
+             Steps(WaitForHelpBubble(), CheckAppListBubbleVisibility(true),
+                   CheckHelpBubbleAnchor(ash::kFilesAppElementId),
+                   CheckHelpBubbleBodyText(l10n_util::GetStringUTF16(
+                       IDS_ASH_WELCOME_TOUR_FILES_APP_BUBBLE_BODY_TEXT)),
+                   CheckHelpBubbleDefaultButtonFocus(true),
+                   CheckHelpBubbleDefaultButtonText(IDS_TUTORIAL_NEXT_BUTTON),
+                   PressHelpBubbleDefaultButton()))),
+
+      // Step 5 in V1 and step 6 in V2: Settings app.
       InAnyContext(WaitForHelpBubble()),
       InSameContext(
           Steps(CheckAppListBubbleVisibility(true),
@@ -325,9 +395,9 @@ IN_PROC_BROWSER_TEST_P(WelcomeTourInteractiveUiTest, WelcomeTour) {
                     product_name)),
                 CheckHelpBubbleDefaultButtonFocus(true),
                 CheckHelpBubbleDefaultButtonText(IDS_TUTORIAL_NEXT_BUTTON),
-                PressHelpBubbleDefaultButton(), FlushEvents())),
+                PressHelpBubbleDefaultButton())),
 
-      // Step 6: Explore app.
+      // Step 6 in V1 and step 7 in V2: Explore app.
       InAnyContext(WaitForHelpBubble()),
       InSameContext(Steps(
           CheckAppListBubbleVisibility(true),
@@ -337,9 +407,9 @@ IN_PROC_BROWSER_TEST_P(WelcomeTourInteractiveUiTest, WelcomeTour) {
           CheckHelpBubbleDefaultButtonFocus(true),
           CheckHelpBubbleDefaultButtonText(
               IDS_ASH_WELCOME_TOUR_COMPLETE_BUTTON_TEXT),
-          PressHelpBubbleDefaultButton(), FlushEvents())),
+          PressHelpBubbleDefaultButton())),
 
-      // Step 7: Explore app window.
+      // Step 7 in V1 and step 8 in V2: Explore app window.
       InAnyContext(WaitForBrowser()),
       InSameContext(Steps(WaitForAppListBubbleToHide(),
                           CheckBrowserIsForWebApp(web_app::kHelpAppId))));

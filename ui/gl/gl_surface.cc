@@ -45,10 +45,6 @@ bool GLSurface::Recreate() {
   return false;
 }
 
-bool GLSurface::DeferDraws() {
-  return false;
-}
-
 bool GLSurface::SupportsPostSubBuffer() {
   return false;
 }
@@ -64,7 +60,7 @@ unsigned int GLSurface::GetBackingFramebufferObject() {
 void GLSurface::SwapBuffersAsync(SwapCompletionCallback completion_callback,
                                  PresentationCallback presentation_callback,
                                  gfx::FrameData data) {
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 gfx::SwapResult GLSurface::PostSubBuffer(int x,
@@ -83,18 +79,11 @@ void GLSurface::PostSubBufferAsync(int x,
                                    SwapCompletionCallback completion_callback,
                                    PresentationCallback presentation_callback,
                                    gfx::FrameData data) {
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 bool GLSurface::OnMakeCurrent(GLContext* context) {
   return true;
-}
-
-bool GLSurface::SetBackbufferAllocation(bool allocated) {
-  return true;
-}
-
-void GLSurface::SetFrontbufferAllocation(bool allocated) {
 }
 
 void* GLSurface::GetShareHandle() {
@@ -139,7 +128,7 @@ bool GLSurface::SupportsSwapTimestamps() const {
 }
 
 void GLSurface::SetEnableSwapTimestamps() {
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 int GLSurface::GetBufferCount() const {
@@ -177,12 +166,14 @@ GpuPreference GLSurface::AdjustGpuPreference(GpuPreference gpu_preference) {
     case GpuPreference::kHighPerformance:
       return forced_gpu_preference_;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       return GpuPreference::kDefault;
   }
 }
 
 GLSurface::~GLSurface() {
+  // InvalidateWeakPtrs should be called from the most concrete class.
+  CHECK(!weak_ptr_factory_.HasWeakPtrs());
   if (GetCurrent() == this) {
     ClearCurrent();
   }
@@ -194,6 +185,18 @@ void GLSurface::ClearCurrent() {
 
 void GLSurface::SetCurrent() {
   current_surface = this;
+}
+
+base::WeakPtr<GLSurface> GLSurface::AsWeakPtr() {
+  return weak_ptr_factory_.GetWeakPtr();
+}
+
+void GLSurface::InvalidateWeakPtrs() {
+  weak_ptr_factory_.InvalidateWeakPtrs();
+}
+
+bool GLSurface::HasWeakPtrs() {
+  return weak_ptr_factory_.HasWeakPtrs();
 }
 
 bool GLSurface::ExtensionsContain(const char* c_extensions, const char* name) {

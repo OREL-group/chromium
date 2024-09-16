@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/functional/callback.h"
+#include "base/time/time.h"
 #include "base/types/strong_alias.h"
 #include "third_party/abseil-cpp/absl/types/variant.h"
 
@@ -70,6 +71,7 @@ enum class TrustedVaultDownloadKeysStatus {
 // should not be renumbered and numeric values should never be reused, only add
 // at the end and. Also remember to update in tools/metrics/histograms/enums.xml
 // TrustedVaultRecoverabilityStatus enum.
+// LINT.IfChange(TrustedVaultRecoverabilityStatus)
 enum class TrustedVaultRecoverabilityStatus {
   // Recoverability status not retrieved due to network, http or protocol error.
   kNotDegraded = 0,
@@ -77,12 +79,14 @@ enum class TrustedVaultRecoverabilityStatus {
   kError = 2,
   kMaxValue = kError,
 };
+// LINT.ThenChange(/tools/metrics/histograms/metadata/sync/enums.xml:TrustedVaultRecoverabilityStatus)
 
 // Contains information about a Google Password Manager PIN that is stored in
 // a trusted vault.
 struct GpmPinMetadata {
   GpmPinMetadata(std::optional<std::string> public_key,
-                 std::string wrapped_pin);
+                 std::string wrapped_pin,
+                 base::Time expiry);
   GpmPinMetadata(const GpmPinMetadata&);
   GpmPinMetadata& operator=(const GpmPinMetadata&);
   GpmPinMetadata(GpmPinMetadata&&);
@@ -99,6 +103,41 @@ struct GpmPinMetadata {
   std::optional<std::string> public_key;
   // The encrypted PIN value, for validation.
   std::string wrapped_pin;
+  // The time when the underlying recovery-key-store entry will expire. Ignored
+  // when uploading.
+  base::Time expiry;
+};
+
+// A MemberKeys contains the cryptographic outputs needed to add or use an
+// authentication factor: the trusted vault key, encrypted to the public key of
+// the member, and an authenticator of that public key.
+struct MemberKeys {
+  MemberKeys(int version,
+             std::vector<uint8_t> wrapped_key,
+             std::vector<uint8_t> proof);
+  MemberKeys(const MemberKeys&) = delete;
+  MemberKeys& operator=(const MemberKeys&) = delete;
+  MemberKeys(MemberKeys&&);
+  MemberKeys& operator=(MemberKeys&&);
+  ~MemberKeys();
+
+  int version;
+  std::vector<uint8_t> wrapped_key;
+  std::vector<uint8_t> proof;
+};
+
+// A vault member public key and its member keys.
+struct VaultMember {
+  VaultMember(std::unique_ptr<SecureBoxPublicKey> public_key,
+              std::vector<MemberKeys> member_keys);
+  VaultMember(const VaultMember&) = delete;
+  VaultMember& operator=(const VaultMember&) = delete;
+  VaultMember(VaultMember&&);
+  VaultMember& operator=(VaultMember&&);
+  ~VaultMember();
+
+  std::unique_ptr<SecureBoxPublicKey> public_key;
+  std::vector<MemberKeys> member_keys;
 };
 
 // The result of calling
@@ -132,25 +171,34 @@ struct DownloadAuthenticationFactorsRegistrationStateResult {
   // version.
   std::optional<int> key_version;
 
+  // The expiry time of any LSKF virtual devices.
+  std::vector<base::Time> lskf_expiries;
+
   // If a Google Password Manager PIN is a member of the domain, and is usable
   // for retrieval, then this will contain its metadata.
   std::optional<GpmPinMetadata> gpm_pin_metadata;
+
+  // The list of iCloud recovery key domain members.
+  std::vector<VaultMember> icloud_keys;
 };
 
 // Authentication factor types:
-using PhysicalDevice =
-    base::StrongAlias<class PhysicalDeviceTag, absl::monostate>;
+using LocalPhysicalDevice =
+    base::StrongAlias<class LocalPhysicalDeviceTag, absl::monostate>;
 using LockScreenKnowledgeFactor =
     base::StrongAlias<class VirtualDeviceTag, absl::monostate>;
+using ICloudKeychain =
+    base::StrongAlias<class ICloudKeychainTag, absl::monostate>;
 // UnspecifiedAuthenticationFactorType carries a type hint for the backend.
 using UnspecifiedAuthenticationFactorType =
     base::StrongAlias<class UnspecifiedAuthenticationFactorTypeTag, int>;
 
 using AuthenticationFactorType =
-    absl::variant<PhysicalDevice,
+    absl::variant<LocalPhysicalDevice,
                   LockScreenKnowledgeFactor,
                   UnspecifiedAuthenticationFactorType,
-                  GpmPinMetadata>;
+                  GpmPinMetadata,
+                  ICloudKeychain>;
 
 struct TrustedVaultKeyAndVersion {
   TrustedVaultKeyAndVersion(const std::vector<uint8_t>& key, int version);
@@ -170,26 +218,10 @@ std::vector<TrustedVaultKeyAndVersion> GetTrustedVaultKeysWithVersions(
     const std::vector<std::vector<uint8_t>>& trusted_vault_keys,
     int last_key_version);
 
-// A PrecomputedMemberKeys contains the cryptographic outputs needed to
-// add an authentication factor: the trusted vault key, encrypted to the
-// public key of the member, and an authenticator of that public key.
-struct PrecomputedMemberKeys {
-  PrecomputedMemberKeys(int version,
-                        std::vector<uint8_t> wrapped_key,
-                        std::vector<uint8_t> proof);
-  PrecomputedMemberKeys(PrecomputedMemberKeys&&);
-  PrecomputedMemberKeys& operator=(PrecomputedMemberKeys&&);
-  ~PrecomputedMemberKeys();
-
-  int version;
-  std::vector<uint8_t> wrapped_key;
-  std::vector<uint8_t> proof;
-};
-
 // A MemberKeysSource provides a method of calculating the values needed to
 // add an authenticator factor.
-using MemberKeysSource = absl::variant<std::vector<TrustedVaultKeyAndVersion>,
-                                       PrecomputedMemberKeys>;
+using MemberKeysSource =
+    absl::variant<std::vector<TrustedVaultKeyAndVersion>, MemberKeys>;
 
 // Supports interaction with vault service, all methods must called on trusted
 // vault backend sequence.
@@ -243,7 +275,7 @@ class TrustedVaultConnection {
   // Special version of the above for the case where the caller has no local
   // keys available. Attempts to register the device using constant key. May
   // succeed only if constant key is the only key known server-side.
-  [[nodiscard]] virtual std::unique_ptr<Request> RegisterDeviceWithoutKeys(
+  [[nodiscard]] virtual std::unique_ptr<Request> RegisterLocalDeviceWithoutKeys(
       const CoreAccountInfo& account_info,
       const SecureBoxPublicKey& device_public_key,
       RegisterAuthenticationFactorCallback callback) = 0;

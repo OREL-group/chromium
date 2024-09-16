@@ -30,11 +30,11 @@ class CORE_EXPORT LayoutGrid : public LayoutBlock {
   const GridPlacementData& CachedPlacementData() const;
   void SetCachedPlacementData(GridPlacementData&& placement_data);
 
-  bool HasCachedMinMaxSizes() const;
-  const MinMaxSizes& CachedMinMaxSizes() const;
-  void SetMinMaxSizesCache(MinMaxSizes&& min_max_sizes,
-                           const GridLayoutData& layout_data);
-  bool ShouldInvalidateMinMaxSizesCacheFor(
+  bool HasCachedSubgridMinMaxSizes() const;
+  const MinMaxSizes& CachedSubgridMinMaxSizes() const;
+  void SetSubgridMinMaxSizesCache(MinMaxSizes&& min_max_sizes,
+                                  const GridLayoutData& layout_data);
+  bool ShouldInvalidateSubgridMinMaxSizesCacheFor(
       const GridLayoutData& layout_data) const;
 
   wtf_size_t AutoRepeatCountForDirection(
@@ -65,14 +65,13 @@ class CORE_EXPORT LayoutGrid : public LayoutBlock {
   Vector<LayoutUnit> ComputeExpandedPositions(
       GridTrackSizingDirection track_direction) const;
 
-  void AddChild(LayoutObject* new_child);
   void AddChild(LayoutObject* new_child, LayoutObject* before_child) override;
   void RemoveChild(LayoutObject* child) override;
   void StyleDidChange(StyleDifference diff,
                       const ComputedStyle* old_style) override;
 
   std::optional<GridPlacementData> cached_placement_data_;
-  Member<const SubgridMinMaxSizesCache> cached_min_max_sizes_;
+  Member<const SubgridMinMaxSizesCache> cached_subgrid_min_max_sizes_;
 };
 
 // wtf/casting.h helper.

@@ -11,6 +11,7 @@
 #include "third_party/blink/renderer/platform/graphics/scrollbar_theme_settings.h"
 #include "third_party/blink/renderer/platform/theme/web_theme_engine_conversions.h"
 #include "third_party/blink/renderer/platform/web_test_support.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 #include "ui/color/color_provider_utils.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/native_theme/native_theme.h"
@@ -171,9 +172,6 @@ static ui::NativeTheme::ExtraParams GetNativeThemeExtraParams(
       ui::NativeTheme::ScrollbarThumbExtraParams native_scrollbar_thumb;
       const auto& scrollbar_thumb =
           absl::get<WebThemeEngine::ScrollbarThumbExtraParams>(*extra_params);
-      native_scrollbar_thumb.scrollbar_theme =
-          NativeThemeScrollbarOverlayColorTheme(
-              scrollbar_thumb.scrollbar_theme);
       native_scrollbar_thumb.thumb_color = scrollbar_thumb.thumb_color;
       native_scrollbar_thumb.is_thumb_minimal_mode =
           scrollbar_thumb.is_thumb_minimal_mode;
@@ -252,6 +250,26 @@ void WebThemeEngineDefault::Paint(
       in_forced_colors, accent_color);
 }
 
+gfx::Insets WebThemeEngineDefault::GetScrollbarSolidColorThumbInsets(
+    Part part) const {
+  return ui::NativeTheme::GetInstanceForWeb()
+      ->GetScrollbarSolidColorThumbInsets(NativeThemePart(part));
+}
+
+SkColor4f WebThemeEngineDefault::GetScrollbarThumbColor(
+    WebThemeEngine::State state,
+    const WebThemeEngine::ExtraParams* extra_params,
+    const ui::ColorProvider* color_provider) const {
+  const ui::NativeTheme::ScrollbarThumbExtraParams native_theme_extra_params =
+      absl::get<ui::NativeTheme::ScrollbarThumbExtraParams>(
+          GetNativeThemeExtraParams(
+              /*part=*/WebThemeEngine::kPartScrollbarVerticalThumb, state,
+              extra_params));
+
+  return ui::NativeTheme::GetInstanceForWeb()->GetScrollbarThumbColor(
+      *color_provider, NativeThemeState(state), native_theme_extra_params);
+}
+
 void WebThemeEngineDefault::GetOverlayScrollbarStyle(ScrollbarStyle* style) {
   if (IsFluentOverlayScrollbarEnabled()) {
     style->fade_out_delay = ui::kFluentOverlayScrollbarFadeDelay;
@@ -279,6 +297,10 @@ gfx::Size WebThemeEngineDefault::NinePatchCanvasSize(Part part) const {
 gfx::Rect WebThemeEngineDefault::NinePatchAperture(Part part) const {
   return ui::NativeTheme::GetInstanceForWeb()->GetNinePatchAperture(
       NativeThemePart(part));
+}
+
+bool WebThemeEngineDefault::IsFluentScrollbarEnabled() const {
+  return ui::IsFluentScrollbarEnabled();
 }
 
 bool WebThemeEngineDefault::IsFluentOverlayScrollbarEnabled() const {

@@ -19,6 +19,10 @@ namespace password_manager {
 
 class BuiltInBackendToAndroidBackendMigrator;
 
+// Exposed here for testing.
+inline constexpr base::TimeDelta kLocalPasswordsMigrationToAndroidBackendDelay =
+    base::Seconds(5);
+
 // This backend migrates local passwords from `built_in_backend` to
 // `android_backend`. Migration is scheduled after InitBackend() call. While
 // migration is ongoing password saving is suppressed. Before migration is
@@ -65,15 +69,18 @@ class PasswordStoreBackendMigrationDecorator : public PasswordStoreBackend {
                      PasswordChangesOrErrorReply callback) override;
   void UpdateLoginAsync(const PasswordForm& form,
                         PasswordChangesOrErrorReply callback) override;
-  void RemoveLoginAsync(const PasswordForm& form,
+  void RemoveLoginAsync(const base::Location& location,
+                        const PasswordForm& form,
                         PasswordChangesOrErrorReply callback) override;
   void RemoveLoginsByURLAndTimeAsync(
+      const base::Location& location,
       const base::RepeatingCallback<bool(const GURL&)>& url_filter,
       base::Time delete_begin,
       base::Time delete_end,
       base::OnceCallback<void(bool)> sync_completion,
       PasswordChangesOrErrorReply callback) override;
   void RemoveLoginsCreatedBetweenAsync(
+      const base::Location& location,
       base::Time delete_begin,
       base::Time delete_end,
       PasswordChangesOrErrorReply callback) override;
@@ -81,7 +88,7 @@ class PasswordStoreBackendMigrationDecorator : public PasswordStoreBackend {
       const base::RepeatingCallback<bool(const GURL&)>& origin_filter,
       base::OnceClosure completion) override;
   SmartBubbleStatsStore* GetSmartBubbleStatsStore() override;
-  std::unique_ptr<syncer::ModelTypeControllerDelegate>
+  std::unique_ptr<syncer::DataTypeControllerDelegate>
   CreateSyncControllerDelegate() override;
   void OnSyncServiceInitialized(syncer::SyncService* sync_service) override;
   void RecordAddLoginAsyncCalledFromTheStore() override;

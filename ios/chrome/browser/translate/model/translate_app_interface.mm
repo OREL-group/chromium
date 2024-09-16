@@ -15,7 +15,7 @@
 #import "components/translate/core/common/language_detection_details.h"
 #import "components/translate/core/common/translate_switches.h"
 #import "components/translate/core/common/translate_util.h"
-#import "ios/chrome/browser/shared/model/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/translate/model/chrome_ios_translate_client.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
 #import "ios/chrome/test/app/tab_test_util.h"
@@ -26,8 +26,8 @@
 namespace {
 
 // Simulates a given network connection type for tests.
-// TODO(crbug.com/938598): Refactor this and similar net::NetworkChangeNotifier
-// subclasses for testing into a separate file.
+// TODO(crbug.com/41445136): Refactor this and similar
+// net::NetworkChangeNotifier subclasses for testing into a separate file.
 class FakeNetworkChangeNotifier : public net::NetworkChangeNotifier {
  public:
   FakeNetworkChangeNotifier(

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_FONTS_UTF16_RAGEL_ITERATOR_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_FONTS_UTF16_RAGEL_ITERATOR_H_
 
@@ -24,7 +29,7 @@ namespace blink {
 // third-party/emoji-segmenter. The dereferenced character category is cached
 // since Ragel dereferences multiple times without moving the iterator's cursor.
 class PLATFORM_EXPORT UTF16RagelIterator {
-  DISALLOW_NEW();
+  STACK_ALLOCATED();
 
  public:
   UTF16RagelIterator()

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "content/browser/devtools/devtools_http_handler.h"
 
 #include <stddef.h>
@@ -420,6 +425,8 @@ static std::string GetMimeType(const std::string& filename) {
                             base::CompareCase::INSENSITIVE_ASCII)) {
     return "text/css";
   } else if (base::EndsWith(filename, ".js",
+                            base::CompareCase::INSENSITIVE_ASCII) ||
+             base::EndsWith(filename, ".mjs",
                             base::CompareCase::INSENSITIVE_ASCII)) {
     return "text/javascript";
   } else if (base::EndsWith(filename, ".png",
@@ -696,16 +703,15 @@ void DevToolsHttpHandler::OnJsonRequest(
 
 void DevToolsHttpHandler::DecompressAndSendJsonProtocol(int connection_id) {
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA) || BUILDFLAG(IS_IOS)
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 #else
   scoped_refptr<base::RefCountedMemory> bytes =
       GetContentClient()->GetDataResourceBytes(kCcompressedProtocolJSON);
   CHECK(bytes) << "Could not load protocol";
-  std::string json_protocol(reinterpret_cast<const char*>(bytes->front()),
-                            bytes->size());
 
   net::HttpServerResponseInfo response(net::HTTP_OK);
-  response.SetBody(json_protocol, "application/json; charset=UTF-8");
+  response.SetBody(std::string(base::as_string_view(*bytes)),
+                   "application/json; charset=UTF-8");
 
   thread_->task_runner()->PostTask(
       FROM_HERE, base::BindOnce(&ServerWrapper::SendResponse,

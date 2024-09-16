@@ -174,9 +174,10 @@ void LargestContentfulPaintCalculator::UpdateWebExposedLargestContentfulText(
     return;
   Node* text_node = largest_text.node_;
   largest_reported_size_ = largest_text.recorded_size;
-  // Do not expose element attribution from shadow trees.
+  // Do not expose element attribution from shadow trees. Also note that @page
+  // margin boxes do not create Element nodes.
   Element* text_element =
-      text_node->IsInShadowTree() ? nullptr : To<Element>(text_node);
+      text_node->IsInShadowTree() ? nullptr : DynamicTo<Element>(text_node);
   const AtomicString& text_id =
       text_element ? text_element->GetIdAttribute() : AtomicString();
   // Always use paint time as start time for text LCP candidate.
@@ -235,10 +236,6 @@ bool LargestContentfulPaintCalculator::NotifyMetricsIfLargestImagePaintChanged(
   latest_lcp_details_.largest_contentful_paint_type =
       blink::LargestContentfulPaintType::kNone;
   if (image_record) {
-    if (image_record->is_loaded_after_mouseover) {
-      latest_lcp_details_.largest_contentful_paint_type |=
-          blink::LargestContentfulPaintType::kAfterMouseover;
-    }
     // TODO(yoav): Once we'd enable the kLCPAnimatedImagesReporting flag by
     // default, we'd be able to use the value of
     // largest_image_record->first_animated_frame_time directly.
@@ -287,10 +284,6 @@ bool LargestContentfulPaintCalculator::NotifyMetricsIfLargestImagePaintChanged(
           image_record->media_timing->LoadStart();
       latest_lcp_details_.resource_load_timings.load_end =
           image_record->media_timing->LoadEnd();
-      latest_lcp_details_.is_loaded_from_memory_cache =
-          image_record->media_timing->IsLoadedFromMemoryCache();
-      latest_lcp_details_.is_preloaded_with_early_hints =
-          image_record->media_timing->IsPreloadedWithEarlyHints();
     }
   }
   latest_lcp_details_.largest_image_paint_time = image_paint_time;

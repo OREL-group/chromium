@@ -11,6 +11,7 @@
 #import "base/strings/sys_string_conversions.h"
 #import "base/test/metrics/histogram_tester.h"
 #import "base/test/mock_callback.h"
+#import "base/test/scoped_feature_list.h"
 #import "base/test/task_environment.h"
 #import "components/prefs/pref_service.h"
 #import "components/signin/public/base/signin_metrics.h"
@@ -19,10 +20,11 @@
 #import "ios/chrome/browser/policy/model/policy_util.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
 #import "ios/chrome/browser/shared/model/browser/test/test_browser.h"
-#import "ios/chrome/browser/shared/model/browser_state/test_chrome_browser_state.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
+#import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
 #import "ios/chrome/browser/shared/public/commands/snackbar_commands.h"
+#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/signin/model/authentication_service.h"
 #import "ios/chrome/browser/signin/model/authentication_service_factory.h"
 #import "ios/chrome/browser/signin/model/fake_authentication_service_delegate.h"
@@ -61,7 +63,7 @@ class SignoutActionSheetCoordinatorTest : public PlatformTest {
         AuthenticationServiceFactory::GetDefaultFactory());
     builder.AddTestingFactory(SyncServiceFactory::GetInstance(),
                               base::BindRepeating(&CreateMockSyncService));
-    browser_state_ = builder.Build();
+    browser_state_ = std::move(builder).Build();
     AuthenticationServiceFactory::CreateAndInitializeForBrowserState(
         browser_state_.get(),
         std::make_unique<FakeAuthenticationServiceDelegate>());
@@ -102,7 +104,9 @@ class SignoutActionSheetCoordinatorTest : public PlatformTest {
     return signout_coordinator_;
   }
 
-  PrefService* GetLocalState() { return scoped_testing_local_state_.Get(); }
+  PrefService* GetLocalState() {
+    return GetApplicationContext()->GetLocalState();
+  }
 
   PrefService* GetPrefs() { return browser_state_->GetPrefs(); }
 
@@ -111,6 +115,8 @@ class SignoutActionSheetCoordinatorTest : public PlatformTest {
   base::test::TaskEnvironment task_environment_;
 
   IOSChromeScopedTestingLocalState scoped_testing_local_state_;
+
+  base::test::ScopedFeatureList scoped_feature_list_;
 
   SignoutActionSheetCoordinator* signout_coordinator_ = nullptr;
   ScopedKeyWindow scoped_key_window_;
@@ -175,9 +181,9 @@ TEST_F(SignoutActionSheetCoordinatorTest,
   // Mock returning no unsynced datatype.
   ON_CALL(*sync_service_mock_, GetTypesWithUnsyncedData)
       .WillByDefault(
-          [](syncer::ModelTypeSet requested_types,
-             base::OnceCallback<void(syncer::ModelTypeSet)> callback) {
-            std::move(callback).Run(syncer::ModelTypeSet());
+          [](syncer::DataTypeSet requested_types,
+             base::OnceCallback<void(syncer::DataTypeSet)> callback) {
+            std::move(callback).Run(syncer::DataTypeSet());
           });
   EXPECT_CALL(completion_callback_, Run);
 
@@ -197,9 +203,9 @@ TEST_F(SignoutActionSheetCoordinatorTest, ShouldShowActionSheetIfUnsyncedData) {
   // Mock returning unsynced datatypes.
   ON_CALL(*sync_service_mock_, GetTypesWithUnsyncedData)
       .WillByDefault(
-          [](syncer::ModelTypeSet requested_types,
-             base::OnceCallback<void(syncer::ModelTypeSet)> callback) {
-            constexpr syncer::ModelTypeSet kUnsyncedTypes = {
+          [](syncer::DataTypeSet requested_types,
+             base::OnceCallback<void(syncer::DataTypeSet)> callback) {
+            constexpr syncer::DataTypeSet kUnsyncedTypes = {
                 syncer::BOOKMARKS, syncer::PREFERENCES};
             std::move(callback).Run(
                 base::Intersection(kUnsyncedTypes, requested_types));
@@ -212,12 +218,12 @@ TEST_F(SignoutActionSheetCoordinatorTest, ShouldShowActionSheetIfUnsyncedData) {
 
   histogram_tester.ExpectTotalCount("Sync.UnsyncedDataOnSignout2", 1u);
   histogram_tester.ExpectBucketCount("Sync.UnsyncedDataOnSignout2",
-                                     syncer::ModelTypeForHistograms::kBookmarks,
+                                     syncer::DataTypeForHistograms::kBookmarks,
                                      1u);
   // Only a few "interesting" data types are recorded. PREFERENCES is not.
   histogram_tester.ExpectBucketCount(
       "Sync.UnsyncedDataOnSignout2",
-      syncer::ModelTypeForHistograms::kPreferences, 0u);
+      syncer::DataTypeForHistograms::kPreferences, 0u);
 
   histogram_tester.ExpectTotalCount("Sync.SignoutWithUnsyncedData", 0u);
 }
@@ -237,9 +243,9 @@ TEST_F(SignoutActionSheetCoordinatorTest,
   EXPECT_CALL(*sync_service_mock_, GetTypesWithUnsyncedData)
       .Times(testing::AtLeast(1))
       .WillRepeatedly(
-          [](syncer::ModelTypeSet requested_types,
-             base::OnceCallback<void(syncer::ModelTypeSet)> callback) {
-            constexpr syncer::ModelTypeSet kUnsyncedTypes = {
+          [](syncer::DataTypeSet requested_types,
+             base::OnceCallback<void(syncer::DataTypeSet)> callback) {
+            constexpr syncer::DataTypeSet kUnsyncedTypes = {
                 syncer::BOOKMARKS, syncer::PREFERENCES};
             std::move(callback).Run(
                 base::Intersection(kUnsyncedTypes, requested_types));
@@ -280,5 +286,22 @@ TEST_F(SignoutActionSheetCoordinatorTest,
   [signout_coordinator_ start];
 }
 
-// TODO(crbug.com/1496731): Add test for recording signout outcome upon warning
+TEST_F(SignoutActionSheetCoordinatorTest,
+       ShouldShowActionSheetForManagedUserWithClearDataonSignoutFeature) {
+  scoped_feature_list_.InitWithFeatures(
+      {kClearDeviceDataOnSignOutForManagedUsers}, {});
+
+  // Sign in with a *managed* account.
+  authentication_service()->SignIn(
+      managed_identity_, signin_metrics::AccessPoint::ACCESS_POINT_UNKNOWN);
+  ASSERT_TRUE(authentication_service()->HasPrimaryIdentityManaged(
+      signin::ConsentLevel::kSignin));
+
+  CreateCoordinator();
+
+  [signout_coordinator_ start];
+  ASSERT_NE(nil, signout_coordinator_.title);
+}
+
+// TODO(crbug.com/40075765): Add test for recording signout outcome upon warning
 // dialog for unsynced data (i.e. for Sync.SignoutWithUnsyncedData).

@@ -118,10 +118,10 @@ Example:
   ```
 
 ### Accessing Bots
- TODO(crbug.com/1327486): Document how to remote into bots for debugging.
+ TODO(crbug.com/40841197): Document how to remote into bots for debugging.
 
 ### Updating the Checked-In Version of the Updater
-An older version of the updater is checked in under `//third_party/updater`.
+An older version of the updater is checked in under `//third_party/updater/*/cipd`.
 This version of the updater is used in some integration tests. The updater is
 pulled from
 [CIPD](https://chrome-infra-packages.appspot.com/p/chromium/third_party/updater)
@@ -199,8 +199,6 @@ To get started on Reclient, and for more information on how to use it, see
 or [Google-internal documentation](go/building-chrome), if you are a Google
 employee.
 
-Goma can't be used anymore as of March, 2024.
-
 #### More release-like builds
 
 Chromium projects build in debug mode by default. Release builds (also called
@@ -222,6 +220,25 @@ include_branded_entitlements=false
 Updater branding affects the path the updater installs itself to, among other
 things. Differently-branded copies of Chromium Updater are intended to coexist
 on a machine, operating independently from each other.
+
+### Build output
+The build generates the following main files:
+
+  - `updater.exe` (Windows) / `ChromiumUpdater.app` (macOS): The actual updater
+    application.
+  - `UpdaterSetup.exe` (Windows): The self-extracting "metainstaller", suitable
+    for tagging, signing, and further distribution.
+  - `UpdaterSigning`: A collection of scripts and tools used to sign the
+    updater.
+  - `qualification_app` (.exe on Windows): A simple app run by each version of
+    the updater prior to taking over as the active updater. Updaters will
+    download and run whatever version is actually released (not what you've
+    built), and the qualification app can be version skewed with the updater.
+  - `ChromiumUpdaterUtil` (macOS): A utility program for debugging the updater.
+  - `chrome/updater/.install` (macOS): A Keystone-compatible install script that
+    drives the updater's installation during update.
+  - `updater.zip`: A zip file containing all of the above, for uploading to the
+    archive / signing infrastructure.
 
 ### Cleaning the build output
 Running `ninja` with `t clean` cleans the build out directory. For example:
@@ -252,9 +269,6 @@ providing to assorted `gn`, `ninja`, and `autoninja` commands. `updater.zip`
 contains copies of the "final" outputs created by the build. `UpdaterSetup` is
 probably what you want for installing the updater you have built.
 
-TODO(crbug.com/1448700): list the relevant/interesting outputs here and what
-they are, why they're relevant/interesting, etc.
-
 ## Code Coverage
 Gerrit now down-votes the changes that do not have enough coverage. And it's
 nice to have good coverage regardless. To improve code-coverage, we need to
@@ -274,14 +288,14 @@ We can quickly get OS-specific coverage result with the local changes:
 
 * macOS/Linux
 ```
-gn gen out/coverage --args="use_clang_coverage=true is_component_build=false is_chrome_branded=true is_debug=true use_debug_fission=true use_goma=true symbol_level=2"
+gn gen out/coverage --args="use_clang_coverage=true is_component_build=false is_chrome_branded=true is_debug=true use_debug_fission=true use_remoteexec=true symbol_level=2"
 
 vpython3 tools/code_coverage/coverage.py  updater_tests -b out/coverage -o out/report -c 'out/coverage/updater_tests' -f chrome/updater
 ```
 
 * Windows
 ```
-gn gen out\coverage --args="use_clang_coverage=true is_component_build=false is_chrome_branded=true is_debug=true use_debug_fission=true use_goma=true symbol_level=2"
+gn gen out\coverage --args="use_clang_coverage=true is_component_build=false is_chrome_branded=true is_debug=true use_debug_fission=true use_remoteexec=true symbol_level=2"
 
 vpython3 tools\code_coverage\coverage.py updater_tests -b out\coverage -o out\report -c out\coverage\updater_tests.exe  -f chrome/updater
 ```
@@ -431,16 +445,37 @@ in chrome/updater/win/ui/resources/create_metainstaller_string_rc.py.
 ```
 * Add tests for the new string in the UI if applicable.
 * Capture a screenshot of the UI with the new string.
-* Save the screenshot as chrome\app\chromium_strings_grd\IDS_NO_NETWORK_PRESENT_ERROR.png and chrome\app\google_chrome_strings_grd\IDS_NO_NETWORK_PRESENT_ERROR.png.
+* Save the screenshot as chrome\app\chromium_strings_grd\IDS_NO_NETWORK_PRESENT_ERROR.png
+and chrome\app\google_chrome_strings_grd\IDS_NO_NETWORK_PRESENT_ERROR.png.
 * Run `python3 tools/translation/upload_screenshots.py`
-* This will generate chrome\app\chromium_strings_grd\IDS_NO_NETWORK_PRESENT_ERROR.png.sha1.
-* Add this file to your CL. Do not add the actual image to your CL.
-* Upload the image to the crbug and delete it from your local enlistment.
+* This will generate chrome\app\chromium_strings_grd\IDS_NO_NETWORK_PRESENT_ERROR.png.sha1
+and chrome\app\google_chrome_strings_grd\IDS_NO_NETWORK_PRESENT_ERROR.png.sha1.
+* Add these `.sha1` files to your CL. Do not add the actual `.png` images to
+your CL.
+* Once the images are successfully uploaded via `upload_screenshots.py`, delete
+them from your local enlistment.
 
-If tools/translation/upload_screenshots.py encounters the following error:
-`ServiceException: 401 Anonymous caller does not have storage.objects.list access to the Google Cloud Storage bucket. Permission 'storage.objects.list' denied on resource (or it may not exist).`
+However, if `upload_screenshots.py` encounters the following error, then the
+screenshots have to be manually uploaded to
+https://storage.cloud.google.com/chromium-translation-screenshots/.
 
-see crbug.com/1491876 for a resolution or workaround.
+```
+ServiceException: 401 Anonymous caller does not have storage.objects.list
+access to the Google Cloud Storage bucket. Permission 'storage.objects.list'
+denied on resource (or it may not exist).
+```
+
+To manually upload each screenshot:
+* Get the `sha1` generated from the tool. So for example, for
+chrome/app/chromium_strings_grd/IDS_UNKNOWN_APPLICATION.png, the `sha1` is
+`085c88707d854787e0c1310d93b519e93d906592`.
+* Rename the `.png` file to the `sha1` hash name. So for example, rename
+`chrome/app/chromium_strings_grd/IDS_UNKNOWN_APPLICATION.png` to
+`chrome/app/chromium_strings_grd/085c88707d854787e0c1310d93b519e93d906592`.
+* upload
+`chrome/app/chromium_strings_grd/085c88707d854787e0c1310d93b519e93d906592` to
+https://storage.cloud.google.com/chromium-translation-screenshots/.
+* Edit the `content-type` from `application/octet-stream` to `image/png`.
 
 ## Troubleshooting
 
@@ -457,8 +492,6 @@ see crbug.com/1491876 for a resolution or workaround.
 * **Dependencies are a fast-moving target.** Remember to run `gclient sync -D`
   after every pull from `origin/main` _and_ every branch change. If you aren't
   sure whether you ran it, just run it, it's fast if you don't need it.
-* **Is the Goma client ready?** If your build is failing quickly with a
-  bunch of errors related to Goma, run `goma_ctl ensure_start` and try again.
 * **Symbols too big?** If your build is failing during linking, check your
   `gn args` to verify that `symbol_level=1` (or `0`) is present. If it's not,
   you're running into a known issue where the default symbol level, `2`,

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/base/video_codec_string_parsers.h"
 
 #include <string_view>
@@ -837,7 +842,7 @@ std::optional<VideoType> ParseVVCCodecId(std::string_view codec_id) {
     return std::nullopt;
   }
 
-  // TODO(crbug.com/1417910): Add VideoCodec::kVVC here when its ready.
+  // TODO(crbug.com/40257449): Add VideoCodec::kVVC here when its ready.
   VideoType result = {
       .codec = VideoCodec::kUnknown,
       .profile = out_profile,

@@ -34,6 +34,7 @@
 #include "base/time/time.h"
 #include "mojo/public/cpp/base/big_buffer.h"
 #include "net/base/schemeful_site.h"
+#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "third_party/blink/public/mojom/loader/code_cache.mojom-blink-forward.h"
 #include "third_party/blink/public/platform/scheduler/web_scoped_virtual_time_pauser.h"
 #include "third_party/blink/renderer/platform/allow_discouraged_type.h"
@@ -69,7 +70,7 @@ class Clock;
 
 namespace blink {
 
-class BackgroundResponseProcessor;
+class BackgroundResponseProcessorFactory;
 class BlobDataHandle;
 class FetchParameters;
 class ResourceFinishObserver;
@@ -159,7 +160,11 @@ class PLATFORM_EXPORT Resource : public GarbageCollected<Resource>,
   void Trace(Visitor*) const override;
 
   virtual WTF::TextEncoding Encoding() const { return WTF::TextEncoding(); }
-  virtual void AppendData(const char*, size_t);
+  // If a BackgroundResponseProcessor consumed the body data on the background
+  // thread, this method is called with a SegmentedBuffer data. Otherwise, it is
+  // called with a span<const char> data several times.
+  virtual void AppendData(
+      absl::variant<SegmentedBuffer, base::span<const char>>);
   virtual void FinishAsError(const ResourceError&,
                              base::SingleThreadTaskRunner*);
 
@@ -193,6 +198,8 @@ class PLATFORM_EXPORT Resource : public GarbageCollected<Resource>,
   ResourceLoaderOptions& MutableOptions() { return options_; }
 
   void DidChangePriority(ResourceLoadPriority, int intra_priority_value);
+
+  void UpdateResourceWidth(const AtomicString& resource_width);
 
   // Returns two priorities:
   // - `first` is the priority with the fix of https://crbug.com/1369823.
@@ -438,12 +445,13 @@ class PLATFORM_EXPORT Resource : public GarbageCollected<Resource>,
 
   bool IsPreloadedByEarlyHints() const { return is_preloaded_by_early_hints_; }
 
-  void SetIsLoadedFromMemoryCache() { is_loaded_from_memory_cache_ = true; }
+  virtual std::unique_ptr<BackgroundResponseProcessorFactory>
+  MaybeCreateBackgroundResponseProcessorFactory();
 
-  bool IsLoadedFromMemoryCache() { return is_loaded_from_memory_cache_; }
-
-  virtual scoped_refptr<BackgroundResponseProcessor>
-  MaybeCreateBackgroundResponseProcessor();
+  virtual bool HasClientsOrObservers() const {
+    return !clients_.empty() || !clients_awaiting_callback_.empty() ||
+           !finished_clients_.empty() || !finish_observers_.empty();
+  }
 
  protected:
   Resource(const ResourceRequestHead&,
@@ -454,11 +462,6 @@ class PLATFORM_EXPORT Resource : public GarbageCollected<Resource>,
   virtual void NotifyFinished();
 
   void MarkClientFinished(ResourceClient*);
-
-  virtual bool HasClientsOrObservers() const {
-    return !clients_.empty() || !clients_awaiting_callback_.empty() ||
-           !finished_clients_.empty() || !finish_observers_.empty();
-  }
   virtual void DestroyDecodedDataForFailedRevalidation() {}
 
   void SetEncodedSize(size_t);
@@ -534,6 +537,9 @@ class PLATFORM_EXPORT Resource : public GarbageCollected<Resource>,
   // upset the MemoryCache's LRU.
   void UpdateMemoryCacheLastAccessedTime();
 
+  void AppendDataImpl(SegmentedBuffer&&);
+  void AppendDataImpl(base::span<const char>);
+
   ResourceType type_;
   ResourceStatus status_;
 
@@ -554,7 +560,6 @@ class PLATFORM_EXPORT Resource : public GarbageCollected<Resource>,
   bool is_unused_preload_ = false;
   bool stale_revalidation_started_ = false;
   bool is_preloaded_by_early_hints_ = false;
-  bool is_loaded_from_memory_cache_ = false;
 
   enum class RevalidationStatus {
     kNoRevalidatingOrFailed,  // not in revalidate procedure or

@@ -15,15 +15,17 @@
 #include "base/timer/timer.h"
 #include "chrome/browser/ui/autofill/autofill_popup_controller.h"
 #include "chrome/browser/ui/autofill/autofill_popup_hide_helper.h"
-#include "chrome/browser/ui/autofill/next_idle_time_ticks.h"
+#include "chrome/browser/ui/autofill/next_idle_barrier.h"
 #include "chrome/browser/ui/autofill/popup_controller_common.h"
-#include "components/autofill/core/browser/ui/popup_hiding_reasons.h"
+#include "components/autofill/core/browser/ui/popup_interaction.h"
+#include "components/autofill/core/browser/ui/popup_open_enums.h"
+#include "components/autofill/core/browser/ui/suggestion.h"
+#include "components/autofill/core/browser/ui/suggestion_hiding_reason.h"
 #include "components/autofill/core/common/aliases.h"
 #include "content/public/browser/render_widget_host.h"
 #include "third_party/abseil-cpp/absl/types/variant.h"
 
 namespace content {
-struct NativeWebKeyboardEvent;
 class WebContents;
 }  // namespace content
 
@@ -37,7 +39,7 @@ class AXPlatformNode;
 
 namespace autofill {
 
-class AutofillPopupDelegate;
+class AutofillSuggestionDelegate;
 class AutofillPopupView;
 
 // Sub-popups and their parent popups are connected by providing children
@@ -71,49 +73,53 @@ class AutofillPopupControllerImpl
   AutofillPopupControllerImpl& operator=(const AutofillPopupControllerImpl&) =
       delete;
 
-  // Handles a key press event and returns whether the event should be swallowed
-  // (meaning that no other handler, in not particular the default handler, can
-  // process it).
-  bool HandleKeyPressEvent(const content::NativeWebKeyboardEvent& event);
-
   // AutofillSuggestionController:
   void OnSuggestionsChanged() override;
-  void SelectSuggestion(int index) override;
-  void UnselectSuggestion() override;
   void AcceptSuggestion(int index) override;
   bool RemoveSuggestion(
       int list_index,
       AutofillMetrics::SingleEntryRemovalMethod removal_method) override;
   int GetLineCount() const override;
-  std::vector<Suggestion> GetSuggestions() const override;
+  const std::vector<Suggestion>& GetSuggestions() const override;
   const Suggestion& GetSuggestionAt(int row) const override;
   FillingProduct GetMainFillingProduct() const override;
   std::optional<AutofillClient::PopupScreenLocation> GetPopupScreenLocation()
       const override;
-  void Hide(PopupHidingReason reason) override;
+  void Hide(SuggestionHidingReason reason) override;
   void ViewDestroyed() override;
-  void Show(std::vector<Suggestion> suggestions,
+  void Show(UiSessionId ui_session_id,
+            std::vector<Suggestion> suggestions,
             AutofillSuggestionTriggerSource trigger_source,
             AutoselectFirstSuggestion autoselect_first_suggestion) override;
-  void DisableThresholdForTesting(bool disable_threshold) override;
-  void KeepPopupOpenForTesting() override;
+  std::optional<UiSessionId> GetUiSessionId() const override;
+  void SetKeepPopupOpenForTesting(bool keep_popup_open_for_testing) override;
   void UpdateDataListValues(base::span<const SelectOption> options) override;
   void PinView() override;
-  void SetViewForTesting(base::WeakPtr<AutofillPopupView> view) override;
+  bool IsViewVisibilityAcceptingThresholdEnabled() const override;
 
   // AutofillPopupController:
+  void SelectSuggestion(int index) override;
+  void UnselectSuggestion() override;
   base::WeakPtr<AutofillSuggestionController> OpenSubPopup(
       const gfx::RectF& anchor_bounds,
       std::vector<Suggestion> suggestions,
       AutoselectFirstSuggestion autoselect_first_suggestion) override;
   void HideSubPopup() override;
   bool ShouldIgnoreMouseObservedOutsideItemBoundsCheck() const override;
-  void PerformButtonActionForSuggestion(int index) override;
+  void PerformButtonActionForSuggestion(
+      int index,
+      const SuggestionButtonAction& button_action) override;
+  const std::vector<SuggestionFilterMatch>& GetSuggestionFilterMatches()
+      const override;
+  void SetFilter(std::optional<SuggestionFilter> filter) override;
+  bool HasFilteredOutSuggestions() const override;
+  bool HandleKeyPressEvent(const input::NativeWebKeyboardEvent& event) override;
+  void OnPopupPainted() override;
   base::WeakPtr<AutofillPopupController> GetWeakPtr() override;
 
  protected:
   AutofillPopupControllerImpl(
-      base::WeakPtr<AutofillPopupDelegate> delegate,
+      base::WeakPtr<AutofillSuggestionDelegate> delegate,
       content::WebContents* web_contents,
       PopupControllerCommon controller_common,
       int32_t form_control_ax_id,
@@ -124,6 +130,7 @@ class AutofillPopupControllerImpl
   gfx::NativeView container_view() const override;
   content::WebContents* GetWebContents() const override;
   const gfx::RectF& element_bounds() const override;
+  PopupAnchorType anchor_type() const override;
   base::i18n::TextDirection GetElementTextDirection() const override;
 
   // Returns true if the popup still has non-options entries to show the user.
@@ -146,6 +153,7 @@ class AutofillPopupControllerImpl
   virtual void HideViewAndDie();
 
  private:
+  friend class AutofillPopupControllerImplTestApi;
   friend class AutofillSuggestionController;
 
   // Clear the internal state of the controller. This is needed to ensure that
@@ -160,10 +168,18 @@ class AutofillPopupControllerImpl
   // Returns `true` if this popup has no parent, and `false` for sub-popups.
   bool IsRootPopup() const;
 
+  // Notifies the view that the suggestions provided by the controller changed.
+  // If `prefer_prev_arrow_side` is `true`, the view takes prev arrow side as
+  // the first preferred when recalculating the popup position.
+  void OnSuggestionsChanged(bool prefer_prev_arrow_side);
+
+  void UpdateFilteredSuggestions();
+
+  UiSessionId ui_session_id_;
   base::WeakPtr<content::WebContents> web_contents_;
   PopupControllerCommon controller_common_;
   base::WeakPtr<AutofillPopupView> view_;
-  base::WeakPtr<AutofillPopupDelegate> delegate_;
+  base::WeakPtr<AutofillSuggestionDelegate> delegate_;
 
   // A helper class for capturing key press events associated with a
   // `content::RenderFrameHost`.
@@ -181,10 +197,15 @@ class AutofillPopupControllerImpl
     content::RenderWidgetHost::KeyPressEventCallback handler_;
   } key_press_observer_{this};
 
-  // The time the view was shown the last time. It is used to safeguard against
-  // accepting suggestions too quickly after a the popup view was shown (see the
-  // `show_threshold` parameter of `AcceptSuggestion`).
-  NextIdleTimeTicks time_view_shown_;
+  // Whether a sufficient amount of time has passed since showing or updating
+  // suggestions. It is used to safeguard against accepting suggestions too
+  // quickly after a the popup view was shown (see the `show_threshold`
+  // parameter of `AcceptSuggestion`).
+  std::optional<NextIdleBarrier> barrier_for_accepting_;
+
+  // The time of the latest successful (the view is created and shown) `Show()`
+  // call.
+  std::optional<base::TimeTicks> shown_time_;
 
   // An override to suppress minimum show thresholds. It should only be set
   // during tests that cannot mock time (e.g. the autofill interactive
@@ -195,8 +216,12 @@ class AutofillPopupControllerImpl
   // the user interacts with native UI.
   bool is_view_pinned_ = false;
 
-  // The current Autofill query values.
-  std::vector<Suggestion> suggestions_;
+  // If `filter_` set, it contains suggestions from `non_filtered_suggestions_`
+  // that matches the filter.  Otherwise, the list is empty
+  std::vector<Suggestion> filtered_suggestions_;
+
+  // Original list of suggestions provided via `SetSuggestions()`.
+  std::vector<Suggestion> non_filtered_suggestions_;
 
   // The trigger source of the `suggestions_`.
   AutofillSuggestionTriggerSource trigger_source_ =
@@ -225,6 +250,24 @@ class AutofillPopupControllerImpl
 
   // This is a helper which detects events that should hide the popup.
   std::optional<AutofillPopupHideHelper> popup_hide_helper_;
+
+  // The filter narrows down the list of suggestions from
+  // `non_filtered_suggestions_`. This filtered list is cached in
+  // `filtered_suggestions_` and becomes the current data used by clients
+  // through the provided API.
+  std::optional<SuggestionFilter> filter_;
+
+  // Cached matches, one per suggestion in `filtered_suggestions_` if
+  // the `filter_` is set, otherwise it is an empty vector.
+  std::vector<SuggestionFilterMatch> suggestion_filter_matches_;
+
+  // The `FillingProduct` that matches the suggestions shown in the popup.
+  // The first `IsStandaloneSuggestionType()` is used to define what the
+  // `FillingProduct` is.
+  FillingProduct suggestions_filling_product_ = FillingProduct::kNone;
+
+  // Whether any suggestion has been selected.
+  bool any_suggestion_selected_ = false;
 
   // AutofillPopupControllerImpl deletes itself. To simplify memory management,
   // we delete the object asynchronously.

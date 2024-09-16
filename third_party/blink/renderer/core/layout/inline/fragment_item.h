@@ -11,7 +11,8 @@
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/layout/geometry/logical_offset.h"
 #include "third_party/blink/renderer/core/layout/ink_overflow.h"
-#include "third_party/blink/renderer/core/layout/inline/line_box_fragment_builder.h"
+#include "third_party/blink/renderer/core/layout/inline/inline_break_token.h"
+#include "third_party/blink/renderer/core/layout/inline/physical_line_box_fragment.h"
 #include "third_party/blink/renderer/core/layout/inline/text_item_type.h"
 #include "third_party/blink/renderer/core/layout/inline/text_offset_range.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
@@ -23,8 +24,8 @@
 namespace blink {
 
 class FragmentItems;
-class InlineBreakToken;
 class InlinePaintContext;
+class PhysicalBoxFragment;
 struct LogicalLineItem;
 struct TextFragmentPaintInfo;
 
@@ -259,7 +260,7 @@ class CORE_EXPORT FragmentItem final {
       line_.descendants_count = count;
       return;
     }
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
   }
 
   // Returns |PhysicalBoxFragment| if one is associated with this item.
@@ -307,7 +308,7 @@ class CORE_EXPORT FragmentItem final {
   LineBoxType GetLineBoxType() const {
     if (Type() == kLine)
       return static_cast<LineBoxType>(sub_type_);
-    NOTREACHED() << this;
+    NOTREACHED_IN_MIGRATION() << this;
     return LineBoxType::kNormalLineBox;
   }
 
@@ -380,7 +381,7 @@ class CORE_EXPORT FragmentItem final {
     }
     if (Type() == kGeneratedText)
       return TextItemType::kLayoutGenerated;
-    NOTREACHED() << this;
+    NOTREACHED_IN_MIGRATION() << this;
     return TextItemType::kNormal;
   }
 
@@ -429,7 +430,7 @@ class CORE_EXPORT FragmentItem final {
   unsigned StartOffsetInContainer(const InlineCursor& container) const;
 
   StringView Text(const FragmentItems& items) const;
-  String GeneratedText() const {
+  StringView GeneratedText() const {
     DCHECK_EQ(Type(), kGeneratedText);
     return generated_text_.text;
   }
@@ -480,6 +481,11 @@ class CORE_EXPORT FragmentItem final {
                                               const InlineCursor& cursor) const;
   unsigned TextOffsetForPoint(const PhysicalOffset& point,
                               const FragmentItems& items) const;
+
+  // True if this item is associated with over/under ruby annotations.
+  // These functions are valid only if IsText() is true.
+  bool HasOverAnnotation() const { return has_over_annotation_; }
+  bool HasUnderAnnotation() const { return has_under_annotation_; }
 
   // Whether this item was marked dirty for reuse or not.
   bool IsDirty() const { return is_dirty_; }
@@ -609,6 +615,8 @@ class CORE_EXPORT FragmentItem final {
   // Note: For |TextItem| and |GeneratedTextItem|, |text_direction_| equals to
   // |ShapeResult::Direction()|.
   unsigned text_direction_ : 1;  // TextDirection.
+  unsigned has_over_annotation_ : 1 = 0;
+  unsigned has_under_annotation_ : 1 = 0;
 
   unsigned ink_overflow_type_ : InkOverflow::kTypeBits;
 

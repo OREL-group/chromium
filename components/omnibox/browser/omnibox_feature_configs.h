@@ -135,24 +135,6 @@ struct ForceAllowedToBeDefault : Config<ForceAllowedToBeDefault> {
   bool enabled;
 };
 
-// If enabled, only suggestions from the keyword mode provider and historical
-// keyword mode suggestions will be shown in keyword mode.
-struct LimitKeywordModeSuggestions : Config<LimitKeywordModeSuggestions> {
-  DECLARE_FEATURE(kLimitKeywordModeSuggestions);
-  LimitKeywordModeSuggestions();
-  bool enabled;
-
-  // If enabled, limits document provider suggestions except for the Google
-  // Drive keyword engine.
-  bool limit_document_suggestions;
-  // If enabled, limits history cluster suggestions in keyword mode.
-  bool limit_history_cluster_suggestions;
-  // If enabled, limits default search engine suggestions in keyword mode.
-  bool limit_dse_suggestions;
-  // If enabled, limits on device head uggestions in keyword mode.
-  bool limit_on_device_head_suggestions;
-};
-
 // If enabled, NTP Realbox second column will allow displaying contextual and
 // trending suggestions.
 struct RealboxContextualAndTrendingSuggestions
@@ -168,6 +150,16 @@ struct RealboxContextualAndTrendingSuggestions
   size_t contextual_suggestions_limit;
   // The total number of matches the `omnibox::GROUP_TRENDS` Group can contain.
   size_t trending_suggestions_limit;
+};
+
+// If enabled, omnibox reports the number of zero-prefix suggestions shown in
+// the session which ends when autocomplete clears the set of results. The
+// current behavior incorrectly reports the number of zero-prefix suggestions in
+// the last set of results, which would be 0 for non-zps queries.
+struct ReportNumZPSInSession : Config<ReportNumZPSInSession> {
+  DECLARE_FEATURE(kReportNumZPSInSession);
+  ReportNumZPSInSession();
+  bool enabled;
 };
 
 // If enabled, uses RichAnswerTemplate instead of SuggestionAnswer to display
@@ -219,15 +211,8 @@ struct VitalizeAutocompletedKeywords : Config<VitalizeAutocompletedKeywords> {
   int score;
 };
 
-// If enabled, omnibox reports the number of zero-prefix suggestions shown in
-// the session which ends when autocomplete clears the set of results. The
-// current behavior incorrectly reports the number of zero-prefix suggestions in
-// the last set of results, which would be 0 for non-zps queries.
-struct ReportNumZPSInSession : Config<ReportNumZPSInSession> {
-  DECLARE_FEATURE(kReportNumZPSInSession);
-  ReportNumZPSInSession();
-  bool enabled;
-};
+// Do not add new configs here at the bottom by default. They should be ordered
+// alphabetically.
 
 #undef DECLARE_FEATURE
 

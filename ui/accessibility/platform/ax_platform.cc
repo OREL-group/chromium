@@ -46,7 +46,30 @@ void AXPlatform::NotifyModeAdded(AXMode mode) {
   }
 }
 
+bool AXPlatform::IsCaretBrowsingEnabled() {
+  return caret_browsing_enabled_;
+}
+
+void AXPlatform::SetCaretBrowsingState(bool enabled) {
+  caret_browsing_enabled_ = enabled;
+}
+
 #if BUILDFLAG(IS_WIN)
+const std::string& AXPlatform::GetProductName() const {
+  RetrieveProductStringsIfNeeded();
+  return product_strings_->product_name;
+}
+
+const std::string& AXPlatform::GetProductVersion() const {
+  RetrieveProductStringsIfNeeded();
+  return product_strings_->product_version;
+}
+
+const std::string& AXPlatform::GetToolkitVersion() const {
+  RetrieveProductStringsIfNeeded();
+  return product_strings_->toolkit_version;
+}
+
 void AXPlatform::SetUiaProviderEnabled(bool is_enabled) {
   CHECK_EQ(uia_provider_enablement_, UiaProviderEnablement::kVariations);
   uia_provider_enablement_ = is_enabled ? UiaProviderEnablement::kEnabled
@@ -57,6 +80,12 @@ bool AXPlatform::IsUiaProviderEnabled() const {
   return uia_provider_enablement_ == UiaProviderEnablement::kVariations
              ? base::FeatureList::IsEnabled(features::kUiaProvider)
              : (uia_provider_enablement_ == UiaProviderEnablement::kEnabled);
+}
+
+void AXPlatform::RetrieveProductStringsIfNeeded() const {
+  if (!product_strings_) {
+    product_strings_ = delegate_->GetProductStrings();
+  }
 }
 #endif  // BUILDFLAG(IS_WIN)
 

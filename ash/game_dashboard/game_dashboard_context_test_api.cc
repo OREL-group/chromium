@@ -7,6 +7,7 @@
 #include <string>
 
 #include "ash/capture_mode/capture_mode_test_util.h"
+#include "ash/game_dashboard/game_dashboard_battery_view.h"
 #include "ash/game_dashboard/game_dashboard_button.h"
 #include "ash/game_dashboard/game_dashboard_button_reveal_controller.h"
 #include "ash/game_dashboard/game_dashboard_context.h"
@@ -17,11 +18,13 @@
 #include "ash/style/icon_button.h"
 #include "ash/style/pill_button.h"
 #include "ash/style/switch.h"
+#include "ash/system/time/time_view.h"
 #include "ash/system/toast/anchored_nudge.h"
 #include "ash/system/unified/feature_tile.h"
 #include "base/timer/timer.h"
 #include "base/types/cxx23_to_underlying.h"
 #include "ui/events/test/event_generator.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/view_utils.h"
 #include "ui/wm/core/window_util.h"
@@ -110,6 +113,16 @@ FeatureTile* GameDashboardContextTestApi::GetMainMenuScreenshotTile() {
       GetMainMenuViewById(VIEW_ID_GD_SCREENSHOT_TILE));
 }
 
+const std::u16string&
+GameDashboardContextTestApi::GetMainMenuScreenSizeSubtitle() {
+  auto* main_menu_view = GetMainMenuView();
+  CHECK(main_menu_view);
+  const views::Label* subtitle_label =
+      main_menu_view->GetScreenSizeRowSubtitle();
+  CHECK(subtitle_label);
+  return subtitle_label->GetText();
+}
+
 views::Button*
 GameDashboardContextTestApi::GetMainMenuScreenSizeSettingsButton() {
   return views::AsViewClass<views::Button>(
@@ -126,6 +139,19 @@ PillButton* GameDashboardContextTestApi::GetMainMenuGameControlsSetupButton() {
   auto* main_menu_view = GetMainMenuView();
   CHECK(main_menu_view);
   return main_menu_view->GetGameControlsSetupButton();
+}
+
+TimeView* GameDashboardContextTestApi::GetMainMenuClockView() {
+  auto* main_menu_view = GetMainMenuView();
+  CHECK(main_menu_view);
+  return main_menu_view->clock_view_;
+}
+
+GameDashboardBatteryView*
+GameDashboardContextTestApi::GetMainMenuBatteryView() {
+  auto* main_menu_view = GetMainMenuView();
+  CHECK(main_menu_view);
+  return main_menu_view->battery_view_;
 }
 
 Switch* GameDashboardContextTestApi::GetMainMenuGameControlsFeatureSwitch() {
@@ -195,6 +221,7 @@ void GameDashboardContextTestApi::OpenTheMainMenu() {
   // Pause to ensure any other open main menu views have had time to auto-close
   // and notify the `GameDashboardContext` that it's been destroyed.
   base::RunLoop().RunUntilIdle();
+  VerifyAccessibilityTree();
   ASSERT_TRUE(GetMainMenuView());
   ASSERT_TRUE(GetMainMenuWidget());
   ASSERT_TRUE(GetMainMenuCursorHandler());
@@ -211,6 +238,7 @@ void GameDashboardContextTestApi::CloseTheMainMenu() {
   // Pause to ensure the main menu view has had time to auto-close itself and
   // notify the `GameDashboardContext` that it's been destroyed.
   base::RunLoop().RunUntilIdle();
+  VerifyAccessibilityTree();
   ASSERT_FALSE(GetMainMenuView());
   ASSERT_FALSE(GetMainMenuWidget());
   ASSERT_FALSE(GetMainMenuCursorHandler());
@@ -280,6 +308,7 @@ void GameDashboardContextTestApi::OpenTheToolbar() {
   auto* main_menu_toolbar_tile = GetMainMenuToolbarTile();
   ASSERT_TRUE(main_menu_toolbar_tile);
   ClickOnView(main_menu_toolbar_tile, event_generator_);
+  VerifyAccessibilityTree();
   ASSERT_TRUE(GetToolbarView());
   ASSERT_TRUE(GetToolbarWidget());
 }
@@ -306,6 +335,7 @@ void GameDashboardContextTestApi::CloseTheToolbar() {
   auto* main_menu_toolbar_tile = GetMainMenuToolbarTile();
   ASSERT_TRUE(main_menu_toolbar_tile);
   ClickOnView(main_menu_toolbar_tile, event_generator_);
+  VerifyAccessibilityTree();
   ASSERT_FALSE(GetToolbarView());
   ASSERT_FALSE(GetToolbarWidget());
 }
@@ -356,6 +386,20 @@ void GameDashboardContextTestApi::ToggleWelcomeDialogSettingsSwitch() {
   bool initial_state = welcome_dialog_switch->GetIsOn();
   ClickOnView(welcome_dialog_switch, event_generator_);
   ASSERT_EQ(GetSettingsViewWelcomeDialogSwitch()->GetIsOn(), !initial_state);
+}
+
+void GameDashboardContextTestApi::VerifyAccessibilityTree() {
+  const std::vector<views::Widget*> widgets = context_->GetTraversableWidgets();
+  const size_t widget_list_size = widgets.size();
+  for (size_t i = 0; i < widget_list_size; i++) {
+    auto* curr_view = widgets[i]->GetContentsView();
+    auto& view_accessibility = curr_view->GetViewAccessibility();
+    const size_t prev_index = (i + widget_list_size - 1u) % widget_list_size;
+    const size_t next_index = (i + 1u) % widget_list_size;
+
+    EXPECT_EQ(widgets[prev_index], view_accessibility.GetPreviousWindowFocus());
+    EXPECT_EQ(widgets[next_index], view_accessibility.GetNextWindowFocus());
+  }
 }
 
 views::View* GameDashboardContextTestApi::GetMainMenuViewById(int view_id) {

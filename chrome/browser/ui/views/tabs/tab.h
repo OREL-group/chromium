@@ -91,7 +91,8 @@ class Tab : public gfx::AnimationDelegate,
   void OnGestureEvent(ui::GestureEvent* event) override;
   std::u16string GetTooltipText(const gfx::Point& p) const override;
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
-  gfx::Size CalculatePreferredSize() const override;
+  gfx::Size CalculatePreferredSize(
+      const views::SizeBounds& available_size) const override;
   void PaintChildren(const views::PaintInfo& info) override;
   void OnPaint(gfx::Canvas* canvas) override;
   void AddedToWidget() override;
@@ -190,11 +191,16 @@ class Tab : public gfx::AnimationDelegate,
     return alert_indicator_button_;
   }
 
+  void SetShouldShowDiscardIndicator(bool enabled);
+
  private:
   class TabCloseButtonObserver;
   friend class AlertIndicatorButtonTest;
   friend class TabTest;
   friend class TabStripTestBase;
+#if BUILDFLAG(IS_CHROMEOS_ASH)
+  FRIEND_TEST_ALL_PREFIXES(TabStripTest, CloseButtonHiddenWhenLockedForOnTask);
+#endif
   FRIEND_TEST_ALL_PREFIXES(TabStripTest, TabCloseButtonVisibility);
   FRIEND_TEST_ALL_PREFIXES(TabTest, TitleTextHasSufficientContrast);
   FRIEND_TEST_ALL_PREFIXES(TabHoverCardInteractiveUiTest,
@@ -269,13 +275,6 @@ class Tab : public gfx::AnimationDelegate,
 
   // Whether the tab is currently animating from a pinned to an unpinned state.
   bool is_animating_from_pinned_ = false;
-
-  // If there's room, we add additional padding to the left of the favicon to
-  // balance the whitespace inside the non-hovered close button image;
-  // otherwise, the tab contents look too close to the left edge. Once the tabs
-  // get too small, we let the tab contents take the full width, to maximize
-  // visible area.
-  bool extra_padding_before_content_ = false;
 
   // When both the close button and alert indicator are visible, we add extra
   // padding between them to space them out visually.

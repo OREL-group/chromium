@@ -11,6 +11,7 @@
 
 #include "base/check.h"
 #include "base/containers/adapters.h"
+#include "base/not_fatal_until.h"
 #include "base/ranges/algorithm.h"
 #include "base/time/time.h"
 #include "chrome/browser/download/download_ui_model.h"
@@ -123,7 +124,8 @@ views::View* DownloadShelfView::GetView() {
   return this;
 }
 
-gfx::Size DownloadShelfView::CalculatePreferredSize() const {
+gfx::Size DownloadShelfView::CalculatePreferredSize(
+    const views::SizeBounds& /*available_size*/) const {
   gfx::Size prefsize(kEndPadding + kStartPadding + kCloseAndLinkPadding, 0);
 
   // Enlarge the preferred size enough to hold various other views side-by-side.
@@ -258,7 +260,7 @@ void DownloadShelfView::AutoClose() {
 void DownloadShelfView::RemoveDownloadView(View* view) {
   DCHECK(view);
   const auto i = base::ranges::find(download_views_, view);
-  DCHECK(i != download_views_.end());
+  CHECK(i != download_views_.end(), base::NotFatalUntil::M130);
   download_views_.erase(i);
   RemoveChildViewT(view);
   if (download_views_.empty())
@@ -269,10 +271,8 @@ void DownloadShelfView::RemoveDownloadView(View* view) {
 }
 
 void DownloadShelfView::ConfigureButtonForTheme(views::MdTextButton* button) {
-  const auto* const cp = GetColorProvider();
-  DCHECK(cp);
-  button->SetBgColorOverride(cp->GetColor(kColorDownloadShelfButtonBackground));
-  button->SetEnabledTextColors(cp->GetColor(kColorDownloadShelfButtonText));
+  button->SetBgColorIdOverride(kColorDownloadShelfButtonBackground);
+  button->SetEnabledTextColorIds(kColorDownloadShelfButtonText);
 }
 
 void DownloadShelfView::DoShowDownload(

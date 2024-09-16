@@ -7,6 +7,16 @@ partial interface Document {
     [
         CallWith=ScriptState,
         NewObject,
+        MeasureAs=StorageAccessAPI_HasStorageAccess_Method
+    ] Promise<boolean> hasStorageAccess();
+    [
+        CallWith=ScriptState,
+        NewObject,
+        MeasureAs=StorageAccessAPI_requestStorageAccess_Method
+    ] Promise<undefined> requestStorageAccess();
+    [
+        CallWith=ScriptState,
+        NewObject,
         MeasureAs=StorageAccessAPI_requestStorageAccess_BeyondCookies
     ] Promise<StorageAccessHandle> requestStorageAccess(StorageAccessTypes types);
     [
@@ -14,4 +24,9 @@ partial interface Document {
         NewObject,
         MeasureAs=StorageAccessAPI_hasUnpartitionedCookieAccess
     ] Promise<boolean> hasUnpartitionedCookieAccess();
+    [
+        CallWith=ScriptState,
+        NewObject,
+        MeasureAs=StorageAccessAPI_requestStorageAccessFor_Method
+    ] Promise<undefined> requestStorageAccessFor(USVString requestedOrigin);
 };

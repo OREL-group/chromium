@@ -345,11 +345,11 @@ class AutomationWebContentsObserver
 #if defined(USE_AURA)
     mouse_location = aura::Env::GetInstance()->last_mouse_location();
 #endif
+
     AutomationEventRouter* router = AutomationEventRouter::GetInstance();
     router->DispatchAccessibilityEvents(
-        std::move(content_event_bundle.ax_tree_id),
-        std::move(content_event_bundle.updates), mouse_location,
-        std::move(content_event_bundle.events));
+        content_event_bundle.ax_tree_id, content_event_bundle.updates,
+        mouse_location, content_event_bundle.events);
   }
 
   void AccessibilityLocationChangesReceived(
@@ -562,7 +562,7 @@ AutomationInternalPerformActionFunction::PerformAction(
         // If |extension| is nullptr, then Lacros is receiving a crosapi request
         // from ash to perform an action. We make the assumption this this is
         // allowed.
-        // TODO(https://crbug.com/1185764): Confirm whether this assumption is
+        // TODO(crbug.com/40753344): Confirm whether this assumption is
         // valid.
       }
 

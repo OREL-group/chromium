@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <string_view>
+
 #include "base/files/file_util.h"
 #include "base/test/gmock_expected_support.h"
 #include "base/test/test_future.h"
@@ -15,6 +17,7 @@
 #include "chrome/browser/web_applications/web_app.h"
 #include "chrome/browser/web_applications/web_app_command_scheduler.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
+#include "chrome/browser/web_applications/web_app_registrar.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "third_party/blink/public/common/features.h"
@@ -29,11 +32,11 @@ class SubAppsPermissionsPolicyBrowserTest
     : public IsolatedWebAppBrowserTestHarness {
   base::ScopedTempDir scoped_temp_dir_;
   base::FilePath bundle_path_;
-  web_package::WebBundleSigner::Ed25519KeyPair key_pair_ =
-      web_package::WebBundleSigner::Ed25519KeyPair::CreateRandom();
+  web_package::test::Ed25519KeyPair key_pair_ =
+      web_package::test::Ed25519KeyPair::CreateRandom();
 
   TestSignedWebBundle CreateBundle() const {
-    constexpr base::StringPiece manifest =
+    constexpr std::string_view manifest =
         R"({
           "name": "Sub apps test app",
           "id": "/",
@@ -103,7 +106,7 @@ class SubAppsPermissionsPolicyBrowserTest
 
     IsolatedWebAppUrlInfo url_info =
         IsolatedWebAppUrlInfo::CreateFromSignedWebBundleId(
-            web_package::SignedWebBundleId::CreateForEd25519PublicKey(
+            web_package::SignedWebBundleId::CreateForPublicKey(
                 key_pair_.public_key));
 
     parent_app_id_ = url_info.app_id();

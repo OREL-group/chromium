@@ -17,6 +17,7 @@
 #import "ios/chrome/browser/policy/model/policy_util.h"
 #import "ios/chrome/browser/search_engines/model/search_engines_util.h"
 #import "ios/chrome/browser/shared/model/url/chrome_url_constants.h"
+#import "ios/chrome/browser/shared/model/url/url_util.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list_observer_bridge.h"
 #import "ios/chrome/browser/shared/public/commands/application_commands.h"
@@ -26,6 +27,7 @@
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
 #import "ios/chrome/browser/ui/lens/lens_availability.h"
 #import "ios/chrome/browser/ui/menu/browser_action_factory.h"
+#import "ios/chrome/browser/ui/toolbar/buttons/toolbar_tab_grid_button_style.h"
 #import "ios/chrome/browser/ui/toolbar/toolbar_consumer.h"
 #import "ios/chrome/browser/url_loading/model/image_search_param_generator.h"
 #import "ios/chrome/browser/url_loading/model/url_loading_browser_agent.h"
@@ -166,6 +168,20 @@
                        change:(const WebStateListChange&)change
                        status:(const WebStateListStatus&)status {
   DCHECK_EQ(_webStateList, webStateList);
+
+  if (IsTabGroupIndicatorEnabled()) {
+    // Update the Tab Grid button style, based on whether the active tab is
+    // grouped or not.
+    const int active_index = webStateList->active_index();
+    if (active_index != WebStateList::kInvalidIndex &&
+        webStateList->GetGroupOfWebStateAt(active_index) != nullptr) {
+      [self.consumer
+          setTabGridButtonStyle:ToolbarTabGridButtonStyle::kTabGroup];
+    } else {
+      [self.consumer setTabGridButtonStyle:ToolbarTabGridButtonStyle::kNormal];
+    }
+  }
+
   switch (change.type()) {
     case WebStateListChange::Type::kStatusOnly:
       // The activation is handled after this switch statement.
@@ -362,8 +378,16 @@
     return;
   }
   const GURL& URL = webState->GetLastCommittedURL();
+
+  // Enable sharing when the current page url is valid and the url is not app
+  // specific (the url's scheme is `chrome`) except when:
+  // 1. The page url represents a chrome's download path `chrome://downloads`.
+  // 2. The page url is a reference to an external file
+  //    `chrome://external-file`.
   BOOL shareMenuEnabled =
-      URL.is_valid() && !web::GetWebClient()->IsAppSpecificURL(URL);
+      URL.is_valid() &&
+      (UrlIsDownloadedFile(URL) || UrlIsExternalFileReference(URL) ||
+       !web::GetWebClient()->IsAppSpecificURL(URL));
   // Page sharing requires JavaScript execution, which is paused while overlays
   // are displayed over the web content area.
   [self.consumer setShareMenuEnabled:shareMenuEnabled &&

@@ -5,19 +5,18 @@
 """Tests for query_optimal_shard_counts.py."""
 
 import datetime
-import sys
 import os
 import json
-import mock
 import platform
 import subprocess
 import tempfile
 import unittest
-
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                '..'))
+from unittest import mock
 
 import query_optimal_shard_counts
+
+# Protected access is allowed for unittests.
+# pylint: disable=protected-access
 
 SUITE_DURATIONS_DEFAULT_DICT = {
     'shard_count': 10,
@@ -531,7 +530,7 @@ class FormatQueryResults(unittest.TestCase):
         query_suite_durations_dict(
             waterfall_builder_group='chromium.android',
             waterfall_builder_name='android-12-x64-rel',
-            try_builder='android-x64-rel',
+            try_builder='android-12-x64-rel',
             test_suite='webview_instrumentation_test_apk',
             shard_count=20,
             percentile_duration_minutes=20,
@@ -541,7 +540,7 @@ class FormatQueryResults(unittest.TestCase):
         query_test_overheads_dict(
             waterfall_builder_group='chromium.android',
             waterfall_builder_name='android-12-x64-rel',
-            try_builder='android-x64-rel',
+            try_builder='android-12-x64-rel',
             test_suite='webview_instrumentation_test_apk',
             normally_assigned_shard_count=19,
             experimental_shard_count=20,
@@ -551,7 +550,7 @@ class FormatQueryResults(unittest.TestCase):
         query_test_overheads_dict(
             waterfall_builder_group='chromium.android',
             waterfall_builder_name='android-12-x64-rel',
-            try_builder='android-x64-rel',
+            try_builder='android-12-x64-rel',
             test_suite='webview_instrumentation_test_apk',
             normally_assigned_shard_count=20,
             experimental_shard_count=21,
@@ -560,7 +559,7 @@ class FormatQueryResults(unittest.TestCase):
         ),
     ])
     avg_num_builds_per_hour = json.dumps([
-        query_average_number_builds_per_hour(try_builder='android-x64-rel'),
+        query_average_number_builds_per_hour(try_builder='android-12-x64-rel'),
     ])
     self._mock_check_output.side_effect = [
         suite_durations,
@@ -583,7 +582,7 @@ class FormatQueryResults(unittest.TestCase):
         query_suite_durations_dict(
             waterfall_builder_group='chromium.android',
             waterfall_builder_name='android-12-x64-rel',
-            try_builder='android-x64-rel',
+            try_builder='android-12-x64-rel',
             test_suite='webview_instrumentation_test_apk',
             shard_count=10,
             percentile_duration_minutes=14.5,
@@ -598,7 +597,7 @@ class FormatQueryResults(unittest.TestCase):
         ),
     ])
     avg_num_builds_per_hour = json.dumps([
-        query_average_number_builds_per_hour(try_builder='android-x64-rel'),
+        query_average_number_builds_per_hour(try_builder='android-12-x64-rel'),
     ])
     self._mock_check_output.side_effect = [
         suite_durations,
@@ -632,7 +631,7 @@ class FormatQueryResults(unittest.TestCase):
         query_suite_durations_dict(
             waterfall_builder_group='chromium.android',
             waterfall_builder_name='android-12-x64-rel',
-            try_builder='android-x64-rel',
+            try_builder='android-12-x64-rel',
             test_suite='webview_instrumentation_test_apk',
             shard_count=10,
             percentile_duration_minutes=14,
@@ -647,7 +646,7 @@ class FormatQueryResults(unittest.TestCase):
         ),
     ])
     avg_num_builds_per_hour = json.dumps([
-        query_average_number_builds_per_hour(try_builder='android-x64-rel'),
+        query_average_number_builds_per_hour(try_builder='android-12-x64-rel'),
     ])
     self._mock_check_output.side_effect = [
         suite_durations,
@@ -681,7 +680,7 @@ class FormatQueryResults(unittest.TestCase):
         query_suite_durations_dict(
             waterfall_builder_group='chromium.android',
             waterfall_builder_name='android-12-x64-rel',
-            try_builder='android-x64-rel',
+            try_builder='android-12-x64-rel',
             test_suite='webview_instrumentation_test_apk',
             shard_count=10,
             percentile_duration_minutes=9,
@@ -691,12 +690,12 @@ class FormatQueryResults(unittest.TestCase):
         query_test_overheads_dict(
             waterfall_builder_group='chromium.android',
             waterfall_builder_name='android-12-x64-rel',
-            try_builder='android-x64-rel',
+            try_builder='android-12-x64-rel',
             test_suite='webview_instrumentation_test_apk',
         ),
     ])
     avg_num_builds_per_hour = json.dumps([
-        query_average_number_builds_per_hour(try_builder='android-x64-rel'),
+        query_average_number_builds_per_hour(try_builder='android-12-x64-rel'),
     ])
     self._mock_check_output.side_effect = [
         suite_durations,
@@ -725,7 +724,7 @@ class FormatQueryResults(unittest.TestCase):
         query_suite_durations_dict(
             waterfall_builder_group='chromium.android',
             waterfall_builder_name='android-12-x64-rel',
-            try_builder='android-x64-rel',
+            try_builder='android-12-x64-rel',
             test_suite='webview_instrumentation_test_apk',
             shard_count=10,
             percentile_duration_minutes=20,
@@ -735,12 +734,12 @@ class FormatQueryResults(unittest.TestCase):
         query_test_overheads_dict(
             waterfall_builder_group='chromium.android',
             waterfall_builder_name='android-12-x64-rel',
-            try_builder='android-x64-rel',
+            try_builder='android-12-x64-rel',
             test_suite='webview_instrumentation_test_apk',
         ),
     ])
     avg_num_builds_per_hour = json.dumps([
-        query_average_number_builds_per_hour(try_builder='android-x64-rel'),
+        query_average_number_builds_per_hour(try_builder='android-12-x64-rel'),
     ])
     self._mock_check_output.side_effect = [
         suite_durations,
@@ -791,7 +790,7 @@ class FormatQueryResults(unittest.TestCase):
         query_suite_durations_dict(
             waterfall_builder_group='chromium.android',
             waterfall_builder_name='android-12-x64-rel',
-            try_builder='android-x64-rel',
+            try_builder='android-12-x64-rel',
             test_suite='webview_instrumentation_test_apk',
             shard_count=10,
             percentile_duration_minutes=20,
@@ -801,12 +800,12 @@ class FormatQueryResults(unittest.TestCase):
         query_test_overheads_dict(
             waterfall_builder_group='chromium.android',
             waterfall_builder_name='android-12-x64-rel',
-            try_builder='android-x64-rel',
+            try_builder='android-12-x64-rel',
             test_suite='webview_instrumentation_test_apk',
         ),
     ])
     avg_num_builds_per_hour = json.dumps([
-        query_average_number_builds_per_hour(try_builder='android-x64-rel'),
+        query_average_number_builds_per_hour(try_builder='android-12-x64-rel'),
         query_average_number_builds_per_hour(try_builder='linux-rel'),
     ])
     self._mock_check_output.side_effect = [
@@ -874,7 +873,7 @@ class FormatQueryResults(unittest.TestCase):
         query_test_overheads_dict(
             waterfall_builder_group='chromium.android',
             waterfall_builder_name='android-12-x64-rel',
-            try_builder='android-x64-rel',
+            try_builder='android-12-x64-rel',
             test_suite='webview_instrumentation_test_apk',
         ),
     ])

@@ -6,8 +6,6 @@
 
 #include <memory>
 
-#include "ash/glanceables/common/glanceables_error_message_view.h"
-#include "ash/glanceables/common/glanceables_view_id.h"
 #include "ash/public/cpp/style/color_provider.h"
 #include "base/functional/bind.h"
 #include "base/types/cxx23_to_underlying.h"
@@ -15,6 +13,7 @@
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/chromeos/styles/cros_tokens_color_mappings.h"
 #include "ui/compositor/layer.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/background.h"
 #include "ui/views/highlight_border.h"
 #include "ui/views/view_class_properties.h"
@@ -29,7 +28,7 @@ constexpr int kBubbleCornerRadius = 24;
 GlanceableTrayChildBubble::GlanceableTrayChildBubble(
     bool use_glanceables_container_style) {
   if (use_glanceables_container_style) {
-    SetAccessibleRole(ax::mojom::Role::kGroup);
+    GetViewAccessibility().SetRole(ax::mojom::Role::kGroup);
 
     SetPaintToLayer();
     layer()->SetFillsBoundsOpaquely(false);
@@ -49,32 +48,6 @@ GlanceableTrayChildBubble::GlanceableTrayChildBubble(
             ? views::HighlightBorder::Type::kHighlightBorderOnShadow
             : views::HighlightBorder::Type::kHighlightBorder1));
   }
-}
-
-void GlanceableTrayChildBubble::Layout(PassKey) {
-  LayoutSuperclass<views::View>(this);
-  if (error_message_) {
-    error_message_->UpdateBoundsToContainer(GetLocalBounds());
-  }
-}
-
-void GlanceableTrayChildBubble::ShowErrorMessage(
-    const std::u16string& error_message,
-    views::Button::PressedCallback callback,
-    GlanceablesErrorMessageView::ButtonActionType type) {
-  MaybeDismissErrorMessage();
-
-  error_message_ = AddChildView(std::make_unique<GlanceablesErrorMessageView>(
-      std::move(callback), error_message, type));
-  error_message_->SetProperty(views::kViewIgnoredByLayoutKey, true);
-}
-
-void GlanceableTrayChildBubble::MaybeDismissErrorMessage() {
-  if (!error_message_.get()) {
-    return;
-  }
-
-  RemoveChildViewT(std::exchange(error_message_, nullptr));
 }
 
 BEGIN_METADATA(GlanceableTrayChildBubble)

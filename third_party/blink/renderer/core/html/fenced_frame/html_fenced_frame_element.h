@@ -126,9 +126,6 @@ class CORE_EXPORT HTMLFencedFrameElement : public HTMLFrameOwnerElement {
   // owner, for reception by the embedder script.
   void DispatchFencedEvent(const WTF::String& event_type);
 
-  // Defines attribute event listener `onfencedtreeclick`.
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(fencedtreeclick, kFencedtreeclick)
-
  private:
   // This method will only navigate the underlying frame if the element
   // `isConnected()`. It will be deferred if the page is currently prerendering.
@@ -164,8 +161,7 @@ class CORE_EXPORT HTMLFencedFrameElement : public HTMLFrameOwnerElement {
   bool LayoutObjectIsNeeded(const DisplayStyle&) const override;
   LayoutObject* CreateLayoutObject(const ComputedStyle&) override;
   void AttachLayoutTree(AttachContext& context) override;
-  bool SupportsFocus(UpdateBehavior update_behavior =
-                         UpdateBehavior::kStyleAndLayout) const override;
+  FocusableState SupportsFocus(UpdateBehavior update_behavior) const override;
 
   // Set the size of the fenced frame outer container. Used for container size
   // specified by FencedFrameConfig.
@@ -234,7 +230,7 @@ class CORE_EXPORT HTMLFencedFrameElement : public HTMLFrameOwnerElement {
   friend class FencedFrameShadowDOMDelegate;
   friend class ResizeObserverDelegate;
   FRIEND_TEST_ALL_PREFIXES(HTMLFencedFrameElementTest,
-                           FreezeSizePageZoomFactor);
+                           FreezeSizeLayoutZoomFactor);
   FRIEND_TEST_ALL_PREFIXES(HTMLFencedFrameElementTest, CoerceFrameSizeTest);
   FRIEND_TEST_ALL_PREFIXES(HTMLFencedFrameElementTest,
                            HistogramTestResizeAfterFreeze);

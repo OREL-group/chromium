@@ -8,7 +8,7 @@ import {CrLitElement} from '//resources/lit/v3_0/lit.rollup.js';
 import type {PropertyValues} from '//resources/lit/v3_0/lit.rollup.js';
 
 import {getHtml} from './cr_menu_selector.html.js';
-import {CrSelectableMixin} from './cr_selectable_mixin.js';
+import {CrSelectableMixin} from '../cr_selectable_mixin.js';
 
 const CrMenuSelectorBase = CrSelectableMixin(CrLitElement);
 
@@ -21,11 +21,9 @@ export class CrMenuSelector extends CrMenuSelectorBase {
     return getHtml.bind(this)();
   }
 
-  private focusOutlineManager_: FocusOutlineManager;
-
   override connectedCallback() {
     super.connectedCallback();
-    this.focusOutlineManager_ = FocusOutlineManager.forDocument(document);
+    FocusOutlineManager.forDocument(document);
   }
 
   override firstUpdated(changedProperties: PropertyValues) {
@@ -55,7 +53,8 @@ export class CrMenuSelector extends CrMenuSelectorBase {
     // ensures that the first menu item is always the first focused item when
     // focusing into the menu. A null relatedTarget means the focus was moved
     // from outside the WebContents.
-    const focusMovedWithKeyboard = this.focusOutlineManager_.visible;
+    const focusMovedWithKeyboard =
+        FocusOutlineManager.forDocument(document).visible;
     const focusMovedFromOutside = e.relatedTarget === null ||
         !this.contains(e.relatedTarget as HTMLElement);
     if (focusMovedWithKeyboard && focusMovedFromOutside) {

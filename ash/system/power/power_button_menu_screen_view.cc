@@ -237,7 +237,7 @@ bool PowerButtonMenuScreenView::AcceleratorPressed(
 }
 
 void PowerButtonMenuScreenView::OnGestureEvent(ui::GestureEvent* event) {
-  if (event->type() != ui::ET_GESTURE_TAP_DOWN) {
+  if (event->type() != ui::EventType::kGestureTapDown) {
     return;
   }
 
@@ -305,7 +305,6 @@ void PowerButtonMenuScreenView::UpdateMenuBoundsOrigins() {
       break;
     default:
       NOTREACHED();
-      return;
   }
 
   switch (power_button_position_) {
@@ -336,7 +335,6 @@ void PowerButtonMenuScreenView::UpdateMenuBoundsOrigins() {
       break;
     default:
       NOTREACHED();
-      return;
   }
 
   menu_bounds_origins_.clear();

@@ -2,11 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <functional>
-
 #include "chrome/browser/download/download_item_warning_data.h"
 
+#include <functional>
+
 #include "base/metrics/histogram_functions.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "components/download/public/common/download_item.h"
 
 using download::DownloadItem;
@@ -150,21 +152,23 @@ void DownloadItemWarningData::AddWarningActionEvent(DownloadItem* download,
 }
 
 // static
-bool DownloadItemWarningData::IsEncryptedArchive(
+bool DownloadItemWarningData::IsTopLevelEncryptedArchive(
     const download::DownloadItem* download) {
-  return GetWithDefault(download,
-                        &DownloadItemWarningData::is_encrypted_archive_, false);
+  return GetWithDefault(
+      download, &DownloadItemWarningData::is_top_level_encrypted_archive_,
+      false);
 }
 
 // static
-void DownloadItemWarningData::SetIsEncryptedArchive(
+void DownloadItemWarningData::SetIsTopLevelEncryptedArchive(
     download::DownloadItem* download,
-    bool is_encrypted_archive) {
+    bool is_top_level_encrypted_archive) {
   if (!download) {
     return;
   }
 
-  GetOrCreate(download)->is_encrypted_archive_ = is_encrypted_archive;
+  GetOrCreate(download)->is_top_level_encrypted_archive_ =
+      is_top_level_encrypted_archive;
 }
 
 // static
@@ -254,8 +258,11 @@ DownloadItemWarningData::ConstructCsbrrDownloadWarningAction(
                             OPEN_LEARN_MORE_LINK);
       break;
     case DownloadItemWarningData::WarningAction::SHOWN:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
+    case DownloadItemWarningData::WarningAction::ACCEPT_DEEP_SCAN:
+      action.set_action(ClientSafeBrowsingReportRequest::DownloadWarningAction::
+                            ACCEPT_DEEP_SCAN);
   }
   action.set_is_terminal_action(event.is_terminal_action);
   action.set_interval_msec(event.action_latency_msec);
@@ -353,3 +360,65 @@ WarningActionEvent::WarningActionEvent(WarningSurface surface,
       action(action),
       action_latency_msec(action_latency_msec),
       is_terminal_action(is_terminal_action) {}
+
+std::string DownloadItemWarningData::WarningActionEvent::ToString() const {
+  std::string surface_string, action_string;
+  switch (surface) {
+    case WarningSurface::BUBBLE_MAINPAGE:
+      surface_string = "BUBBLE_MAINPAGE";
+      break;
+    case WarningSurface::BUBBLE_SUBPAGE:
+      surface_string = "BUBBLE_SUBPAGE";
+      break;
+    case WarningSurface::DOWNLOADS_PAGE:
+      surface_string = "DOWNLOADS_PAGE";
+      break;
+    case WarningSurface::DOWNLOAD_PROMPT:
+      surface_string = "DOWNLOAD_PROMPT";
+      break;
+    case WarningSurface::DOWNLOAD_NOTIFICATION:
+      surface_string = "DOWNLOAD_NOTIFICATION";
+      break;
+  }
+  switch (action) {
+    case WarningAction::SHOWN:
+      action_string = "SHOWN";
+      break;
+    case WarningAction::PROCEED:
+      action_string = "PROCEED";
+      break;
+    case WarningAction::DISCARD:
+      action_string = "DISCARD";
+      break;
+    case WarningAction::KEEP:
+      action_string = "KEEP";
+      break;
+    case WarningAction::CLOSE:
+      action_string = "CLOSE";
+      break;
+    case WarningAction::CANCEL:
+      action_string = "CANCEL";
+      break;
+    case WarningAction::DISMISS:
+      action_string = "DISMISS";
+      break;
+    case WarningAction::BACK:
+      action_string = "BACK";
+      break;
+    case WarningAction::OPEN_SUBPAGE:
+      action_string = "OPEN_SUBPAGE";
+      break;
+    case WarningAction::PROCEED_DEEP_SCAN:
+      action_string = "PROCEED_DEEP_SCAN";
+      break;
+    case WarningAction::OPEN_LEARN_MORE_LINK:
+      action_string = "OPEN_LEARN_MORE_LINK";
+      break;
+    case WarningAction::ACCEPT_DEEP_SCAN:
+      action_string = "ACCEPT_DEEP_SCAN";
+      break;
+  }
+  return base::JoinString({surface_string, action_string,
+                           base::NumberToString(action_latency_msec)},
+                          ":");
+}

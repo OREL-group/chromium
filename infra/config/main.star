@@ -13,7 +13,7 @@ load("//lib/chrome_settings.star", "chrome_settings")
 load("//project.star", "settings")
 
 lucicfg.check_version(
-    min = "1.40.0",
+    min = "1.43.13",
     message = "Update depot_tools",
 )
 
@@ -147,6 +147,7 @@ luci.cq(
     submit_max_burst = 2,
     submit_burst_delay = time.minute,
     status_host = "chromium-cq-status.appspot.com",
+    honor_gerrit_linked_accounts = True,
 )
 
 luci.logdog(
@@ -163,6 +164,10 @@ luci.notify(
 
 chrome_settings.per_builder_outputs(
     root_dir = "builders",
+)
+
+chrome_settings.targets(
+    autoshard_exceptions_file = "//targets/autoshard_exceptions.json",
 )
 
 # An all-purpose public realm.
@@ -214,7 +219,7 @@ luci.realm(
 )
 
 # Allows builders to write baselines and query ResultDB for new tests.
-# TODO(crbug/1465953) @project is not available, and @root should inherit into
+# TODO(crbug.com/40276195) @project is not available, and @root should inherit into
 # project so we'll do this for now until @project is supported.
 luci.realm(
     name = "@root",
@@ -236,6 +241,40 @@ luci.realm(
             ],
             users = [
                 "chromium-orchestrator@chops-service-accounts.iam.gserviceaccount.com",
+            ],
+        ),
+    ],
+)
+
+luci.realm(
+    name = "@project",
+    bindings = [
+        # Allow everyone (including non-logged-in users) to see chromium tree status.
+        luci.binding(
+            roles = "role/treestatus.limitedReader",
+            groups = [
+                "all",
+            ],
+        ),
+        # Only allow Googlers to see PII.
+        luci.binding(
+            roles = "role/treestatus.reader",
+            groups = [
+                "googlers",
+            ],
+            users = [
+                "chromium-status-hr@appspot.gserviceaccount.com",
+                "luci-notify@appspot.gserviceaccount.com",
+            ],
+        ),
+        # Only allow Googlers and service accounts.
+        luci.binding(
+            roles = "role/treestatus.writer",
+            groups = [
+                "googlers",
+            ],
+            users = [
+                "luci-notify@appspot.gserviceaccount.com",
             ],
         ),
     ],

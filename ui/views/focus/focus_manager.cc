@@ -50,20 +50,23 @@ FocusManager::~FocusManager() {
 bool FocusManager::OnKeyEvent(const ui::KeyEvent& event) {
   const ui::KeyboardCode key_code = event.key_code();
 
-  if (event.type() != ui::ET_KEY_PRESSED && event.type() != ui::ET_KEY_RELEASED)
+  if (event.type() != ui::EventType::kKeyPressed &&
+      event.type() != ui::EventType::kKeyReleased) {
     return false;
+  }
 
   if (shortcut_handling_suspended())
     return true;
 
   ui::Accelerator accelerator(event);
 
-  if (event.type() == ui::ET_KEY_PRESSED) {
     // If the focused view wants to process the key event as is, let it be.
-    if (focused_view_ && focused_view_->SkipDefaultKeyEventProcessing(event) &&
-        !accelerator_manager_.HasPriorityHandler(accelerator))
-      return true;
+  if (focused_view_ && focused_view_->SkipDefaultKeyEventProcessing(event) &&
+      !accelerator_manager_.HasPriorityHandler(accelerator)) {
+    return true;
+  }
 
+  if (event.type() == ui::EventType::kKeyPressed) {
     // Intercept Tab related messages for focus traversal.
     // Note that we don't do focus traversal if the root window is not part of
     // the active window hierarchy as this would mean we have no focused view
@@ -580,7 +583,7 @@ bool FocusManager::RedirectAcceleratorToBubbleAnchorWidget(
   if (!focus_manager->IsAcceleratorRegistered(accelerator))
     return false;
 
-// TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
+// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
 // of lacros-chrome is complete.
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
   // Processing an accelerator can delete things. Because we
@@ -597,7 +600,7 @@ bool FocusManager::RedirectAcceleratorToBubbleAnchorWidget(
   const bool accelerator_processed =
       focus_manager->ProcessAccelerator(accelerator);
 
-// TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
+// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
 // of lacros-chrome is complete.
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
   // Need to manually close the bubble widget on Linux. On Linux when the

@@ -89,7 +89,7 @@ std::string EncodeResultToString(WebrtcVideoEncoder::EncodeResult result) {
     case EncodeResult::UNKNOWN_ERROR:
       return "Unknown error";
   }
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
   return "";
 }
 
@@ -453,12 +453,12 @@ WebrtcVideoEncoderWrapper::ReturnEncodedFrame(
     h264_info->packetization_mode =
         webrtc::H264PacketizationMode::NonInterleaved;
 #else
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
 #endif
   } else if (frame.codec == webrtc::kVideoCodecAV1) {
     // TODO(joedow): Set codec specific params for AV1 here.
   } else {
-    NOTREACHED();
+    NOTREACHED_IN_MIGRATION();
   }
 
   return encoded_callback_->OnEncodedImage(encoded_image, &codec_specific_info);
@@ -497,7 +497,7 @@ void WebrtcVideoEncoderWrapper::OnFrameEncoded(
   }
 
   if (encode_result != WebrtcVideoEncoder::EncodeResult::SUCCEEDED) {
-    // TODO(crbug.com/1192865): Store this error and communicate it to WebRTC
+    // TODO(crbug.com/40175068): Store this error and communicate it to WebRTC
     // via the next call to Encode(). The VPX encoders are never expected to
     // return any error, but hardware-decoders such as H264 may fail.
     LOG(ERROR) << "Video encoder returned error "

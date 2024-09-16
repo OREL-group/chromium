@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -66,7 +71,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
                                base::BindRepeating(&OnWriteCallback)),
                            std::nullopt);
     base::RunLoop().RunUntilIdle();
-
+    bool is_first_frame = true;
     int num_iterations = kMinNumIterations + rng() % kMaxNumIterations;
     int index = 0;
     do {
@@ -83,8 +88,9 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         muxer.PutFrame(
             media::Muxer::EncodedFrame{parameters, std::nullopt, str,
                                        has_alpha_frame ? str : std::string(),
-                                       is_key_frame != 0},
+                                       is_key_frame != 0 || is_first_frame},
             base::TimeDelta() + base::Milliseconds(index));
+        is_first_frame = false;
         base::RunLoop().RunUntilIdle();
       }
 

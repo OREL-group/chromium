@@ -12,6 +12,7 @@ AppInfoDialogBrowserTest.*
 AppMenuBrowserTest*.InvokeUi_*
 AskGoogleForSuggestionsDialogTest.*
 AutofillBubbleSignInPromoInteractiveUITest.*
+BatchUploadDialogViewPixelTest.*
 BookmarkBubbleViewBrowserTest.*
 BookmarkEditorViewBrowserTest.*
 BubbleFrameViewBrowserTest.*
@@ -20,9 +21,12 @@ ChromeSignoutConfirmationPromptPixelTest.*
 ConfirmBubbleTest.*
 ContentAnalysysDialogUiTest.*
 ContentSettingBubbleDialogTest.*
+CookieClearOnExitMigrationNoticePixelTest.*
 CookieControlsBubbleViewPixelTest.*
+CookieControlsBubbleViewTrackingProtectionUiPixelTest.*
 OldCookieControlsBubbleViewTest.*
 *CreatePopupRowViewTest.*
+*CreatePopupRowViewWithNoUserEducationRateLimitTest.*
 CryptoModulePasswordDialogTest.*
 *DataControlsDialogUiTest.*
 DeepScanningFailureModalDialogTest.*
@@ -33,6 +37,8 @@ DeleteAddressProfileDialogControllerImplTest.InvokeUi_*
 DesktopPaymentsWindowManagerInteractiveUiTest*
 DocumentPictureInPicturePixelTest.*
 EditAddressProfileDialogControllerImplTest.InvokeUi_*
+*EmbeddedPermissionPromptUiTest.InvokeUi_*
+MahiMenuPixelBrowserTest.*
 ManagedUserNoticeUIDialogPixelTest.*
 ManagedUserNoticeUIWindowPixelTest.*
 ExtensionInstallDialogViewInteractiveBrowserTest.*
@@ -45,8 +51,6 @@ FirstRunDialogTest.*
 FirstRunIntroPixelTest.*
 GlobalErrorBubbleTest.*
 HatsBubbleTest.*
-*HighEfficiencyFaviconTreatmentTest.*
-*HighEfficiencyMemorySavingsReportingImprovementsTest.*
 HomeButtonUiTest.*
 HungRendererDialogViewBrowserTest.*
 ImportLockDialogViewBrowserTest.*
@@ -58,7 +62,12 @@ IntentPickerDialogGridViewTest.*
 InteractionTestUtilBrowserTest.CompareScreenshot_*
 InteractionTestUtilBrowserUiTest.CompareScreenshot_*
 IsolatedWebAppInstallerViewUiPixelTest.*
+LHSIndicatorsUiBrowserTest.*
 LocalCardMigrationBrowserUiTest.*
+*MemorySaverChipInteractiveTest.*
+*MemorySaverFaviconTreatmentTest.*
+*MemorySaverImprovedFaviconTreatmentTest.*
+MoveBookmarksToAccountDialogTest*
 NewTabPageTest.*
 OfferNotificationBubbleViewPixelBrowserTest.*
 OutdatedUpgradeBubbleTest.*
@@ -72,17 +81,20 @@ PageInfoBubbleViewIsolatedWebAppBrowserTest.*
 *PasswordAutomaticSaveBubbleBrowserTest.*
 *PasswordCrossDomainConfirmationPopupViewBrowsertest.*
 *PasswordGenerationPopupViewBrowsertest.*
-*PasswordGenerationPopupViewWithExperimentsBrowsertest.*
+*PasswordGenerationPopupViewWithSoftNudgeBrowsertest.*
 *PasswordManagementRevampedBubbleInteractiveUiTest.*
 PasswordBubbleInteractiveUiTest.NavigateToManagementDetailsViewAndTakeScreenshot
 PasswordBubbleInteractiveUiTest.NavigateToManagementDetailsViewWithMoveFooterVisibleAndTakeScreenshot
 *PasswordBubbleWithManagePasswordButtonInteractiveUiTest.*
 PasswordReuseModalWarningTest.*
 PaymentsWindowUserConsentDialogBrowserTest*
-PerformanceToolbarButtonInteractiveUiTest.*
+PerformanceInterventionInteractiveTest.InterventionToolbarButton
 PermissionRequestChipBrowserUiTest.*
-*PermissionPromptBubble*ViewBrowserTest.InvokeUi_*
+*PermissionPromptBubble*View*BrowserTest.InvokeUi_*
 PermissionPromptPreviewBrowserTest.InvokeUi_*
+*PlusAddressCreationDialogUiVariationsTest*
+*PlusAddressCreationDialogUiVariationsOnboardingErrorStatesTest*
+PlusAddressCreationDialogWithNoticeTest.ShowNoticeAndCancel
 *PopupViewViewsBrowsertest*
 PrivacySandboxDialogViewBrowserTest.*
 PrivacySandboxNoticeBubbleBrowserTest.*
@@ -106,6 +118,7 @@ SyncConfirmationUIDialogPixelTest.*
 SyncConfirmationUIWindowPixelTest.*
 TabGroupEditorBubbleViewDialogBrowserTest.*
 TabHoverCardBubbleViewDialogBrowserTest.*
+TabSearchBubbleUIBrowserTest.*
 *TailoredSecurityDesktopDialogManagerTest.InvokeUi_*
 TranslateBubbleVisualTest.InvokeUi_*
 UpdateRecommendedDialogTest.*
@@ -118,3 +131,7 @@ ZoomBubbleDialogTest.*
 #
 # # TODO(crbug.com/xxx): Fix xyz and re-enable.
 # -MyTestSuite.InvokeUi_MyTestCase
+
+# TODO(crbug.com/359386795): Failing on Win10 Tests x64, linux-win-cross-rel
+-AppMenuBrowserTest.InvokeUi_main
+-AppMenuBrowserTestRefreshOnly.InvokeUi_main*

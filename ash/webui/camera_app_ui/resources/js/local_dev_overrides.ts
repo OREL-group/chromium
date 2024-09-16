@@ -17,13 +17,13 @@ import {ChromeHelper, getInstanceImpl} from './mojo/chrome_helper.js';
 import {
   EventsSenderRemote,
   LidState,
+  OcrResult,
+  PdfBuilderRemote,
   ScreenState,
   StorageMonitorStatus,
-  ToteMetricFormat,
   WifiConfig,
 } from './mojo/type.js';
 import {fakeEndpoint} from './mojo/util.js';
-import {MimeType} from './type.js';
 import {expandPath} from './util.js';
 
 export class ChromeHelperFake extends ChromeHelper {
@@ -110,10 +110,6 @@ export class ChromeHelperFake extends ChromeHelper {
     /* Do nothing. */
   }
 
-  override notifyTote(_format: ToteMetricFormat, _name: string): void {
-    /* Do nothing. */
-  }
-
   override async monitorFileDeletion(_name: string, _callback: () => void):
       Promise<void> {
     /* Do nothing. */
@@ -133,12 +129,7 @@ export class ChromeHelperFake extends ChromeHelper {
   }
 
   override async convertToDocument(
-      _blob: Blob, _corners: Point[], _rotation: number,
-      _mimeType: MimeType): Promise<Blob> {
-    assertNotReached();
-  }
-
-  override async convertToPdf(_jpegBlobs: Blob[]): Promise<Blob> {
+      _blob: Blob, _corners: Point[], _rotation: number): Promise<Blob> {
     assertNotReached();
   }
 
@@ -169,6 +160,11 @@ export class ChromeHelperFake extends ChromeHelper {
     return LidState.kNotPresent;
   }
 
+  override async initSWPrivacySwitchMonitor(
+      _onChange: (is_sw_privacy_switch_on: boolean) => void): Promise<boolean> {
+    return false;
+  }
+
   override async getEventsSender(): Promise<EventsSenderRemote> {
     return fakeEndpoint();
   }
@@ -178,6 +174,17 @@ export class ChromeHelperFake extends ChromeHelper {
     return false;
   }
 
+  override async renderPdfAsImage(_pdf: Blob): Promise<Blob> {
+    return new Blob();
+  }
+
+  override async performOcr(_jpeg: Blob): Promise<OcrResult> {
+    return {lines: []};
+  }
+
+  override createPdfBuilder(): PdfBuilderRemote {
+    assertNotReached();
+  }
   /* eslint-enable @typescript-eslint/require-await */
 }
 

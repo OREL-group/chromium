@@ -26,6 +26,8 @@
 
 #include <limits>
 
+#include "base/compiler_specific.h"
+#include "base/containers/span.h"
 #include "third_party/blink/public/platform/web_content_settings_client.h"
 #include "third_party/blink/renderer/core/css/css_color.h"
 #include "third_party/blink/renderer/core/dom/events/native_event_listener.h"
@@ -108,7 +110,7 @@ class ImageDocumentParser : public RawDataDocumentParser {
   }
 
  private:
-  void AppendBytes(const char*, size_t) override;
+  void AppendBytes(base::span<const uint8_t>) override;
   void Finish() override;
 
   Member<ImageResource> image_resource_;
@@ -130,9 +132,10 @@ static String ImageTitle(const String& filename, const gfx::Size& size) {
   return result.ToString();
 }
 
-void ImageDocumentParser::AppendBytes(const char* data, size_t length) {
-  if (!length)
+void ImageDocumentParser::AppendBytes(base::span<const uint8_t> data) {
+  if (data.empty()) {
     return;
+  }
 
   if (IsDetached())
     return;
@@ -162,11 +165,12 @@ void ImageDocumentParser::AppendBytes(const char* data, size_t length) {
       image_resource_->ResponseReceived(loader->GetResponse());
   }
 
-  CHECK_LE(length, std::numeric_limits<unsigned>::max());
+  CHECK_LE(data.size(), std::numeric_limits<unsigned>::max());
   // If decoding has already failed, there's no point in sending additional
   // data to the ImageResource.
-  if (image_resource_->GetStatus() != ResourceStatus::kDecodeError)
-    image_resource_->AppendData(data, length);
+  if (image_resource_->GetStatus() != ResourceStatus::kDecodeError) {
+    image_resource_->AppendData(base::as_chars(data));
+  }
 
   if (!IsDetached())
     GetDocument()->ImageUpdated();
@@ -501,7 +505,7 @@ int ImageDocument::CalculateDivWidth() {
   // * Images smaller in either dimension are centered along that axis.
   int viewport_width =
       GetFrame()->GetPage()->GetVisualViewport().Size().width() /
-      GetFrame()->PageZoomFactor();
+      GetFrame()->LayoutZoomFactor();
 
   // For huge images, minimum-scale=0.1 is still too big on small screens.
   // Set the <div> width so that the image will shrink to fit the width of the

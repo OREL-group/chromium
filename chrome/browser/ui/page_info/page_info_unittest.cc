@@ -85,6 +85,7 @@
 #endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 using content::SSLStatus;
+using content_settings::SettingSource;
 using testing::_;
 using testing::AnyNumber;
 using testing::Invoke;
@@ -148,7 +149,7 @@ class PageInfoTest : public ChromeRenderViewHostTestHarness {
   ~PageInfoTest() override = default;
 
   void SetUp() override {
-    // TODO(crbug.com/1344787): Fix tests and enable the feature.
+    // TODO(crbug.com/40231917): Fix tests and enable the feature.
     scoped_feature_list_.InitWithFeatures(
         {
 #if !BUILDFLAG(IS_ANDROID)
@@ -189,9 +190,9 @@ class PageInfoTest : public ChromeRenderViewHostTestHarness {
   }
 
   TestingProfile::TestingFactories GetTestingFactories() const override {
-    return {
-        {StatefulSSLHostStateDelegateFactory::GetInstance(),
-         StatefulSSLHostStateDelegateFactory::GetDefaultFactoryForTesting()}};
+    return {TestingProfile::TestingFactory{
+        StatefulSSLHostStateDelegateFactory::GetInstance(),
+        StatefulSSLHostStateDelegateFactory::GetDefaultFactoryForTesting()}};
   }
 
   void SetDefaultUIExpectations(MockPageInfoUI* mock_ui) {
@@ -305,8 +306,8 @@ class PageInfoTest : public ChromeRenderViewHostTestHarness {
     // missing ones needed by these tests.
     infobars::ContentInfoBarManager::CreateForWebContents(contents);
     content_settings::PageSpecificContentSettings::CreateForWebContents(
-        contents, std::make_unique<chrome::PageSpecificContentSettingsDelegate>(
-                      contents));
+        contents,
+        std::make_unique<PageSpecificContentSettingsDelegate>(contents));
     permissions::PermissionRecoverySuccessRateTracker::CreateForWebContents(
         contents);
   }
@@ -1563,7 +1564,7 @@ TEST_F(PageInfoTest, ShowInfoBarWhenAllowingThirdPartyCookies) {
   page_info()->OnStatusChanged(
       /*controls_visible=*/true, /*protections_on=*/true,
       CookieControlsEnforcement::kNoEnforcement,
-      CookieBlocking3pcdStatus::kNotIn3pcd, base::Time());
+      CookieBlocking3pcdStatus::kNotIn3pcd, base::Time(), /*features=*/{});
 
   EXPECT_EQ(0u, infobar_manager()->infobars().size());
   page_info()->OnThirdPartyToggleClicked(/*block_third_party_cookies=*/false);
@@ -1586,7 +1587,7 @@ TEST_F(PageInfoTest, ShowInfoBarWhenBlockingThirdPartyCookies) {
   page_info()->OnStatusChanged(
       /*controls_visible=*/true, /*protections_on=*/false,
       CookieControlsEnforcement::kNoEnforcement,
-      CookieBlocking3pcdStatus::kNotIn3pcd, base::Time());
+      CookieBlocking3pcdStatus::kNotIn3pcd, base::Time(), /*features=*/{});
 
   EXPECT_EQ(0u, infobar_manager()->infobars().size());
   page_info()->OnThirdPartyToggleClicked(/*block_third_party_cookies=*/true);
@@ -1928,7 +1929,7 @@ TEST_F(PageInfoTest, PermissionBlockedStrings) {
   camera_permission.type = ContentSettingsType::MEDIASTREAM_CAMERA;
   camera_permission.setting = CONTENT_SETTING_BLOCK;
   camera_permission.default_setting = CONTENT_SETTING_ASK;
-  camera_permission.source = content_settings::SETTING_SOURCE_USER;
+  camera_permission.source = SettingSource::kUser;
   camera_permission.is_one_time = false;
 
   EXPECT_EQ(std::u16string(), PageInfoUI::PermissionMainPageStateToUIString(
@@ -1949,7 +1950,7 @@ TEST_F(PageInfoTest, PermissionUsingNowStrings) {
   camera_permission.type = ContentSettingsType::MEDIASTREAM_CAMERA;
   camera_permission.setting = CONTENT_SETTING_ALLOW;
   camera_permission.default_setting = CONTENT_SETTING_ASK;
-  camera_permission.source = content_settings::SETTING_SOURCE_USER;
+  camera_permission.source = SettingSource::kUser;
   camera_permission.is_one_time = false;
   camera_permission.is_in_use = true;
 
@@ -1973,7 +1974,7 @@ TEST_F(PageInfoTest, PermissionRecentlyUsedStrings) {
   camera_permission.type = ContentSettingsType::MEDIASTREAM_CAMERA;
   camera_permission.setting = CONTENT_SETTING_ALLOW;
   camera_permission.default_setting = CONTENT_SETTING_ASK;
-  camera_permission.source = content_settings::SETTING_SOURCE_USER;
+  camera_permission.source = SettingSource::kUser;
   camera_permission.is_one_time = false;
   camera_permission.is_in_use = false;
   camera_permission.last_used = base::Time::Now() - base::Seconds(30);
@@ -1998,7 +1999,7 @@ TEST_F(PageInfoTest, PermissionUsed30MinutesAgoStrings) {
   camera_permission.type = ContentSettingsType::MEDIASTREAM_CAMERA;
   camera_permission.setting = CONTENT_SETTING_ALLOW;
   camera_permission.default_setting = CONTENT_SETTING_ASK;
-  camera_permission.source = content_settings::SETTING_SOURCE_USER;
+  camera_permission.source = SettingSource::kUser;
   camera_permission.is_one_time = false;
   camera_permission.is_in_use = false;
   camera_permission.last_used = base::Time::Now() - base::Minutes(30);
@@ -2040,7 +2041,7 @@ class UnifiedAutoplaySoundSettingsPageInfoTest
                                       GURL("http://www.example.com"));
     return PageInfoUI::PermissionActionToUIString(
         &delegate, ContentSettingsType::SOUND, CONTENT_SETTING_DEFAULT,
-        default_setting_, content_settings::SettingSource::SETTING_SOURCE_USER,
+        default_setting_, SettingSource::kUser,
         /*is_one_time=*/false);
   }
 
@@ -2051,7 +2052,7 @@ class UnifiedAutoplaySoundSettingsPageInfoTest
                                       GURL("http://www.example.com"));
     return PageInfoUI::PermissionActionToUIString(
         &delegate, ContentSettingsType::SOUND, setting, default_setting_,
-        content_settings::SettingSource::SETTING_SOURCE_USER,
+        SettingSource::kUser,
         /*is_one_time=*/false);
   }
 
@@ -2147,8 +2148,7 @@ TEST_F(UnifiedAutoplaySoundSettingsPageInfoTest, NotSoundSetting_Noop) {
       l10n_util::GetStringUTF16(IDS_PAGE_INFO_BUTTON_TEXT_ALLOWED_BY_DEFAULT),
       PageInfoUI::PermissionActionToUIString(
           &delegate, ContentSettingsType::ADS, CONTENT_SETTING_DEFAULT,
-          CONTENT_SETTING_ALLOW,
-          content_settings::SettingSource::SETTING_SOURCE_USER,
+          CONTENT_SETTING_ALLOW, SettingSource::kUser,
           /*is_one_time=*/false));
 }
 
@@ -2176,7 +2176,7 @@ TEST_F(PageInfoToggleStatesUnitTest,
   camera_permission.type = ContentSettingsType::MEDIASTREAM_CAMERA;
   camera_permission.setting = CONTENT_SETTING_ALLOW;
   camera_permission.default_setting = CONTENT_SETTING_ASK;
-  camera_permission.source = content_settings::SETTING_SOURCE_USER;
+  camera_permission.source = SettingSource::kUser;
   camera_permission.is_one_time = false;
 
   // Allow -> Block
@@ -2194,22 +2194,23 @@ TEST_F(PageInfoToggleStatesUnitTest,
   camera_permission.type = ContentSettingsType::MEDIASTREAM_CAMERA;
   camera_permission.setting = CONTENT_SETTING_ALLOW;
   camera_permission.default_setting = CONTENT_SETTING_BLOCK;
-  camera_permission.source = content_settings::SETTING_SOURCE_USER;
+  camera_permission.source = SettingSource::kUser;
   camera_permission.is_one_time = false;
 
-  // Allow -> Block (default)
+  // Allow -> Block
   PageInfoUI::ToggleBetweenAllowAndBlock(camera_permission);
-  EXPECT_EQ(camera_permission.setting, CONTENT_SETTING_DEFAULT);
+  EXPECT_EQ(camera_permission.setting, CONTENT_SETTING_BLOCK);
 
-  // Block (default) -> Allow
+  // Block -> Allow
   PageInfoUI::ToggleBetweenAllowAndBlock(camera_permission);
   EXPECT_EQ(camera_permission.setting, CONTENT_SETTING_ALLOW);
 
-  // Block -> Allow
-  // If there is a site exception created, that matches the default setting,
-  // permission setting still will be toggled to the opposite but there won't
-  // be an option to recreate the site setting.
-  camera_permission.setting = CONTENT_SETTING_BLOCK;
+  // Allow -> Block
+  PageInfoUI::ToggleBetweenAllowAndBlock(camera_permission);
+  EXPECT_EQ(camera_permission.setting, CONTENT_SETTING_BLOCK);
+
+  // Block (default) -> Allow
+  camera_permission.setting = CONTENT_SETTING_DEFAULT;
   PageInfoUI::ToggleBetweenAllowAndBlock(camera_permission);
   EXPECT_EQ(camera_permission.setting, CONTENT_SETTING_ALLOW);
 }
@@ -2222,7 +2223,7 @@ TEST_F(PageInfoToggleStatesUnitTest,
   location_permission.type = ContentSettingsType::GEOLOCATION;
   location_permission.setting = CONTENT_SETTING_ALLOW;
   location_permission.default_setting = CONTENT_SETTING_ASK;
-  location_permission.source = content_settings::SETTING_SOURCE_USER;
+  location_permission.source = SettingSource::kUser;
   location_permission.is_one_time = false;
 
   // Allow -> Block
@@ -2250,16 +2251,10 @@ TEST_F(PageInfoToggleStatesUnitTest,
        TogglePermissionWithAllowOnceDefaultBlockTest) {
   PageInfo::PermissionInfo location_permission;
   location_permission.type = ContentSettingsType::GEOLOCATION;
-  location_permission.setting = CONTENT_SETTING_ALLOW;
+  location_permission.setting = CONTENT_SETTING_DEFAULT;
   location_permission.default_setting = CONTENT_SETTING_BLOCK;
-  location_permission.source = content_settings::SETTING_SOURCE_USER;
+  location_permission.source = SettingSource::kUser;
   location_permission.is_one_time = false;
-
-  // If the default setting matches target setting, no site exception will be
-  // created and permission will be in the default state.
-  // Allow -> Block (default)
-  PageInfoUI::ToggleBetweenAllowAndBlock(location_permission);
-  EXPECT_EQ(location_permission.setting, CONTENT_SETTING_DEFAULT);
 
   // Block (default) -> Allow once
   PageInfoUI::ToggleBetweenAllowAndBlock(location_permission);
@@ -2271,27 +2266,24 @@ TEST_F(PageInfoToggleStatesUnitTest,
   EXPECT_EQ(location_permission.setting, CONTENT_SETTING_ALLOW);
   EXPECT_EQ(location_permission.is_one_time, false);
 
+  // Allow -> Block
+  PageInfoUI::ToggleBetweenAllowAndBlock(location_permission);
+  EXPECT_EQ(location_permission.setting, CONTENT_SETTING_BLOCK);
+
+  // Block -> Allow
+  PageInfoUI::ToggleBetweenAllowAndBlock(location_permission);
+  EXPECT_EQ(location_permission.setting, CONTENT_SETTING_ALLOW);
+  EXPECT_EQ(location_permission.is_one_time, false);
+
   // Allow -> Allow once
   PageInfoUI::ToggleBetweenRememberAndForget(location_permission);
   EXPECT_EQ(location_permission.setting, CONTENT_SETTING_ALLOW);
   EXPECT_EQ(location_permission.is_one_time, true);
 
-  // Allow once -> Block (default)
+  // Allow once -> Block
   PageInfoUI::ToggleBetweenAllowAndBlock(location_permission);
-  EXPECT_EQ(location_permission.setting, CONTENT_SETTING_DEFAULT);
+  EXPECT_EQ(location_permission.setting, CONTENT_SETTING_BLOCK);
   EXPECT_EQ(location_permission.is_one_time, false);
-
-  // If there is a site exception created, that matches the default setting,
-  // permission setting still will be toggled to the opposite but there won't
-  // be an option to recreate the site setting.
-  // Block -> Allow
-  location_permission.setting = CONTENT_SETTING_BLOCK;
-  PageInfoUI::ToggleBetweenAllowAndBlock(location_permission);
-  EXPECT_EQ(location_permission.setting, CONTENT_SETTING_ALLOW);
-  // Block -> Block (default)
-  location_permission.setting = CONTENT_SETTING_BLOCK;
-  PageInfoUI::ToggleBetweenRememberAndForget(location_permission);
-  EXPECT_EQ(location_permission.setting, CONTENT_SETTING_DEFAULT);
 }
 
 // Testing all possible state transitions for a content settings with a default
@@ -2301,22 +2293,18 @@ TEST_F(PageInfoToggleStatesUnitTest, TogglePermissionDefaultAllowTest) {
   images_permission.type = ContentSettingsType::IMAGES;
   images_permission.setting = CONTENT_SETTING_DEFAULT;
   images_permission.default_setting = CONTENT_SETTING_ALLOW;
-  images_permission.source = content_settings::SETTING_SOURCE_USER;
+  images_permission.source = SettingSource::kUser;
   images_permission.is_one_time = false;
 
   // Allow (default) -> Block
   PageInfoUI::ToggleBetweenAllowAndBlock(images_permission);
   EXPECT_EQ(images_permission.setting, CONTENT_SETTING_BLOCK);
 
-  // Block -> Allow (default)
+  // Block -> Allow
   PageInfoUI::ToggleBetweenAllowAndBlock(images_permission);
-  EXPECT_EQ(images_permission.setting, CONTENT_SETTING_DEFAULT);
+  EXPECT_EQ(images_permission.setting, CONTENT_SETTING_ALLOW);
 
   // Allow -> Block
-  // If there is a site exception created, that matches the default setting,
-  // permission setting still will be toggled to the opposite but there won't
-  // be an option to recreate the site setting.
-  images_permission.setting = CONTENT_SETTING_ALLOW;
   PageInfoUI::ToggleBetweenAllowAndBlock(images_permission);
   EXPECT_EQ(images_permission.setting, CONTENT_SETTING_BLOCK);
 }
@@ -2328,30 +2316,23 @@ TEST_F(PageInfoToggleStatesUnitTest, TogglePermissionDefaultBlockTest) {
   popups_permission.type = ContentSettingsType::POPUPS;
   popups_permission.setting = CONTENT_SETTING_DEFAULT;
   popups_permission.default_setting = CONTENT_SETTING_BLOCK;
-  popups_permission.source = content_settings::SETTING_SOURCE_USER;
+  popups_permission.source = SettingSource::kUser;
   popups_permission.is_one_time = false;
 
   // Block (default) -> Allow
   PageInfoUI::ToggleBetweenAllowAndBlock(popups_permission);
   EXPECT_EQ(popups_permission.setting, CONTENT_SETTING_ALLOW);
 
-  // Allow -> Block (default)
+  // Allow -> Block
+  // The page info always creates a site exception even if the target setting
+  // matches the default.
   PageInfoUI::ToggleBetweenAllowAndBlock(popups_permission);
-  EXPECT_EQ(popups_permission.setting, CONTENT_SETTING_DEFAULT);
+  EXPECT_EQ(popups_permission.setting, CONTENT_SETTING_BLOCK);
 
   // Block -> Allow
-  // If there is a site exception created, that matches the default setting,
-  // permission setting still will be toggled to the opposite but there won't
-  // be an option to recreate the site setting.
-  popups_permission.setting = CONTENT_SETTING_BLOCK;
   PageInfoUI::ToggleBetweenAllowAndBlock(popups_permission);
   EXPECT_EQ(popups_permission.setting, CONTENT_SETTING_ALLOW);
 }
-
-// TODO(olesiamarukhno): Add test for guard content setting for
-// chooser-based permissions (ex. ContentSettingsType::USB_GUARD for
-// ContentSettingsType::USB_CHOOSER_DATA). Guard content settings support only
-// ask and block state, don't support allow.
 
 // Testing all possible state transitions for a guard content settings with a
 // default setting ask.
@@ -2360,22 +2341,20 @@ TEST_F(PageInfoToggleStatesUnitTest, ToggleGuardPermissionDefaultAskTest) {
   usb_guard.type = ContentSettingsType::USB_GUARD;
   usb_guard.setting = CONTENT_SETTING_DEFAULT;
   usb_guard.default_setting = CONTENT_SETTING_ASK;
-  usb_guard.source = content_settings::SETTING_SOURCE_USER;
+  usb_guard.source = SettingSource::kUser;
   usb_guard.is_one_time = false;
 
   // Ask (default) -> Block
   PageInfoUI::ToggleBetweenAllowAndBlock(usb_guard);
   EXPECT_EQ(usb_guard.setting, CONTENT_SETTING_BLOCK);
 
-  // Block -> Ask (default)
+  // Block -> Ask
+  // The page info always creates a site exception even if the target setting
+  // matches the default.
   PageInfoUI::ToggleBetweenAllowAndBlock(usb_guard);
-  EXPECT_EQ(usb_guard.setting, CONTENT_SETTING_DEFAULT);
+  EXPECT_EQ(usb_guard.setting, CONTENT_SETTING_ASK);
 
   // Ask -> Block
-  // If there is a site exception created, that matches the default setting,
-  // permission setting still will be toggled to the opposite but there won't
-  // be an option to recreate the site setting.
-  usb_guard.setting = CONTENT_SETTING_ASK;
   PageInfoUI::ToggleBetweenAllowAndBlock(usb_guard);
   EXPECT_EQ(usb_guard.setting, CONTENT_SETTING_BLOCK);
 }
@@ -2387,22 +2366,20 @@ TEST_F(PageInfoToggleStatesUnitTest, ToggleGuardPermissionDefaultBlockTest) {
   hid_guard.type = ContentSettingsType::HID_GUARD;
   hid_guard.setting = CONTENT_SETTING_DEFAULT;
   hid_guard.default_setting = CONTENT_SETTING_BLOCK;
-  hid_guard.source = content_settings::SETTING_SOURCE_USER;
+  hid_guard.source = SettingSource::kUser;
   hid_guard.is_one_time = false;
 
   // Block (default) -> Ask
   PageInfoUI::ToggleBetweenAllowAndBlock(hid_guard);
   EXPECT_EQ(hid_guard.setting, CONTENT_SETTING_ASK);
 
-  // Ask -> Block (default)
+  // Ask -> Block
+  // The page info always creates a site exception even if the target setting
+  // matches the default.
   PageInfoUI::ToggleBetweenAllowAndBlock(hid_guard);
-  EXPECT_EQ(hid_guard.setting, CONTENT_SETTING_DEFAULT);
+  EXPECT_EQ(hid_guard.setting, CONTENT_SETTING_BLOCK);
 
   // Block -> Ask
-  // If there is a site exception created, that matches the default setting,
-  // permission setting still will be toggled to the opposite but there won't
-  // be an option to recreate the site setting.
-  hid_guard.setting = CONTENT_SETTING_BLOCK;
   PageInfoUI::ToggleBetweenAllowAndBlock(hid_guard);
   EXPECT_EQ(hid_guard.setting, CONTENT_SETTING_ASK);
 }
@@ -2435,4 +2412,84 @@ TEST_F(PageInfoTest, MidiGrantsAreFilteredWhenAllowSysex) {
   expected_visible_permissions.insert(ContentSettingsType::MIDI_SYSEX);
   ExpectPermissionInfoList(expected_visible_permissions,
                            last_permission_info_list());
+}
+
+TEST_F(PageInfoTest, OriginLevelExceptionScope) {
+  SetURL("https://www.example.com");
+
+  auto* map = HostContentSettingsMapFactory::GetForProfile(profile());
+  page_info()->PresentSitePermissionsForTesting();
+  map->SetContentSettingDefaultScope(url(), url(), ContentSettingsType::POPUPS,
+                                     CONTENT_SETTING_ALLOW);
+
+  page_info()->OnSitePermissionChanged(ContentSettingsType::POPUPS,
+                                       CONTENT_SETTING_BLOCK,
+                                       /*requesting_origin=*/std::nullopt,
+                                       /*is_one_time=*/false);
+
+  // Page info has created an allow origin-level exception.
+  content_settings::SettingInfo info;
+  ContentSetting setting =
+      map->GetContentSetting(url(), url(), ContentSettingsType::POPUPS, &info);
+  EXPECT_EQ(setting, CONTENT_SETTING_BLOCK);
+  EXPECT_EQ(info.primary_pattern,
+            ContentSettingsPattern::FromURLNoWildcard(url()));
+  EXPECT_EQ(info.secondary_pattern, ContentSettingsPattern::Wildcard());
+
+  page_info()->OnSitePermissionChanged(ContentSettingsType::POPUPS,
+                                       CONTENT_SETTING_ALLOW,
+                                       /*requesting_origin=*/std::nullopt,
+                                       /*is_one_time=*/false);
+
+  // Page info has created a block origin-level exception.
+  setting =
+      map->GetContentSetting(url(), url(), ContentSettingsType::POPUPS, &info);
+  EXPECT_EQ(setting, CONTENT_SETTING_ALLOW);
+  EXPECT_EQ(info.primary_pattern,
+            ContentSettingsPattern::FromURLNoWildcard(url()));
+  EXPECT_EQ(info.secondary_pattern, ContentSettingsPattern::Wildcard());
+}
+
+TEST_F(PageInfoTest, CustomExceptionScope) {
+  SetURL("https://www.example.com");
+
+  auto* map = HostContentSettingsMapFactory::GetForProfile(profile());
+  page_info()->PresentSitePermissionsForTesting();
+  map->SetContentSettingCustomScope(
+      ContentSettingsPattern::FromString("https://*"),
+      ContentSettingsPattern::Wildcard(), ContentSettingsType::JAVASCRIPT,
+      CONTENT_SETTING_BLOCK);
+
+  page_info()->OnSitePermissionChanged(ContentSettingsType::JAVASCRIPT,
+                                       CONTENT_SETTING_ALLOW,
+                                       /*requesting_origin=*/std::nullopt,
+                                       /*is_one_time=*/false);
+
+  // Page info has created an allow origin-level exception.
+  content_settings::SettingInfo info;
+  ContentSetting setting = map->GetContentSetting(
+      url(), url(), ContentSettingsType::JAVASCRIPT, &info);
+  EXPECT_EQ(setting, CONTENT_SETTING_ALLOW);
+  EXPECT_EQ(info.primary_pattern,
+            ContentSettingsPattern::FromURLNoWildcard(url()));
+  EXPECT_EQ(info.secondary_pattern, ContentSettingsPattern::Wildcard());
+
+  // Other origins matching the pattern are not affected.
+  GURL another_url = GURL("https://www.another.com");
+  EXPECT_EQ(CONTENT_SETTING_BLOCK,
+            map->GetContentSetting(another_url, another_url,
+                                   ContentSettingsType::JAVASCRIPT));
+
+  page_info()->OnSitePermissionChanged(ContentSettingsType::JAVASCRIPT,
+                                       CONTENT_SETTING_BLOCK,
+                                       /*requesting_origin=*/std::nullopt,
+                                       /*is_one_time=*/false);
+
+  // Page info has created a block origin-level exception.
+  setting = map->GetContentSetting(url(), url(),
+                                   ContentSettingsType::JAVASCRIPT, &info);
+  EXPECT_EQ(setting, CONTENT_SETTING_BLOCK);
+  EXPECT_EQ(info.primary_pattern,
+            ContentSettingsPattern::FromURLNoWildcard(url()));
+  EXPECT_EQ(info.secondary_pattern, ContentSettingsPattern::Wildcard());
 }

@@ -2,11 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "content/browser/service_worker/service_worker_cache_writer.h"
 
 #include <algorithm>
 #include <string>
 
+#include "base/containers/span.h"
 #include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
@@ -151,7 +157,7 @@ int ServiceWorkerCacheWriter::DoLoop(int status) {
         status = DoDone(status);
         break;
       default:
-        NOTREACHED() << "Unknown state in DoLoop";
+        NOTREACHED_IN_MIGRATION() << "Unknown state in DoLoop";
         state_ = STATE_DONE;
         break;
     }
@@ -739,8 +745,9 @@ class ServiceWorkerCacheWriter::DataPipeReader {
 
  private:
   void ReadInternal(MojoResult) {
-    MojoResult result = data_->ReadData(buffer_->data(), &num_bytes_to_read_,
-                                        MOJO_READ_DATA_FLAG_NONE);
+    MojoResult result = data_->ReadData(
+        MOJO_READ_DATA_FLAG_NONE, buffer_->span().first(num_bytes_to_read_),
+        num_bytes_to_read_);
     if (result == MOJO_RESULT_SHOULD_WAIT) {
       watcher_.ArmOrNotify();
       return;
@@ -748,7 +755,7 @@ class ServiceWorkerCacheWriter::DataPipeReader {
     if (result != MOJO_RESULT_OK) {
       // Disconnected means it's the end of the body or an error occurs during
       // reading the body.
-      // TODO(https://crbug.com/1055677): notify of errors.
+      // TODO(crbug.com/40120038): notify of errors.
       num_bytes_to_read_ = 0;
     }
     owner_->AsyncDoLoop(base::checked_cast<int>(num_bytes_to_read_));
@@ -770,7 +777,7 @@ class ServiceWorkerCacheWriter::DataPipeReader {
                        weak_factory_.GetWeakPtr()));
     ReadInternal(MOJO_RESULT_OK);
 
-    // TODO(https://crbug.com/1055677): provide a callback to notify of errors
+    // TODO(crbug.com/40120038): provide a callback to notify of errors
     // if any.
     reader_->ReadData({});
   }

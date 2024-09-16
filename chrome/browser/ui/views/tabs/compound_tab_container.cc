@@ -62,17 +62,17 @@ class PinnedTabContainerController final : public TabContainerController {
   }
 
   bool IsGroupCollapsed(const tab_groups::TabGroupId& group) const override {
-    NOTREACHED_NORETURN();  // Pinned container can't have groups.
+    NOTREACHED();  // Pinned container can't have groups.
   }
 
   std::optional<int> GetFirstTabInGroup(
       const tab_groups::TabGroupId& group) const override {
-    NOTREACHED_NORETURN();  // Pinned container can't have groups.
+    NOTREACHED();  // Pinned container can't have groups.
   }
 
   gfx::Range ListTabsInGroup(
       const tab_groups::TabGroupId& group) const override {
-    NOTREACHED_NORETURN();  // Pinned container can't have groups.
+    NOTREACHED();  // Pinned container can't have groups.
   }
 
   bool CanExtendDragHandle() const override {
@@ -357,15 +357,17 @@ void CompoundTabContainer::SetActiveTab(
 }
 
 Tab* CompoundTabContainer::RemoveTabFromViewModel(int model_index) {
-  // TODO(1395526): This only needs to be implemented in TabContainerImpl.
-  NOTREACHED_NORETURN();
+  // TODO(crbug.com/40882151): This only needs to be implemented in
+  // TabContainerImpl.
+  NOTREACHED();
 }
 
 Tab* CompoundTabContainer::AddTabToViewModel(Tab* tab,
                                              int model_index,
                                              TabPinned pinned) {
-  // TODO(1395526): This only needs to be implemented in TabContainerImpl.
-  NOTREACHED_NORETURN();
+  // TODO(crbug.com/40882151): This only needs to be implemented in
+  // TabContainerImpl.
+  NOTREACHED();
 }
 
 void CompoundTabContainer::ReturnTabSlotView(TabSlotView* view) {
@@ -373,7 +375,7 @@ void CompoundTabContainer::ReturnTabSlotView(TabSlotView* view) {
 }
 
 void CompoundTabContainer::ScrollTabToVisible(int model_index) {
-  // TODO(crbug.com/1346023): Implement. I guess.
+  // TODO(crbug.com/40060338): Implement. I guess.
 }
 
 void CompoundTabContainer::ScrollTabContainerByOffset(int offset) {
@@ -532,13 +534,15 @@ bool CompoundTabContainer::IsRectInContentArea(const gfx::Rect& rect) {
 
 std::optional<ZOrderableTabContainerElement>
 CompoundTabContainer::GetLeadingElementForZOrdering() const {
-  // TODO(1395526): This only needs to be implemented in TabContainerImpl.
-  NOTREACHED_NORETURN();
+  // TODO(crbug.com/40882151): This only needs to be implemented in
+  // TabContainerImpl.
+  NOTREACHED();
 }
 std::optional<ZOrderableTabContainerElement>
 CompoundTabContainer::GetTrailingElementForZOrdering() const {
-  // TODO(1395526): This only needs to be implemented in TabContainerImpl.
-  NOTREACHED_NORETURN();
+  // TODO(crbug.com/40882151): This only needs to be implemented in
+  // TabContainerImpl.
+  NOTREACHED();
 }
 
 void CompoundTabContainer::OnTabSlotAnimationProgressed(TabSlotView* view) {
@@ -546,8 +550,9 @@ void CompoundTabContainer::OnTabSlotAnimationProgressed(TabSlotView* view) {
 }
 
 void CompoundTabContainer::OnTabCloseAnimationCompleted(Tab* tab) {
-  // TODO(1395526): This only needs to be implemented in TabContainerImpl.
-  NOTREACHED_NORETURN();
+  // TODO(crbug.com/40882151): This only needs to be implemented in
+  // TabContainerImpl.
+  NOTREACHED();
 }
 
 void CompoundTabContainer::InvalidateIdealBounds() {
@@ -625,7 +630,7 @@ void CompoundTabContainer::ExitTabClosingMode() {
 }
 
 void CompoundTabContainer::SetTabSlotVisibility() {
-  // TODO(crbug.com/1346023): Impl
+  // TODO(crbug.com/40060338): Impl
 }
 
 bool CompoundTabContainer::InTabClose() {
@@ -688,7 +693,8 @@ views::SizeBounds CompoundTabContainer::GetAvailableSize(
                            views::SizeBound());
 }
 
-gfx::Size CompoundTabContainer::CalculatePreferredSize() const {
+gfx::Size CompoundTabContainer::CalculatePreferredSize(
+    const views::SizeBounds& available_size) const {
   return GetCombinedSizeForTabContainerSizes(
       pinned_tab_container_->GetPreferredSize(),
       unpinned_tab_container_->GetPreferredSize());
@@ -768,8 +774,7 @@ void CompoundTabContainer::ChildPreferredSizeChanged(views::View* child) {
 }
 
 std::optional<BrowserRootView::DropIndex> CompoundTabContainer::GetDropIndex(
-    const ui::DropTargetEvent& event,
-    bool allow_replacement) {
+    const ui::DropTargetEvent& event) {
   TabContainer* sub_drop_target = GetTabContainerForDrop(event.location());
   CHECK(sub_drop_target);
   CHECK(sub_drop_target->GetDropTarget(
@@ -785,12 +790,12 @@ std::optional<BrowserRootView::DropIndex> CompoundTabContainer::GetDropIndex(
   if (sub_drop_target == base::to_address(pinned_tab_container_)) {
     // Pinned tab container shares an index and coordinate space, so no
     // adjustments needed.
-    return sub_drop_target->GetDropIndex(adjusted_event, allow_replacement);
+    return sub_drop_target->GetDropIndex(adjusted_event);
   } else {
     // For the unpinned container, we need to transform the output to the
     // correct index space.
     const std::optional<BrowserRootView::DropIndex> sub_target_index =
-        sub_drop_target->GetDropIndex(adjusted_event, allow_replacement);
+        sub_drop_target->GetDropIndex(adjusted_event);
     return BrowserRootView::DropIndex{
         .index = sub_target_index->index + NumPinnedTabs(),
         .relative_to_index = sub_target_index->relative_to_index,

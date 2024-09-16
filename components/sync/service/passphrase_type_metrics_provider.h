@@ -15,13 +15,13 @@ namespace syncer {
 class SyncService;
 
 // These values are persisted to logs. Entries should not be renumbered and
-// numeric values should never be reused. Keep in sync with SyncPassphraseType2
+// numeric values should never be reused. Keep in sync with the homonym enum
 // in tools/metrics/histograms/metadata/sync/enums.xml.
 // Exposed in the header file for testing.
+// LINT.IfChange(PassphraseTypeForMetrics)
 enum class PassphraseTypeForMetrics {
-  // Used if there are no syncing profiles or all syncing profiles are not in
-  // ACTIVE sync transport state.
-  kNoActiveSyncingProfiles = 0,
+  // Passphrase type is unknown.
+  kUnknown = 0,
   // Used if there are multiple syncing profiles with different passphrase
   // types or with different sync transport state is ACTIVE values.
   kInconsistentStateAcrossProfiles = 1,
@@ -34,6 +34,7 @@ enum class PassphraseTypeForMetrics {
   kTrustedVaultPassphrase = 6,
   kMaxValue = kTrustedVaultPassphrase
 };
+// LINT.ThenChange(/tools/metrics/histograms/metadata/sync/enums.xml:PassphraseTypeForMetrics)
 
 // A registerable metrics provider that will emit sync passphrase type upon UMA
 // upload. If it's impossible to detect real passphrase type, special enum
@@ -45,8 +46,10 @@ class PassphraseTypeMetricsProvider : public metrics::MetricsProvider {
       base::RepeatingCallback<std::vector<const SyncService*>()>;
 
   // All SyncServices returned by |get_all_sync_services_callback| must be not
-  // null.
-  explicit PassphraseTypeMetricsProvider(
+  // null. If `use_cached_passphrase_type` is true, the metric will be computed
+  // based on the passphrase type that's cached in sync prefs.
+  PassphraseTypeMetricsProvider(
+      bool use_cached_passphrase_type,
       const GetAllSyncServicesCallback& get_all_sync_services_callback);
 
   PassphraseTypeMetricsProvider(const PassphraseTypeMetricsProvider& other) =
@@ -60,6 +63,7 @@ class PassphraseTypeMetricsProvider : public metrics::MetricsProvider {
   bool ProvideHistograms() override;
 
  private:
+  const bool use_cached_passphrase_type_;
   const GetAllSyncServicesCallback get_all_sync_services_callback_;
 };
 

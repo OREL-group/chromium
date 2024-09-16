@@ -30,8 +30,6 @@
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_resource_clipper.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_resource_masker.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_root.h"
-#include "third_party/blink/renderer/core/layout/svg/layout_svg_transformable_container.h"
-#include "third_party/blink/renderer/core/layout/svg/layout_svg_viewport_container.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_resources.h"
 #include "third_party/blink/renderer/core/paint/css_mask_painter.h"
 #include "third_party/blink/renderer/core/paint/outline_painter.h"
@@ -88,9 +86,10 @@ gfx::RectF SVGLayoutSupport::LocalVisualRect(const LayoutObject& object) {
   DCHECK(!object.IsSVGRoot());
 
   // Return early for any cases where we don't actually paint
-  if (object.StyleRef().Visibility() != EVisibility::kVisible &&
-      !object.EnclosingLayer()->HasVisibleContent())
+  if (object.StyleRef().UsedVisibility() != EVisibility::kVisible &&
+      !object.EnclosingLayer()->HasVisibleContent()) {
     return gfx::RectF();
+  }
 
   gfx::RectF visual_rect = object.VisualRectInLocalSVGCoordinates();
   if (int outset = OutlinePainter::OutlineOutsetExtent(
@@ -229,37 +228,6 @@ void SVGLayoutSupport::MapAncestorToLocal(const LayoutObject& object,
   transform_state.ApplyTransform(local_to_svg_root);
 }
 
-bool SVGLayoutSupport::LayoutSizeOfNearestViewportChanged(
-    const LayoutObject* start) {
-  for (; start; start = start->Parent()) {
-    if (auto* svg_root = DynamicTo<LayoutSVGRoot>(*start)) {
-      return svg_root->IsLayoutSizeChanged();
-    }
-    if (auto* svg_viewport = DynamicTo<LayoutSVGViewportContainer>(*start)) {
-      return svg_viewport->IsLayoutSizeChanged();
-    }
-  }
-  NOTREACHED();
-  return false;
-}
-
-bool SVGLayoutSupport::ScreenScaleFactorChanged(const LayoutObject* ancestor) {
-  for (; ancestor; ancestor = ancestor->Parent()) {
-    if (auto* svg_root = DynamicTo<LayoutSVGRoot>(*ancestor)) {
-      return svg_root->DidScreenScaleFactorChange();
-    }
-    if (auto* svg_transformable =
-            DynamicTo<LayoutSVGTransformableContainer>(*ancestor)) {
-      return svg_transformable->DidScreenScaleFactorChange();
-    }
-    if (auto* svg_viewport = DynamicTo<LayoutSVGViewportContainer>(*ancestor)) {
-      return svg_viewport->DidScreenScaleFactorChange();
-    }
-  }
-  NOTREACHED();
-  return false;
-}
-
 bool SVGLayoutSupport::IsOverflowHidden(const LayoutObject& object) {
   // LayoutSVGRoot should never query for overflow state - it should always clip
   // itself to the initial viewport size.
@@ -364,7 +332,7 @@ bool SVGLayoutSupport::IsLayoutableTextNode(const LayoutObject* object) {
 
 bool SVGLayoutSupport::WillIsolateBlendingDescendantsForStyle(
     const ComputedStyle& style) {
-  return style.HasGroupingProperty(style.BoxReflect()) || style.HasMask();
+  return style.HasGroupingProperty(style.BoxReflect());
 }
 
 bool SVGLayoutSupport::WillIsolateBlendingDescendantsForObject(
@@ -377,9 +345,6 @@ bool SVGLayoutSupport::WillIsolateBlendingDescendantsForObject(
 }
 
 bool SVGLayoutSupport::IsIsolationRequired(const LayoutObject* object) {
-  if (object->StyleRef().HasMask()) {
-    return true;
-  }
   return WillIsolateBlendingDescendantsForObject(object) &&
          object->HasNonIsolatedBlendingDescendants();
 }

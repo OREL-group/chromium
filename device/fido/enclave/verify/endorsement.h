@@ -8,27 +8,32 @@
 #include <cstdint>
 #include <vector>
 
+#include "base/component_export.h"
 #include "base/containers/span.h"
 #include "base/time/time.h"
 #include "device/fido/enclave/verify/claim.h"
 
 namespace device::enclave {
 
-bool VerifyBinaryDigest(base::span<const uint8_t> endorsement,
-                        base::span<const uint8_t> expected);
+// Verifies the binary endorsement against log entry and public keys.
+bool COMPONENT_EXPORT(DEVICE_FIDO)
+    VerifyBinaryEndorsement(base::Time now,
+                            base::span<const uint8_t> endorsement,
+                            base::span<const uint8_t> signature,
+                            base::span<const uint8_t> log_entry,
+                            base::span<const uint8_t> endorser_public_key,
+                            base::span<const uint8_t> rekor_public_key);
 
-bool VerifyBinaryEndorsement(base::Time now,
-                             base::span<const uint8_t> endorsement,
-                             base::span<const uint8_t> signature,
-                             base::span<const uint8_t> log_entry,
-                             base::span<const uint8_t> endorser_public_key,
-                             base::span<const uint8_t> rekor_public_key);
+// Verifies endorsement against the given reference values.
+bool COMPONENT_EXPORT(DEVICE_FIDO)
+    VerifyEndorsementStatement(base::Time now,
+                               const EndorsementStatement& statement);
 
-bool VerifyEndorsementStatement(base::Time now,
-                                const EndorsementStatement& statement);
-
-bool VerifyEndorserPublicKey(base::span<const uint8_t> log_entry,
-                             base::span<const uint8_t> endorser_public_key);
+// Verifies that the endorser public key coincides with the one contained in
+// the attestation.
+bool COMPONENT_EXPORT(DEVICE_FIDO)
+    VerifyEndorserPublicKey(base::span<const uint8_t> log_entry,
+                            base::span<const uint8_t> endorser_public_key);
 
 }  // namespace device::enclave
 

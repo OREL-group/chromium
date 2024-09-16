@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "remoting/codec/webrtc_video_encoder_vpx.h"
 
 #include <algorithm>
@@ -437,7 +442,7 @@ void WebrtcVideoEncoderVpx::UpdateConfig(const FrameParams& params) {
 
   // Update encoder context.
   if (vpx_codec_enc_config_set(codec_.get(), &config_)) {
-    NOTREACHED() << "Unable to set encoder config";
+    NOTREACHED_IN_MIGRATION() << "Unable to set encoder config";
   }
 }
 
@@ -521,7 +526,7 @@ void WebrtcVideoEncoderVpx::PrepareImage(
       }
       break;
     default:
-      NOTREACHED();
+      NOTREACHED_IN_MIGRATION();
       break;
   }
 }

@@ -28,13 +28,15 @@ import org.chromium.ui.AsyncViewStub;
 import org.chromium.ui.DropdownPopupWindow;
 import org.chromium.ui.base.WindowAndroid;
 
+import java.util.List;
+import java.util.function.BooleanSupplier;
+
 /**
  * Handles requests to the manual UI for filling passwords, payments and other user data. Ideally,
  * the caller has no access to Keyboard accessory or sheet and is only interacting with this
- * component.
- * For that, it facilitates the communication between {@link KeyboardAccessoryCoordinator} and
- * {@link AccessorySheetCoordinator} to add and trigger surfaces that may assist users while filling
- * fields.
+ * component. For that, it facilitates the communication between {@link
+ * KeyboardAccessoryCoordinator} and {@link AccessorySheetCoordinator} to add and trigger surfaces
+ * that may assist users while filling fields.
  */
 class ManualFillingCoordinator implements ManualFillingComponent {
     private final ManualFillingMediator mMediator = new ManualFillingMediator();
@@ -47,6 +49,7 @@ class ManualFillingCoordinator implements ManualFillingComponent {
             WindowAndroid windowAndroid,
             Profile profile,
             BottomSheetController sheetController,
+            BooleanSupplier isContextualSearchOpened,
             SoftKeyboardDelegate keyboardDelegate,
             BackPressManager backPressManager,
             Supplier<EdgeToEdgeController> edgeToEdgeControllerSupplier,
@@ -66,6 +69,7 @@ class ManualFillingCoordinator implements ManualFillingComponent {
                 new KeyboardAccessoryCoordinator(profile, mMediator, mMediator, barStub),
                 new AccessorySheetCoordinator(sheetStub, mMediator),
                 sheetController,
+                isContextualSearchOpened,
                 backPressManager,
                 edgeToEdgeControllerSupplier,
                 keyboardDelegate,
@@ -78,6 +82,7 @@ class ManualFillingCoordinator implements ManualFillingComponent {
             KeyboardAccessoryCoordinator accessoryBar,
             AccessorySheetCoordinator accessorySheet,
             BottomSheetController sheetController,
+            BooleanSupplier isContextualSearchOpened,
             BackPressManager backPressManager,
             Supplier<EdgeToEdgeController> edgeToEdgeControllerSupplier,
             SoftKeyboardDelegate keyboardDelegate,
@@ -87,6 +92,7 @@ class ManualFillingCoordinator implements ManualFillingComponent {
                 accessorySheet,
                 windowAndroid,
                 sheetController,
+                isContextualSearchOpened,
                 backPressManager,
                 edgeToEdgeControllerSupplier,
                 keyboardDelegate,
@@ -157,7 +163,8 @@ class ManualFillingCoordinator implements ManualFillingComponent {
 
     @Override
     public void registerAutofillProvider(
-            PropertyProvider<AutofillSuggestion[]> autofillProvider, AutofillDelegate delegate) {
+            PropertyProvider<List<AutofillSuggestion>> autofillProvider,
+            AutofillDelegate delegate) {
         mMediator.registerAutofillProvider(autofillProvider, delegate);
     }
 
@@ -219,6 +226,12 @@ class ManualFillingCoordinator implements ManualFillingComponent {
     @Override
     public int getKeyboardExtensionHeight() {
         return mMediator != null ? mMediator.getKeyboardExtensionHeight() : 0;
+    }
+
+    @Override
+    public ObservableSupplier<AccessorySheetVisualStateProvider>
+            getAccessorySheetVisualStateProvider() {
+        return mMediator.getAccessorySheetVisualStateProvider();
     }
 
     @Override

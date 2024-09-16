@@ -35,6 +35,7 @@
 
 #include "base/memory/ptr_util.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
+#include "net/storage_access_api/status.h"
 #include "services/network/public/mojom/fetch_api.mojom-shared.h"
 #include "third_party/blink/public/common/loader/worker_main_script_load_parameters.h"
 #include "third_party/blink/public/mojom/browser_interface_broker.mojom-blink.h"
@@ -192,6 +193,7 @@ void WebSharedWorkerImpl::StartWorkerContext(
     network::mojom::CredentialsMode credentials_mode,
     const WebString& name,
     WebSecurityOrigin constructor_origin,
+    WebSecurityOrigin origin_from_browser,
     bool is_constructor_secure_context,
     const WebString& user_agent,
     const UserAgentMetadata& ua_metadata,
@@ -266,8 +268,11 @@ void WebSharedWorkerImpl::StartWorkerContext(
       /*interface_registry=*/nullptr,
       /*agent_group_scheduler_compositor_task_runner=*/nullptr,
       /*top_level_frame_security_origin=*/nullptr,
-      /*parent_has_storage_access=*/false,
-      require_cross_site_request_for_cookies);
+      /*parent_storage_access_api_status=*/
+      net::StorageAccessApiStatus::kNone,
+      require_cross_site_request_for_cookies,
+      blink::SecurityOrigin::CreateFromUrlOrigin(
+          url::Origin(origin_from_browser)));
 
   auto thread_startup_data = WorkerBackingThreadStartupData::CreateDefault();
   thread_startup_data.atomics_wait_mode =
@@ -330,6 +335,7 @@ std::unique_ptr<WebSharedWorker> WebSharedWorker::CreateAndStart(
     network::mojom::CredentialsMode credentials_mode,
     const WebString& name,
     WebSecurityOrigin constructor_origin,
+    WebSecurityOrigin origin_from_browser,
     bool is_constructor_secure_context,
     const WebString& user_agent,
     const UserAgentMetadata& ua_metadata,
@@ -353,8 +359,8 @@ std::unique_ptr<WebSharedWorker> WebSharedWorker::CreateAndStart(
       base::WrapUnique(new WebSharedWorkerImpl(token, std::move(host), client));
   worker->StartWorkerContext(
       script_request_url, script_type, credentials_mode, name,
-      constructor_origin, is_constructor_secure_context, user_agent,
-      ua_metadata, content_security_policies,
+      constructor_origin, origin_from_browser, is_constructor_secure_context,
+      user_agent, ua_metadata, content_security_policies,
       outside_fetch_client_settings_object, devtools_worker_token,
       std::move(content_settings), std::move(browser_interface_broker),
       pause_worker_context_on_start, std::move(worker_main_script_load_params),

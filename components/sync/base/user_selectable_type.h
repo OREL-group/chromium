@@ -11,7 +11,7 @@
 
 #include "base/containers/enum_set.h"
 #include "build/chromeos_buildflags.h"
-#include "components/sync/base/model_type.h"
+#include "components/sync/base/data_type.h"
 
 namespace syncer {
 
@@ -38,8 +38,9 @@ enum class UserSelectableType {
   kSavedTabGroups,
   kPayments,
   kSharedTabGroupData,
-  kCompare,
-  kLastType = kCompare
+  kProductComparison,
+  kCookies,
+  kLastType = kCookies
 };
 
 using UserSelectableTypeSet = base::EnumSet<UserSelectableType,
@@ -51,9 +52,9 @@ const char* GetUserSelectableTypeName(UserSelectableType type);
 std::optional<UserSelectableType> GetUserSelectableTypeFromString(
     const std::string& type);
 std::string UserSelectableTypeSetToString(UserSelectableTypeSet types);
-ModelTypeSet UserSelectableTypeToAllModelTypes(UserSelectableType type);
+DataTypeSet UserSelectableTypeToAllDataTypes(UserSelectableType type);
 
-ModelType UserSelectableTypeToCanonicalModelType(UserSelectableType type);
+DataType UserSelectableTypeToCanonicalDataType(UserSelectableType type);
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
 // Chrome OS provides a separate UI with sync controls for OS data types. Note
@@ -75,8 +76,8 @@ using UserSelectableOsTypeSet = base::EnumSet<UserSelectableOsType,
 
 const char* GetUserSelectableOsTypeName(UserSelectableOsType type);
 std::string UserSelectableOsTypeSetToString(UserSelectableOsTypeSet types);
-ModelTypeSet UserSelectableOsTypeToAllModelTypes(UserSelectableOsType type);
-ModelType UserSelectableOsTypeToCanonicalModelType(UserSelectableOsType type);
+DataTypeSet UserSelectableOsTypeToAllDataTypes(UserSelectableOsType type);
+DataType UserSelectableOsTypeToCanonicalDataType(UserSelectableOsType type);
 
 // Returns the type if the string matches a known OS type.
 std::optional<UserSelectableOsType> GetUserSelectableOsTypeFromString(

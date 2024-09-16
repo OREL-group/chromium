@@ -71,7 +71,6 @@ class Browser;
 #if BUILDFLAG(IS_CHROMEOS_LACROS)
 class FakeAccountManagerUI;
 #endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
-class MainThreadStackSamplingProfiler;
 class PrefService;
 class Profile;
 #if BUILDFLAG(IS_MAC)
@@ -509,8 +508,6 @@ class InProcessBrowserTest : public content::BrowserTestBase {
   std::unique_ptr<views::ViewsDelegate> views_delegate_;
 #endif
 
-  std::unique_ptr<MainThreadStackSamplingProfiler> sampling_profiler_;
-
   // Used to set up test factories for each browser context.
   base::CallbackListSubscription create_services_subscription_;
 
@@ -531,9 +528,5 @@ class InProcessBrowserTest : public content::BrowserTestBase {
   base::Process ash_process_;
 #endif
 };
-
-// When including either in_process_browser_test.h or android_browser_test.h
-// depending on the platform, use this type alias as the test base class.
-using PlatformBrowserTest = InProcessBrowserTest;
 
 #endif  // CHROME_TEST_BASE_IN_PROCESS_BROWSER_TEST_H_

@@ -4,7 +4,6 @@
 #include "components/password_manager/core/browser/credential_manager_impl.h"
 
 #include <memory>
-
 #include <string>
 
 #include "base/functional/bind.h"
@@ -49,8 +48,9 @@ void CredentialManagerImpl::Store(const CredentialInfo& credential,
   std::move(callback).Run();
 
   if (credential.type == CredentialType::CREDENTIAL_TYPE_EMPTY ||
-      !client_->IsSavingAndFillingEnabled(origin.GetURL()))
+      !client_->IsSavingAndFillingEnabled(origin.GetURL())) {
     return;
+  }
 
   client_->NotifyStorePasswordCalled();
 
@@ -59,7 +59,8 @@ void CredentialManagerImpl::Store(const CredentialInfo& credential,
 
   // Check whether a stored password credential was leaked.
   if (credential.type == CredentialType::CREDENTIAL_TYPE_PASSWORD) {
-    leak_delegate_.StartLeakCheck(LeakDetectionInitiator::kSignInCheck, *form);
+    leak_delegate_.StartLeakCheck(LeakDetectionInitiator::kSignInCheck, *form,
+                                  origin.GetURL());
   }
 
   std::string signon_realm = origin.GetURL().spec();
@@ -84,8 +85,9 @@ void CredentialManagerImpl::PreventSilentAccess(
   std::move(callback).Run();
 
   PasswordStoreInterface* store = GetProfilePasswordStore();
-  if (!store || !client_->IsSavingAndFillingEnabled(GetOrigin().GetURL()))
+  if (!store || !client_->IsSavingAndFillingEnabled(GetOrigin().GetURL())) {
     return;
+  }
 
   if (!pending_require_user_mediation_) {
     pending_require_user_mediation_ =
@@ -238,15 +240,15 @@ void CredentialManagerImpl::OnProvisionalSaveComplete() {
       return;
     }
   }
-  if (!form.federation_origin.opaque()) {
+  if (form.federation_origin.IsValid()) {
     // If this is a federated credential, check it against the federated matches
     // produced by the PasswordFormManager. If a match is found, update it and
     // return.
-    for (const password_manager::PasswordForm* match :
+    for (const password_manager::PasswordForm& match :
          form_manager_->GetFormFetcher()->GetFederatedMatches()) {
-      if (match->username_value == form.username_value &&
-          match->federation_origin.IsSameOriginWith(form.federation_origin)) {
-        form_manager_->Update(*match);
+      if (match.username_value == form.username_value &&
+          match.federation_origin == form.federation_origin) {
+        form_manager_->Save();
         return;
       }
     }
@@ -257,7 +259,7 @@ void CredentialManagerImpl::OnProvisionalSaveComplete() {
     // signal that the page understands the credential management API and so can
     // be trusted to notify us when they sign the user out.
     bool is_update_confirmation = form_manager_->IsPasswordUpdate();
-    form_manager_->Update(form_manager_->GetPendingCredentials());
+    form_manager_->Save();
     if (is_update_confirmation) {
       client_->AutomaticPasswordSave(std::move(form_manager_),
                                      /*is_update_confirmation=*/true);

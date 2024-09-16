@@ -290,7 +290,7 @@ void EcheTray::Initialize() {
   SetVisiblePreferred(visibility);
 }
 
-void EcheTray::CloseBubble() {
+void EcheTray::CloseBubbleInternal() {
   if (bubble_)
     HideBubble();
 }
@@ -694,7 +694,6 @@ void EcheTray::InitBubble(
         break;
       case eche_app::mojom::AppStreamLaunchEntryPoint::UNKNOWN:
         NOTREACHED();
-        break;
     }
   }
   init_stream_timestamp_ = base::TimeTicks::Now();
@@ -914,7 +913,7 @@ void EcheTray::UpdateEcheSizeAndBubbleBounds() {
       shelf()->GetSystemTrayAnchorRect());
 }
 
-void EcheTray::OnDisplayConfigurationChanged() {
+void EcheTray::OnDidApplyDisplayChanges() {
   UpdateEcheSizeAndBubbleBounds();
 }
 
@@ -1007,8 +1006,9 @@ bool EcheTray::ProcessAcceleratorKeys(ui::KeyEvent* event) {
   const bool any_modifier_pressed =
       ui::Accelerator::MaskOutKeyEventFlags(event->flags());
 
-  if (event->type() != ui::ET_KEY_PRESSED)
+  if (event->type() != ui::EventType::kKeyPressed) {
     return false;
+  }
 
   switch (key_code) {
     case ui::VKEY_W:

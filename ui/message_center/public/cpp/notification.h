@@ -16,6 +16,7 @@
 #include "base/time/time.h"
 #include "build/chromeos_buildflags.h"
 #include "third_party/skia/include/core/SkColor.h"
+#include "ui/base/interaction/element_identifier.h"
 #include "ui/base/models/image_model.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/geometry/skia_conversions.h"
@@ -44,10 +45,13 @@ class MESSAGE_CENTER_PUBLIC_EXPORT NotificationItem {
   NotificationItem(const std::u16string& title,
                    const std::u16string& message,
                    ui::ImageModel icon = ui::ImageModel());
-  NotificationItem(const NotificationItem& other);
+
   NotificationItem();
-  ~NotificationItem();
+  NotificationItem(const NotificationItem& other);
+  NotificationItem(NotificationItem&& other);
   NotificationItem& operator=(const NotificationItem& other);
+  NotificationItem& operator=(NotificationItem&& other);
+  ~NotificationItem();
 
   const std::u16string& title() const { return title_; }
   const std::u16string& message() const { return message_; }
@@ -88,10 +92,12 @@ struct MESSAGE_CENTER_PUBLIC_EXPORT ButtonInfo {
   explicit ButtonInfo(const std::u16string& title);
   ButtonInfo(const gfx::VectorIcon* vector_icon,
              const std::u16string& accessible_name);
-  ButtonInfo(const ButtonInfo& other);
   ButtonInfo();
-  ~ButtonInfo();
+  ButtonInfo(const ButtonInfo& other);
+  ButtonInfo(ButtonInfo&& other);
   ButtonInfo& operator=(const ButtonInfo& other);
+  ButtonInfo& operator=(ButtonInfo&& other);
+  ~ButtonInfo();
 
   // Title that should be displayed on the notification button.
   std::u16string title;
@@ -223,10 +229,6 @@ class MESSAGE_CENTER_PUBLIC_EXPORT RichNotificationData {
   // Flag if the notification is pinned. If true, the notification is pinned
   // and the user can't remove it.
   bool pinned = false;
-
-  // Presents a shortcut that will dismiss the notification when performed.
-  // Only used in in ash pinned notifications. See `PinnedNotificationView`.
-  std::u16string shortcut_text;
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
   // Vibration pattern to play when displaying the notification. There must be
@@ -325,7 +327,9 @@ class MESSAGE_CENTER_PUBLIC_EXPORT Notification {
   // identical for both the Notification instances.
   Notification(const Notification& other);
 
+  Notification(Notification&& other);
   Notification& operator=(const Notification& other);
+  Notification& operator=(Notification&& other);
 
   virtual ~Notification();
 
@@ -443,7 +447,7 @@ class MESSAGE_CENTER_PUBLIC_EXPORT Notification {
   void set_icon(const ui::ImageModel& icon) { icon_ = icon; }
 
   const gfx::Image& image() const { return optional_fields_.image; }
-  void set_image(const gfx::Image& image) { optional_fields_.image = image; }
+  void SetImage(const gfx::Image& image);
 
 #if BUILDFLAG(IS_CHROMEOS)
   void set_image_path(const base::FilePath& image_path) {
@@ -452,9 +456,7 @@ class MESSAGE_CENTER_PUBLIC_EXPORT Notification {
 #endif
 
   const gfx::Image& small_image() const { return optional_fields_.small_image; }
-  void set_small_image(const gfx::Image& image) {
-    optional_fields_.small_image = image;
-  }
+  void SetSmallImage(const gfx::Image& image);
 
   bool small_image_needs_additional_masking() const {
     return optional_fields_.small_image_needs_additional_masking;
@@ -524,14 +526,6 @@ class MESSAGE_CENTER_PUBLIC_EXPORT Notification {
 #if BUILDFLAG(IS_CHROMEOS)
   void set_pinned(bool pinned) { optional_fields_.pinned = pinned; }
 #endif  // BUILDFLAG(IS_CHROMEOS)
-
-  const std::u16string shortcut_text() const {
-#if BUILDFLAG(IS_CHROMEOS)
-    return optional_fields_.shortcut_text;
-#else
-    return std::u16string();
-#endif  // BUILDFLAG(IS_CHROMEOS)
-  }
 
   // Gets a text for spoken feedback.
   const std::u16string& accessible_name() const {
@@ -626,6 +620,16 @@ class MESSAGE_CENTER_PUBLIC_EXPORT Notification {
     custom_view_type_ = custom_view_type;
   }
 
+  // Gets the element ID that should be used for the view that hosts this
+  // notification.
+  ui::ElementIdentifier host_view_element_id() const {
+    return host_view_element_id_;
+  }
+  void set_host_view_element_id(
+      const ui::ElementIdentifier host_view_element_id) {
+    host_view_element_id_ = host_view_element_id;
+  }
+
  protected:
   // The type of notification we'd like displayed.
   NotificationType type_;
@@ -674,6 +678,10 @@ class MESSAGE_CENTER_PUBLIC_EXPORT Notification {
   // creating the view for this notification. The type should match the type
   // used to register the factory in MessageViewFactory.
   std::string custom_view_type_;
+
+  // The value that should be used for the element ID of the view that hosts
+  // this notification.
+  ui::ElementIdentifier host_view_element_id_;
 
 #if BUILDFLAG(IS_CHROMEOS_ASH)
   // The warning level of a system notification.

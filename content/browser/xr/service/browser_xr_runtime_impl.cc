@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "content/browser/xr/service/browser_xr_runtime_impl.h"
 
 #include <algorithm>
@@ -133,7 +138,7 @@ BrowserXRRuntimeImpl::BrowserXRRuntimeImpl(
 
   runtime_->ListenToDeviceChanges(receiver_.BindNewEndpointAndPassRemote());
 
-  // TODO(crbug.com/1031622): Convert this to a query for the client off of
+  // TODO(crbug.com/40662458): Convert this to a query for the client off of
   // ContentBrowserClient once BrowserXRRuntimeImpl moves to content.
   auto* integration_client = GetXrIntegrationClient();
 
@@ -204,7 +209,7 @@ bool BrowserXRRuntimeImpl::SupportsCustomIPD() const {
 #endif
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 bool BrowserXRRuntimeImpl::SupportsNonEmulatedHeight() const {
@@ -226,7 +231,7 @@ bool BrowserXRRuntimeImpl::SupportsNonEmulatedHeight() const {
 #endif  // ENABLE_OPENXR
   }
 
-  NOTREACHED();
+  NOTREACHED_IN_MIGRATION();
 }
 
 bool BrowserXRRuntimeImpl::SupportsArBlendMode() {

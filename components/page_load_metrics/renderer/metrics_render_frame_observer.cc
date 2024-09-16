@@ -81,10 +81,16 @@ class MojoPageTimingSender : public PageTimingSender {
         std::move(shared_memory));
   }
 
+  void SendCustomUserTiming(mojom::CustomUserTimingMarkPtr timing) override {
+    CHECK(timing);
+    CHECK(page_load_metrics_);
+    page_load_metrics_->AddCustomUserTiming(std::move(timing));
+  }
+
  private:
   // Indicates that this sender should not send timing updates or frame render
   // data updates.
-  // TODO(https://crbug.com/1097127): When timing updates are handled for cases
+  // TODO(crbug.com/40136524): When timing updates are handled for cases
   // where we have a subframe document and no committed navigation, this can be
   // removed.
   bool limited_sending_mode_ = false;
@@ -94,39 +100,6 @@ class MojoPageTimingSender : public PageTimingSender {
   mojo::AssociatedRemote<mojom::PageLoadMetrics> page_load_metrics_;
 };
 }  //  namespace
-
-namespace internal {
-void RecordUmaForkPageLoadInternalSoftNavigationFromStartInvalidTiming(
-    base::TimeDelta start_time_relative_to_reference,
-    double nav_start_to_reference) {
-  if (start_time_relative_to_reference.is_zero()) {
-    if (nav_start_to_reference == 0) {
-      base::UmaHistogramEnumeration(
-          kPageLoadInternalSoftNavigationFromStartInvalidTiming,
-          SoftNavigationFromStartInvalidTimingReasons::
-              kSoftNavStartTimeIsZeroAndEqNavStart);
-    } else {
-      base::UmaHistogramEnumeration(
-          kPageLoadInternalSoftNavigationFromStartInvalidTiming,
-          SoftNavigationFromStartInvalidTimingReasons::
-              kSoftNavStartTimeIsZeroAndLtNavStart);
-    }
-  } else {
-    if (start_time_relative_to_reference.InSecondsF() <
-        nav_start_to_reference) {
-      base::UmaHistogramEnumeration(
-          kPageLoadInternalSoftNavigationFromStartInvalidTiming,
-          SoftNavigationFromStartInvalidTimingReasons::
-              kSoftNavStartTimeIsNonZeroAndLtNavStart);
-    } else {
-      base::UmaHistogramEnumeration(
-          kPageLoadInternalSoftNavigationFromStartInvalidTiming,
-          SoftNavigationFromStartInvalidTimingReasons::
-              kSoftNavStartTimeIsNonZeroAndEqNavStart);
-    }
-  }
-}
-}  // namespace internal
 
 MetricsRenderFrameObserver::MetricsRenderFrameObserver(
     content::RenderFrame* render_frame)
@@ -205,23 +178,12 @@ void MetricsRenderFrameObserver::DidObserveSoftNavigation(
         render_frame()->GetWebFrame()->PerformanceMetricsForReporting();
 
     // Make soft navigation start time relative to navigation start.
-    base::TimeDelta start_time_relative_to_reference =
-        soft_nav_metrics.start_time;
     soft_nav_metrics.start_time = CreateTimeDeltaFromTimestampsInSeconds(
         soft_nav_metrics.start_time.InSecondsF(), metrics.NavigationStart());
 
-    // TODO(crbug.com/1489583): Avoid a crash here, while further investigating
-    // its causes.
-    if (soft_nav_metrics.start_time.is_zero()) {
-      // When soft navigation start time relative to navigation start is 0, the
-      // soft navigation start time relative to reference time is either less or
-      // equal to the navigation start. We also want to know if the start time
-      // relative to reference time itself is 0. That gives 4 scenarios.
-      internal::
-          RecordUmaForkPageLoadInternalSoftNavigationFromStartInvalidTiming(
-              start_time_relative_to_reference, metrics.NavigationStart());
-      return;
-    }
+    // (crbug.com/40074158): will non-fatally dump in official builds if the
+    // start_time is 0.
+    DUMP_WILL_BE_CHECK(!soft_nav_metrics.start_time.is_zero());
 
     page_timing_metrics_sender_->DidObserveSoftNavigation(soft_nav_metrics);
   }
@@ -332,7 +294,8 @@ void MetricsRenderFrameObserver::DidStartNavigation(
   // If that happens, it will be too late to send the metrics from WillDetach
   // or the destructor, because the browser ignores metrics update from
   // non-current RenderFrameHosts. See crbug.com/1150242 for more details.
-  // TODO(crbug.com/1150242): Remove this when we have the full fix for the bug.
+  // TODO(crbug.com/40157795): Remove this when we have the full fix for the
+  // bug.
   if (page_timing_metrics_sender_) {
     page_timing_metrics_sender_->SendLatest();
   }
@@ -344,7 +307,8 @@ void MetricsRenderFrameObserver::DidSetPageLifecycleState(
   // RenderFrame or its process might be killed, and this might be the last
   // point we can send the metrics to the browser. See crbug.com/1150242 for
   // more details.
-  // TODO(crbug.com/1150242): Remove this when we have the full fix for the bug.
+  // TODO(crbug.com/40157795): Remove this when we have the full fix for the
+  // bug.
   if (page_timing_metrics_sender_) {
     page_timing_metrics_sender_->SendLatest();
   }
@@ -387,7 +351,7 @@ void MetricsRenderFrameObserver::DidCreateDocumentElement() {
   // will only send resource usage updates to the browser process. There
   // currently is not infrastructure in the browser process to monitor this case
   // and properly handle timing updates without a committed load.
-  // TODO(https://crbug.com/1097127): Implement proper handling of timing
+  // TODO(crbug.com/40136524): Implement proper handling of timing
   // updates in the browser process and create a normal page timing sender.
 
   // It should not be possible to have a |provisional_frame_resource_data_use_|
@@ -507,6 +471,12 @@ void MetricsRenderFrameObserver::SendMetrics() {
       GetSoftNavigationMetrics());
   page_timing_metrics_sender_->Update(std::move(timing.relative_timing),
                                       timing.monotonic_timing);
+
+  mojom::CustomUserTimingMarkPtr user_timing = GetCustomUserTimingMark();
+  if (user_timing) {
+    page_timing_metrics_sender_->SendCustomUserTimingMark(
+        std::move(user_timing));
+  }
 }
 
 void MetricsRenderFrameObserver::OnMetricsSenderCreated() {
@@ -716,6 +686,18 @@ MetricsRenderFrameObserver::Timing MetricsRenderFrameObserver::GetTiming()
         CreateTimeDeltaFromTimestampsInSeconds(
             (*perf.FirstScrollTimestamp()).InSecondsF(), start);
   }
+  if (perf.DomainLookupStart() > 0.0) {
+    timing->domain_lookup_timing->domain_lookup_start =
+        CreateTimeDeltaFromTimestampsInSeconds(perf.DomainLookupStart(), start);
+  }
+  if (perf.DomainLookupEnd() > 0.0) {
+    timing->domain_lookup_timing->domain_lookup_end =
+        CreateTimeDeltaFromTimestampsInSeconds(perf.DomainLookupEnd(), start);
+  }
+  if (perf.ConnectStart() > 0.0) {
+    timing->connect_start =
+        CreateTimeDeltaFromTimestampsInSeconds(perf.ConnectStart(), start);
+  }
   if (perf.ResponseStart() > 0.0) {
     timing->response_start =
         CreateTimeDeltaFromTimestampsInSeconds(perf.ResponseStart(), start);
@@ -853,14 +835,6 @@ MetricsRenderFrameObserver::Timing MetricsRenderFrameObserver::GetTiming()
               .InSecondsF(),
           start);
     }
-
-    timing->paint_timing->largest_contentful_paint
-        ->is_loaded_from_memory_cache =
-        largest_contentful_paint_details.is_loaded_from_memory_cache;
-
-    timing->paint_timing->largest_contentful_paint
-        ->is_preloaded_with_early_hints =
-        largest_contentful_paint_details.is_preloaded_with_early_hints;
   }
   if (largest_contentful_paint_details.text_paint_size > 0) {
     // LargestTextPaint and LargestTextPaintSize should be available at the
@@ -916,10 +890,6 @@ MetricsRenderFrameObserver::Timing MetricsRenderFrameObserver::GetTiming()
         base::Seconds(
             perf.ParseBlockedOnScriptExecutionFromDocumentWriteDuration());
   }
-  if (perf.LastPortalActivatedPaint().has_value()) {
-    timing->paint_timing->portal_activated_paint =
-        *perf.LastPortalActivatedPaint();
-  }
   if (perf.PrerenderActivationStart().has_value()) {
     timing->activation_start = perf.PrerenderActivationStart();
   }
@@ -937,6 +907,23 @@ MetricsRenderFrameObserver::Timing MetricsRenderFrameObserver::GetTiming()
   }
 
   return Timing(std::move(timing), monotonic_timing);
+}
+
+mojom::CustomUserTimingMarkPtr
+MetricsRenderFrameObserver::GetCustomUserTimingMark() const {
+  const blink::WebPerformanceMetricsForReporting& perf =
+      render_frame()->GetWebFrame()->PerformanceMetricsForReporting();
+  auto timing = perf.CustomUserTimingMark();
+  if (!timing.has_value()) {
+    return nullptr;
+  }
+  const auto [mark_name, start_time] = timing.value();
+  mojom::CustomUserTimingMarkPtr custom_user_timing_mark =
+      mojom::CustomUserTimingMark::New();
+  custom_user_timing_mark->mark_name = mark_name;
+  custom_user_timing_mark->start_time = start_time;
+
+  return custom_user_timing_mark;
 }
 
 std::unique_ptr<base::OneShotTimer> MetricsRenderFrameObserver::CreateTimer() {

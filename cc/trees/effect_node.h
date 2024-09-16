@@ -143,6 +143,7 @@ struct CC_EXPORT EffectNode {
   // If set, the effect node tries to not trigger a render surface due to it
   // having a rounded corner.
   bool is_fast_rounded_corner : 1 = false;
+  bool node_or_ancestor_has_fast_rounded_corner : 1 = false;
   // If the node or it's parent has the filters, it sets to true.
   bool node_or_ancestor_has_filters : 1 = false;
   // All node in the subtree starting from the containing render surface, and
@@ -163,6 +164,12 @@ struct CC_EXPORT EffectNode {
   // RenderSurfaceImpl.
   // This is set and used for the impl-side effect tree only.
   int target_id = 1;
+  // If this node is tagged with a ViewTransitionElementResourceId, it means it
+  // produces a snapshot for an element participating in a transition. This
+  // target id corresponds to the effect node where the
+  // ViewTransitionContentLayer using this resource draws. Can be unset if no
+  // layer using this resource is being drawn.
+  int view_transition_target_id = kInvalidPropertyNodeId;
   int closest_ancestor_with_cached_render_surface_id = kInvalidPropertyNodeId;
   int closest_ancestor_with_copy_request_id = kInvalidPropertyNodeId;
   int closest_ancestor_being_captured_id = kInvalidPropertyNodeId;

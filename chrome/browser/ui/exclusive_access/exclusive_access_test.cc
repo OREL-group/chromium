@@ -25,8 +25,8 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/input/native_web_keyboard_event.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/input/native_web_keyboard_event.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "exclusive_access_controller_base.h"
@@ -103,7 +103,7 @@ void ExclusiveAccessTest::TearDownOnMainThread() {
 // static
 bool ExclusiveAccessTest::IsBubbleDownloadNotification(
     ExclusiveAccessBubble* bubble) {
-  return bubble->notify_download_;
+  return bubble->params_.has_download;
 }
 
 bool ExclusiveAccessTest::RequestKeyboardLock(bool esc_key_locked) {
@@ -177,7 +177,7 @@ void ExclusiveAccessTest::LostPointerLock() {
 }
 
 bool ExclusiveAccessTest::SendEscapeToExclusiveAccessManager(bool is_key_down) {
-  content::NativeWebKeyboardEvent event(
+  input::NativeWebKeyboardEvent event(
       is_key_down ? blink::WebInputEvent::Type::kRawKeyDown
                   : blink::WebInputEvent::Type::kKeyUp,
       blink::WebInputEvent::kNoModifiers,
@@ -282,10 +282,6 @@ void ExclusiveAccessTest::SetUserEscapeTimestampForTest(
   GetExclusiveAccessManager()
       ->pointer_lock_controller()
       ->last_user_escape_time_ = timestamp;
-}
-
-int ExclusiveAccessTest::InitialBubbleDelayMs() const {
-  return ExclusiveAccessBubble::kInitialDelayMs;
 }
 
 void ExclusiveAccessTest::ExpectMockControllerReceivedEscape(int count) {

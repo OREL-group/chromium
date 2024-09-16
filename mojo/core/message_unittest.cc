@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include <memory>
 #include <string_view>
 #include <utility>
@@ -18,17 +23,25 @@
 #include "mojo/core/embedder/embedder.h"
 #include "mojo/core/ipcz_driver/mojo_message.h"
 #include "mojo/core/test/mojo_test_base.h"
-#include "mojo/core/user_message_impl.h"
 #include "mojo/public/cpp/platform/platform_channel.h"
 #include "mojo/public/cpp/system/buffer.h"
 #include "mojo/public/cpp/system/message_pipe.h"
 #include "mojo/public/cpp/system/platform_handle.h"
 
-namespace mojo {
-namespace core {
+#if BUILDFLAG(MOJO_SUPPORT_LEGACY_CORE)
+#include "mojo/core/user_message_impl.h"
+#endif
+
+namespace mojo::core {
 namespace {
 
 using MessageTest = test::MojoTestBase;
+
+#if BUILDFLAG(MOJO_SUPPORT_LEGACY_CORE)
+constexpr uint32_t kLegacyMinimumPayloadBufferSize = kMinimumPayloadBufferSize;
+#else
+constexpr uint32_t kLegacyMinimumPayloadBufferSize = 0;
+#endif
 
 // Helper class which provides a base implementation for an unserialized user
 // message context and helpers to go between these objects and opaque message
@@ -247,7 +260,7 @@ DEFINE_TEST_CLIENT_TEST_WITH_PIPE(ReceiveMessageNoHandles, MessageTest, h) {
 }
 
 #if BUILDFLAG(IS_IOS)
-// TODO(crbug.com/1418597): Test currently fails on iOS.
+// TODO(crbug.com/40257752): Test currently fails on iOS.
 #define MAYBE_SerializeSimpleMessageNoHandlesWithContext \
   DISABLED_SerializeSimpleMessageNoHandlesWithContext
 #else
@@ -263,7 +276,7 @@ TEST_F(MessageTest, MAYBE_SerializeSimpleMessageNoHandlesWithContext) {
 }
 
 #if BUILDFLAG(IS_IOS)
-// TODO(crbug.com/1418597): Test currently fails on iOS.
+// TODO(crbug.com/40257752): Test currently fails on iOS.
 #define MAYBE_SerializeDynamicallySizedMessage \
   DISABLED_SerializeDynamicallySizedMessage
 #else
@@ -305,7 +318,7 @@ DEFINE_TEST_CLIENT_TEST_WITH_PIPE(ReceiveMessageOneHandle, MessageTest, h) {
 }
 
 #if BUILDFLAG(IS_IOS)
-// TODO(crbug.com/1418597): Test currently fails on iOS.
+// TODO(crbug.com/40257752): Test currently fails on iOS.
 #define MAYBE_SerializeSimpleMessageOneHandleWithContext \
   DISABLED_SerializeSimpleMessageOneHandleWithContext
 #else
@@ -344,7 +357,7 @@ DEFINE_TEST_CLIENT_TEST_WITH_PIPE(ReceiveMessageWithHandles, MessageTest, h) {
 }
 
 #if BUILDFLAG(IS_IOS)
-// TODO(crbug.com/1418597): Test currently fails on iOS.
+// TODO(crbug.com/40257752): Test currently fails on iOS.
 #define MAYBE_SerializeSimpleMessageWithHandlesWithContext \
   DISABLED_SerializeSimpleMessageWithHandlesWithContext
 #else
@@ -700,7 +713,7 @@ TEST_F(MessageTest, PreallocateEnoughMemoryForMessage) {
   // `kMinimumBufferSize` bytes of capacity will be allocated).
   const size_t kMinimumBufferSize =
       IsMojoIpczEnabled() ? ipcz_driver::MojoMessage::kMinBufferSize
-                          : kMinimumPayloadBufferSize;
+                          : kLegacyMinimumPayloadBufferSize;
   const std::string kMsgPart1(kMinimumBufferSize / 2, 'x');
   const std::string kMsgPart2(kMinimumBufferSize, 'y');
   const std::string kCombined = kMsgPart1 + kMsgPart2;
@@ -768,7 +781,7 @@ TEST_F(MessageTest, PreallocateNotEnoughMemoryForMessage) {
   // `kMinimumBufferSize` bytes of capacity will be allocated).
   const size_t kMinimumBufferSize =
       IsMojoIpczEnabled() ? ipcz_driver::MojoMessage::kMinBufferSize
-                          : kMinimumPayloadBufferSize;
+                          : kLegacyMinimumPayloadBufferSize;
   const std::string kMsgPart1(kMinimumBufferSize / 2, 'x');
   const std::string kMsgPart2(kMinimumBufferSize, 'y');
   const std::string kCombined = kMsgPart1 + kMsgPart2;
@@ -899,7 +912,7 @@ TEST_F(MessageTest, ExtendMessagePayloadLarge) {
     // progressively extend the payload to this size.
     constexpr size_t kTestMessagePayloadSize = 512 * 1024;
     std::vector<uint8_t> test_payload(kTestMessagePayloadSize);
-    base::RandBytes(test_payload.data(), kTestMessagePayloadSize);
+    base::RandBytes(test_payload);
 
     size_t current_payload_size = 0;
     while (current_payload_size < kTestMessagePayloadSize) {
@@ -978,6 +991,7 @@ TEST_F(MessageTest, CorrectPayloadBufferBoundaries) {
   EXPECT_EQ(MOJO_RESULT_OK, MojoDestroyMessage(message));
 }
 
+#if BUILDFLAG(MOJO_SUPPORT_LEGACY_CORE)
 TEST_F(MessageTest, CommitInvalidMessageContents) {
   // Regression test for https://crbug.com/755127. Ensures that we don't crash
   // if we attempt to commit the contents of an unserialized message.
@@ -1000,11 +1014,12 @@ TEST_F(MessageTest, CommitInvalidMessageContents) {
   EXPECT_EQ(MOJO_RESULT_OK, MojoDestroyMessage(message));
   EXPECT_EQ(MOJO_RESULT_OK, MojoClose(b));
 }
+#endif  // BUILDFLAG(MOJO_SUPPORT_LEGACY_CORE)
 
 #if BUILDFLAG(USE_BLINK)
 
 #if BUILDFLAG(IS_IOS)
-// TODO(crbug.com/1418597): Test currently fails on iOS.
+// TODO(crbug.com/40257752): Test currently fails on iOS.
 #define MAYBE_ExtendPayloadWithHandlesAttached \
   DISABLED_ExtendPayloadWithHandlesAttached
 #else
@@ -1069,7 +1084,7 @@ DEFINE_TEST_CLIENT_TEST_WITH_PIPE(ReadAndIgnoreMessage, MessageTest, h) {
 }
 
 #if BUILDFLAG(IS_IOS)
-// TODO(crbug.com/1418597): Test currently fails on iOS.
+// TODO(crbug.com/40257752): Test currently fails on iOS.
 #define MAYBE_ExtendPayloadWithHandlesAttachedViaExtension \
   DISABLED_ExtendPayloadWithHandlesAttachedViaExtension
 #else
@@ -1166,5 +1181,4 @@ TEST_F(MessageTest, PartiallySerializedMessagesDontLeakHandles) {
 }
 
 }  // namespace
-}  // namespace core
-}  // namespace mojo
+}  // namespace mojo::core

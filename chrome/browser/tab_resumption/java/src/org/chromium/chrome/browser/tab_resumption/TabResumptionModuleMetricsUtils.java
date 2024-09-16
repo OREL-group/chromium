@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.tab_resumption;
 
+import android.text.format.DateUtils;
+
 import androidx.annotation.IntDef;
 import androidx.annotation.Nullable;
 
@@ -17,16 +19,26 @@ public class TabResumptionModuleMetricsUtils {
     // Information on the tile clicked by the user. The values must be consistent with
     // MagicStack.Clank.TabResumption.ClickInfo in enums.xml.
     @IntDef({
-        ClickInfo.SINGLE_TILE_FIRST,
-        ClickInfo.DOUBLE_TILE_FIRST,
-        ClickInfo.DOUBLE_TILE_SECOND,
+        ClickInfo.FOREIGN_SINGLE_FIRST,
+        ClickInfo.LOCAL_SINGLE_FIRST,
+        ClickInfo.HISTORY_SINGLE_FIRST,
+        ClickInfo.FOREIGN_DOUBLE_ANY,
+        ClickInfo.LOCAL_DOUBLE_ANY,
+        ClickInfo.HISTORY_DOUBLE_ANY,
         ClickInfo.NUM_ENTRIES
     })
     @interface ClickInfo {
-        int SINGLE_TILE_FIRST = 0;
-        int DOUBLE_TILE_FIRST = 1;
-        int DOUBLE_TILE_SECOND = 2;
-        int NUM_ENTRIES = 3;
+        int FOREIGN_SINGLE_FIRST = 0;
+        // int FOREIGN_FOREIGN_DOUBLE_FIRST = 1;
+        // int FOREIGN_FOREIGN_DOUBLE_SECOND = 2;
+        int LOCAL_SINGLE_FIRST = 3;
+        // int LOCAL_FOREIGN_DOUBLE_FIRST = 4;
+        // int LOCAL_FOREIGN_DOUBLE_SECOND = 5;
+        int HISTORY_SINGLE_FIRST = 6;
+        int FOREIGN_DOUBLE_ANY = 7;
+        int LOCAL_DOUBLE_ANY = 8;
+        int HISTORY_DOUBLE_ANY = 9;
+        int NUM_ENTRIES = 10;
     }
 
     // These values are persisted to logs. Entries should not be renumbered and numeric values
@@ -55,13 +67,31 @@ public class TabResumptionModuleMetricsUtils {
     // enums.xml.
     @IntDef({
         ModuleShowConfig.SINGLE_TILE_FOREIGN,
-        ModuleShowConfig.DOUBLE_TILE_FOREIGN,
+        ModuleShowConfig.DOUBLE_TILE_FOREIGN_FOREIGN,
+        ModuleShowConfig.SINGLE_TILE_LOCAL,
+        ModuleShowConfig.DOUBLE_TILE_LOCAL_FOREIGN,
+        ModuleShowConfig.SINGLE_TILE_HISTORY,
+        ModuleShowConfig.DOUBLE_TILE_FOREIGN_HISTORY,
+        ModuleShowConfig.DOUBLE_TILE_LOCAL_LOCAL,
+        ModuleShowConfig.DOUBLE_TILE_HISTORY_HISTORY,
+        ModuleShowConfig.DOUBLE_TILE_LOCAL_HISTORY,
+        ModuleShowConfig.SINGLE_TILE_ANY,
+        ModuleShowConfig.DOUBLE_TILE_ANY,
         ModuleShowConfig.NUM_ENTRIES
     })
     @interface ModuleShowConfig {
         int SINGLE_TILE_FOREIGN = 0;
-        int DOUBLE_TILE_FOREIGN = 1;
-        int NUM_ENTRIES = 2;
+        int DOUBLE_TILE_FOREIGN_FOREIGN = 1;
+        int SINGLE_TILE_LOCAL = 2;
+        int DOUBLE_TILE_LOCAL_FOREIGN = 3;
+        int DOUBLE_TILE_FOREIGN_HISTORY = 4;
+        int DOUBLE_TILE_LOCAL_LOCAL = 5;
+        int DOUBLE_TILE_LOCAL_HISTORY = 6;
+        int SINGLE_TILE_HISTORY = 7;
+        int DOUBLE_TILE_HISTORY_HISTORY = 8;
+        int SINGLE_TILE_ANY = 9;
+        int DOUBLE_TILE_ANY = 10;
+        int NUM_ENTRIES = 11;
     }
 
     static final String HISTOGRAM_CLICK_INFO = "MagicStack.Clank.TabResumption.ClickInfo";
@@ -71,15 +101,35 @@ public class TabResumptionModuleMetricsUtils {
             "MagicStack.Clank.TabResumption.ModuleShowConfig";
     static final String HISTOGRAM_STABILITY_DELAY = "MagicStack.Clank.TabResumption.StabilityDelay";
 
+    static final String HISTOGRAM_IS_SALIENT_IMAGE_AVAILABLE =
+            "MagicStack.Clank.TabResumption.IsSalientImageAvailable";
+
+    static final String HISTOGRAM_SEE_MORE_LINK_CLICKED =
+            "MagicStack.Clank.TabResumption.SeeMoreLinkClicked";
+
+    static final String HISTOGRAM_TAB_RECENCY_SHOW =
+            "MagicStack.Clank.TabResumption.TabRecency.Show";
+
+    static final String HISTOGRAM_TAB_RECENCY_CLICK =
+            "MagicStack.Clank.TabResumption.TabRecency.Click";
+
     /** Maps specification of a clicked tile to a ClickInfo for logging. */
-    static @ClickInfo int computeClickInfo(int tileCount, int tileIndex) {
-        assert tileIndex >= 0 && tileIndex < tileCount;
-        if (tileCount == 1) {
-            return ClickInfo.SINGLE_TILE_FIRST;
+    static @ClickInfo int computeClickInfo(SuggestionEntry entry, int size) {
+        boolean isSingle = size == 1;
+        if (isSingle) {
+            if (entry.isLocalTab()) return ClickInfo.LOCAL_SINGLE_FIRST;
+            return entry.type == SuggestionEntryType.FOREIGN_TAB
+                    ? ClickInfo.FOREIGN_SINGLE_FIRST
+                    : ClickInfo.HISTORY_SINGLE_FIRST;
         }
 
-        assert tileCount == 2;
-        return tileIndex == 0 ? ClickInfo.DOUBLE_TILE_FIRST : ClickInfo.DOUBLE_TILE_SECOND;
+        if (entry.isLocalTab()) {
+            return isSingle ? ClickInfo.LOCAL_SINGLE_FIRST : ClickInfo.LOCAL_DOUBLE_ANY;
+        } else if (entry.type == SuggestionEntryType.FOREIGN_TAB) {
+            return isSingle ? ClickInfo.FOREIGN_SINGLE_FIRST : ClickInfo.FOREIGN_DOUBLE_ANY;
+        } else {
+            return isSingle ? ClickInfo.HISTORY_SINGLE_FIRST : ClickInfo.HISTORY_DOUBLE_ANY;
+        }
     }
 
     /** Maps SuggestionBundle to a ModuleShowConfig value, or null if there are no suggestions. */
@@ -87,9 +137,48 @@ public class TabResumptionModuleMetricsUtils {
             @Nullable SuggestionBundle bundle) {
         if (bundle == null || bundle.entries.size() == 0) return null;
 
-        return bundle.entries.size() == 1
-                ? ModuleShowConfig.SINGLE_TILE_FOREIGN
-                : ModuleShowConfig.DOUBLE_TILE_FOREIGN;
+        boolean isSingle = bundle.entries.size() == 1;
+        SuggestionEntry entry = bundle.entries.get(0);
+        if (isSingle) {
+            if (entry.isLocalTab()) {
+                return ModuleShowConfig.SINGLE_TILE_LOCAL;
+            } else if (entry.getNeedMatchLocalTab()) {
+                return ModuleShowConfig.SINGLE_TILE_ANY;
+            } else {
+                return entry.type == SuggestionEntryType.FOREIGN_TAB
+                        ? ModuleShowConfig.SINGLE_TILE_FOREIGN
+                        : ModuleShowConfig.SINGLE_TILE_HISTORY;
+            }
+        }
+
+        SuggestionEntry entry1 = bundle.entries.get(1);
+        if (entry.getNeedMatchLocalTab() || entry1.getNeedMatchLocalTab()) {
+            return ModuleShowConfig.DOUBLE_TILE_ANY;
+        }
+
+        if (entry.isLocalTab()) {
+            if (entry1.isLocalTab()) {
+                return ModuleShowConfig.DOUBLE_TILE_LOCAL_LOCAL;
+            } else {
+                return entry1.type == SuggestionEntryType.FOREIGN_TAB
+                        ? ModuleShowConfig.DOUBLE_TILE_LOCAL_FOREIGN
+                        : ModuleShowConfig.DOUBLE_TILE_LOCAL_HISTORY;
+            }
+        } else if (entry.type == SuggestionEntryType.FOREIGN_TAB) {
+            if (entry1.isLocalTab()) {
+                return ModuleShowConfig.DOUBLE_TILE_LOCAL_FOREIGN;
+            }
+            return entry1.type == SuggestionEntryType.FOREIGN_TAB
+                    ? ModuleShowConfig.DOUBLE_TILE_FOREIGN_FOREIGN
+                    : ModuleShowConfig.DOUBLE_TILE_FOREIGN_HISTORY;
+        } else {
+            if (entry1.isLocalTab()) {
+                return ModuleShowConfig.DOUBLE_TILE_LOCAL_HISTORY;
+            }
+            return entry1.type == SuggestionEntryType.FOREIGN_TAB
+                    ? ModuleShowConfig.DOUBLE_TILE_FOREIGN_HISTORY
+                    : ModuleShowConfig.DOUBLE_TILE_HISTORY_HISTORY;
+        }
     }
 
     /** Records info (encoded tile count and index) on a clicked tile. */
@@ -119,5 +208,36 @@ public class TabResumptionModuleMetricsUtils {
         // imposes stability after a timeout of STABILITY_TIMEOUT_MS, after which delay logging is
         // moot. This timeout is well below the max bucket of 10 seconds.
         RecordHistogram.recordTimesHistogram(HISTOGRAM_STABILITY_DELAY, stabilityDelay);
+    }
+
+    /** Records whether a salient image fetch attempt was successful. */
+    static void recordSalientImageAvailability(boolean isAvailable) {
+        RecordHistogram.recordBooleanHistogram(HISTOGRAM_IS_SALIENT_IMAGE_AVAILABLE, isAvailable);
+    }
+
+    /**
+     * Records the configuration of the tab resumption module when the "see more" link is clicked.
+     */
+    static void recordSeeMoreLinkClicked(@ModuleShowConfig int config) {
+        RecordHistogram.recordEnumeratedHistogram(
+                HISTOGRAM_SEE_MORE_LINK_CLICKED, config, ModuleShowConfig.NUM_ENTRIES);
+    }
+
+    /**
+     * Records the recency of a suggestion tile, i.e., the duration between the tile's tab's last
+     * active time to when the tile gets shown.
+     */
+    static void recordTabRecencyShow(long recencyMs) {
+        RecordHistogram.recordCustomTimesHistogram(
+                HISTOGRAM_TAB_RECENCY_SHOW, recencyMs, 1, DateUtils.DAY_IN_MILLIS * 2, 50);
+    }
+
+    /**
+     * Records the recency of a suggested tile on click, i.e., the duratoin of the tile's tab's last
+     * active time to when the tile gets shown (NOT when click takes place).
+     */
+    static void recordTabRecencyClick(long recencyMs) {
+        RecordHistogram.recordCustomTimesHistogram(
+                HISTOGRAM_TAB_RECENCY_CLICK, recencyMs, 1, DateUtils.DAY_IN_MILLIS * 2, 50);
     }
 }

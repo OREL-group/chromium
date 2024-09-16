@@ -12,11 +12,13 @@
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/chrome_widget_sublevel.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/permissions/features.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/vector_icons/vector_icons.h"
 #include "ui/base/interaction/element_identifier.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/gfx/paint_vector_icon.h"
 
 DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(ExclusiveAccessPermissionPromptView,
@@ -26,9 +28,11 @@ DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(ExclusiveAccessPermissionPromptView,
 DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(ExclusiveAccessPermissionPromptView,
                                       kLabelViewId2);
 DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(ExclusiveAccessPermissionPromptView,
-                                      kAllowId);
+                                      kAlwaysAllowId);
 DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(ExclusiveAccessPermissionPromptView,
-                                      kDontAllowId);
+                                      kAllowThisTimeId);
+DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(ExclusiveAccessPermissionPromptView,
+                                      kNeverAllowId);
 
 namespace {
 
@@ -95,10 +99,12 @@ void ExclusiveAccessPermissionPromptView::RunButtonCallback(int button_id) {
     return;
   }
   ButtonType button = GetButtonType(button_id);
-  if (button == ButtonType::kAllow) {
+  if (button == ButtonType::kAllowThisTime) {
+    delegate_->AcceptThisTime();
+  } else if (button == ButtonType::kAlwaysAllow) {
     delegate_->Accept();
-  } else if (button == ButtonType::kDontAllow) {
-    delegate_->Dismiss();
+  } else if (button == ButtonType::kNeverAllow) {
+    delegate_->Deny();
   }
 }
 
@@ -115,6 +121,8 @@ void ExclusiveAccessPermissionPromptView::CreateWidget() {
 }
 
 void ExclusiveAccessPermissionPromptView::AddedToWidget() {
+  StartTrackingPictureInPictureOcclusion();
+
   auto title_container = std::make_unique<views::FlexLayoutView>();
   title_container->SetOrientation(views::LayoutOrientation::kHorizontal);
 
@@ -123,6 +131,7 @@ void ExclusiveAccessPermissionPromptView::AddedToWidget() {
   label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   label->SetCollapseWhenHidden(true);
   label->SetMultiLine(true);
+  label->SetAllowCharacterBreak(true);
   label->SetProperty(
       views::kFlexBehaviorKey,
       views::FlexSpecification(views::MinimumFlexSizeRule::kScaleToZero,
@@ -141,7 +150,6 @@ void ExclusiveAccessPermissionPromptView::PrepareToClose() {
 
 void ExclusiveAccessPermissionPromptView::ShowWidget() {
   GetWidget()->Show();
-  SizeToContents();
 }
 
 void ExclusiveAccessPermissionPromptView::UpdateAnchor(views::Widget* widget) {
@@ -178,18 +186,23 @@ void ExclusiveAccessPermissionPromptView::Init() {
 
 void ExclusiveAccessPermissionPromptView::InitButtons() {
   // Hide the OK/Cancel buttons that are shown by default on dialogs.
-  SetButtons(ui::DIALOG_BUTTON_NONE);
+  SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
 
   auto buttons_container = std::make_unique<views::View>();
   buttons_container->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kVertical, gfx::Insets(),
       kButtonVerticalDistance));
 
-  AddButton(*buttons_container, l10n_util::GetStringUTF16(IDS_PERMISSION_ALLOW),
-            ButtonType::kAllow, ui::ButtonStyle::kTonal, kAllowId);
+  if (permissions::feature_params::kShowAllowAlwaysAsFirstButton.Get()) {
+    AddAlwaysAllowButton(*buttons_container);
+    AddAllowThisTimeButton(*buttons_container);
+  } else {
+    AddAllowThisTimeButton(*buttons_container);
+    AddAlwaysAllowButton(*buttons_container);
+  }
   AddButton(*buttons_container,
-            l10n_util::GetStringUTF16(IDS_PERMISSION_DONT_ALLOW),
-            ButtonType::kDontAllow, ui::ButtonStyle::kTonal, kDontAllowId);
+            l10n_util::GetStringUTF16(IDS_PERMISSION_NEVER_ALLOW),
+            ButtonType::kNeverAllow, ui::ButtonStyle::kTonal, kNeverAllowId);
 
   views::LayoutProvider* const layout_provider = views::LayoutProvider::Get();
   buttons_container->SetPreferredSize(gfx::Size(
@@ -250,6 +263,21 @@ void ExclusiveAccessPermissionPromptView::AddButton(
   button_view->SetStyle(style);
   button_view->SetProperty(views::kElementIdentifierKey, identifier);
   buttons_container.AddChildView(std::move(button_view));
+}
+
+void ExclusiveAccessPermissionPromptView::AddAlwaysAllowButton(
+    views::View& buttons_container) {
+  AddButton(buttons_container,
+            l10n_util::GetStringUTF16(IDS_PERMISSION_ALLOW_EVERY_VISIT),
+            ButtonType::kAlwaysAllow, ui::ButtonStyle::kTonal, kAlwaysAllowId);
+}
+
+void ExclusiveAccessPermissionPromptView::AddAllowThisTimeButton(
+    views::View& buttons_container) {
+  AddButton(buttons_container,
+            l10n_util::GetStringUTF16(IDS_PERMISSION_ALLOW_THIS_TIME),
+            ButtonType::kAllowThisTime, ui::ButtonStyle::kTonal,
+            kAllowThisTimeId);
 }
 
 void ExclusiveAccessPermissionPromptView::ClosingPermission() {
